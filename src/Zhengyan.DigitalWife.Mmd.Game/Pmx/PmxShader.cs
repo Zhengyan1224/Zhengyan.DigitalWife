@@ -1,0 +1,122 @@
+﻿using Zhengyan.DigitalWife.Mmd.Game.Graphics;
+using Silk.NET.OpenGLES;
+
+namespace Zhengyan.DigitalWife.Mmd.Game.Pmx;
+
+internal sealed class PmxShader : IDisposable
+{
+    private readonly GL _gl;
+
+    public PmxShader(GL gl)
+    {
+        _gl = gl;
+        Id = PmxShaderResources.CreateProgram(
+            gl,
+            PmxShaderResources.ModelVertexShader,
+            PmxShaderResources.ModelFragmentShader);
+
+        InPos = (uint)gl.GetAttribLocation(Id, "in_Pos");
+        InNor = (uint)gl.GetAttribLocation(Id, "in_Nor");
+        InUV = (uint)gl.GetAttribLocation(Id, "in_UV");
+
+        UniWV = gl.GetUniformLocation(Id, "u_WV");
+        UniWVP = gl.GetUniformLocation(Id, "u_WVP");
+        UniAlpha = gl.GetUniformLocation(Id, "u_Alpha");
+        UniDiffuse = gl.GetUniformLocation(Id, "u_Diffuse");
+        UniAmbient = gl.GetUniformLocation(Id, "u_Ambient");
+        UniSpecular = gl.GetUniformLocation(Id, "u_Specular");
+        UniSpecularPower = gl.GetUniformLocation(Id, "u_SpecularPower");
+        UniLightColor = gl.GetUniformLocation(Id, "u_LightColor");
+        UniLightDir = gl.GetUniformLocation(Id, "u_LightDir");
+        UniAmbientLightColor = gl.GetUniformLocation(Id, "u_AmbientLightColor");
+        UniAmbientLightStrength = gl.GetUniformLocation(Id, "u_AmbientLightStrength");
+        UniTexMode = gl.GetUniformLocation(Id, "u_TexMode");
+        UniTex = gl.GetUniformLocation(Id, "u_Tex");
+        UniTexMulFactor = gl.GetUniformLocation(Id, "u_TexMulFactor");
+        UniTexAddFactor = gl.GetUniformLocation(Id, "u_TexAddFactor");
+        UniToonTexMode = gl.GetUniformLocation(Id, "u_ToonTexMode");
+        UniToonTex = gl.GetUniformLocation(Id, "u_ToonTex");
+        UniToonTexMulFactor = gl.GetUniformLocation(Id, "u_ToonTexMulFactor");
+        UniToonTexAddFactor = gl.GetUniformLocation(Id, "u_ToonTexAddFactor");
+        UniSphereTexMode = gl.GetUniformLocation(Id, "u_SphereTexMode");
+        UniSphereTex = gl.GetUniformLocation(Id, "u_SphereTex");
+        UniSphereTexMulFactor = gl.GetUniformLocation(Id, "u_SphereTexMulFactor");
+        UniSphereTexAddFactor = gl.GetUniformLocation(Id, "u_SphereTexAddFactor");
+        UniShadowMap0 = gl.GetUniformLocation(Id, "u_ShadowMap0");
+        UniShadowMap1 = gl.GetUniformLocation(Id, "u_ShadowMap1");
+        UniShadowMap2 = gl.GetUniformLocation(Id, "u_ShadowMap2");
+        UniShadowMap3 = gl.GetUniformLocation(Id, "u_ShadowMap3");
+        UniShadowMapEnabled = gl.GetUniformLocation(Id, "u_ShadowMapEnabled");
+    }
+
+    public uint Id { get; }
+
+    public uint InPos { get; }
+
+    public uint InNor { get; }
+
+    public uint InUV { get; }
+
+    public int UniWV { get; }
+
+    public int UniWVP { get; }
+
+    public int UniAlpha { get; }
+
+    public int UniDiffuse { get; }
+
+    public int UniAmbient { get; }
+
+    public int UniSpecular { get; }
+
+    public int UniSpecularPower { get; }
+
+    public int UniLightColor { get; }
+
+    public int UniLightDir { get; }
+
+    public int UniAmbientLightColor { get; }
+
+    public int UniAmbientLightStrength { get; }
+
+    public int UniTexMode { get; }
+
+    public int UniTex { get; }
+
+    public int UniTexMulFactor { get; }
+
+    public int UniTexAddFactor { get; }
+
+    public int UniToonTexMode { get; }
+
+    public int UniToonTex { get; }
+
+    public int UniToonTexMulFactor { get; }
+
+    public int UniToonTexAddFactor { get; }
+
+    public int UniSphereTexMode { get; }
+
+    public int UniSphereTex { get; }
+
+    public int UniSphereTexMulFactor { get; }
+
+    public int UniSphereTexAddFactor { get; }
+
+    public int UniShadowMap0 { get; }
+
+    public int UniShadowMap1 { get; }
+
+    public int UniShadowMap2 { get; }
+
+    public int UniShadowMap3 { get; }
+
+    public int UniShadowMapEnabled { get; }
+
+    public void Dispose()
+    {
+        _gl.DeleteProgram(Id);
+        GC.SuppressFinalize(this);
+    }
+}
+

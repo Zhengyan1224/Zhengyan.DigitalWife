@@ -1,0 +1,6 @@
+bin/
+obj/
+models/
+artifacts/
+temp/
+appsettings.Local.json

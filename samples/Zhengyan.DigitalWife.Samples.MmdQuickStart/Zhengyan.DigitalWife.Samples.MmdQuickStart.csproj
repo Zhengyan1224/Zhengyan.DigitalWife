@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="$(DigitalWifeMmdSampleDataDir)**\*">
+            <Link>GameData\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
+            <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>
+

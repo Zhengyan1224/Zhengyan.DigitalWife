@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Assistant\Zhengyan.DigitalWife.Assistant.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Audio.PortAudio\Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Speech.SherpaOnnx\Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Speech.WhisperNet\Zhengyan.DigitalWife.Speech.WhisperNet.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" />
+    <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(DigitalWifeMmdSampleDataDir)**\*">
+      <Link>GameData\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\assets\mmd\samples\GameData\Logo\logo.png">
+      <Link>Resources\Logo\logo.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
+      <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Local.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Local.example.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="README.md">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

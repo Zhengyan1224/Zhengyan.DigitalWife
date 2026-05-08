@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Silk.NET.Input" />
+        <PackageReference Include="Silk.NET.OpenAL" />
+        <PackageReference Include="Silk.NET.OpenGLES" />
+        <PackageReference Include="Silk.NET.Windowing" />
+        <PackageReference Include="StbImageSharp" />
+        <PackageReference Include="Pfim" />
+        <PackageReference Include="NVorbis" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
+            <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>
+

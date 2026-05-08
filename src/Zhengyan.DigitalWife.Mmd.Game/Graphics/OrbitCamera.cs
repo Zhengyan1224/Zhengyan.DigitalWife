@@ -1,0 +1,124 @@
+﻿using System.Numerics;
+using Zhengyan.DigitalWife.Mmd.Helpers;
+
+namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
+
+public class OrbitCamera
+{
+    private const float MinOrbitDistance = 0.1f;
+
+    private Vector3 _position = Vector3.Zero;
+    private Vector3 _target = Vector3.Zero;
+    private Vector3 _front = -Vector3.UnitZ;
+    private Vector3 _up = Vector3.UnitY;
+    private Vector3 _right = Vector3.UnitX;
+    private float _pitch;
+    private float _yaw = -MathHelper.PiOver2;
+    private float _fov = MathHelper.PiOver2;
+
+    public int Width { get; set; } = 1;
+
+    public int Height { get; set; } = 1;
+
+    public Vector3 Position => _position;
+
+    public Vector3 Target => _target;
+
+    public Vector3 Front => _front;
+
+    public Vector3 Up => _up;
+
+    public Vector3 Right => _right;
+
+    public float Pitch => MathHelper.RadiansToDegrees(_pitch);
+
+    public float Yaw => MathHelper.RadiansToDegrees(_yaw);
+
+    public float Fov
+    {
+        get => MathHelper.RadiansToDegrees(_fov);
+        set => _fov = MathHelper.DegreesToRadians(MathHelper.Clamp(value, 1f, 90f));
+    }
+
+    public float DistanceToTarget => MathF.Max(Vector3.Distance(_position, _target), MinOrbitDistance);
+
+    public Matrix4x4 View => Matrix4x4.CreateLookAt(_position, _target, _up);
+
+    public Matrix4x4 Projection => Matrix4x4.CreatePerspectiveFieldOfView(_fov, (float)Math.Max(Width, 1) / Math.Max(Height, 1), 0.1f, 1000.0f);
+
+    public void SetLookAt(Vector3 newPosition, Vector3 newTarget)
+    {
+        _position = newPosition;
+        _target = newTarget;
+
+        if (Vector3.DistanceSquared(_position, _target) < MinOrbitDistance * MinOrbitDistance)
+        {
+            _target = _position + _front * MinOrbitDistance;
+        }
+
+        UpdateVectorsFromLookAt();
+    }
+
+    public void Orbit(float deltaYawDegrees, float deltaPitchDegrees)
+    {
+        SetOrbitAngles(Yaw + deltaYawDegrees, Pitch + deltaPitchDegrees);
+    }
+
+    public void Pan(float deltaPixelsX, float deltaPixelsY)
+    {
+        float viewportHeight = MathF.Max(Height, 1);
+        float distance = DistanceToTarget;
+        float worldUnitsPerPixel = 2.0f * MathF.Tan(_fov * 0.5f) * distance / viewportHeight;
+
+        Vector3 offset = (-_right * deltaPixelsX + _up * deltaPixelsY) * worldUnitsPerPixel;
+        _position += offset;
+        _target += offset;
+    }
+
+    public void Dolly(float delta)
+    {
+        float distance = DistanceToTarget;
+        float step = MathF.Max(distance * 0.15f, 0.05f);
+        float newDistance = MathF.Max(MinOrbitDistance, distance - (delta * step));
+        _position = _target - (_front * newDistance);
+    }
+
+    private void SetOrbitAngles(float yawDegrees, float pitchDegrees)
+    {
+        float distance = DistanceToTarget;
+
+        _yaw = MathHelper.DegreesToRadians(yawDegrees);
+        _pitch = MathHelper.DegreesToRadians(MathHelper.Clamp(pitchDegrees, -89f, 89f));
+
+        UpdateVectorsFromAngles();
+        _position = _target - (_front * distance);
+    }
+
+    private void UpdateVectorsFromLookAt()
+    {
+        Vector3 direction = Vector3.Normalize(_target - _position);
+        _front = direction;
+
+        _yaw = MathF.Atan2(_front.Z, _front.X);
+        _pitch = MathF.Asin(_front.Y);
+
+        UpdateRightAndUp();
+    }
+
+    private void UpdateVectorsFromAngles()
+    {
+        _front.X = MathF.Cos(_pitch) * MathF.Cos(_yaw);
+        _front.Y = MathF.Sin(_pitch);
+        _front.Z = MathF.Cos(_pitch) * MathF.Sin(_yaw);
+        _front = Vector3.Normalize(_front);
+
+        UpdateRightAndUp();
+    }
+
+    private void UpdateRightAndUp()
+    {
+        _right = Vector3.Normalize(Vector3.Cross(_front, Vector3.UnitY));
+        _up = Vector3.Normalize(Vector3.Cross(_right, _front));
+    }
+}
+

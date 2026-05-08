@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj" />
+    <Project Path="samples/Zhengyan.DigitalWife.Samples.DigitalHuman/Zhengyan.DigitalWife.Samples.DigitalHuman.csproj" />
+    <Project Path="samples/Zhengyan.DigitalWife.Samples.MmdDemo/Zhengyan.DigitalWife.Samples.MmdDemo.csproj" />
+    <Project Path="samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/Zhengyan.DigitalWife.Samples.MmdQuickStart.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Zhengyan.DigitalWife.Abstractions/Zhengyan.DigitalWife.Abstractions.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Assistant/Zhengyan.DigitalWife.Assistant.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Audio.PortAudio/Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Llm.OpenAI/Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Mmd.Game/Zhengyan.DigitalWife.Mmd.Game.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Mmd/Zhengyan.DigitalWife.Mmd.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Speech.SherpaOnnx/Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Speech.WhisperNet/Zhengyan.DigitalWife.Speech.WhisperNet.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Zhengyan.DigitalWife.Tools.ApiInspector/Zhengyan.DigitalWife.Tools.ApiInspector.csproj" />
+    <Project Path="tools/Zhengyan.DigitalWife.Tools.ModelInspector/Zhengyan.DigitalWife.Tools.ModelInspector.csproj" />
+    <Project Path="tools/Zhengyan.DigitalWife.Tools.ModelInstaller/Zhengyan.DigitalWife.Tools.ModelInstaller.csproj" />
+  </Folder>
+</Solution>

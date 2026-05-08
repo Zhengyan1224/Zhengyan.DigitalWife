@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Zhengyan.DigitalWife.Speech.SherpaOnnx</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>SherpaOnnx speech recognition, wake-word, and TTS provider for Zhengyan.DigitalWife.Assistant.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Abstractions\Zhengyan.DigitalWife.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
+

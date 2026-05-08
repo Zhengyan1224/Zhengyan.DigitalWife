@@ -1,0 +1,31 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+    <PackageVersion Include="Evergine.Bullet" Version="2025.3.18.659" />
+    <PackageVersion Include="ImGui.NET" Version="1.91.6.1" />
+    <PackageVersion Include="NVorbis" Version="0.10.5" />
+    <PackageVersion Include="Pfim" Version="0.11.4" />
+    <PackageVersion Include="PortAudioSharp2" Version="1.0.6" />
+    <PackageVersion Include="SharpCompress" Version="0.39.0" />
+    <PackageVersion Include="org.k2fsa.sherpa.onnx" Version="1.12.38" />
+    <PackageVersion Include="Silk.NET.Input" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.OpenAL" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.OpenCL" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.OpenGLES" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.OpenGLES.Extensions.ImGui" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.Windowing" Version="2.22.0" />
+    <PackageVersion Include="StbImageSharp" Version="2.30.15" />
+    <PackageVersion Include="System.Text.Encoding.CodePages" Version="9.0.4" />
+    <PackageVersion Include="Whisper.net" Version="1.9.0" />
+    <PackageVersion Include="Whisper.net.Runtime" Version="1.9.0" />
+  </ItemGroup>
+</Project>
