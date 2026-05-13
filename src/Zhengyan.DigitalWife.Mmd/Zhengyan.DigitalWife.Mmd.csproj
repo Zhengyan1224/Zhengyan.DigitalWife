@@ -7,7 +7,6 @@
     <ItemGroup>
         <PackageReference Include="Evergine.Bullet" />
         <PackageReference Include="Silk.NET.OpenCL" />
-        <PackageReference Include="System.Text.Encoding.CodePages" />
     </ItemGroup>
 
     <ItemGroup>

@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Reflection;
 using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
@@ -78,6 +79,31 @@ public sealed class WhisperNetSpeechRecognizer : ISpeechRecognizer, IDisposable
     public IStreamingSpeechRecognitionSession CreateStreamingSession(StreamingSpeechRecognitionOptions? options = null)
         => new WhisperNetStreamingRecognitionSession(this, options ?? new StreamingSpeechRecognitionOptions(), _logger);
 
+    public WhisperNetRuntimeDiagnostics GetRuntimeDiagnostics()
+    {
+        string? initializationError = null;
+
+        try
+        {
+            _ = _factory.Value;
+        }
+        catch (Exception ex)
+        {
+            initializationError = ex.Message;
+        }
+
+        string root = AppContext.BaseDirectory;
+        return new WhisperNetRuntimeDiagnostics
+        {
+            RequestedUseGpu = _options.UseGpu,
+            NativeSearchRoot = root,
+            FoundNativeFiles = FindNativeRuntimeFiles(root),
+            LoadedRuntimeLibrary = ReadRuntimeOptionsProperty("LoadedLibrary"),
+            RuntimeLibraryOrder = ReadRuntimeLibraryOrder(),
+            InitializationError = initializationError
+        };
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -129,6 +155,84 @@ public sealed class WhisperNetSpeechRecognizer : ISpeechRecognizer, IDisposable
         };
 
         return WhisperFactory.FromPath(_options.ModelPath, factoryOptions);
+    }
+
+    private static string? ReadRuntimeOptionsProperty(string propertyName)
+    {
+        Type? runtimeOptionsType = typeof(WhisperFactory).Assembly.GetType("Whisper.net.LibraryLoader.RuntimeOptions");
+        PropertyInfo? property = runtimeOptionsType?.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Static);
+        object? value = property?.GetValue(null);
+        return value?.ToString();
+    }
+
+    private static IReadOnlyList<string> ReadRuntimeLibraryOrder()
+    {
+        Type? runtimeOptionsType = typeof(WhisperFactory).Assembly.GetType("Whisper.net.LibraryLoader.RuntimeOptions");
+        PropertyInfo? property = runtimeOptionsType?.GetProperty("RuntimeLibraryOrder", BindingFlags.Public | BindingFlags.Static);
+        object? value = property?.GetValue(null);
+        if (value is System.Collections.IEnumerable enumerable)
+        {
+            List<string> items = [];
+            foreach (object? item in enumerable)
+            {
+                if (item is not null)
+                {
+                    items.Add(item.ToString() ?? string.Empty);
+                }
+            }
+
+            return items;
+        }
+
+        return [];
+    }
+
+    private static IReadOnlyList<string> FindNativeRuntimeFiles(string root)
+    {
+        string[] interestingNames =
+        [
+            "ggml-cpu-whisper.dll",
+            "ggml-cpu-whisper.so",
+            "libggml-cpu-whisper.dylib",
+            "ggml-cuda-whisper.dll",
+            "ggml-cuda-whisper.so",
+            "libggml-cuda-whisper.dylib",
+            "ggml-vulkan-whisper.dll",
+            "ggml-vulkan-whisper.so",
+            "libggml-vulkan-whisper.dylib",
+            "ggml-openvino-whisper.dll",
+            "ggml-openvino-whisper.so",
+            "libggml-openvino-whisper.dylib"
+        ];
+
+        List<string> found = [];
+        foreach (string fileName in interestingNames)
+        {
+            string direct = Path.Combine(root, fileName);
+            if (File.Exists(direct))
+            {
+                found.Add(direct);
+            }
+        }
+
+        string runtimesDirectory = Path.Combine(root, "runtimes");
+        if (!Directory.Exists(runtimesDirectory))
+        {
+            return found;
+        }
+
+        foreach (string fileName in interestingNames)
+        {
+            foreach (string path in Directory.EnumerateFiles(runtimesDirectory, fileName, SearchOption.AllDirectories))
+            {
+                if (!found.Contains(path, StringComparer.OrdinalIgnoreCase))
+                {
+                    found.Add(path);
+                }
+            }
+        }
+
+        return found;
     }
 }
 

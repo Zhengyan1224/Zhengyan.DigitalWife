@@ -1,4 +1,4 @@
-﻿# Zhengyan.DigitalWife.Speech.SherpaOnnx
+# Zhengyan.DigitalWife.Speech.SherpaOnnx
 
 `Zhengyan.DigitalWife.Speech.SherpaOnnx` 基于 `org.k2fsa.sherpa.onnx` 提供三类能力：
 
@@ -54,29 +54,11 @@
 - `NoiseScaleW`
 - `LengthScale`
 
-`SpeechSynthesisOptions` 也支持 `ModelKind`，可以在单次调用时覆盖配置文件中的默认模型类型。
-
 ### 唤醒词
 
 - `SherpaOnnxWakeWordOptions`
 - `SherpaOnnxWakeWordDetector`
 - `AddSherpaOnnxWakeWordDetector(...)`
-
-`SherpaOnnxWakeWordOptions` 常用字段：
-
-- `TokensPath`
-- `EncoderPath`
-- `DecoderPath`
-- `JoinerPath`
-- `KeywordsFile`
-- `SampleRate`
-- `FeatureDim`
-- `Threads`
-- `Provider`
-- `KeywordsThreshold`
-- `KeywordsScore`
-- `NumTrailingBlanks`
-- `CaptureOptions`
 
 ## 注册识别器
 
@@ -98,39 +80,6 @@ services.AddSherpaOnnxSpeechRecognizer(new SherpaOnnxRecognizerOptions
 });
 ```
 
-## 识别示例
-
-```csharp
-using Microsoft.Extensions.DependencyInjection;
-using Zhengyan.DigitalWife.Audio;
-using Zhengyan.DigitalWife.Speech;
-
-using ServiceProvider provider = services.BuildServiceProvider();
-ISpeechRecognizer recognizer = provider.GetRequiredService<ISpeechRecognizer>();
-
-AudioData audio = await WaveFile.ReadAsync("test.wav");
-SpeechRecognitionResult result = await recognizer.RecognizeAsync(audio, new SpeechRecognitionOptions
-{
-    Language = "zh",
-    EnableTimestamps = true
-});
-
-Console.WriteLine(result.Text);
-```
-
-## 注册 TTS
-
-```csharp
-services.AddSherpaOnnxTextToSpeech(new SherpaOnnxTtsOptions
-{
-    ModelKind = SpeechSynthesisModelKind.Vits,
-    ModelPath = "models/tts/example/model.onnx",
-    TokensPath = "models/tts/example/tokens.txt",
-    LexiconPath = "models/tts/example/lexicon.txt",
-    Provider = "cpu"
-});
-```
-
 ## TTS 示例
 
 ```csharp
@@ -145,58 +94,36 @@ AudioData audio = await tts.SynthesizeAsync(
 await WaveFile.WriteAsync("tts.wav", audio);
 ```
 
-### Matcha 示例
+## Matcha 说明
 
-`Matcha` 模型需要把 `ModelKind` 设为 `Matcha`，并额外提供 vocoder 文件路径：
-如果你不显式设置 `VocoderPath`，运行时会自动去 `ModelPath` 同目录寻找 `vocos-16khz-univ.onnx`。
-如果你不显式设置 `RuleFsts`，运行时会自动在 `ModelPath` 同目录寻找 `phone-zh.fst`、`date-zh.fst` 和 `number-zh.fst`，按找到的顺序拼接。
+`Matcha` 模型需要把 `ModelKind` 设为 `Matcha`，并额外提供 vocoder 文件路径。
 
-```csharp
-services.AddSherpaOnnxTextToSpeech(new SherpaOnnxTtsOptions
-{
-    ModelKind = SpeechSynthesisModelKind.Matcha,
-    ModelPath = "models/tts/matcha-icefall-zh-en/model-steps-3.onnx",
-    TokensPath = "models/tts/matcha-icefall-zh-en/tokens.txt",
-    LexiconPath = "models/tts/matcha-icefall-zh-en/lexicon.txt",
-    DataDirectory = "models/tts/matcha-icefall-zh-en/espeak-ng-data",
-    VocoderPath = "models/tts/matcha-icefall-zh-en/vocos-16khz-univ.onnx",
-    RuleFsts = "models/tts/matcha-icefall-zh-en/phone-zh.fst,models/tts/matcha-icefall-zh-en/date-zh.fst,models/tts/matcha-icefall-zh-en/number-zh.fst",
-    Provider = "cpu"
-});
-```
+如果你不显式设置：
 
-## 注册唤醒词
+- `VocoderPath`
+- `RuleFsts`
 
-```csharp
-services.AddSherpaOnnxWakeWordDetector(new SherpaOnnxWakeWordOptions
-{
-    TokensPath = "models/wake/example/tokens.txt",
-    EncoderPath = "models/wake/example/encoder.onnx",
-    DecoderPath = "models/wake/example/decoder.onnx",
-    JoinerPath = "models/wake/example/joiner.onnx",
-    KeywordsFile = "models/wake/example/keywords.txt"
-});
-```
+运行时会尝试从 `ModelPath` 所在目录自动推断默认文件。
 
-## 唤醒词示例
+## GPU / Provider 说明
 
-```csharp
-using Microsoft.Extensions.DependencyInjection;
-using Zhengyan.DigitalWife.Speech;
+`Provider` 会传到底层 `SherpaOnnx` / ONNX Runtime。
 
-IWakeWordDetector detector = provider.GetRequiredService<IWakeWordDetector>();
-detector.WakeWordDetected += (_, e) =>
-{
-    Console.WriteLine($"Wake word: {e.Keyword} @ {e.DetectedAt}");
-};
+但这不代表“只改配置就一定上 GPU”。是否真正走 GPU 还取决于：
 
-await detector.StartAsync();
-Console.ReadLine();
-await detector.StopAsync();
-await detector.DisposeAsync();
-```
+- 你传入的 `Provider` 值
+- 当前部署目录里是否存在对应的 ONNX Runtime GPU native libraries
+- 服务器上的 GPU / CUDA 环境是否匹配
+
+在 `RealtimeVoice` 服务里，启动日志会额外打印：
+
+- `requestedProvider`
+- `cudaProviderBinaryDetected`
+
+如果你在 NVIDIA 服务器上配置了 GPU provider，但日志仍提示没检测到 CUDA provider 二进制，那么当前部署大概率仍会回退到 CPU 或直接无法用 GPU。
 
 ## 适合什么场景
 
-- 希望统一用一个 Provider 覆盖离线识别、唤醒词和 TTS。
-- 需要本地部署、低延迟、可离线运行的中文语音能力。
+- 希望统一用一个 Provider 覆盖离线识别、唤醒词和 TTS
+- 需要本地部署、低延迟、可离线运行的中文语音能力
+- 需要在同一技术栈里控制 ASR、TTS 和唤醒词

@@ -1,13 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Zhengyan.DigitalWife.Assistant;
-using Zhengyan.DigitalWife.Assistant.Text;
 using Zhengyan.DigitalWife.Audio.PortAudio;
-using Zhengyan.DigitalWife.Llm.OpenAI;
+using Zhengyan.DigitalWife.Realtime.OpenAI;
 using Zhengyan.DigitalWife.Samples.DigitalHuman;
-using Zhengyan.DigitalWife.Speech.SherpaOnnx;
-using Zhengyan.DigitalWife.Speech.WhisperNet;
 
 string appBasePath = AppContext.BaseDirectory;
 
@@ -34,47 +30,8 @@ services.AddLogging(builder =>
     });
 });
 
-services.AddDigitalWifeAssistantCore();
-services.AddSingleton(new SentenceChunker(new SentenceChunkerOptions
-{
-    EnableClauseBoundaries = resolvedOptions.Conversation.ResponseChunking.EnableClauseBoundaries,
-    MinClauseCharacters = resolvedOptions.Conversation.ResponseChunking.MinClauseCharacters,
-    MaxBufferedCharacters = resolvedOptions.Conversation.ResponseChunking.MaxBufferedCharacters
-}));
 services.AddPortAudio(resolvedOptions.Audio);
-services.AddOpenAiCompatibleLlmClient(resolvedOptions.Llm);
-services.AddSherpaOnnxTextToSpeech(resolvedOptions.Tts);
-
-IReadOnlyList<string> recognitionPriority = resolvedOptions.RecognitionPriority.Count > 0
-    ? resolvedOptions.RecognitionPriority
-    : [resolvedOptions.RecognitionProvider];
-
-foreach (string providerName in recognitionPriority)
-{
-    switch (providerName.ToLowerInvariant())
-    {
-        case "sherpa":
-            if (resolvedOptions.SherpaRecognizer is null)
-            {
-                throw new InvalidOperationException("Sherpa recognizer configuration is required when RecognitionPriority contains 'sherpa'.");
-            }
-
-            services.AddSherpaOnnxSpeechRecognizer(resolvedOptions.SherpaRecognizer);
-            break;
-
-        case "whisper":
-            if (resolvedOptions.WhisperRecognizer is null)
-            {
-                throw new InvalidOperationException("Whisper recognizer configuration is required when RecognitionPriority contains 'whisper'.");
-            }
-
-            services.AddWhisperNetSpeechRecognizer(resolvedOptions.WhisperRecognizer);
-            break;
-
-        default:
-            throw new InvalidOperationException($"Unsupported recognition provider: {providerName}");
-    }
-}
+services.AddOpenAiRealtimeClient(resolvedOptions.RealtimeClient);
 
 using ServiceProvider provider = services.BuildServiceProvider();
 ILogger<DigitalHumanGame> logger = provider.GetRequiredService<ILogger<DigitalHumanGame>>();

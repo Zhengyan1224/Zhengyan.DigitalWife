@@ -18,3 +18,8 @@ public interface IAudioPlayer
     Task PlayFileAsync(string path, CancellationToken cancellationToken = default);
 }
 
+public interface IAudioPlaybackTiming
+{
+    TimeSpan GetEstimatedOutputLatency(AudioFormat format);
+}
+

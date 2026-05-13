@@ -42,6 +42,7 @@ internal sealed class SamplePathResolver
         {
             BaseUrl = options.BaseUrl,
             ApiKey = options.ApiKey,
+            Model = options.Model,
             ChatCompletionsPath = options.ChatCompletionsPath,
             Timeout = options.Timeout
         };

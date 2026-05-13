@@ -5,7 +5,7 @@ using Zhengyan.DigitalWife.Audio;
 
 namespace Zhengyan.DigitalWife.Audio.PortAudio;
 
-public sealed class PortAudioSpeakerPlayer : IAudioPlayer, IDisposable
+public sealed class PortAudioSpeakerPlayer : IAudioPlayer, IAudioPlaybackTiming, IDisposable
 {
     private readonly PortAudioEngine _engine;
     private readonly ILogger<PortAudioSpeakerPlayer> _logger;
@@ -37,6 +37,22 @@ public sealed class PortAudioSpeakerPlayer : IAudioPlayer, IDisposable
     {
         var audio = await WaveFile.ReadAsync(path, cancellationToken);
         await PlayAsync(audio, cancellationToken);
+    }
+
+    public TimeSpan GetEstimatedOutputLatency(AudioFormat format)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+
+        try
+        {
+            int device = _runtimeOptions.OutputDeviceIndex ?? PortAudioSharp.PortAudio.DefaultOutputDevice;
+            double seconds = PortAudioSharp.PortAudio.GetDeviceInfo(device).defaultLowOutputLatency;
+            return TimeSpan.FromSeconds(Math.Max(0.0, seconds));
+        }
+        catch
+        {
+            return TimeSpan.FromMilliseconds(80);
+        }
     }
 
     public void Dispose()

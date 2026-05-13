@@ -4,9 +4,7 @@ using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Zhengyan.DigitalWife.Assistant.Text;
 using Zhengyan.DigitalWife.Audio;
-using Zhengyan.DigitalWife.Llm;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Audio;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
@@ -14,7 +12,7 @@ using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
 using Zhengyan.DigitalWife.Mmd.Game.Speech;
-using Zhengyan.DigitalWife.Speech;
+using Zhengyan.DigitalWife.Realtime.OpenAI;
 
 namespace Zhengyan.DigitalWife.Samples.DigitalHuman;
 
@@ -23,11 +21,8 @@ internal sealed class DigitalHumanGame : Game
     private readonly ResolvedDigitalHumanOptions _options;
     private readonly ILogger<DigitalHumanGame> _logger;
     private readonly IAudioSource _audioSource;
-    private readonly IReadOnlyList<ISpeechRecognizer> _speechRecognizers;
-    private readonly ILlmClient _llmClient;
-    private readonly ITextToSpeechSynthesizer _tts;
+    private readonly OpenAiRealtimeClient _realtimeClient;
     private readonly IAudioPlayer _audioPlayer;
-    private readonly SentenceChunker _sentenceChunker;
     private readonly OrbitCamera _camera = new();
     private readonly MmdCharacterGroup _characters;
     private readonly Random _random = new();
@@ -36,7 +31,6 @@ internal sealed class DigitalHumanGame : Game
     private readonly object _startupSync = new();
     private readonly DialogueBubbleState _bubbleState = new();
     private StartupStatusSnapshot _startupStatus = new(true, "正在启动", "准备语音模型...", 0.0f);
-    private readonly List<LlmChatMessage> _history = [];
     private readonly List<MmdCharacter> _wearables = [];
     private readonly List<PmxModelComponent> _sceneModels = [];
     private SpeechDictionarySet? _speechDictionaries;
@@ -79,11 +73,8 @@ internal sealed class DigitalHumanGame : Game
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _audioSource = services.GetRequiredService<IAudioSource>();
-        _speechRecognizers = services.GetServices<ISpeechRecognizer>().ToArray();
-        _llmClient = services.GetRequiredService<ILlmClient>();
-        _tts = services.GetRequiredService<ITextToSpeechSynthesizer>();
+        _realtimeClient = services.GetRequiredService<OpenAiRealtimeClient>();
         _audioPlayer = services.GetRequiredService<IAudioPlayer>();
-        _sentenceChunker = services.GetRequiredService<SentenceChunker>();
         _characters = new MmdCharacterGroup(this, _camera);
     }
 
@@ -315,6 +306,7 @@ internal sealed class DigitalHumanGame : Game
         }
     }
 
+    #if false
     private IEnumerable<StartupWarmupStep> BuildStartupWarmupSteps()
     {
         foreach (ISpeechRecognizer recognizer in _speechRecognizers)
@@ -815,6 +807,595 @@ internal sealed class DigitalHumanGame : Game
         }
     }
 
+    #endif
+
+    private IEnumerable<StartupWarmupStep> BuildStartupWarmupSteps()
+    {
+        yield return new StartupWarmupStep(
+            "杩炴帴瀹炴椂璇煶鏈嶅姟",
+            WarmUpRealtimeConnectionAsync);
+    }
+
+    private async Task WarmUpRealtimeConnectionAsync(CancellationToken cancellationToken)
+    {
+        await _realtimeClient.ConnectAsync(cancellationToken);
+        await _realtimeClient.UpdateSessionAsync(_options.RealtimeSession, cancellationToken);
+        await _realtimeClient.ResetConversationAsync(cancellationToken);
+    }
+
+    private async Task<string?> WaitForWakeWordAsync(CancellationToken cancellationToken)
+    {
+        await EnterStateAsync(DigitalHumanState.WaitingForWakeWord, CharacterMotionGroup.Stand, cancellationToken);
+        HideBubble();
+        await _realtimeClient.ResetConversationAsync(cancellationToken);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            OpenAiRealtimeTranscriptionResult? recognition = await CaptureAndTranscribeWakeWordAsync(cancellationToken);
+            if (recognition is null || string.IsNullOrWhiteSpace(recognition.Text))
+            {
+                continue;
+            }
+
+            _logger.LogInformation("Wake-word stage recognized text: {Text}", recognition.Text);
+
+            if (!TryExtractWakeWordTail(recognition.Text, out string? tailText))
+            {
+                continue;
+            }
+
+            _logger.LogInformation("Wake word recognized from ASR text: {Text}", recognition.Text);
+            if (!string.IsNullOrWhiteSpace(tailText))
+            {
+                await EnsureRemoteUserConversationItemAsync(tailText, cancellationToken);
+            }
+
+            return tailText;
+        }
+
+        return null;
+    }
+
+    private async Task<OpenAiRealtimeTranscriptionResult?> CaptureAndTranscribeWakeWordAsync(CancellationToken cancellationToken)
+    {
+        AudioData audio = await _audioSource.RecordAsync(
+            _options.Conversation.WakeWordChunkDuration,
+            _options.Conversation.WakeWordCapture,
+            cancellationToken);
+
+        if (audio.Samples.Length == 0)
+        {
+            return null;
+        }
+
+        AudioData padded = AppendTrailingSilence(audio, _options.Conversation.WakeWordTrailingSilencePadding);
+        OpenAiRealtimeTranscriptionResult? result = await TranscribeAudioAsync(
+            padded,
+            deleteConversationItemAfterTranscription: true,
+            saveCapture: false,
+            cancellationToken);
+
+        if (result is null
+            || string.IsNullOrWhiteSpace(result.Text)
+            || !LooksLikeWakeWordPrefix(result.Text))
+        {
+            return result;
+        }
+
+        _logger.LogInformation("Wake-word stage detected possible prefix {Text}; capturing extension chunk.", result.Text);
+
+        AudioData extension = await _audioSource.RecordAsync(
+            _options.Conversation.WakeWordExtensionDuration,
+            _options.Conversation.WakeWordCapture,
+            cancellationToken);
+
+        if (extension.Samples.Length == 0)
+        {
+            return result;
+        }
+
+        AudioData combined = CombineAudio(audio, extension);
+        AudioData combinedPadded = AppendTrailingSilence(combined, _options.Conversation.WakeWordTrailingSilencePadding);
+        OpenAiRealtimeTranscriptionResult? extended = await TranscribeAudioAsync(
+            combinedPadded,
+            deleteConversationItemAfterTranscription: true,
+            saveCapture: false,
+            cancellationToken);
+
+        if (extended is not null && !string.IsNullOrWhiteSpace(extended.Text))
+        {
+            _logger.LogInformation("Wake-word extended recognition text: {Text}", extended.Text);
+            return extended;
+        }
+
+        return result;
+    }
+
+    private async Task ActivateConversationAsync(CancellationToken cancellationToken)
+    {
+        await EnterStateAsync(DigitalHumanState.WaitingForUserInput, CharacterMotionGroup.Wait, cancellationToken);
+        await ShowTransientPromptAsync(_options.Conversation.WakeAcknowledgementText, cancellationToken);
+        ShowHintBubble(_options.Conversation.ListeningPromptText);
+    }
+
+    private async Task ReturnToIdleAsync(CancellationToken cancellationToken)
+    {
+        await _realtimeClient.ResetConversationAsync(cancellationToken);
+        await EnterStateAsync(DigitalHumanState.WaitingForWakeWord, CharacterMotionGroup.Stand, cancellationToken);
+        HideBubble();
+    }
+
+    private async Task HandleReturnToStandAsync(CancellationToken cancellationToken)
+    {
+        string promptText = _options.Conversation.ReturnToStandPromptText.Trim();
+        if (!string.IsNullOrWhiteSpace(promptText))
+        {
+            await ShowTransientPromptAsync(promptText, cancellationToken);
+        }
+
+        await ReturnToIdleAsync(cancellationToken);
+    }
+
+    private async Task<string?> WaitForUserInputAsync(DateTimeOffset idleDeadline, CancellationToken cancellationToken)
+    {
+        await EnterStateAsync(DigitalHumanState.WaitingForUserInput, CharacterMotionGroup.Wait, cancellationToken);
+        ShowHintBubble(_options.Conversation.ListeningPromptText);
+
+        TimeSpan remainingToStand = idleDeadline - DateTimeOffset.UtcNow;
+        if (remainingToStand <= TimeSpan.Zero)
+        {
+            _logger.LogInformation("Conversation idle timeout expired; returning to idle.");
+            await HandleReturnToStandAsync(cancellationToken);
+            return null;
+        }
+
+        TimeSpan captureTimeout = _options.Conversation.PostResponseIdleTimeout <= TimeSpan.Zero
+            ? remainingToStand
+            : _options.Conversation.PostResponseIdleTimeout < remainingToStand
+                ? _options.Conversation.PostResponseIdleTimeout
+                : remainingToStand;
+
+        OpenAiRealtimeTranscriptionResult? recognition = await CaptureAndTranscribeAsync(
+            _options.Conversation.UserCapture,
+            captureTimeout,
+            deleteConversationItemAfterTranscription: false,
+            saveCapture: true,
+            cancellationToken);
+
+        if (recognition is null)
+        {
+            if (DateTimeOffset.UtcNow >= idleDeadline)
+            {
+                _logger.LogInformation("Conversation idle timeout expired; returning to idle.");
+                await HandleReturnToStandAsync(cancellationToken);
+                return null;
+            }
+
+            _logger.LogInformation("User input timed out; keep waiting for the idle deadline.");
+            return string.Empty;
+        }
+
+        string text = recognition.Text.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _logger.LogInformation("User input was empty; keep waiting.");
+            await DeleteConversationItemIfPresentAsync(recognition.ItemId, cancellationToken);
+            ShowHintBubble("娌℃湁鍚竻锛岃鍐嶈涓€閬嶃€?");
+            return string.Empty;
+        }
+
+        _logger.LogInformation("Conversation stage recognized text: {Text}", text);
+
+        if (!TryExtractWakeWordTail(text, out string? tailText))
+        {
+            return text;
+        }
+
+        await DeleteConversationItemIfPresentAsync(recognition.ItemId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(tailText))
+        {
+            return string.Empty;
+        }
+
+        await EnsureRemoteUserConversationItemAsync(tailText, cancellationToken);
+        return tailText;
+    }
+
+    private async Task ProcessConversationTurnAsync(string userText, CancellationToken cancellationToken)
+    {
+        await EnterStateAsync(DigitalHumanState.Thinking, CharacterMotionGroup.Wait, cancellationToken);
+        ShowThinkingBubble(userText);
+
+        string normalizedUserText = userText.Trim();
+
+        try
+        {
+            string assistantText = await PlayRealtimeResponseAsync(normalizedUserText, cancellationToken);
+            if (string.IsNullOrWhiteSpace(assistantText))
+            {
+                assistantText = "鈥︹€?";
+            }
+
+            await EnterStateAsync(DigitalHumanState.WaitingForUserInput, CharacterMotionGroup.Wait, cancellationToken);
+            ShowAssistantBubble(normalizedUserText, assistantText, _options.Conversation.ListeningPromptText);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed while processing assistant turn.");
+            ShowAssistantBubble(normalizedUserText, "鎶辨瓑锛屾垜鍒氭墠鍑轰簡鐐归棶棰樸€?", string.Empty);
+        }
+    }
+
+    private async Task<string> PlayRealtimeResponseAsync(string userText, CancellationToken cancellationToken)
+    {
+        StringBuilder assistantBuilder = new();
+        Channel<AudioChunk> audioChannel = Channel.CreateUnbounded<AudioChunk>();
+        Task? playbackTask = null;
+        bool enteredSpeakingState = false;
+        bool lipSyncLoopStarted = false;
+        Task? lipSyncStartTask = null;
+        int lastLipSyncLength = 0;
+        string finalText = string.Empty;
+
+        try
+        {
+            await foreach (OpenAiRealtimeResponseUpdate update in _realtimeClient.CreateResponseAsync(cancellationToken: cancellationToken))
+            {
+                if (!string.IsNullOrWhiteSpace(update.AssistantTranscript))
+                {
+                    assistantBuilder.Clear();
+                    assistantBuilder.Append(update.AssistantTranscript);
+
+                    if (!enteredSpeakingState)
+                    {
+                        enteredSpeakingState = true;
+                        await EnterStateAsync(DigitalHumanState.Speaking, CharacterMotionGroup.Wait, cancellationToken);
+                    }
+
+                    ShowAssistantBubble(userText, assistantBuilder.ToString(), string.Empty);
+
+                    if (lipSyncLoopStarted && assistantBuilder.Length - lastLipSyncLength >= 8)
+                    {
+                        lastLipSyncLength = assistantBuilder.Length;
+                        string lipSyncText = assistantBuilder.ToString();
+                        await RunOnMainThreadAsync(() => StartLipSyncLoop(lipSyncText));
+                    }
+                }
+
+                if (update.AudioChunk is not null)
+                {
+                    if (!enteredSpeakingState)
+                    {
+                        enteredSpeakingState = true;
+                        await EnterStateAsync(DigitalHumanState.Speaking, CharacterMotionGroup.Wait, cancellationToken);
+                    }
+
+                    if (playbackTask is null)
+                    {
+                        playbackTask = _audioPlayer.PlayAsync(
+                            ReadRealtimeAudioAsync(audioChannel.Reader, cancellationToken),
+                            update.AudioChunk.Format,
+                            cancellationToken);
+                    }
+
+                    if (!lipSyncLoopStarted)
+                    {
+                        lipSyncLoopStarted = true;
+                        lastLipSyncLength = assistantBuilder.Length;
+                        string lipSyncText = assistantBuilder.Length > 0 ? assistantBuilder.ToString() : userText;
+                        TimeSpan lipSyncDelay = GetLipSyncStartDelay(update.AudioChunk.Format);
+                        lipSyncStartTask = StartLipSyncAfterDelayAsync(lipSyncText, lipSyncDelay, cancellationToken);
+                    }
+
+                    await audioChannel.Writer.WriteAsync(ApplyVolume(update.AudioChunk, _options.SpeechOutput.Volume), cancellationToken);
+                }
+
+                if (update.IsCompleted)
+                {
+                    finalText = string.IsNullOrWhiteSpace(update.FinalAssistantText)
+                        ? assistantBuilder.ToString().Trim()
+                        : update.FinalAssistantText.Trim();
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            audioChannel.Writer.TryComplete();
+            if (playbackTask is not null)
+            {
+                await playbackTask;
+            }
+
+            if (lipSyncStartTask is not null)
+            {
+                try
+                {
+                    await lipSyncStartTask;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+
+            if (lipSyncLoopStarted)
+            {
+                await RunOnMainThreadAsync(StopLipSync);
+            }
+        }
+
+        return finalText;
+    }
+
+    private async Task<OpenAiRealtimeTranscriptionResult?> CaptureAndTranscribeAsync(
+        VoiceActivityCaptureOptions captureOptions,
+        TimeSpan timeout,
+        bool deleteConversationItemAfterTranscription,
+        bool saveCapture,
+        CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (timeout > TimeSpan.Zero)
+        {
+            timeoutCts.CancelAfter(timeout);
+        }
+
+        AudioData? audio = null;
+        try
+        {
+            audio = await _audioSource.RecordUntilSilenceAsync(captureOptions, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+
+        if (audio is null || audio.Samples.Length == 0)
+        {
+            return null;
+        }
+
+        return await TranscribeAudioAsync(audio, deleteConversationItemAfterTranscription, saveCapture, cancellationToken);
+    }
+
+    private async Task<OpenAiRealtimeTranscriptionResult?> TranscribeAudioAsync(
+        AudioData audio,
+        bool deleteConversationItemAfterTranscription,
+        bool saveCapture,
+        CancellationToken cancellationToken)
+    {
+        if (audio.Samples.Length == 0)
+        {
+            return null;
+        }
+
+        string? savedCapturePath = null;
+        if (saveCapture && !string.IsNullOrWhiteSpace(_options.CapturedAudioDirectory))
+        {
+            savedCapturePath = await SaveCapturedAudioAsync(audio, cancellationToken);
+        }
+
+        try
+        {
+            return await _realtimeClient.TranscribeAsync(audio, deleteConversationItemAfterTranscription, cancellationToken);
+        }
+        finally
+        {
+            if (_options.DeleteCapturedAudioAfterRecognition
+                && !string.IsNullOrWhiteSpace(savedCapturePath)
+                && File.Exists(savedCapturePath))
+            {
+                try
+                {
+                    File.Delete(savedCapturePath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete captured audio file {Path}.", savedCapturePath);
+                }
+            }
+        }
+    }
+
+    private async Task EnsureRemoteUserConversationItemAsync(string text, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        await _realtimeClient.CreateConversationItemAsync(new OpenAiRealtimeConversationItem
+        {
+            Type = "message",
+            Status = "completed",
+            Role = "user",
+            Content =
+            [
+                new OpenAiRealtimeContentPart
+                {
+                    Type = "input_text",
+                    Text = text.Trim()
+                }
+            ]
+        }, cancellationToken: cancellationToken);
+    }
+
+    private async Task DeleteConversationItemIfPresentAsync(string? itemId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(itemId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _realtimeClient.DeleteConversationItemAsync(itemId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete Realtime conversation item {ItemId}.", itemId);
+        }
+    }
+
+    private async Task ShowTransientPromptAsync(string text, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        await EnterStateAsync(DigitalHumanState.Speaking, CharacterMotionGroup.Wait, cancellationToken);
+        ShowAssistantBubble(string.Empty, text, string.Empty);
+        await RunOnMainThreadAsync(() => StartLipSyncLoop(text));
+
+        try
+        {
+            await PlayRealtimePromptAsync(text, cancellationToken);
+        }
+        finally
+        {
+            await RunOnMainThreadAsync(StopLipSync);
+        }
+
+        await EnterStateAsync(DigitalHumanState.WaitingForUserInput, CharacterMotionGroup.Wait, cancellationToken);
+    }
+
+    private async Task PlayRealtimePromptAsync(string text, CancellationToken cancellationToken)
+    {
+        AudioData directAudio = await _realtimeClient.SynthesizeTextAsync(
+            text,
+            new OpenAiAudioSpeechRequest
+            {
+                Model = _options.RealtimeSession.Model,
+                Voice = _options.RealtimeSession.Audio.Output.Voice,
+                ResponseFormat = "wav"
+            },
+            cancellationToken);
+
+        AudioData adjustedDirectAudio = ApplyVolume(directAudio, _options.SpeechOutput.Volume);
+        TimeSpan lipSyncDelay = GetLipSyncStartDelay(adjustedDirectAudio.Format);
+        Task playbackTask = _audioPlayer.PlayAsync(adjustedDirectAudio, cancellationToken);
+        if (lipSyncDelay > TimeSpan.Zero)
+        {
+            await Task.Delay(lipSyncDelay, cancellationToken);
+        }
+
+        TimeSpan lipSyncDuration = adjustedDirectAudio.Duration > lipSyncDelay
+            ? adjustedDirectAudio.Duration - lipSyncDelay
+            : adjustedDirectAudio.Duration;
+        await RunOnMainThreadAsync(() => StartLipSync(text, lipSyncDuration));
+        await playbackTask;
+        return;
+
+        #if false
+        OpenAiRealtimeResponseRequest request = new()
+        {
+            Conversation = "none",
+            Instructions = $"请只输出以下这句话，不要添加任何其它内容，也不要解释：{text}",
+            OutputModalities = ["audio"],
+            Audio = new OpenAiRealtimeResponseAudioOptions
+            {
+                Format = _options.RealtimeSession.Audio.Output.Format,
+                Voice = _options.RealtimeSession.Audio.Output.Voice
+            },
+            MaxOutputTokens = Math.Max(32, text.Length * 4),
+            Temperature = 0.0f
+        };
+        request.Instructions = $"Return exactly the following sentence and do not add anything else: {text}";
+
+        Channel<AudioChunk> audioChannel = Channel.CreateUnbounded<AudioChunk>();
+        Task? playbackTask = null;
+
+        try
+        {
+            await foreach (OpenAiRealtimeResponseUpdate update in _realtimeClient.CreateResponseAsync(request, cancellationToken))
+            {
+                if (update.AudioChunk is not null)
+                {
+                    if (playbackTask is null)
+                    {
+                        playbackTask = _audioPlayer.PlayAsync(
+                            ReadRealtimeAudioAsync(audioChannel.Reader, cancellationToken),
+                            update.AudioChunk.Format,
+                            cancellationToken);
+                    }
+
+                    await audioChannel.Writer.WriteAsync(ApplyVolume(update.AudioChunk, _options.SpeechOutput.Volume), cancellationToken);
+                }
+
+                if (update.IsCompleted)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            audioChannel.Writer.TryComplete();
+            if (playbackTask is not null)
+            {
+                await playbackTask;
+            }
+        }
+        #endif
+    }
+
+    private async IAsyncEnumerable<AudioChunk> ReadRealtimeAudioAsync(
+        ChannelReader<AudioChunk> reader,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (AudioChunk chunk in reader.ReadAllAsync(cancellationToken))
+        {
+            yield return chunk;
+        }
+    }
+
+    private async Task<string?> SaveCapturedAudioAsync(AudioData audio, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.CapturedAudioDirectory))
+        {
+            return null;
+        }
+
+        Directory.CreateDirectory(_options.CapturedAudioDirectory);
+        string fileName = $"{DateTime.Now:yyyyMMdd_HHmmss_fff}.wav";
+        string path = Path.Combine(_options.CapturedAudioDirectory, fileName);
+        await WaveFile.WriteAsync(path, audio, cancellationToken: cancellationToken);
+        return path;
+    }
+
+    private bool TryExtractWakeWordTail(string text, out string? tailText)
+    {
+        foreach (string wakeWord in _options.Conversation.WakeWords)
+        {
+            if (string.IsNullOrWhiteSpace(wakeWord))
+            {
+                continue;
+            }
+
+            int index = text.IndexOf(wakeWord, StringComparison.OrdinalIgnoreCase);
+            if (index >= 0)
+            {
+                StringBuilder builder = new(text);
+                builder.Remove(index, wakeWord.Length);
+                tailText = builder.ToString().Trim().Trim(',', '.', '!', '?', ':', ';', '\uFF0C', '\u3002', '\uFF01', '\uFF1F', '\uFF1A', '\uFF1B');
+                return true;
+            }
+
+            string normalizedText = NormalizeWakeWordText(text);
+            string normalizedWakeWord = NormalizeWakeWordText(wakeWord);
+            if (!string.IsNullOrWhiteSpace(normalizedWakeWord)
+                && normalizedText.Contains(normalizedWakeWord, StringComparison.OrdinalIgnoreCase))
+            {
+                tailText = string.Empty;
+                return true;
+            }
+        }
+
+        tailText = null;
+        return false;
+    }
+
     private async Task EnterStateAsync(DigitalHumanState state, CharacterMotionGroup motionGroup, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1222,6 +1803,16 @@ internal sealed class DigitalHumanGame : Game
         _speechUpdater.Start(text, TimeSpan.FromMilliseconds(framePeriodMilliseconds), isLoop: false);
     }
 
+    private void StartLipSyncLoop(string text)
+    {
+        if (_speechUpdater is null || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        _speechUpdater.Start(text, TimeSpan.FromMilliseconds(150.0), isLoop: true);
+    }
+
     private void StopLipSync()
     {
         _speechUpdater?.Stop(resetFace: true);
@@ -1334,6 +1925,33 @@ internal sealed class DigitalHumanGame : Game
         return new AudioData(scaled, audio.Format);
     }
 
+    private static AudioChunk ApplyVolume(AudioChunk chunk, float volume)
+    {
+        if (Math.Abs(volume - 1.0f) < 0.0001f)
+        {
+            return chunk;
+        }
+
+        float[] scaled = new float[chunk.Samples.Length];
+        ReadOnlySpan<float> source = chunk.Samples.Span;
+        for (int i = 0; i < source.Length; i++)
+        {
+            scaled[i] = Math.Clamp(source[i] * volume, -1.0f, 1.0f);
+        }
+
+        return new AudioChunk(scaled, chunk.Format, chunk.Offset, chunk.IsFinal);
+    }
+
+    private async Task StartLipSyncAfterDelayAsync(string text, TimeSpan delay, CancellationToken cancellationToken)
+    {
+        if (delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+
+        await RunOnMainThreadAsync(() => StartLipSyncLoop(text));
+    }
+
     private static AudioData AppendTrailingSilence(AudioData audio, TimeSpan duration)
     {
         if (duration <= TimeSpan.Zero)
@@ -1363,6 +1981,21 @@ internal sealed class DigitalHumanGame : Game
     {
         int sampleCount = Math.Max(1, sampleRate / 5) * Math.Max(1, channels);
         return new AudioData(new float[sampleCount], new AudioFormat(sampleRate, Math.Max(1, channels)));
+    }
+
+    private TimeSpan GetLipSyncStartDelay(AudioFormat format)
+    {
+        TimeSpan estimated = _audioPlayer is IAudioPlaybackTiming timing
+            ? timing.GetEstimatedOutputLatency(format)
+            : TimeSpan.FromMilliseconds(80);
+
+        if (estimated < TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        TimeSpan minimum = TimeSpan.FromMilliseconds(45);
+        return estimated < minimum ? minimum : estimated;
     }
 
     private static int CountVowels(string text, SpeechDictionarySet dictionaries)

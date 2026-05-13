@@ -6,12 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Assistant\Zhengyan.DigitalWife.Assistant.csproj" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Audio.PortAudio\Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
-    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
-    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Speech.SherpaOnnx\Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
-    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Speech.WhisperNet\Zhengyan.DigitalWife.Speech.WhisperNet.csproj" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Realtime.OpenAI\Zhengyan.DigitalWife.Realtime.OpenAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

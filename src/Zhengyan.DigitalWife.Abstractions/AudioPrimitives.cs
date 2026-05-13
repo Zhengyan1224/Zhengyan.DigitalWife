@@ -168,6 +168,22 @@ public static class WaveFile
         }
 
         await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        await WriteAsync(stream, audio, encoding, cancellationToken);
+    }
+
+    public static async Task WriteAsync(
+        Stream stream,
+        AudioData audio,
+        AudioEncoding encoding = AudioEncoding.Pcm16,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(audio);
+        if (!stream.CanWrite)
+        {
+            throw new InvalidOperationException("The target stream is not writable.");
+        }
+
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
 
         var bytesPerSample = encoding == AudioEncoding.Pcm16 ? sizeof(short) : sizeof(float);
@@ -217,6 +233,25 @@ public static class WaveFile
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return await ReadAsync(stream, cancellationToken);
+    }
+
+    public static async Task<AudioData> ReadAsync(Stream stream, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        if (!stream.CanRead)
+        {
+            throw new InvalidOperationException("The source stream is not readable.");
+        }
+
+        if (!stream.CanSeek)
+        {
+            await using MemoryStream buffered = new();
+            await stream.CopyToAsync(buffered, cancellationToken);
+            buffered.Position = 0;
+            return await ReadAsync(buffered, cancellationToken);
+        }
+
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
 
         var riff = new string(reader.ReadChars(4));

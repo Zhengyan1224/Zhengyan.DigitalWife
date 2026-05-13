@@ -1,6 +1,12 @@
-﻿# Zhengyan.DigitalWife.Audio.PortAudio
+# Zhengyan.DigitalWife.Audio.PortAudio
 
-`Zhengyan.DigitalWife.Audio.PortAudio` 提供基于 `PortAudioSharp2` 的跨平台录音与播放实现，对外实现了 `IAudioSource` 与 `IAudioPlayer`。
+`Zhengyan.DigitalWife.Audio.PortAudio` 提供基于 `PortAudioSharp2` 的跨平台录音与播放实现。
+
+它当前实现了：
+
+- `IAudioSource`
+- `IAudioPlayer`
+- `IAudioPlaybackTiming`
 
 ## 主要 API
 
@@ -30,10 +36,6 @@
 - `ListInputDevices()`
 - `ListOutputDevices()`
 
-返回类型：
-
-- `PortAudioDeviceDescriptor`
-
 ### `PortAudioMicrophoneSource`
 
 实现：
@@ -49,6 +51,9 @@
 - `PlayAsync(AudioData audio, ...)`
 - `PlayAsync(IAsyncEnumerable<AudioChunk> audioStream, AudioFormat format, ...)`
 - `PlayFileAsync(string path, ...)`
+- `GetEstimatedOutputLatency(AudioFormat format)`
+
+`GetEstimatedOutputLatency(...)` 用来估算“提交播放”和“设备真正出声”之间的延迟，典型用途是帮助前端做口型同步补偿。
 
 ## 设备枚举示例
 
@@ -107,16 +112,9 @@ AudioData captured = await audioSource.RecordUntilSilenceAsync(new VoiceActivity
 await audioPlayer.PlayAsync(captured);
 ```
 
-## 写入 WAV
-
-```csharp
-AudioData captured = await audioSource.RecordAsync(TimeSpan.FromSeconds(3));
-await WaveFile.WriteAsync("test.wav", captured);
-await audioPlayer.PlayFileAsync("test.wav");
-```
-
 ## 适合什么场景
 
-- 需要跨平台本地录音与播放。
-- 希望在 `Assistant` 编排层中直接替换成具体音频 Provider。
-- 需要按设备索引精确选择输入输出设备。
+- 需要跨平台本地录音与播放
+- 希望在 `Assistant` 编排层中直接替换成具体音频 Provider
+- 需要按设备索引精确选择输入输出设备
+- 需要为口型同步估算本地播放延迟

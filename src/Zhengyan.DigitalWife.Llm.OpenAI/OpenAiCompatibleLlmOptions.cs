@@ -6,6 +6,8 @@ public sealed class OpenAiCompatibleLlmOptions
 
     public required string ApiKey { get; init; }
 
+    public string? Model { get; init; }
+
     public string ChatCompletionsPath { get; init; } = "/v1/chat/completions";
 
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(5);

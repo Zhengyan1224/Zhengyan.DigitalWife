@@ -73,6 +73,35 @@ public sealed class SherpaOnnxSpeechRecognizer : ISpeechRecognizer, IDisposable
         return new SherpaOnnxStreamingRecognitionSession(recognizer, _options, options ?? new StreamingSpeechRecognitionOptions(), _logger);
     }
 
+    public SherpaOnnxRuntimeDiagnostics GetRuntimeDiagnostics()
+    {
+        string root = AppContext.BaseDirectory;
+        List<string> found = FindNativeRuntimeFiles(root, [
+            "onnxruntime.dll",
+            "onnxruntime_providers_cuda.dll",
+            "onnxruntime_providers_shared.dll",
+            "sherpa-onnx-c-api.dll",
+            "libonnxruntime.so",
+            "libonnxruntime_providers_cuda.so",
+            "libonnxruntime_providers_shared.so",
+            "libsherpa-onnx-c-api.so",
+            "libonnxruntime.dylib",
+            "libonnxruntime_providers_cuda.dylib",
+            "libonnxruntime_providers_shared.dylib",
+            "libsherpa-onnx-c-api.dylib"
+        ]);
+
+        return new SherpaOnnxRuntimeDiagnostics
+        {
+            RequestedProvider = _options.Provider,
+            ModelKind = _options.ModelKind,
+            NativeSearchRoot = root,
+            FoundNativeFiles = found,
+            CudaProviderBinaryDetected = found.Any(path =>
+                path.Contains("providers_cuda", StringComparison.OrdinalIgnoreCase))
+        };
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -334,6 +363,38 @@ public sealed class SherpaOnnxSpeechRecognizer : ISpeechRecognizer, IDisposable
 
     private static string Required(string? value)
         => !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException("Model path is required.");
+
+    private static List<string> FindNativeRuntimeFiles(string root, IReadOnlyList<string> fileNames)
+    {
+        List<string> found = [];
+        foreach (string fileName in fileNames)
+        {
+            string direct = Path.Combine(root, fileName);
+            if (File.Exists(direct))
+            {
+                found.Add(direct);
+            }
+        }
+
+        string runtimesDirectory = Path.Combine(root, "runtimes");
+        if (!Directory.Exists(runtimesDirectory))
+        {
+            return found;
+        }
+
+        foreach (string fileName in fileNames)
+        {
+            foreach (string path in Directory.EnumerateFiles(runtimesDirectory, fileName, SearchOption.AllDirectories))
+            {
+                if (!found.Contains(path, StringComparer.OrdinalIgnoreCase))
+                {
+                    found.Add(path);
+                }
+            }
+        }
+
+        return found;
+    }
 }
 
 internal sealed class SherpaOnnxStreamingRecognitionSession : IStreamingSpeechRecognitionSession

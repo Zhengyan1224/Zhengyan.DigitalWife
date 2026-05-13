@@ -1,71 +1,13 @@
 using System.Numerics;
 using Zhengyan.DigitalWife.Audio;
 using Zhengyan.DigitalWife.Audio.PortAudio;
-using Zhengyan.DigitalWife.Llm.OpenAI;
 using Zhengyan.DigitalWife.Mmd.Game.Speech;
-using Zhengyan.DigitalWife.Speech.SherpaOnnx;
-using Zhengyan.DigitalWife.Speech.WhisperNet;
+using Zhengyan.DigitalWife.Realtime.OpenAI;
 
 namespace Zhengyan.DigitalWife.Samples.DigitalHuman;
 
 public sealed class DigitalHumanAppOptions
 {
-    public DigitalHumanAppOptions()
-    {
-        Llm = new OpenAiCompatibleLlmOptions
-        {
-            BaseUrl = "http://203.119.115.87:10001",
-            ApiKey = "Vjdgwco4QeETBgqqD7iNPjfqn8yKpxvokTYyUR3eWkQ",
-            ChatCompletionsPath = "/openapi/71ebe2dc-06c9-4624-bcaf-577bc52c4ad4/v1/chat/completions",
-            Timeout = TimeSpan.FromMinutes(5)
-        };
-
-        SherpaRecognizer = new SherpaOnnxRecognizerOptions
-        {
-            ModelKind = SherpaOnnxRecognizerModelKind.OnlineTransducer,
-            TokensPath = "models/asr/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/tokens.txt",
-            EncoderPath = "models/asr/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/encoder.int8.onnx",
-            DecoderPath = "models/asr/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/decoder.onnx",
-            JoinerPath = "models/asr/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/joiner.int8.onnx",
-            Language = "zh",
-            Provider = "cpu",
-            SampleRate = 16_000,
-            FeatureDim = 80,
-            Threads = 4,
-            DecodingMethod = "greedy_search"
-        };
-
-        WhisperRecognizer = new WhisperNetRecognizerOptions
-        {
-            ModelPath = "models/whisper/ggml-base.bin",
-            Language = "auto",
-            TranslateToEnglish = false,
-            UseGpu = false,
-            Threads = 4,
-            SampleRate = 16_000
-        };
-
-        Tts = new SherpaOnnxTtsOptions
-        {
-            ModelPath = "models/tts/vits-icefall-zh-aishell3/model.onnx",
-            TokensPath = "models/tts/vits-icefall-zh-aishell3/tokens.txt",
-            LexiconPath = "models/tts/vits-icefall-zh-aishell3/lexicon.txt",
-            Provider = "cpu",
-            Threads = 4,
-            NoiseScale = 0.667f,
-            NoiseScaleW = 0.8f,
-            LengthScale = 1.0f
-        };
-    }
-
-    public string RecognitionProvider { get; init; } = "sherpa";
-
-    public string[] RecognitionPriority { get; init; } = [];
-
-    public string SystemPrompt { get; init; } = "\u4f60\u662f\u6653\u96e8\uff0c\u4e00\u4e2a\u6e29\u67d4\u3001\u7b80\u6d01\u3001\u81ea\u7136\u7684\u4e2d\u6587\u6570\u5b57\u4eba\u52a9\u624b\u3002\u8bf7\u76f4\u63a5\u56de\u7b54\u7528\u6237\u95ee\u9898\uff0c\u907f\u514d\u5197\u957f\u3002";
-
-    public string LlmModel { get; init; } = "qwen_2.5_14b";
-
     public string? CapturedAudioDirectory { get; init; } = "artifacts/digital-human/captured";
 
     public string? WindowIconPath { get; init; } = "Resources/Logo/logo.png";
@@ -74,13 +16,7 @@ public sealed class DigitalHumanAppOptions
 
     public PortAudioRuntimeOptions Audio { get; init; } = new();
 
-    public OpenAiCompatibleLlmOptions Llm { get; init; }
-
-    public SherpaOnnxRecognizerOptions SherpaRecognizer { get; init; }
-
-    public WhisperNetRecognizerOptions WhisperRecognizer { get; init; }
-
-    public SherpaOnnxTtsOptions Tts { get; init; }
+    public DigitalHumanRealtimeOptions Realtime { get; init; } = new();
 
     public DigitalHumanSpeechOutputOptions SpeechOutput { get; init; } = new();
 
@@ -98,6 +34,48 @@ public sealed class DigitalHumanSpeechOutputOptions
     public float Speed { get; init; } = 1.0f;
 
     public int SpeakerId { get; init; }
+}
+
+public sealed class DigitalHumanRealtimeOptions
+{
+    public string BaseUrl { get; init; } = "http://127.0.0.1:5058";
+
+    public string RealtimePath { get; init; } = "/v1/realtime";
+
+    public string AudioSpeechPath { get; init; } = "/v1/audio/speech";
+
+    public string? ApiKey { get; init; }
+
+    public string Model { get; init; } = "zhengyan-realtime-voice";
+
+    public string Instructions { get; init; } = "\u4f60\u662f\u6653\u96e8\uff0c\u4e00\u4e2a\u6e29\u67d4\u3001\u7b80\u6d01\u3001\u81ea\u7136\u7684\u4e2d\u6587\u8bed\u97f3\u52a9\u624b\u3002\u8bf7\u76f4\u63a5\u56de\u7b54\u7528\u6237\u95ee\u9898\uff0c\u907f\u514d\u5197\u957f\u3002";
+
+    public string[] OutputModalities { get; init; } = ["audio"];
+
+    public string Voice { get; init; } = "0";
+
+    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    public bool SendOpenAiBetaHeader { get; init; } = true;
+
+    public int OutboundAudioChunkSamples { get; init; } = 4_096;
+
+    public int InputAudioSampleRate { get; init; } = 24_000;
+
+    public int OutputAudioSampleRate { get; init; } = 24_000;
+
+    public string InputTranscriptionModel { get; init; } = "whisper-1";
+
+    public string InputTranscriptionLanguage { get; init; } = "zh";
+
+    public string? InputTranscriptionPrompt { get; init; }
+
+    public int? MaxOutputTokens { get; init; } = 1_024;
+
+    public float? Temperature { get; init; } = 0.7f;
+
+    public IReadOnlyDictionary<string, string> Headers { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class DigitalHumanConversationOptions
@@ -337,14 +315,6 @@ public readonly record struct Float4Options(float X, float Y, float Z, float W)
 
 internal sealed class ResolvedDigitalHumanOptions
 {
-    public required string RecognitionProvider { get; init; }
-
-    public required IReadOnlyList<string> RecognitionPriority { get; init; }
-
-    public required string SystemPrompt { get; init; }
-
-    public required string LlmModel { get; init; }
-
     public string? CapturedAudioDirectory { get; init; }
 
     public string? WindowIconPath { get; init; }
@@ -353,13 +323,9 @@ internal sealed class ResolvedDigitalHumanOptions
 
     public required PortAudioRuntimeOptions Audio { get; init; }
 
-    public required OpenAiCompatibleLlmOptions Llm { get; init; }
+    public required OpenAiRealtimeClientOptions RealtimeClient { get; init; }
 
-    public SherpaOnnxRecognizerOptions? SherpaRecognizer { get; init; }
-
-    public WhisperNetRecognizerOptions? WhisperRecognizer { get; init; }
-
-    public required SherpaOnnxTtsOptions Tts { get; init; }
+    public required OpenAiRealtimeSession RealtimeSession { get; init; }
 
     public required DigitalHumanSpeechOutputOptions SpeechOutput { get; init; }
 
@@ -561,71 +527,53 @@ internal static class DigitalHumanOptionsResolver
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(paths);
 
-        SherpaOnnxRecognizerOptions? sherpaRecognizer = null;
-        if (options.SherpaRecognizer is not null)
-        {
-            sherpaRecognizer = new SherpaOnnxRecognizerOptions
-            {
-                ModelKind = options.SherpaRecognizer.ModelKind,
-                TokensPath = paths.ResolveRequiredFile(options.SherpaRecognizer.TokensPath),
-                EncoderPath = string.IsNullOrWhiteSpace(options.SherpaRecognizer.EncoderPath) ? null : paths.ResolveRequiredFile(options.SherpaRecognizer.EncoderPath),
-                DecoderPath = string.IsNullOrWhiteSpace(options.SherpaRecognizer.DecoderPath) ? null : paths.ResolveRequiredFile(options.SherpaRecognizer.DecoderPath),
-                JoinerPath = string.IsNullOrWhiteSpace(options.SherpaRecognizer.JoinerPath) ? null : paths.ResolveRequiredFile(options.SherpaRecognizer.JoinerPath),
-                ModelPath = string.IsNullOrWhiteSpace(options.SherpaRecognizer.ModelPath) ? null : paths.ResolveRequiredFile(options.SherpaRecognizer.ModelPath),
-                Language = options.SherpaRecognizer.Language,
-                Provider = options.SherpaRecognizer.Provider,
-                SampleRate = options.SherpaRecognizer.SampleRate,
-                FeatureDim = options.SherpaRecognizer.FeatureDim,
-                Threads = options.SherpaRecognizer.Threads,
-                DecodingMethod = options.SherpaRecognizer.DecodingMethod,
-                HotwordsScore = options.SherpaRecognizer.HotwordsScore,
-                HotwordsFile = string.IsNullOrWhiteSpace(options.SherpaRecognizer.HotwordsFile) ? null : paths.ResolveRequiredFile(options.SherpaRecognizer.HotwordsFile)
-            };
-        }
+        Dictionary<string, string> realtimeHeaders = options.Realtime.Headers
+            .Where(static pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .ToDictionary(pair => pair.Key.Trim(), pair => pair.Value.Trim(), StringComparer.OrdinalIgnoreCase);
 
-        WhisperNetRecognizerOptions? whisperRecognizer = null;
-        if (options.WhisperRecognizer is not null)
+        OpenAiRealtimeClientOptions realtimeClient = new()
         {
-            whisperRecognizer = new WhisperNetRecognizerOptions
-            {
-                ModelPath = paths.ResolveRequiredFile(options.WhisperRecognizer.ModelPath),
-                Language = options.WhisperRecognizer.Language,
-                TranslateToEnglish = options.WhisperRecognizer.TranslateToEnglish,
-                UseGpu = options.WhisperRecognizer.UseGpu,
-                Threads = options.WhisperRecognizer.Threads,
-                SampleRate = options.WhisperRecognizer.SampleRate
-            };
-        }
-
-        SherpaOnnxTtsOptions tts = new()
-        {
-            ModelPath = paths.ResolveRequiredFile(options.Tts.ModelPath),
-            TokensPath = paths.ResolveRequiredFile(options.Tts.TokensPath),
-            ModelKind = options.Tts.ModelKind,
-            LexiconPath = string.IsNullOrWhiteSpace(options.Tts.LexiconPath) ? null : paths.ResolveOptionalFile(options.Tts.LexiconPath),
-            DataDirectory = string.IsNullOrWhiteSpace(options.Tts.DataDirectory) ? null : paths.ResolveOptionalDirectory(options.Tts.DataDirectory),
-            DictDirectory = string.IsNullOrWhiteSpace(options.Tts.DictDirectory) ? null : paths.ResolveOptionalDirectory(options.Tts.DictDirectory),
-            Provider = options.Tts.Provider,
-            Threads = options.Tts.Threads,
-            NoiseScale = options.Tts.NoiseScale,
-            NoiseScaleW = options.Tts.NoiseScaleW,
-            LengthScale = options.Tts.LengthScale
+            BaseUrl = options.Realtime.BaseUrl,
+            RealtimePath = options.Realtime.RealtimePath,
+            AudioSpeechPath = options.Realtime.AudioSpeechPath,
+            ApiKey = string.IsNullOrWhiteSpace(options.Realtime.ApiKey) ? null : options.Realtime.ApiKey.Trim(),
+            Model = options.Realtime.Model,
+            ConnectTimeout = options.Realtime.ConnectTimeout,
+            OutboundAudioChunkSamples = Math.Max(512, options.Realtime.OutboundAudioChunkSamples),
+            SendOpenAiBetaHeader = options.Realtime.SendOpenAiBetaHeader,
+            Headers = realtimeHeaders
         };
 
-        OpenAiCompatibleLlmOptions llm = new()
+        OpenAiRealtimeSession realtimeSession = new()
         {
-            BaseUrl = options.Llm.BaseUrl,
-            ApiKey = options.Llm.ApiKey,
-            ChatCompletionsPath = options.Llm.ChatCompletionsPath,
-            Timeout = options.Llm.Timeout
+            Model = options.Realtime.Model,
+            Instructions = options.Realtime.Instructions,
+            OutputModalities = options.Realtime.OutputModalities.Length > 0 ? options.Realtime.OutputModalities : ["audio"],
+            Audio = new OpenAiRealtimeSessionAudioOptions
+            {
+                Input = new OpenAiRealtimeSessionInputAudioOptions
+                {
+                    Format = OpenAiRealtimeAudioFormat.Pcm16(options.Realtime.InputAudioSampleRate),
+                    Transcription = new OpenAiRealtimeInputAudioTranscription
+                    {
+                        Model = options.Realtime.InputTranscriptionModel,
+                        Language = options.Realtime.InputTranscriptionLanguage,
+                        Prompt = options.Realtime.InputTranscriptionPrompt
+                    },
+                    TurnDetection = null
+                },
+                Output = new OpenAiRealtimeSessionOutputAudioOptions
+                {
+                    Format = OpenAiRealtimeAudioFormat.Pcm16(options.Realtime.OutputAudioSampleRate),
+                    Voice = options.Realtime.Voice
+                }
+            },
+            MaxOutputTokens = options.Realtime.MaxOutputTokens,
+            Temperature = options.Realtime.Temperature
         };
 
         return new ResolvedDigitalHumanOptions
         {
-            RecognitionProvider = options.RecognitionProvider.Trim(),
-            RecognitionPriority = ResolveRecognitionPriority(options),
-            SystemPrompt = options.SystemPrompt,
-            LlmModel = options.LlmModel,
             CapturedAudioDirectory = string.IsNullOrWhiteSpace(options.CapturedAudioDirectory) ? null : paths.ResolveOptionalDirectory(options.CapturedAudioDirectory),
             WindowIconPath = paths.ResolveOptionalFile(options.WindowIconPath),
             Audio = new PortAudioRuntimeOptions
@@ -633,10 +581,8 @@ internal static class DigitalHumanOptionsResolver
                 InputDeviceIndex = options.Audio.InputDeviceIndex,
                 OutputDeviceIndex = options.Audio.OutputDeviceIndex
             },
-            Llm = llm,
-            SherpaRecognizer = sherpaRecognizer,
-            WhisperRecognizer = whisperRecognizer,
-            Tts = tts,
+            RealtimeClient = realtimeClient,
+            RealtimeSession = realtimeSession,
             SpeechOutput = options.SpeechOutput,
             DeleteCapturedAudioAfterRecognition = options.DeleteCapturedAudioAfterRecognition,
             Conversation = ResolveConversation(options.Conversation, paths),
@@ -836,29 +782,6 @@ internal static class DigitalHumanOptionsResolver
                 ResetPhysicsOnLoop = item.ResetPhysicsOnLoop
             })
             .ToArray();
-    }
-
-    private static IReadOnlyList<string> ResolveRecognitionPriority(DigitalHumanAppOptions options)
-    {
-        IReadOnlyList<string> source = options.RecognitionPriority.Length > 0
-            ? options.RecognitionPriority
-            : ResolveLegacyRecognitionPriority(options.RecognitionProvider);
-
-        return source
-            .Where(static item => !string.IsNullOrWhiteSpace(item))
-            .Select(static item => item.Trim().ToLowerInvariant())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
-
-    private static IReadOnlyList<string> ResolveLegacyRecognitionPriority(string recognitionProvider)
-    {
-        return recognitionProvider.Trim().ToLowerInvariant() switch
-        {
-            "whisper" => ["whisper", "sherpa"],
-            "sherpa" => ["sherpa", "whisper"],
-            _ => []
-        };
     }
 
     private static Quaternion ToQuaternion(Vector3 degrees)

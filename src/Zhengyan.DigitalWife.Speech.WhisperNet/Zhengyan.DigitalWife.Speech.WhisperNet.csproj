@@ -15,6 +15,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Whisper.net" />
     <PackageReference Include="Whisper.net.Runtime" />
+    <PackageReference Include="Whisper.net.Runtime.Cuda" />
   </ItemGroup>
 
   <ItemGroup>

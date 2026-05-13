@@ -75,7 +75,14 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
         _logger.LogInformation("Sending streaming chat completion request to {Url}.", url);
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"Response status code does not indicate success: {(int)response.StatusCode} ({response.ReasonPhrase}). Body: {TrimBody(body)}",
+                null,
+                response.StatusCode);
+        }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
@@ -154,6 +161,17 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
         }
 
         return $"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}";
+    }
+
+    private static string TrimBody(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return "<empty>";
+        }
+
+        string normalized = body.ReplaceLineEndings(" ").Trim();
+        return normalized.Length <= 800 ? normalized : normalized[..800];
     }
 
     private sealed class ChatCompletionChunk

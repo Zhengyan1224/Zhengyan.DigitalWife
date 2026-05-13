@@ -1,14 +1,14 @@
 ﻿![Zhengyan.DigitalWife Logo](assets/mmd/samples/GameData/Logo/logo.png)
 
 
-`Zhengyan.DigitalWife` 是一个面向跨平台数字人应用的新一代 `.NET` 引擎与示例集合，聚焦语音采集、语音识别、LLM、TTS、唤醒词、MMD/PMX/VMD 运行时和 3D Demo 的统一接入、统一配置与统一构建。它提供了一套适合 Windows、Linux 和 macOS 的目录结构、命名体系和运行入口，方便你直接搭建、扩展和替换数字人交互链路。
+`Zhengyan.DigitalWife` 是一个面向跨平台数字人应用的新一代 `.NET` 引擎与示例集合，聚焦语音采集、语音识别、LLM、TTS、唤醒词、OpenAI Realtime 风格协议、MMD/PMX/VMD 运行时和 3D Demo 的统一接入、统一配置与统一构建。它提供了一套适合 Windows、Linux 和 macOS 的目录结构、命名体系和运行入口，方便你直接搭建、扩展和替换数字人交互链路，也支持把高负载语音链路拆到独立服务部署。
 
 ## 解决方案入口
 
 - `Zhengyan.DigitalWife.sln`
 - `Zhengyan.DigitalWife.slnx`
 
-统一目标框架为 `net9.0`，`global.json` 以 `9.0.313` 为最低 SDK 基线，并允许向上使用 `.NET 10` SDK。
+当前项目统一目标框架为 `net10.0`。`global.json` 以 `9.0.313` 为 SDK 基线，并通过 `rollForward=latestMajor` 允许使用 `.NET 10` SDK。
 
 ## 目录结构
 
@@ -33,6 +33,12 @@ Zhengyan.DigitalWife/
 | [Zhengyan.DigitalWife.Abstractions](src/Zhengyan.DigitalWife.Abstractions/README.md) | 公共契约层 | 音频、ASR、TTS、唤醒词、LLM 的公共接口与数据结构。 |
 | [Zhengyan.DigitalWife.Assistant](src/Zhengyan.DigitalWife.Assistant/README.md) | 语音助手编排层 | 负责把音频输入、识别、分句和回复串成完整的助手流水线。 |
 
+### Realtime 协议
+
+| 项目 | 作用 | 说明 |
+| --- | --- | --- |
+| [Zhengyan.DigitalWife.Realtime.OpenAI](src/Zhengyan.DigitalWife.Realtime.OpenAI/README.md) | Realtime 协议层 | 提供 `/v1/realtime` 与 `/v1/audio/speech` 所需的协议模型、PCM16 编解码和客户端封装，供前后端样例共享。 |
+
 ### Provider
 
 | 项目 | 作用 | 说明 |
@@ -54,7 +60,8 @@ Zhengyan.DigitalWife/
 | 项目 | 作用 | 说明 |
 | --- | --- | --- |
 | [Zhengyan.DigitalWife.Samples.AssistantConsole](samples/Zhengyan.DigitalWife.Samples.AssistantConsole/README.md) | 控制台语音助手示例 | 展示最基础的语音对话链路，适合先跑通 ASR、LLM、TTS。 |
-| [Zhengyan.DigitalWife.Samples.DigitalHuman](samples/Zhengyan.DigitalWife.Samples.DigitalHuman/README.md) | 数字人实时对话示例 | 组合 PMX 人物、服饰绑定、唤醒词、ASR、LLM、TTS 和对话气泡，是完整的数字人入口。 |
+| [Zhengyan.DigitalWife.Samples.RealtimeVoice](samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md) | Realtime 语音后端示例 | 把 `ASR -> LLM -> TTS` 封装成 `/v1/realtime` 与 `/v1/audio/speech` 风格接口，适合独立部署。 |
+| [Zhengyan.DigitalWife.Samples.DigitalHuman](samples/Zhengyan.DigitalWife.Samples.DigitalHuman/README.md) | 数字人前端示例 | 负责本地采音、唤醒词判断、3D 渲染、口型和音频播放，并通过远端语音服务完成对话与固定提示语播报。 |
 | [Zhengyan.DigitalWife.Samples.MmdQuickStart](samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/README.md) | 最小 MMD 示例 | 只保留最小可运行路径，适合快速验证 MMD 资源和渲染链路。 |
 | [Zhengyan.DigitalWife.Samples.MmdDemo](samples/Zhengyan.DigitalWife.Samples.MmdDemo/README.md) | 完整 MMD Demo | 带 ImGui 控制面板的完整示例，适合调试模型、动作和场景参数。 |
 
@@ -93,6 +100,8 @@ dotnet build Zhengyan.DigitalWife.slnx
 
 ### 语音示例
 
+#### AssistantConsole
+
 1. 下载默认模型：
 
 ```powershell
@@ -109,6 +118,40 @@ Copy-Item samples/Zhengyan.DigitalWife.Samples.AssistantConsole/appsettings.Loca
 
 ```powershell
 dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj -- --run-once
+```
+
+#### Realtime 数字人链路
+
+1. 下载默认模型：
+
+```powershell
+./scripts/download-models.ps1
+```
+
+2. 复制并填写 Realtime 语音服务配置：
+
+```powershell
+Copy-Item samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/appsettings.Local.example.json samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/appsettings.Local.json
+```
+
+3. 如有需要，再复制数字人前端本地覆盖配置：
+
+```powershell
+Copy-Item samples/Zhengyan.DigitalWife.Samples.DigitalHuman/appsettings.Local.example.json samples/Zhengyan.DigitalWife.Samples.DigitalHuman/appsettings.Local.json
+```
+
+4. 启动 Realtime 语音服务：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/Zhengyan.DigitalWife.Samples.RealtimeVoice.csproj
+```
+
+服务启动时会主动预热已注册的 ASR 与 TTS 模型，减少首轮交互延迟。
+
+5. 启动数字人前端：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.DigitalHuman/Zhengyan.DigitalWife.Samples.DigitalHuman.csproj
 ```
 
 ### MMD QuickStart
@@ -134,7 +177,7 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdDemo/Zhengyan.Digit
 
 已验证：
 
-- `dotnet build Zhengyan.DigitalWife.slnx -v minimal`
+- `dotnet build Zhengyan.DigitalWife.sln -v minimal`
   可通过。
 
 ## 说明
