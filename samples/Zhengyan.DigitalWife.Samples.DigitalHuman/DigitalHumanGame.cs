@@ -812,7 +812,7 @@ internal sealed class DigitalHumanGame : Game
     private IEnumerable<StartupWarmupStep> BuildStartupWarmupSteps()
     {
         yield return new StartupWarmupStep(
-            "杩炴帴瀹炴椂璇煶鏈嶅姟",
+            "连接实时语音服务",
             WarmUpRealtimeConnectionAsync);
     }
 
@@ -980,7 +980,7 @@ internal sealed class DigitalHumanGame : Game
         {
             _logger.LogInformation("User input was empty; keep waiting.");
             await DeleteConversationItemIfPresentAsync(recognition.ItemId, cancellationToken);
-            ShowHintBubble("娌℃湁鍚竻锛岃鍐嶈涓€閬嶃€?");
+            ShowHintBubble("没有听清，请再说一遍。");
             return string.Empty;
         }
 
@@ -1013,7 +1013,7 @@ internal sealed class DigitalHumanGame : Game
             string assistantText = await PlayRealtimeResponseAsync(normalizedUserText, cancellationToken);
             if (string.IsNullOrWhiteSpace(assistantText))
             {
-                assistantText = "鈥︹€?";
+                assistantText = "……";
             }
 
             await EnterStateAsync(DigitalHumanState.WaitingForUserInput, CharacterMotionGroup.Wait, cancellationToken);
@@ -1022,7 +1022,7 @@ internal sealed class DigitalHumanGame : Game
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed while processing assistant turn.");
-            ShowAssistantBubble(normalizedUserText, "鎶辨瓑锛屾垜鍒氭墠鍑轰簡鐐归棶棰樸€?", string.Empty);
+            ShowAssistantBubble(normalizedUserText, "抱歉，我刚才出了点问题。", string.Empty);
         }
     }
 

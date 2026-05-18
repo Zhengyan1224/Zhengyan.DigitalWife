@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Zhengyan.DigitalWife.Assistant.Text;
 using Zhengyan.DigitalWife.Audio;
@@ -9,6 +11,14 @@ namespace Zhengyan.DigitalWife.Samples.RealtimeVoice;
 
 internal sealed class RealtimeVoiceBackend
 {
+    private static readonly Regex TtsUnsafeCharactersRegex = new(
+        @"[^\u4e00-\u9fa5a-zA-Z0-9\s,.!?]",
+        RegexOptions.Compiled);
+
+    private static readonly Regex TtsWhitespaceRegex = new(
+        @"\s+",
+        RegexOptions.Compiled);
+
     private readonly ResolvedRealtimeVoiceOptions _options;
     private readonly IReadOnlyList<ISpeechRecognizer> _speechRecognizers;
     private readonly ILlmClient _llmClient;
@@ -155,11 +165,23 @@ internal sealed class RealtimeVoiceBackend
 
     public async Task<AudioData> SynthesizeAsync(string text, string? requestedVoice, float? speedOverride, CancellationToken cancellationToken)
     {
+        string cleanedText = CleanTextForTts(text);
+        if (string.IsNullOrWhiteSpace(cleanedText))
+        {
+            _logger.LogWarning("TTS input became empty after special-character filtering. Returning silence.");
+            return CreateSilentOutputAudio();
+        }
+
+        if (!string.Equals(cleanedText, text, StringComparison.Ordinal))
+        {
+            _logger.LogDebug("Filtered TTS text from '{Original}' to '{Cleaned}'.", TrimForLog(text), TrimForLog(cleanedText));
+        }
+
         await _ttsGate.WaitAsync(cancellationToken);
         try
         {
             return await _tts.SynthesizeAsync(
-                text,
+                cleanedText,
                 new SpeechSynthesisOptions
                 {
                     ModelKind = _options.Tts.ModelKind,
@@ -182,6 +204,51 @@ internal sealed class RealtimeVoiceBackend
         }
 
         return _options.Synthesis.SpeakerId;
+    }
+
+    private AudioData CreateSilentOutputAudio()
+    {
+        int sampleRate = _options.Session.Audio.Output.Format.Rate ?? 24_000;
+        int sampleCount = Math.Max(1, sampleRate / 5);
+        return new AudioData(new float[sampleCount], new AudioFormat(sampleRate, 1));
+    }
+
+    private static string CleanTextForTts(string rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            return string.Empty;
+        }
+
+        StringBuilder normalized = new(rawText.Length);
+        foreach (char ch in rawText)
+        {
+            normalized.Append(ch switch
+            {
+                '，' or '、' or '；' or '：' => ',',
+                '。' or '…' => '.',
+                '！' => '!',
+                '？' => '?',
+                '（' or '）' or '【' or '】' or '《' or '》' or '「' or '」' or '『' or '』'
+                    or '“' or '”' or '‘' or '’' or '"' or '\'' or '—' or '-' => ' ',
+                _ => ch
+            });
+        }
+
+        string cleaned = TtsUnsafeCharactersRegex.Replace(normalized.ToString(), "");
+        cleaned = TtsWhitespaceRegex.Replace(cleaned, " ").Trim();
+        return cleaned;
+    }
+
+    private static string TrimForLog(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        string normalized = value.ReplaceLineEndings(" ").Trim();
+        return normalized.Length <= 120 ? normalized : normalized[..120];
     }
 
     private AudioData CreateSilenceAudio()
