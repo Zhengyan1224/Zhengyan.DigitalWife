@@ -3,6 +3,14 @@ using Zhengyan.DigitalWife.Mmd.Helpers;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
+public enum CameraProjectionMode
+{
+    Perspective = 0,
+    Orthographic = 1
+}
+
+public readonly record struct CameraRay(Vector3 Origin, Vector3 Direction);
+
 public class OrbitCamera
 {
     private const float MinOrbitDistance = 0.1f;
@@ -15,6 +23,9 @@ public class OrbitCamera
     private float _pitch;
     private float _yaw = -MathHelper.PiOver2;
     private float _fov = MathHelper.PiOver2;
+    private float _orthographicSize = 5.0f;
+    private float _nearClipPlane = 0.1f;
+    private float _farClipPlane = 1000.0f;
 
     public int Width { get; set; } = 1;
 
@@ -40,11 +51,40 @@ public class OrbitCamera
         set => _fov = MathHelper.DegreesToRadians(MathHelper.Clamp(value, 1f, 90f));
     }
 
+    public CameraProjectionMode ProjectionMode { get; set; } = CameraProjectionMode.Perspective;
+
+    public float OrthographicSize
+    {
+        get => _orthographicSize;
+        set => _orthographicSize = MathHelper.Clamp(value, 0.01f, 10000.0f);
+    }
+
+    public float NearClipPlane
+    {
+        get => _nearClipPlane;
+        set => _nearClipPlane = MathF.Max(0.001f, value);
+    }
+
+    public float FarClipPlane
+    {
+        get => _farClipPlane;
+        set => _farClipPlane = MathF.Max(NearClipPlane + 0.001f, value);
+    }
+
     public float DistanceToTarget => MathF.Max(Vector3.Distance(_position, _target), MinOrbitDistance);
 
     public Matrix4x4 View => Matrix4x4.CreateLookAt(_position, _target, _up);
 
-    public Matrix4x4 Projection => Matrix4x4.CreatePerspectiveFieldOfView(_fov, (float)Math.Max(Width, 1) / Math.Max(Height, 1), 0.1f, 1000.0f);
+    public Matrix4x4 Projection
+    {
+        get
+        {
+            float aspect = (float)Math.Max(Width, 1) / Math.Max(Height, 1);
+            return ProjectionMode == CameraProjectionMode.Orthographic
+                ? Matrix4x4.CreateOrthographic(OrthographicSize * 2.0f * aspect, OrthographicSize * 2.0f, NearClipPlane, FarClipPlane)
+                : Matrix4x4.CreatePerspectiveFieldOfView(_fov, aspect, NearClipPlane, FarClipPlane);
+        }
+    }
 
     public void SetLookAt(Vector3 newPosition, Vector3 newTarget)
     {
@@ -81,6 +121,34 @@ public class OrbitCamera
         float step = MathF.Max(distance * 0.15f, 0.05f);
         float newDistance = MathF.Max(MinOrbitDistance, distance - (delta * step));
         _position = _target - (_front * newDistance);
+    }
+
+    public CameraRay ScreenPointToRay(float screenX, float screenY)
+    {
+        float viewportX = screenX / Math.Max(Width, 1);
+        float viewportY = screenY / Math.Max(Height, 1);
+        return ViewportPointToRay(viewportX, viewportY);
+    }
+
+    public CameraRay ViewportPointToRay(float viewportX, float viewportY)
+    {
+        float ndcX = (viewportX * 2.0f) - 1.0f;
+        float ndcY = 1.0f - (viewportY * 2.0f);
+        float aspect = (float)Math.Max(Width, 1) / Math.Max(Height, 1);
+
+        if (ProjectionMode == CameraProjectionMode.Orthographic)
+        {
+            Vector3 origin = _position
+                + (_right * ndcX * OrthographicSize * aspect)
+                + (_up * ndcY * OrthographicSize);
+            return new CameraRay(origin, _front);
+        }
+
+        float tanHalfFov = MathF.Tan(_fov * 0.5f);
+        Vector3 direction = Vector3.Normalize(_front
+            + (_right * ndcX * aspect * tanHalfFov)
+            + (_up * ndcY * tanHalfFov));
+        return new CameraRay(_position, direction);
     }
 
     private void SetOrbitAngles(float yawDegrees, float pitchDegrees)

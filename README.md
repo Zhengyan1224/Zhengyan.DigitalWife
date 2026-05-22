@@ -54,6 +54,7 @@ Zhengyan.DigitalWife/
 | --- | --- | --- |
 | [Zhengyan.DigitalWife.Mmd](src/Zhengyan.DigitalWife.Mmd/README.md) | MMD 底层运行时 | 提供 PMX / VMD 解析、骨骼、Morph、IK、物理等基础能力。 |
 | [Zhengyan.DigitalWife.Mmd.Game](src/Zhengyan.DigitalWife.Mmd.Game/README.md) | MMD 游戏层 | 基于 Silk.NET / OpenGL ES / OpenAL 的跨平台渲染与场景运行层。 |
+| [Zhengyan.DigitalWife.GameProjects](src/Zhengyan.DigitalWife.GameProjects/Zhengyan.DigitalWife.GameProjects.csproj) | 游戏工程格式 | 提供简易游戏工程 JSON、场景 JSON、PMX、VMD 动作、音频、粒子系统、水面、资源路径和脚本绑定的共享模型。 |
 
 ### 示例
 
@@ -62,6 +63,8 @@ Zhengyan.DigitalWife/
 | [Zhengyan.DigitalWife.Samples.AssistantConsole](samples/Zhengyan.DigitalWife.Samples.AssistantConsole/README.md) | 控制台语音助手示例 | 展示最基础的语音对话链路，适合先跑通 ASR、LLM、TTS。 |
 | [Zhengyan.DigitalWife.Samples.RealtimeVoice](samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md) | Realtime 语音后端示例 | 把 `ASR -> LLM -> TTS` 封装成 `/v1/realtime` 与 `/v1/audio/speech` 风格接口，适合独立部署。 |
 | [Zhengyan.DigitalWife.Samples.DigitalHuman](samples/Zhengyan.DigitalWife.Samples.DigitalHuman/README.md) | 数字人前端示例 | 负责本地采音、唤醒词判断、3D 渲染、口型和音频播放，并通过远端语音服务完成对话与固定提示语播报。 |
+| [Zhengyan.DigitalWife.Samples.GameEditor](samples/Zhengyan.DigitalWife.Samples.GameEditor/README.md) | 简易游戏编辑器 | 用 ImGui GUI 创建 PMX、VMD、WAV/OGG、粒子系统、水面、场景配置和 C# / Python 脚本绑定，保存为普通工程目录。 |
+| [Zhengyan.DigitalWife.Samples.GamePlayer](samples/Zhengyan.DigitalWife.Samples.GamePlayer/README.md) | 简易游戏运行器 | 读取 GameEditor 保存的工程目录，加载 PMX、VMD 动作层、音频、粒子系统、水面并执行 C# `.csx` / Python `.py` 脚本逻辑。 |
 | [Zhengyan.DigitalWife.Samples.MmdQuickStart](samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/README.md) | 最小 MMD 示例 | 只保留最小可运行路径，适合快速验证 MMD 资源和渲染链路。 |
 | [Zhengyan.DigitalWife.Samples.MmdDemo](samples/Zhengyan.DigitalWife.Samples.MmdDemo/README.md) | 完整 MMD Demo | 带 ImGui 控制面板的完整示例，适合调试模型、动作和场景参数。 |
 
@@ -164,6 +167,20 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/Zhengyan
 
 ```powershell
 dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdDemo/Zhengyan.DigitalWife.Samples.MmdDemo.csproj
+```
+
+### Game Editor / Player
+
+先启动编辑器创建或保存工程：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GameEditor/Zhengyan.DigitalWife.Samples.GameEditor.csproj
+```
+
+再用运行器加载编辑器保存的工程目录：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- <project-directory>
 ```
 
 ## 补充文档

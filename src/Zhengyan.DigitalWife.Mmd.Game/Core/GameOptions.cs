@@ -15,6 +15,10 @@ public sealed class GameOptions
 
     public Vector2D<int> WindowSize { get; set; } = new(1280, 720);
 
+    public bool IsFullscreen { get; set; }
+
+    public bool IsResizable { get; set; } = true;
+
     public bool VSync { get; set; } = true;
 
     public int Samples { get; set; } = 4;

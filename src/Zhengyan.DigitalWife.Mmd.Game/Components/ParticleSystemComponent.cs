@@ -330,6 +330,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     private int _uniformStartColor = -1;
     private int _uniformEndColor = -1;
     private int _uniformUseTextureColor = -1;
+    private Vector3 _position = Vector3.Zero;
 
     public ParticleSystemComponent(OrbitCamera camera, ParticleSystemSettings settings)
     {
@@ -344,7 +345,27 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
 
     public string Name => _settings.Name;
 
-    public Vector3 Position { get; set; } = Vector3.Zero;
+    public Vector3 Position
+    {
+        get => _position;
+        set
+        {
+            if (_position == value)
+            {
+                return;
+            }
+
+            Vector3 delta = value - _position;
+            _position = value;
+
+            // Particles are stored in world space, so keep live particles attached
+            // to the emitter when the emitter transform changes.
+            for (int i = 0; i < _particles.Length; i++)
+            {
+                _particles[i].Position += delta;
+            }
+        }
+    }
 
     public float SimulationSpeed { get; set; } = 1.0f;
 

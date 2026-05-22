@@ -64,6 +64,65 @@ public sealed unsafe class AudioEngine : IDisposable
         return new AudioClip(_al, bufferId, Path.GetFileName(fullPath), audioData.Channels, audioData.SampleRate, audioData.Duration);
     }
 
+    public AudioClip CreateClip(
+        string? name,
+        ReadOnlySpan<float> samples,
+        int sampleRate,
+        int channels)
+    {
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        if (channels <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(channels));
+        }
+
+        short[] pcm16Samples = new short[samples.Length];
+        for (int i = 0; i < samples.Length; i++)
+        {
+            pcm16Samples[i] = (short)MathF.Round(Math.Clamp(samples[i], -1.0f, 1.0f) * short.MaxValue);
+        }
+
+        byte[] pcm16 = new byte[pcm16Samples.Length * sizeof(short)];
+        Buffer.BlockCopy(pcm16Samples, 0, pcm16, 0, pcm16.Length);
+        return CreateClip(name, pcm16, sampleRate, channels);
+    }
+
+    public AudioClip CreateClip(
+        string? name,
+        ReadOnlySpan<byte> pcm16,
+        int sampleRate,
+        int channels)
+    {
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        if (channels <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(channels));
+        }
+
+        uint bufferId = _al.GenBuffer();
+        fixed (byte* pcmPtr = pcm16)
+        {
+            _al.BufferData(
+                bufferId,
+                GetBufferFormat(channels),
+                pcmPtr,
+                pcm16.Length,
+                sampleRate);
+        }
+
+        int bytesPerFrame = sizeof(short) * channels;
+        double seconds = pcm16.Length / (double)(sampleRate * bytesPerFrame);
+        return new AudioClip(_al, bufferId, name, channels, sampleRate, TimeSpan.FromSeconds(seconds));
+    }
+
     public AudioSource CreateSource(AudioClip? clip = null)
     {
         uint sourceId = _al.GenSource();

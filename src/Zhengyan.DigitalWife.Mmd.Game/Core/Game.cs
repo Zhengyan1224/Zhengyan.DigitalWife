@@ -24,6 +24,8 @@ public abstract class Game : IDisposable
         WindowOptions windowOptions = WindowOptions.Default;
         windowOptions.Title = Options.Title;
         windowOptions.Size = Options.WindowSize;
+        windowOptions.WindowState = Options.IsFullscreen ? WindowState.Fullscreen : WindowState.Normal;
+        windowOptions.WindowBorder = Options.IsResizable ? WindowBorder.Resizable : WindowBorder.Fixed;
         windowOptions.VSync = Options.VSync;
         windowOptions.Samples = Options.Samples;
         // The built-in shaders only require GLES 3.0, which is a much safer baseline on Windows/WGL.
@@ -63,6 +65,32 @@ public abstract class Game : IDisposable
     {
         get => _window.Title;
         set => _window.Title = value;
+    }
+
+    public AnimationTimingMode AnimationTimingMode
+    {
+        get => Options.AnimationTimingMode;
+        set => Options.AnimationTimingMode = value;
+    }
+
+    public void SetWindowSize(int width, int height)
+    {
+        int clampedWidth = Math.Max(320, width);
+        int clampedHeight = Math.Max(240, height);
+        Options.WindowSize = new Vector2D<int>(clampedWidth, clampedHeight);
+        _window.Size = Options.WindowSize;
+    }
+
+    public void SetFullscreen(bool fullscreen)
+    {
+        Options.IsFullscreen = fullscreen;
+        _window.WindowState = fullscreen ? WindowState.Fullscreen : WindowState.Normal;
+    }
+
+    public void SetResizable(bool resizable)
+    {
+        Options.IsResizable = resizable;
+        _window.WindowBorder = resizable ? WindowBorder.Resizable : WindowBorder.Fixed;
     }
 
     public void Run() => _window.Run();

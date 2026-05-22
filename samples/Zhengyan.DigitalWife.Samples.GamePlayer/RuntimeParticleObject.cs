@@ -1,0 +1,11 @@
+using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd.Game.Components;
+
+namespace Zhengyan.DigitalWife.Samples.GamePlayer;
+
+internal sealed class RuntimeParticleObject
+{
+    public required GameEntity Definition { get; init; }
+
+    public required ParticleSystemComponent Component { get; init; }
+}
