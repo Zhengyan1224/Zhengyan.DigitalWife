@@ -1,4 +1,5 @@
 using System.Numerics;
+using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.Samples.GamePlayer;
@@ -51,15 +52,21 @@ public sealed class RuntimeCamera
     private readonly OrbitCamera _camera;
     private readonly RuntimeCameraControllerComponent _controller;
     private readonly Func<IEnumerable<RuntimeEntity>> _getEntities;
+    private readonly GameProjectScene _scene;
+    private readonly SceneRenderTextureManager? _renderTextureManager;
 
     internal RuntimeCamera(
         OrbitCamera camera,
         RuntimeCameraControllerComponent controller,
-        Func<IEnumerable<RuntimeEntity>> getEntities)
+        Func<IEnumerable<RuntimeEntity>> getEntities,
+        GameProjectScene scene,
+        SceneRenderTextureManager? renderTextureManager)
     {
         _camera = camera;
         _controller = controller;
         _getEntities = getEntities;
+        _scene = scene;
+        _renderTextureManager = renderTextureManager;
     }
 
     public Vector3 Position => _camera.Position;
@@ -156,6 +163,65 @@ public sealed class RuntimeCamera
         set => _camera.ProjectionMode = NormalizeProjectionMode(value) == "orthographic"
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;
+    }
+
+    public string MainCamera
+    {
+        get => _scene.MainCamera;
+        set => SetMainCamera(value);
+    }
+
+    public IReadOnlyList<string> CameraNames => _scene.Cameras.Select(camera => camera.Name).ToArray();
+
+    public IReadOnlyList<string> RenderTextureNames => _scene.RenderTextures.Select(renderTexture => renderTexture.Name).ToArray();
+
+    public string RenderTexture(string renderTextureName) => ToRenderTextureReference(renderTextureName);
+
+    public void SetMainCamera(string cameraName)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is null)
+        {
+            return;
+        }
+
+        foreach (SceneCameraSettings item in _scene.Cameras)
+        {
+            item.IsMain = ReferenceEquals(item, camera);
+        }
+
+        _scene.MainCamera = camera.Name;
+        _scene.Camera = camera.Camera;
+        ApplyCameraSettings(_camera, camera.Camera);
+        _renderTextureManager?.SyncCameras(_camera);
+    }
+
+    public void SetCameraLookAt(string cameraName, float positionX, float positionY, float positionZ, float targetX, float targetY, float targetZ)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is null)
+        {
+            return;
+        }
+
+        camera.Camera.Position = new Vector3Dto(positionX, positionY, positionZ);
+        camera.Camera.Target = new Vector3Dto(targetX, targetY, targetZ);
+        _renderTextureManager?.SyncCameras(_camera);
+        if (camera.IsMain)
+        {
+            ApplyCameraSettings(_camera, camera.Camera);
+        }
+    }
+
+    public void BindRenderTextureCamera(string renderTextureName, string cameraName)
+    {
+        RenderTextureSettings? renderTexture = _scene.RenderTextures.FirstOrDefault(item =>
+            string.Equals(item.Name, renderTextureName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Id, renderTextureName, StringComparison.OrdinalIgnoreCase));
+        if (renderTexture is not null)
+        {
+            renderTexture.Camera = cameraName;
+        }
     }
 
     public void SetLookAt(float positionX, float positionY, float positionZ, float targetX, float targetY, float targetZ)
@@ -339,22 +405,79 @@ public sealed class RuntimeCamera
 
     public RuntimeEntity? PickEntity(float screenX, float screenY, float radius = 0.5f)
     {
-        RuntimeRay ray = ScreenPointToRay(screenX, screenY);
-        RuntimeEntity? best = null;
-        float bestDistance = float.MaxValue;
-        float safeRadius = Math.Max(radius, 0.001f);
+        return RaycastEntity(ScreenPointToRay(screenX, screenY), out RuntimeRaycastHit hit, radius)
+            ? hit.Entity
+            : null;
+    }
+
+    public bool RaycastEntity(RuntimeRay ray, out RuntimeRaycastHit hit, float fallbackRadius = 0.5f)
+    {
+        hit = default;
+        RuntimeEntity? bestColliderEntity = null;
+        RuntimeCollider bestCollider = default;
+        Vector3 bestColliderPoint = default;
+        float bestColliderDistance = float.MaxValue;
+        RuntimeEntity? bestFallbackEntity = null;
+        Vector3 bestFallbackPoint = default;
+        float bestFallbackDistance = float.MaxValue;
+        float safeRadius = Math.Max(fallbackRadius, 0.001f);
 
         foreach (RuntimeEntity entity in _getEntities())
         {
-            float scaledRadius = safeRadius * MathF.Max(MathF.Max(entity.Scale.X, entity.Scale.Y), entity.Scale.Z);
-            if (ray.TryIntersectSphere(entity.Position, scaledRadius, out float distance) && distance < bestDistance)
+            if (RuntimePhysics.TryRaycastEntity(
+                entity,
+                ray,
+                out RuntimeCollider collider,
+                out float distance,
+                out Vector3 point))
             {
-                best = entity;
-                bestDistance = distance;
+                if (distance < bestColliderDistance)
+                {
+                    bestColliderEntity = entity;
+                    bestCollider = collider;
+                    bestColliderDistance = distance;
+                    bestColliderPoint = point;
+                }
+            }
+
+            if (!entity.CollisionEnabled && CanUseFallbackRaycast(entity))
+            {
+                float scaledRadius = safeRadius * MathF.Max(MathF.Max(entity.Scale.X, entity.Scale.Y), entity.Scale.Z);
+                if (ray.TryIntersectSphere(entity.Position, scaledRadius, out float fallbackDistance)
+                    && fallbackDistance < bestFallbackDistance)
+                {
+                    bestFallbackEntity = entity;
+                    bestFallbackDistance = fallbackDistance;
+                    bestFallbackPoint = ray.GetPoint(fallbackDistance);
+                }
             }
         }
 
-        return best;
+        if (bestColliderEntity is not null)
+        {
+            hit = new RuntimeRaycastHit(
+                bestColliderEntity,
+                bestCollider.Id,
+                bestCollider.Name,
+                bestCollider.Shape,
+                bestColliderDistance,
+                bestColliderPoint);
+            return true;
+        }
+
+        if (bestFallbackEntity is null)
+        {
+            return false;
+        }
+
+        hit = new RuntimeRaycastHit(bestFallbackEntity, string.Empty, string.Empty, "fallback_sphere", bestFallbackDistance, bestFallbackPoint);
+        return true;
+    }
+
+    private static bool CanUseFallbackRaycast(RuntimeEntity entity)
+    {
+        string normalizedType = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalizedType is "pmx_model";
     }
 
     private static string NormalizeProjectionMode(string projectionMode)
@@ -363,5 +486,35 @@ public sealed class RuntimeCamera
         return normalized is "orthographic" or "ortho"
             ? "orthographic"
             : "perspective";
+    }
+
+    private SceneCameraSettings? FindSceneCamera(string cameraName)
+    {
+        if (string.IsNullOrWhiteSpace(cameraName))
+        {
+            return null;
+        }
+
+        return _scene.Cameras.FirstOrDefault(item =>
+            string.Equals(item.Name, cameraName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Id, cameraName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void ApplyCameraSettings(OrbitCamera target, CameraSettings settings)
+    {
+        target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3());
+        target.ProjectionMode = NormalizeProjectionMode(settings.ProjectionMode) == "orthographic"
+            ? CameraProjectionMode.Orthographic
+            : CameraProjectionMode.Perspective;
+        target.Fov = settings.Fov;
+        target.OrthographicSize = settings.OrthographicSize;
+        target.NearClipPlane = settings.NearClipPlane;
+        target.FarClipPlane = settings.FarClipPlane;
+    }
+
+    private static string ToRenderTextureReference(string renderTextureName)
+    {
+        string trimmed = (renderTextureName ?? string.Empty).Trim();
+        return trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? trimmed : $"rt:{trimmed}";
     }
 }

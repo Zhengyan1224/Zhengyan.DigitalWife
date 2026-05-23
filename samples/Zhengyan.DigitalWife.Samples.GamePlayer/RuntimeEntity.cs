@@ -13,6 +13,7 @@ public sealed class RuntimeEntity
     private readonly PmxModelComponent? _model;
     private readonly ParticleSystemComponent? _particle;
     private readonly WaterSurfaceComponent? _water;
+    private readonly TexturedPlaneComponent? _plane;
     private readonly Func<string, string> _resolvePath;
     private RuntimeScene? _scene;
     private RuntimeVoice? _voice;
@@ -39,6 +40,13 @@ public sealed class RuntimeEntity
         _resolvePath = static path => path;
     }
 
+    internal RuntimeEntity(GameEntity definition, TexturedPlaneComponent plane)
+    {
+        _definition = definition;
+        _plane = plane;
+        _resolvePath = static path => path;
+    }
+
     internal RuntimeEntity(GameEntity definition)
     {
         _definition = definition;
@@ -53,6 +61,8 @@ public sealed class RuntimeEntity
 
     public bool IsPmxModel => _model is not null;
 
+    public IReadOnlyList<string> MaterialNames => _model?.MaterialNames ?? [];
+
     public bool RelationEnabled => _definition.Relation.Enabled;
 
     public string RelationEntity => _definition.Relation.RelationEntity;
@@ -61,65 +71,177 @@ public sealed class RuntimeEntity
 
     public bool RelationBindLighting => _definition.Relation.BindLighting;
 
-    public Vector3 Position
+    public CollisionSettings Collision => _definition.Collision;
+
+    public IList<ColliderSettings> Colliders => _definition.Colliders;
+
+    internal IEnumerable<ColliderSettings> EffectiveColliders
     {
-        get => _model?.Position ?? _particle?.Position ?? _water?.Position ?? _definition.Transform.Position.ToVector3();
+        get
+        {
+            if (_definition.Colliders.Count > 0)
+            {
+                foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(_definition))
+                {
+                    yield return collider;
+                }
+
+                yield break;
+            }
+
+            foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(_definition))
+            {
+                yield return collider;
+            }
+        }
+    }
+
+    public bool CollisionEnabled
+    {
+        get => EffectiveColliders.Any(collider => collider.Enabled);
         set
         {
+            if (_definition.Colliders.Count == 0)
+            {
+                _definition.Collision.Enabled = value;
+                return;
+            }
+
+            foreach (ColliderSettings collider in _definition.Colliders)
+            {
+                collider.Enabled = value;
+            }
+        }
+    }
+
+    public string CollisionShape => EffectiveColliders.FirstOrDefault()?.Shape ?? _definition.Collision.Shape;
+
+    public Vector3 CollisionCenter
+    {
+        get => GetPrimaryCollider().Position.ToVector3();
+        set => GetPrimaryCollider().Position = Vector3Dto.FromVector3(value);
+    }
+
+    public float CollisionRadius
+    {
+        get => GetPrimaryCollider().Radius;
+        set => GetPrimaryCollider().Radius = Math.Max(0.0001f, value);
+    }
+
+    public float CollisionHeight
+    {
+        get => GetPrimaryCollider().Height;
+        set => GetPrimaryCollider().Height = Math.Max(0.0f, value);
+    }
+
+    public string CollisionAxis
+    {
+        get => GetPrimaryCollider().Axis;
+        set => GetPrimaryCollider().Axis = NormalizeCollisionAxis(value);
+    }
+
+    public Vector3 Position
+    {
+        get => _model?.Position ?? _particle?.Position ?? _water?.Position ?? _plane?.Position ?? _definition.Transform.Position.ToVector3();
+        set
+        {
+            bool applied = false;
             if (_model is not null)
             {
                 _model.Position = value;
+                applied = true;
             }
 
             if (_particle is not null)
             {
                 _particle.Position = value;
+                applied = true;
             }
 
             if (_water is not null)
             {
                 _water.Position = value;
+                applied = true;
+            }
+
+            if (_plane is not null)
+            {
+                _plane.Position = value;
+                applied = true;
+            }
+
+            if (!applied)
+            {
+                _definition.Transform.Position = Vector3Dto.FromVector3(value);
             }
         }
     }
 
     public Vector3 Scale
     {
-        get => _model?.Scale ?? _water?.Scale ?? _definition.Transform.Scale.ToVector3();
+        get => _model?.Scale ?? _water?.Scale ?? _plane?.Scale ?? _definition.Transform.Scale.ToVector3();
         set
         {
+            bool applied = false;
             if (_model is not null)
             {
                 _model.Scale = value;
+                applied = true;
             }
 
             if (_water is not null)
             {
                 _water.Scale = value;
+                applied = true;
+            }
+
+            if (_plane is not null)
+            {
+                _plane.Scale = value;
+                applied = true;
+            }
+
+            if (!applied)
+            {
+                _definition.Transform.Scale = Vector3Dto.FromVector3(value);
             }
         }
     }
 
     public Quaternion Rotation
     {
-        get => _model?.Rotation ?? _water?.Rotation ?? Quaternion.Identity;
+        get => _model?.Rotation ?? _water?.Rotation ?? _plane?.Rotation ?? ToQuaternion(_definition.Transform.RotationDegrees.ToVector3());
         set
         {
+            bool applied = false;
             if (_model is not null)
             {
                 _model.Rotation = value;
+                applied = true;
             }
 
             if (_water is not null)
             {
                 _water.Rotation = value;
+                applied = true;
+            }
+
+            if (_plane is not null)
+            {
+                _plane.Rotation = value;
+                applied = true;
+            }
+
+            if (!applied)
+            {
+                _definition.Transform.RotationDegrees = Vector3Dto.FromVector3(ToEulerDegrees(value));
             }
         }
     }
 
     public bool IsPlaying
     {
-        get => _model?.IsPlaying ?? _particle?.Enabled ?? _water?.Enabled ?? _definition.IsPlaying;
+        get => _model?.IsPlaying ?? _particle?.Enabled ?? _water?.Enabled ?? _plane?.Visible ?? _definition.IsPlaying;
         set
         {
             if (_model is not null)
@@ -137,6 +259,11 @@ public sealed class RuntimeEntity
             {
                 _water.Enabled = value;
                 _water.Visible = value;
+            }
+
+            if (_plane is not null)
+            {
+                _plane.Visible = value;
             }
         }
     }
@@ -185,7 +312,7 @@ public sealed class RuntimeEntity
 
     public bool Visible
     {
-        get => _model?.Visible ?? _particle?.Visible ?? _water?.Visible ?? true;
+        get => _model?.Visible ?? _particle?.Visible ?? _water?.Visible ?? _plane?.Visible ?? true;
         set
         {
             if (_model is not null)
@@ -201,6 +328,11 @@ public sealed class RuntimeEntity
             if (_water is not null)
             {
                 _water.Visible = value;
+            }
+
+            if (_plane is not null)
+            {
+                _plane.Visible = value;
             }
         }
     }
@@ -235,6 +367,110 @@ public sealed class RuntimeEntity
         Rotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, ToRadians(degrees)) * Rotation);
     }
 
+    public void SetCapsuleCollider(float radius, float height, float centerX = 0.0f, float centerY = 1.0f, float centerZ = 0.0f, string axis = "y")
+    {
+        _definition.Collision.Enabled = false;
+        _definition.Colliders.Clear();
+        _definition.Colliders.Add(CreateCapsuleCollider("Capsule Collider", radius, height, centerX, centerY, centerZ, axis));
+    }
+
+    public string AddCapsuleCollider(
+        string name,
+        float radius,
+        float height,
+        float centerX = 0.0f,
+        float centerY = 1.0f,
+        float centerZ = 0.0f,
+        string axis = "y",
+        float rotationX = 0.0f,
+        float rotationY = 0.0f,
+        float rotationZ = 0.0f)
+    {
+        ColliderSettings collider = CreateCapsuleCollider(name, radius, height, centerX, centerY, centerZ, axis);
+        collider.RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ);
+        _definition.Colliders.Add(collider);
+        _definition.Collision.Enabled = false;
+        return collider.Id;
+    }
+
+    public string AddBoxCollider(
+        string name,
+        float sizeX,
+        float sizeY,
+        float sizeZ,
+        float centerX = 0.0f,
+        float centerY = 0.5f,
+        float centerZ = 0.0f,
+        float rotationX = 0.0f,
+        float rotationY = 0.0f,
+        float rotationZ = 0.0f)
+    {
+        ColliderSettings collider = new()
+        {
+            Name = string.IsNullOrWhiteSpace(name) ? "Box Collider" : name,
+            Enabled = true,
+            Shape = "box",
+            Position = new Vector3Dto(centerX, centerY, centerZ),
+            RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ),
+            Size = new Vector3Dto(Math.Max(0.001f, sizeX), Math.Max(0.001f, sizeY), Math.Max(0.001f, sizeZ))
+        };
+        _definition.Colliders.Add(collider);
+        _definition.Collision.Enabled = false;
+        return collider.Id;
+    }
+
+    public bool RemoveCollider(string idOrName)
+    {
+        int index = _definition.Colliders.FindIndex(collider =>
+            string.Equals(collider.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(collider.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return false;
+        }
+
+        _definition.Colliders.RemoveAt(index);
+        return true;
+    }
+
+    public void ClearColliders()
+    {
+        _definition.Colliders.Clear();
+        _definition.Collision.Enabled = false;
+    }
+
+    public void DisableCollider()
+    {
+        foreach (ColliderSettings collider in _definition.Colliders)
+        {
+            collider.Enabled = false;
+        }
+
+        _definition.Collision.Enabled = false;
+    }
+
+    public bool TryGetCapsule(out RuntimeCapsule capsule)
+    {
+        return RuntimePhysics.TryCreateCapsule(this, out capsule);
+    }
+
+    public bool Raycast(RuntimeRay ray, out float distance, out Vector3 point)
+    {
+        distance = 0.0f;
+        point = default;
+        return RuntimePhysics.TryRaycastEntity(this, ray, out _, out distance, out point);
+    }
+
+    public bool CheckCollision(RuntimeEntity other)
+    {
+        return RuntimePhysics.CheckCollision(this, other);
+    }
+
+    public float DistanceToCollider(RuntimeEntity other)
+    {
+        return RuntimePhysics.DistanceBetween(this, other);
+    }
+
     public void ApplyMotion(string motionPath)
     {
         _model?.ApplyMotion(_resolvePath(motionPath));
@@ -263,6 +499,36 @@ public sealed class RuntimeEntity
     public void ClearMotion()
     {
         _model?.ClearMotion();
+    }
+
+    public bool SetMaterialTexture(int materialIndex, string textureReference)
+    {
+        return _model?.SetMaterialTexture(materialIndex, ResolveRuntimeTextureReference(textureReference)) == true;
+    }
+
+    public bool SetMaterialTexture(string materialName, string textureReference)
+    {
+        return _model?.SetMaterialTexture(materialName, ResolveRuntimeTextureReference(textureReference)) == true;
+    }
+
+    public bool SetMaterialRenderTexture(int materialIndex, string renderTextureName)
+    {
+        return SetMaterialTexture(materialIndex, ToRenderTextureReference(renderTextureName));
+    }
+
+    public bool SetMaterialRenderTexture(string materialName, string renderTextureName)
+    {
+        return SetMaterialTexture(materialName, ToRenderTextureReference(renderTextureName));
+    }
+
+    public void ClearMaterialTextureOverride(int materialIndex)
+    {
+        _model?.ClearMaterialTextureOverride(materialIndex);
+    }
+
+    public void ClearMaterialTextureOverrides()
+    {
+        _model?.ClearMaterialTextureOverrides();
     }
 
     public void Speak(string text)
@@ -450,7 +716,108 @@ public sealed class RuntimeEntity
             _definition.Water.ReflectionTint = Vector3Dto.FromVector3(_water.ReflectionTint);
             _definition.Water.SkyReflectionStrength = _water.SkyReflectionStrength;
         }
+        else if (_plane is not null)
+        {
+            _definition.Transform.Position = Vector3Dto.FromVector3(_plane.Position);
+            _definition.Transform.Scale = Vector3Dto.FromVector3(_plane.Scale);
+            _definition.Plane.Width = _plane.Width;
+            _definition.Plane.Height = _plane.Height;
+            _definition.Plane.Billboard = _plane.Billboard;
+            _definition.Plane.Opacity = _plane.Opacity;
+            _definition.Plane.Tint = Vector4Dto.FromVector4(_plane.Tint);
+        }
     }
 
     private static float ToRadians(float degrees) => degrees * MathF.PI / 180.0f;
+
+    private ColliderSettings GetPrimaryCollider()
+    {
+        if (_definition.Colliders.Count == 0)
+        {
+            if (_definition.Collision.Enabled)
+            {
+                _definition.Colliders.Add(CollisionGeometry.FromLegacy(_definition.Collision));
+                _definition.Collision.Enabled = false;
+            }
+            else
+            {
+                _definition.Colliders.Add(CreateCapsuleCollider("Capsule Collider", 0.5f, 2.0f, 0.0f, 1.0f, 0.0f, "y"));
+            }
+        }
+
+        return _definition.Colliders[0];
+    }
+
+    private static ColliderSettings CreateCapsuleCollider(
+        string name,
+        float radius,
+        float height,
+        float centerX,
+        float centerY,
+        float centerZ,
+        string axis)
+    {
+        return new ColliderSettings
+        {
+            Name = string.IsNullOrWhiteSpace(name) ? "Capsule Collider" : name,
+            Enabled = true,
+            Shape = "capsule",
+            Position = new Vector3Dto(centerX, centerY, centerZ),
+            Radius = Math.Max(0.0001f, radius),
+            Height = Math.Max(0.0f, height),
+            Axis = NormalizeCollisionAxis(axis)
+        };
+    }
+
+    private static Quaternion ToQuaternion(Vector3 degrees)
+    {
+        Vector3 radians = degrees * (MathF.PI / 180.0f);
+        return Quaternion.CreateFromYawPitchRoll(radians.Y, radians.X, radians.Z);
+    }
+
+    private static Vector3 ToEulerDegrees(Quaternion rotation)
+    {
+        Quaternion q = Quaternion.Normalize(rotation);
+        float sinrCosp = 2.0f * ((q.W * q.X) + (q.Y * q.Z));
+        float cosrCosp = 1.0f - (2.0f * ((q.X * q.X) + (q.Y * q.Y)));
+        float x = MathF.Atan2(sinrCosp, cosrCosp);
+
+        float sinp = 2.0f * ((q.W * q.Y) - (q.Z * q.X));
+        float y = MathF.Abs(sinp) >= 1.0f
+            ? MathF.CopySign(MathF.PI * 0.5f, sinp)
+            : MathF.Asin(sinp);
+
+        float sinyCosp = 2.0f * ((q.W * q.Z) + (q.X * q.Y));
+        float cosyCosp = 1.0f - (2.0f * ((q.Y * q.Y) + (q.Z * q.Z)));
+        float z = MathF.Atan2(sinyCosp, cosyCosp);
+        return new Vector3(x, y, z) * (180.0f / MathF.PI);
+    }
+
+    private static string NormalizeCollisionAxis(string axis)
+    {
+        return (axis ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "x" => "x",
+            "z" => "z",
+            _ => "y"
+        };
+    }
+
+    private static string ToRenderTextureReference(string renderTextureName)
+    {
+        string trimmed = (renderTextureName ?? string.Empty).Trim();
+        return trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? trimmed : $"rt:{trimmed}";
+    }
+
+    private string ResolveRuntimeTextureReference(string textureReference)
+    {
+        string trimmed = (textureReference ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)
+            || trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+
+        return _resolvePath(trimmed);
+    }
 }

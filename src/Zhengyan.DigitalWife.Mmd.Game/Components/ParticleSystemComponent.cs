@@ -314,13 +314,14 @@ public static class ParticleSystemPresets
 
 public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
 {
-    private readonly OrbitCamera _camera;
+    private OrbitCamera _camera;
     private readonly Random _random = new();
     private ParticleSystemSettings _settings;
     private ParticleState[] _particles;
     private ParticleVertex[] _vertices;
 
     private Texture2D? _texture;
+    private IRuntimeTextureProvider? _runtimeTextureProvider;
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
@@ -344,6 +345,12 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     }
 
     public string Name => _settings.Name;
+
+    public OrbitCamera Camera
+    {
+        get => _camera;
+        set => _camera = value ?? throw new ArgumentNullException(nameof(value));
+    }
 
     public Vector3 Position
     {
@@ -372,6 +379,12 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     public float Opacity { get; set; } = 1.0f;
 
     public int ParticleCount => _particles.Length;
+
+    public IRuntimeTextureProvider? RuntimeTextureProvider
+    {
+        get => _runtimeTextureProvider;
+        set => _runtimeTextureProvider = value;
+    }
 
     public ParticleSystemSettings GetSettingsSnapshot()
     {
@@ -496,7 +509,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     {
         _ = gameTime;
 
-        if (Game is null || _texture is null || _program == 0 || _vao == 0)
+        if (Game is null || (_texture is null && !IsRuntimeTextureReference(_settings.TexturePath)) || _program == 0 || _vao == 0)
         {
             return;
         }
@@ -535,7 +548,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         gl.UseProgram(_program);
         gl.BindVertexArray(_vao);
         gl.ActiveTexture(TextureUnit.Texture0);
-        gl.BindTexture(GLEnum.Texture2D, _texture.Id);
+        gl.BindTexture(GLEnum.Texture2D, ResolveTextureId());
 
         Matrix4x4 viewProjection = _camera.View * _camera.Projection;
         gl.SetUniform(_uniformViewProjection, viewProjection);
@@ -700,6 +713,13 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
 
     private static Texture2D CreateTexture(GL gl, ParticleSystemSettings settings)
     {
+        if (!string.IsNullOrWhiteSpace(settings.TexturePath) && IsRuntimeTextureReference(settings.TexturePath))
+        {
+            Texture2D fallback = new(gl, GLEnum.ClampToEdge);
+            fallback.Fill(255, 255, 255, 255);
+            return fallback;
+        }
+
         if (!string.IsNullOrWhiteSpace(settings.TexturePath))
         {
             string? resolvedPath = TryResolveTexturePath(settings.TexturePath);
@@ -838,6 +858,23 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         string normalizedLeft = string.IsNullOrWhiteSpace(left) ? string.Empty : left.Trim();
         string normalizedRight = string.IsNullOrWhiteSpace(right) ? string.Empty : right.Trim();
         return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private uint ResolveTextureId()
+    {
+        if (_runtimeTextureProvider is not null
+            && !string.IsNullOrWhiteSpace(_settings.TexturePath)
+            && _runtimeTextureProvider.TryGetTexture(_settings.TexturePath, out uint runtimeTextureId))
+        {
+            return runtimeTextureId;
+        }
+
+        return _texture?.Id ?? 0;
+    }
+
+    private static bool IsRuntimeTextureReference(string? texturePath)
+    {
+        return texturePath?.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private struct ParticleState

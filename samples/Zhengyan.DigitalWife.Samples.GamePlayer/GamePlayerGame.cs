@@ -17,6 +17,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly List<PlayerPmxObject> _pmxObjects = [];
     private readonly List<RuntimeParticleObject> _particleObjects = [];
     private readonly List<RuntimeWaterObject> _waterObjects = [];
+    private readonly List<RuntimePlaneObject> _planeObjects = [];
     private readonly List<(RuntimeEntity Entity, List<IScriptInstance> Scripts, string Name)> _scriptTargets = [];
     private readonly List<IScriptInstance> _loadingScripts = [];
     private readonly Queue<LoadingStep> _loadingSteps = [];
@@ -25,10 +26,14 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly Dictionary<string, RuntimeEntity> _entitiesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioClip> _audioClips = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioSource> _audioSources = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ScriptHost _scriptHost;
     private LoadingScreenComponent? _loadingScreen;
     private RuntimeGuiOverlayComponent? _guiOverlay;
     private RuntimeCameraControllerComponent? _cameraController;
+    private RuntimeDebugDrawComponent? _debugDraw;
+    private SceneRenderTextureManager? _renderTextureManager;
+    private SkyboxComponent? _skybox;
     private RuntimeScene? _runtimeScene;
     private RuntimeInput? _runtimeInput;
     private RuntimeAudio? _runtimeAudio;
@@ -69,6 +74,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public IReadOnlyList<RuntimeWaterObject> WaterObjects => _waterObjects;
 
+    public IReadOnlyList<RuntimePlaneObject> PlaneObjects => _planeObjects;
+
     private float LoadingProgress => _loadingTotalSteps <= 0
         ? 0.0f
         : Math.Clamp(_loadingCompletedSteps / (float)_loadingTotalSteps, 0.0f, 1.0f);
@@ -91,21 +98,28 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         });
 
         _runtimeInput = new RuntimeInput(this);
+        _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents());
 
         _ = AddComponent(new GroundShadowPassComponent(this)
         {
             DrawOrder = 110
         });
 
-        _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
-            () => Project.Scene.GuiControls,
-            () => Project.Scene.Sprites,
-            ResolveProjectPath,
-            DispatchGuiEvent)
+        _debugDraw = AddComponent(new RuntimeDebugDrawComponent(_camera)
         {
-            DrawOrder = int.MaxValue - 10,
-            UpdateOrder = int.MaxValue
+            DrawOrder = int.MaxValue - 100
         });
+
+            _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
+                () => Project.Scene.GuiControls,
+                () => Project.Scene.Sprites,
+                ResolveProjectPath,
+                DispatchGuiEvent)
+            {
+                RuntimeTextureProvider = _renderTextureManager,
+                DrawOrder = int.MaxValue - 10,
+                UpdateOrder = int.MaxValue
+            });
 
         BeginProjectLoad();
     }
@@ -133,6 +147,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        UpdateWaterInteractions(gameTime);
+
         foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, string name) in _scriptTargets.ToArray())
         {
             entity.SyncFromModel();
@@ -150,9 +166,17 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    protected override void Draw(GameTime gameTime)
+    {
+        _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
+        ApplyRuntimeCamera(_camera);
+    }
+
     protected override void UnloadContent()
     {
         ClearRuntimeScene();
+        _renderTextureManager?.Dispose();
+        _renderTextureManager = null;
         _runtimeVoice?.Dispose();
         _runtimeVoice = null;
     }
@@ -306,12 +330,16 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _runtimeAudio = new RuntimeAudio(_audioSources);
             RuntimeCameraControllerComponent cameraController = _cameraController
                 ?? throw new InvalidOperationException("Runtime camera controller is not initialized.");
+            RuntimeDebugDrawComponent debugDraw = _debugDraw
+                ?? throw new InvalidOperationException("Runtime debug draw is not initialized.");
             _runtimeScene = new RuntimeScene(
                 Project.Scene,
                 _entitiesById,
                 _entitiesByName,
                 new RuntimeWindowControl(this, Project.Window),
-                new RuntimeCamera(_camera, cameraController, () => _entitiesById.Values),
+                new RuntimeCamera(_camera, cameraController, () => _entitiesById.Values, Project.Scene, _renderTextureManager),
+                new RuntimeDebug(debugDraw),
+                new RuntimeSaveStore(_projectDirectory),
                 DispatchSpeechEvent,
                 RequestSceneChange);
             PrepareLoadingScripts();
@@ -476,6 +504,13 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         _waterObjects.Clear();
+
+        foreach (RuntimePlaneObject item in _planeObjects.ToArray())
+        {
+            RemoveComponent(item.Component);
+        }
+
+        _planeObjects.Clear();
         _entitiesById.Clear();
         _entitiesByName.Clear();
 
@@ -515,6 +550,18 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+        {
+            LoadPlaneEntity(entity);
+            return;
+        }
+
+        if (IsEmptyEntity(entity))
+        {
+            RegisterRuntimeEntity(new RuntimeEntity(entity));
+            return;
+        }
+
         if (!string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
         {
             Console.Error.WriteLine($"Unsupported entity type '{entity.Type}' for entity '{entity.Name}'.");
@@ -533,13 +580,18 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             PmxModelComponent model = AddComponent(new PmxModelComponent(fullPath)
             {
                 Camera = _camera,
+                RuntimeTextureProvider = _renderTextureManager,
                 DrawOrder = 100
             });
             ApplyEntityToModel(entity, model);
             ApplyLightingToModel(model);
 
             RuntimeEntity runtimeEntity = new(entity, model, ResolveProjectPath);
-            _runtimeVoice?.AttachEntity(runtimeEntity);
+            if (_runtimeVoice is not null)
+            {
+                runtimeEntity.AttachVoice(_runtimeVoice);
+            }
+
             PlayerPmxObject runtimeObject = new()
             {
                 Definition = entity,
@@ -564,6 +616,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 _camera,
                 ParticleEntitySettingsMapper.ToSettings(entity.Particle))
             {
+                RuntimeTextureProvider = _renderTextureManager,
                 DrawOrder = 130
             });
             ApplyEntityToParticle(entity, component, resetParticles: true);
@@ -602,6 +655,36 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             Console.Error.WriteLine($"Failed to load water entity '{entity.Name}': {ex.Message}");
         }
+    }
+
+    private void LoadPlaneEntity(GameEntity entity)
+    {
+        try
+        {
+            TexturedPlaneComponent component = AddComponent(new TexturedPlaneComponent(_camera, ResolvePlaneTexturePath(entity))
+            {
+                RuntimeTextureProvider = _renderTextureManager,
+                DrawOrder = 115
+            });
+            ApplyEntityToPlane(entity, component);
+            RuntimeEntity runtimeEntity = new(entity, component);
+            _planeObjects.Add(new RuntimePlaneObject
+            {
+                Definition = entity,
+                Component = component
+            });
+            RegisterRuntimeEntity(runtimeEntity);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to load textured plane '{entity.Name}': {ex.Message}");
+        }
+    }
+
+    private static bool IsEmptyEntity(GameEntity entity)
+    {
+        string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized is "empty" or "empty_object" or "game_object";
     }
 
     private void LoadAudio()
@@ -716,6 +799,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
         {
+            Console.Error.WriteLine($"GUI event '{eventName}' ignored because runtime scene/input/audio is not ready.");
             return;
         }
 
@@ -729,9 +813,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         if (target is null)
         {
+            Console.Error.WriteLine($"GUI event '{eventName}' from '{control.Name}' has no target entity and no script target fallback.");
             return;
         }
 
+        bool dispatched = false;
         foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, _) in _scriptTargets.ToArray())
         {
             if (!ReferenceEquals(entity, target))
@@ -744,12 +830,18 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 try
                 {
                     script.GuiEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, control.Id, eventName);
+                    dispatched = true;
                 }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"Script GUI event failed for entity '{entity.Name}': {ex.Message}");
                 }
             }
+        }
+
+        if (!dispatched)
+        {
+            Console.Error.WriteLine($"GUI event '{eventName}' from '{control.Name}' found target '{target.Name}', but no script handled it.");
         }
     }
 
@@ -840,6 +932,32 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
     }
 
+    private void ApplyEntityToPlane(GameEntity entity, TexturedPlaneComponent component)
+    {
+        component.Position = entity.Transform.Position.ToVector3();
+        component.Rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
+        component.Scale = entity.Transform.Scale.ToVector3();
+        component.Visible = entity.IsPlaying;
+        component.TexturePath = ResolvePlaneTexturePath(entity);
+        component.Width = Math.Max(entity.Plane.Width, 0.001f);
+        component.Height = Math.Max(entity.Plane.Height, 0.001f);
+        component.Billboard = entity.Plane.Billboard;
+        component.Tint = entity.Plane.Tint.ToVector4();
+        component.Opacity = entity.Plane.Opacity;
+    }
+
+    private string ResolvePlaneTexturePath(GameEntity entity)
+    {
+        string path = !string.IsNullOrWhiteSpace(entity.Plane.TexturePath)
+            ? entity.Plane.TexturePath
+            : entity.AssetPath;
+        return string.IsNullOrWhiteSpace(path)
+            ? string.Empty
+            : path.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase)
+                ? path.Trim()
+                : ResolveProjectPath(path);
+    }
+
     private void ApplySceneSettings()
     {
         LightingSettings lighting = Project.Scene.Lighting;
@@ -848,11 +966,93 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             GraphicsDevice.ClearColor = Options.ClearColor;
         }
+
+        ApplySkyboxSettings();
+    }
+
+    private void ApplySkyboxSettings()
+    {
+        SkyboxSettings skybox = Project.Scene.Skybox;
+        if (!skybox.Enabled)
+        {
+            if (_skybox is not null)
+            {
+                RemoveComponent(_skybox);
+                _skybox = null;
+            }
+
+            return;
+        }
+
+        string texturePath = ResolveProjectPath(skybox.TexturePath);
+        if (_skybox is null)
+        {
+            _skybox = AddComponent(new SkyboxComponent(_camera, texturePath)
+            {
+                DrawOrder = -10000
+            });
+        }
+
+        _skybox.TexturePath = texturePath;
+        _skybox.Exposure = skybox.Exposure;
+        _skybox.Tint = skybox.Tint.ToVector3();
+        _skybox.Visible = true;
+    }
+
+    private void UpdateWaterInteractions(GameTime gameTime)
+    {
+        double now = gameTime.TotalSeconds;
+        foreach (RuntimeWaterObject waterObject in _waterObjects)
+        {
+            GameEntity waterEntity = waterObject.Definition;
+            if (!waterEntity.Water.EnableInteraction)
+            {
+                continue;
+            }
+
+            float waterY = waterEntity.Transform.Position.Y;
+            float waterHalfSize = Math.Max(waterEntity.Water.Size, 0.1f) * MathF.Max(MathF.Abs(waterEntity.Transform.Scale.X), MathF.Abs(waterEntity.Transform.Scale.Z));
+            foreach (RuntimeEntity entity in _entitiesById.Values)
+            {
+                if (string.Equals(entity.Id, waterEntity.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (RuntimeCollider collider in RuntimePhysics.CreateColliders(entity))
+                {
+                    Vector3 center = collider.Shape == "box" ? collider.Box.Center : collider.Capsule.Center;
+                    float radius = collider.Shape == "box"
+                        ? collider.Box.HalfExtents.Length()
+                        : collider.Capsule.Radius + (Vector3.Distance(collider.Capsule.Start, collider.Capsule.End) * 0.5f);
+                    if (MathF.Abs(center.Y - waterY) > radius)
+                    {
+                        continue;
+                    }
+
+                    Vector3 delta = center - waterEntity.Transform.Position.ToVector3();
+                    if (MathF.Abs(delta.X) <= waterHalfSize && MathF.Abs(delta.Z) <= waterHalfSize)
+                    {
+                        string rippleKey = $"{waterEntity.Id}:{entity.Id}:{collider.Id}";
+                        if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= 0.35)
+                        {
+                            _waterRippleTimes[rippleKey] = now;
+                            waterObject.Component.AddRipple(new Vector3(center.X, waterY, center.Z), waterEntity.Water.InteractionRadius, waterEntity.Water.InteractionStrength);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void ApplyCameraSettings()
     {
         CameraSettings camera = Project.Scene.Camera;
+        EnsureSceneCameras();
+        SceneCameraSettings mainCamera = Project.Scene.Cameras.First(item => item.IsMain);
+        camera = mainCamera.Camera;
+        Project.Scene.Camera = camera;
+        Project.Scene.MainCamera = mainCamera.Name;
         _camera.SetLookAt(camera.Position.ToVector3(), camera.Target.ToVector3());
         _cameraController?.EditorOrbit(0.2f, 1.0f, 1.0f);
         _camera.ProjectionMode = NormalizeProjectionMode(camera.ProjectionMode) == "orthographic"
@@ -862,6 +1062,80 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _camera.OrthographicSize = camera.OrthographicSize;
         _camera.NearClipPlane = camera.NearClipPlane;
         _camera.FarClipPlane = camera.FarClipPlane;
+        _renderTextureManager?.SyncCameras(_camera);
+    }
+
+    private void EnsureSceneCameras()
+    {
+        if (Project.Scene.Cameras.Count == 0)
+        {
+            Project.Scene.Cameras.Add(new SceneCameraSettings
+            {
+                Name = string.IsNullOrWhiteSpace(Project.Scene.MainCamera) ? "Main Camera" : Project.Scene.MainCamera,
+                IsMain = true,
+                Camera = Project.Scene.Camera
+            });
+        }
+
+        SceneCameraSettings? main = Project.Scene.Cameras.FirstOrDefault(camera => camera.IsMain)
+            ?? Project.Scene.Cameras.FirstOrDefault(camera => string.Equals(camera.Name, Project.Scene.MainCamera, StringComparison.OrdinalIgnoreCase))
+            ?? Project.Scene.Cameras[0];
+        foreach (SceneCameraSettings camera in Project.Scene.Cameras)
+        {
+            camera.IsMain = ReferenceEquals(camera, main);
+        }
+
+        Project.Scene.MainCamera = main.Name;
+        Project.Scene.Camera = main.Camera;
+    }
+
+    private void ApplyRuntimeCamera(OrbitCamera camera)
+    {
+        foreach (PlayerPmxObject item in _pmxObjects)
+        {
+            item.Model.Camera = camera;
+        }
+
+        foreach (RuntimeParticleObject item in _particleObjects)
+        {
+            item.Component.Camera = camera;
+        }
+
+        foreach (RuntimeWaterObject item in _waterObjects)
+        {
+            item.Component.Camera = camera;
+        }
+
+        foreach (RuntimePlaneObject item in _planeObjects)
+        {
+            item.Component.Camera = camera;
+        }
+
+        if (_skybox is not null)
+        {
+            _skybox.Camera = camera;
+        }
+    }
+
+    private IReadOnlyList<DrawableGameComponent> GetRenderTextureExcludedComponents()
+    {
+        List<DrawableGameComponent> excluded = [];
+        if (_guiOverlay is not null)
+        {
+            excluded.Add(_guiOverlay);
+        }
+
+        if (_loadingScreen is not null)
+        {
+            excluded.Add(_loadingScreen);
+        }
+
+        if (_debugDraw is not null)
+        {
+            excluded.Add(_debugDraw);
+        }
+
+        return excluded;
     }
 
     private static string NormalizeProjectionMode(string projectionMode)

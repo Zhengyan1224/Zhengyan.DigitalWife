@@ -116,7 +116,22 @@ public sealed class GameProjectScene
 
     public CameraSettings Camera { get; set; } = new();
 
+    public string MainCamera { get; set; } = "Main Camera";
+
+    public List<SceneCameraSettings> Cameras { get; set; } =
+    [
+        new SceneCameraSettings
+        {
+            Name = "Main Camera",
+            IsMain = true
+        }
+    ];
+
+    public List<RenderTextureSettings> RenderTextures { get; set; } = [];
+
     public LightingSettings Lighting { get; set; } = new();
+
+    public SkyboxSettings Skybox { get; set; } = new();
 
     public LoadingScreenSettings LoadingScreen { get; set; } = new();
 
@@ -159,6 +174,36 @@ public sealed class CameraSettings
     public float FarClipPlane { get; set; } = 1000.0f;
 }
 
+public sealed class SceneCameraSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = "Camera";
+
+    public bool IsMain { get; set; }
+
+    public bool Enabled { get; set; } = true;
+
+    public CameraSettings Camera { get; set; } = new();
+}
+
+public sealed class RenderTextureSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = "RenderTexture";
+
+    public bool Enabled { get; set; } = true;
+
+    public string Camera { get; set; } = "Main Camera";
+
+    public int Width { get; set; } = 512;
+
+    public int Height { get; set; } = 512;
+
+    public Vector4Dto ClearColor { get; set; } = new(0.08f, 0.09f, 0.12f, 1.0f);
+}
+
 public sealed class LightingSettings
 {
     public Vector3Dto LightColor { get; set; } = new(1.0f, 1.0f, 1.0f);
@@ -172,6 +217,17 @@ public sealed class LightingSettings
     public Vector4Dto ShadowColor { get; set; } = new(0.17f, 0.17f, 0.17f, 0.7f);
 
     public Vector4Dto ClearColor { get; set; } = new(0.08f, 0.09f, 0.12f, 1.0f);
+}
+
+public sealed class SkyboxSettings
+{
+    public bool Enabled { get; set; }
+
+    public string TexturePath { get; set; } = "app:Resources/Skybox/autumn_field_puresky.jpg";
+
+    public float Exposure { get; set; } = 1.0f;
+
+    public Vector3Dto Tint { get; set; } = Vector3Dto.One;
 }
 
 public sealed class GameEntity
@@ -204,7 +260,13 @@ public sealed class GameEntity
 
     public WaterSurfaceSettings Water { get; set; } = new();
 
+    public TexturedPlaneSettings Plane { get; set; } = new();
+
     public PmxRelationSettings Relation { get; set; } = new();
+
+    public CollisionSettings Collision { get; set; } = new();
+
+    public List<ColliderSettings> Colliders { get; set; } = [];
 
     public List<MotionLayerSettings> MotionLayers { get; set; } = [];
 
@@ -303,6 +365,44 @@ public sealed class PmxRelationSettings
     public bool BindLighting { get; set; }
 }
 
+public sealed class CollisionSettings
+{
+    public bool Enabled { get; set; }
+
+    public string Shape { get; set; } = "capsule";
+
+    public Vector3Dto Center { get; set; } = new(0.0f, 1.0f, 0.0f);
+
+    public float Radius { get; set; } = 0.5f;
+
+    public float Height { get; set; } = 2.0f;
+
+    public string Axis { get; set; } = "y";
+}
+
+public sealed class ColliderSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = "Collider";
+
+    public bool Enabled { get; set; } = true;
+
+    public string Shape { get; set; } = "capsule";
+
+    public Vector3Dto Position { get; set; } = new(0.0f, 1.0f, 0.0f);
+
+    public Vector3Dto RotationDegrees { get; set; } = Vector3Dto.Zero;
+
+    public Vector3Dto Size { get; set; } = Vector3Dto.One;
+
+    public float Radius { get; set; } = 0.5f;
+
+    public float Height { get; set; } = 2.0f;
+
+    public string Axis { get; set; } = "y";
+}
+
 public sealed class MotionLayerSettings
 {
     public string Path { get; set; } = string.Empty;
@@ -327,6 +427,27 @@ public sealed class WaterSurfaceSettings
     public Vector3Dto ReflectionTint { get; set; } = new(0.56f, 0.70f, 0.90f);
 
     public float SkyReflectionStrength { get; set; } = 0.85f;
+
+    public bool EnableInteraction { get; set; }
+
+    public float InteractionRadius { get; set; } = 0.8f;
+
+    public float InteractionStrength { get; set; } = 0.8f;
+}
+
+public sealed class TexturedPlaneSettings
+{
+    public string TexturePath { get; set; } = string.Empty;
+
+    public float Width { get; set; } = 2.0f;
+
+    public float Height { get; set; } = 2.0f;
+
+    public bool Billboard { get; set; }
+
+    public float Opacity { get; set; } = 1.0f;
+
+    public Vector4Dto Tint { get; set; } = new(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 public sealed class ParticleEntitySettings

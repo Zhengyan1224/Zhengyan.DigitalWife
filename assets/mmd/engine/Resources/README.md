@@ -43,6 +43,25 @@ PMX 模型渲染所需的 GLSL Shader：
 
 - `WaterSurfaceComponent`
 
+### `Skybox/`
+
+场景天空盒贴图：
+
+- `autumn_field_puresky.jpg`
+
+供以下类型使用：
+
+- `SkyboxComponent`
+- `GameEditor` / `GamePlayer` 场景 `Skybox` 设置
+
+默认路径为：
+
+```text
+app:Resources/Skybox/autumn_field_puresky.jpg
+```
+
+该路径表示从程序输出目录开始查找。示例项目构建后会复制为 `bin/Debug/net10.0/Resources/Skybox/autumn_field_puresky.jpg`。图片来自 Poly Haven 的 CC0 `autumn_field_puresky` 天空全景图。
+
 ### `Particles/`
 
 粒子预设默认贴图：

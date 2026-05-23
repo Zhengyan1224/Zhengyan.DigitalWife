@@ -1,5 +1,8 @@
+using System.Diagnostics;
 using System.Numerics;
 using System.Reflection;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using ImGuiNET;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
@@ -18,12 +21,17 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly List<EditorPmxObject> _pmxObjects = [];
     private readonly List<EditorParticleObject> _particleObjects = [];
     private readonly List<EditorWaterObject> _waterObjects = [];
+    private readonly List<EditorPlaneObject> _planeObjects = [];
+    private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioClip> _audioClips = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioSource> _audioSources = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _resourceImportCache = new(StringComparer.OrdinalIgnoreCase);
 
     private SceneRenderTarget? _sceneRenderTarget;
     private OrbitCameraController? _cameraController;
     private GameEditorOverlayComponent? _overlay;
+    private SceneRenderTextureManager? _renderTextureManager;
+    private SkyboxComponent? _skybox;
     private string _statusMessage = "Ready.";
 
     public GameEditorGame()
@@ -55,6 +63,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public IReadOnlyList<EditorWaterObject> WaterObjects => _waterObjects;
 
+    public IReadOnlyList<EditorPlaneObject> PlaneObjects => _planeObjects;
+
     public string StatusMessage => _statusMessage;
 
     public int SelectedEntityIndex { get; set; } = -1;
@@ -75,6 +85,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         _sceneRenderTarget = new SceneRenderTarget(GraphicsDevice.Gl);
         _sceneRenderTarget.EnsureSize(GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
+        _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents());
 
         ApplyCameraSettings();
         ApplySceneSettings();
@@ -97,6 +108,11 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             DrawOrder = 900
         });
 
+        _ = AddComponent(new EditorColliderWireframeComponent(this, _camera)
+        {
+            DrawOrder = 905
+        });
+
         _overlay = AddComponent(new GameEditorOverlayComponent(this)
         {
             DrawOrder = int.MaxValue,
@@ -109,6 +125,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         UpdateStatus($"Project ready: {ProjectDirectory}");
     }
 
+    protected override void Update(GameTime gameTime)
+    {
+        base.Update(gameTime);
+        UpdateWaterInteractions(gameTime);
+    }
+
     protected override void Draw(GameTime gameTime)
     {
         _ = gameTime;
@@ -117,6 +139,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             return;
         }
+
+        _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
 
         _sceneRenderTarget.Bind();
         GraphicsDevice.Gl.Disable(GLEnum.ScissorTest);
@@ -129,11 +153,14 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _camera.Width = _sceneRenderTarget.Width;
         _camera.Height = _sceneRenderTarget.Height;
+        ApplyRuntimeCamera(_camera);
     }
 
     protected override void UnloadContent()
     {
         ClearSceneRuntime();
+        _renderTextureManager?.Dispose();
+        _renderTextureManager = null;
         _sceneRenderTarget?.Dispose();
         _sceneRenderTarget = null;
     }
@@ -203,9 +230,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public void SaveProject()
     {
         Directory.CreateDirectory(ProjectDirectory);
+        ResourceImportSummary resourceImport = PrepareAndImportResources();
+        ScriptValidationSummary validation = PrepareAndValidateScripts();
         GameProjectStore.Save(ProjectDirectory, Project);
-        EnsureDefaultScripts();
-        UpdateStatus($"Saved project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}");
+        string projectPath = Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName);
+        UpdateStatus(validation.HasErrors
+            ? $"Saved project with script errors: {projectPath}\n{resourceImport.Message}\n{validation.Message}"
+            : $"Saved project: {projectPath}\n{resourceImport.Message}\n{validation.Message}");
     }
 
     public void AddPmxEntityFromPath(string sourcePath, bool copyIntoProject)
@@ -310,6 +341,52 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         UpdateStatus($"Added sprite: {assetPath}");
     }
 
+    public void AddTexturedPlaneFromPath(string sourcePath, bool copyIntoProject)
+    {
+        string normalizedSourcePath = NormalizeInputPath(sourcePath);
+        string assetPath = copyIntoProject
+            ? GameProjectPath.CopyAssetIntoProject(ProjectDirectory, normalizedSourcePath, "textures")
+            : GameProjectPath.ToProjectRelative(ProjectDirectory, normalizedSourcePath);
+
+        GameEntity entity = new()
+        {
+            Name = Path.GetFileNameWithoutExtension(assetPath),
+            Type = "textured_plane",
+            AssetPath = assetPath,
+            Transform = new TransformSettings
+            {
+                Position = new Vector3Dto(0.0f, 1.0f, 0.0f),
+                RotationDegrees = Vector3Dto.Zero,
+                Scale = Vector3Dto.One
+            },
+            Plane = new TexturedPlaneSettings
+            {
+                TexturePath = assetPath,
+                Width = 2.0f,
+                Height = 2.0f
+            },
+            Scripts =
+            [
+                new ScriptBinding
+                {
+                    Language = Project.ScriptRuntime.PreferredLanguage,
+                    Path = Project.ScriptRuntime.PreferredLanguage == "python"
+                        ? $"scripts/{SafeFileStem(Path.GetFileNameWithoutExtension(assetPath))}_plane.py"
+                        : $"scripts/{SafeFileStem(Path.GetFileNameWithoutExtension(assetPath))}_plane.csx"
+                }
+            ]
+        };
+
+        Project.Scene.Entities.Add(entity);
+        SelectedEntityIndex = Project.Scene.Entities.Count - 1;
+        bool runtimeLoaded = TryLoadEntityRuntime(entity);
+        EnsureCleanEntityScriptTemplate(entity.Scripts[0]);
+        if (runtimeLoaded)
+        {
+            UpdateStatus($"Added textured plane: {assetPath}");
+        }
+    }
+
     public void AddParticleEntity(string preset)
     {
         ParticleEntitySettings particle = ParticleEntitySettingsMapper.FromPreset(preset);
@@ -387,6 +464,37 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    public void AddEmptyEntity()
+    {
+        GameEntity entity = new()
+        {
+            Name = "Empty Object",
+            Type = "empty_object",
+            Transform = new TransformSettings
+            {
+                Position = Vector3Dto.Zero,
+                RotationDegrees = Vector3Dto.Zero,
+                Scale = Vector3Dto.One
+            },
+            Scripts =
+            [
+                new ScriptBinding
+                {
+                    Language = Project.ScriptRuntime.PreferredLanguage,
+                    Path = Project.ScriptRuntime.PreferredLanguage == "python"
+                        ? "scripts/empty_object.py"
+                        : "scripts/empty_object.csx"
+                }
+            ]
+        };
+
+        Project.Scene.Entities.Add(entity);
+        SelectedEntityIndex = Project.Scene.Entities.Count - 1;
+        EnsureCleanEntityScriptTemplate(entity.Scripts[0]);
+        TryLoadEntityRuntime(entity);
+        UpdateStatus("Added empty object.");
+    }
+
     public void AddScriptToSelected(string language)
     {
         GameEntity? entity = SelectedEntity;
@@ -406,7 +514,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         entity.Scripts.Add(binding);
         EnsureCleanEntityScriptTemplate(binding);
-        UpdateStatus($"Added {language} script: {binding.Path}");
+        UpdateStatus(ValidateScriptBinding(binding, "entity script").ToStatusMessage($"Added {language} script: {binding.Path}"));
     }
 
     public void AddSceneLoadingScript(string language)
@@ -424,7 +532,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         Project.Scene.LoadingScripts.Add(binding);
         EnsureLoadingScriptTemplate(binding);
-        UpdateStatus($"Added scene loading {normalizedLanguage} script: {binding.Path}");
+        UpdateStatus(ValidateScriptBinding(binding, "scene loading script").ToStatusMessage($"Added scene loading {normalizedLanguage} script: {binding.Path}"));
+    }
+
+    public void NormalizeAndValidateScriptBinding(ScriptBinding binding, string context)
+    {
+        ScriptValidationResult result = PrepareScriptBinding(binding, context);
+        UpdateStatus(result.ToStatusMessage($"Script ready: {binding.Path}"));
     }
 
     public GameEntity? SelectedEntity => SelectedEntityIndex >= 0 && SelectedEntityIndex < Project.Scene.Entities.Count
@@ -462,6 +576,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _waterObjects.Remove(waterRuntime);
         }
 
+        EditorPlaneObject? planeRuntime = _planeObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
+        if (planeRuntime is not null)
+        {
+            RemoveComponent(planeRuntime.Component);
+            _planeObjects.Remove(planeRuntime);
+        }
+
         SelectedEntityIndex = Math.Min(SelectedEntityIndex, Project.Scene.Entities.Count - 1);
         UpdateStatus($"Removed entity: {entity.Name}");
     }
@@ -483,6 +604,18 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         if (string.Equals(entity.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
         {
             ApplySelectedWaterToRuntime();
+            return;
+        }
+
+        if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplySelectedPlaneToRuntime();
+            return;
+        }
+
+        if (IsEmptyEntity(entity))
+        {
+            UpdateStatus($"Updated empty object: {entity.Name}");
             return;
         }
 
@@ -510,6 +643,37 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             ApplyLightingToModel(item.Model);
         }
+
+        ApplySkyboxSettings();
+    }
+
+    private void ApplySkyboxSettings()
+    {
+        SkyboxSettings skybox = Project.Scene.Skybox;
+        if (!skybox.Enabled)
+        {
+            if (_skybox is not null)
+            {
+                RemoveComponent(_skybox);
+                _skybox = null;
+            }
+
+            return;
+        }
+
+        string texturePath = GameProjectPath.ToAbsolute(ProjectDirectory, skybox.TexturePath);
+        if (_skybox is null)
+        {
+            _skybox = AddComponent(new SkyboxComponent(_camera, texturePath)
+            {
+                DrawOrder = -10000
+            });
+        }
+
+        _skybox.TexturePath = texturePath;
+        _skybox.Exposure = skybox.Exposure;
+        _skybox.Tint = skybox.Tint.ToVector3();
+        _skybox.Visible = true;
     }
 
     public void ApplyWindowSettings()
@@ -552,9 +716,288 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             : "time_synchronized";
     }
 
+    private ResourceImportSummary PrepareAndImportResources()
+    {
+        int imported = 0;
+        List<string> warnings = [];
+        _resourceImportCache.Clear();
+
+        Project.Window.IconPath = ImportOptionalResource(Project.Window.IconPath, "window-icons", ref imported, warnings);
+
+        GameProjectVoiceSettings voice = Project.Voice;
+        voice.ModelPath = ImportOptionalResource(voice.ModelPath, "tts", ref imported, warnings);
+        voice.TokensPath = ImportOptionalResource(voice.TokensPath, "tts", ref imported, warnings);
+        voice.LexiconPath = ImportOptionalNullableResource(voice.LexiconPath, "tts", ref imported, warnings);
+        voice.DataDirectory = ImportOptionalNullableResource(voice.DataDirectory, "tts", ref imported, warnings, copyDirectory: true);
+        voice.DictDirectory = ImportOptionalNullableResource(voice.DictDirectory, "tts", ref imported, warnings, copyDirectory: true);
+        voice.VocoderPath = ImportOptionalNullableResource(voice.VocoderPath, "tts", ref imported, warnings);
+        voice.RuleFars = ImportOptionalNullableResource(voice.RuleFars, "tts", ref imported, warnings);
+        voice.RuleFsts = ImportRuleFsts(voice.RuleFsts, ref imported, warnings);
+        NormalizeMatchaVoiceDataDirectory(voice);
+        voice.LipSync.DictionaryDirectory = ImportOptionalResource(voice.LipSync.DictionaryDirectory, "tts/lip-sync", ref imported, warnings, copyDirectory: true);
+
+        GameProjectScene scene = Project.Scene;
+        scene.LoadingScreen.BackgroundImagePath = ImportOptionalResource(scene.LoadingScreen.BackgroundImagePath, "loading", ref imported, warnings);
+        scene.Skybox.TexturePath = ImportOptionalResource(scene.Skybox.TexturePath, "skybox", ref imported, warnings);
+
+        foreach (AudioAsset audio in scene.Audio)
+        {
+            audio.Path = ImportOptionalResource(audio.Path, "audio", ref imported, warnings);
+        }
+
+        foreach (MotionAsset motion in scene.Motions)
+        {
+            motion.Path = ImportOptionalResource(motion.Path, "motions", ref imported, warnings);
+        }
+
+        foreach (SpriteSettings sprite in scene.Sprites)
+        {
+            sprite.Path = ImportOptionalResource(sprite.Path, "sprites", ref imported, warnings);
+        }
+
+        foreach (GameEntity entity in scene.Entities)
+        {
+            ImportEntityResources(entity, ref imported, warnings);
+        }
+
+        if (warnings.Count == 0)
+        {
+            return new ResourceImportSummary(false, $"Resource import passed: {imported} file(s) copied.");
+        }
+
+        return new ResourceImportSummary(
+            true,
+            $"Resource import completed with {warnings.Count} warning(s), {imported} file(s) copied.\n{string.Join('\n', warnings.Take(5))}");
+    }
+
+    private void ImportEntityResources(GameEntity entity, ref int imported, List<string> warnings)
+    {
+        if (string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
+        {
+            entity.AssetPath = ImportPmxResource(entity.AssetPath, ref imported, warnings);
+        }
+        else if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+        {
+            string texture = ImportOptionalResource(
+                string.IsNullOrWhiteSpace(entity.Plane.TexturePath) ? entity.AssetPath : entity.Plane.TexturePath,
+                "textures",
+                ref imported,
+                warnings);
+            entity.Plane.TexturePath = texture;
+            entity.AssetPath = texture;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entity.Particle.TexturePath))
+        {
+            entity.Particle.TexturePath = ImportOptionalNullableResource(entity.Particle.TexturePath, "particles", ref imported, warnings);
+        }
+
+        foreach (MotionLayerSettings layer in entity.MotionLayers)
+        {
+            layer.Path = ImportOptionalResource(layer.Path, "motions", ref imported, warnings);
+        }
+    }
+
+    private string ImportPmxResource(string path, ref int imported, List<string> warnings)
+    {
+        if (!ShouldImportResource(path))
+        {
+            return path;
+        }
+
+        string fullPath = ResolveImportPath(path);
+        if (!File.Exists(fullPath))
+        {
+            warnings.Add($"PMX not found: {path}");
+            return path;
+        }
+
+        if (IsPathInsideDirectory(fullPath, ProjectDirectory))
+        {
+            return GameProjectPath.ToProjectRelative(ProjectDirectory, fullPath);
+        }
+
+        string importedPath = CopyPmxAssetDirectoryIntoProject(fullPath);
+        imported++;
+        return importedPath;
+    }
+
+    private string ImportOptionalResource(
+        string? path,
+        string assetSubdirectory,
+        ref int imported,
+        List<string> warnings,
+        bool copyDirectory = false)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        string normalizedPath = GameProjectPath.NormalizePathText(path);
+        if (!ShouldImportResource(normalizedPath))
+        {
+            return normalizedPath;
+        }
+
+        string fullPath = ResolveImportPath(normalizedPath);
+        string cacheKey = GetResourceImportCacheKey(fullPath);
+        if (_resourceImportCache.TryGetValue(cacheKey, out string? cachedPath))
+        {
+            return cachedPath;
+        }
+
+        if (File.Exists(fullPath))
+        {
+            if (IsPathInsideDirectory(fullPath, ProjectDirectory))
+            {
+                string projectRelative = GameProjectPath.ToProjectRelative(ProjectDirectory, fullPath);
+                _resourceImportCache[cacheKey] = projectRelative;
+                return projectRelative;
+            }
+
+            string importedPath = GameProjectPath.CopyAssetIntoProject(ProjectDirectory, fullPath, assetSubdirectory);
+            _resourceImportCache[cacheKey] = importedPath;
+            imported++;
+            return importedPath;
+        }
+
+        if (Directory.Exists(fullPath))
+        {
+            if (IsPathInsideDirectory(fullPath, ProjectDirectory))
+            {
+                string projectRelative = GameProjectPath.ToProjectRelative(ProjectDirectory, fullPath);
+                _resourceImportCache[cacheKey] = projectRelative;
+                return projectRelative;
+            }
+
+            if (!copyDirectory)
+            {
+                warnings.Add($"Directory resource is not supported here: {normalizedPath}");
+                return normalizedPath;
+            }
+
+            string importedPath = CopyDirectoryResourceIntoProject(fullPath, assetSubdirectory);
+            _resourceImportCache[cacheKey] = importedPath;
+            imported++;
+            return importedPath;
+        }
+
+        warnings.Add($"Resource not found: {normalizedPath}");
+        return normalizedPath;
+    }
+
+    private string? ImportOptionalNullableResource(
+        string? path,
+        string assetSubdirectory,
+        ref int imported,
+        List<string> warnings,
+        bool copyDirectory = false)
+    {
+        string importedPath = ImportOptionalResource(path, assetSubdirectory, ref imported, warnings, copyDirectory);
+        return string.IsNullOrWhiteSpace(importedPath) ? null : importedPath;
+    }
+
+    private string? ImportRuleFsts(string? ruleFsts, ref int imported, List<string> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(ruleFsts))
+        {
+            return null;
+        }
+
+        List<string> importedPaths = [];
+        foreach (string path in ruleFsts.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string importedPath = ImportOptionalResource(path, "tts", ref imported, warnings);
+            if (!string.IsNullOrWhiteSpace(importedPath))
+            {
+                importedPaths.Add(importedPath);
+            }
+        }
+
+        return importedPaths.Count == 0 ? null : string.Join(",", importedPaths);
+    }
+
+    private void NormalizeMatchaVoiceDataDirectory(GameProjectVoiceSettings voice)
+    {
+        if (!string.Equals(voice.ModelKind, "matcha", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(voice.DataDirectory))
+        {
+            return;
+        }
+
+        string dataDirectory = GameProjectPath.NormalizePathText(voice.DataDirectory);
+        string dataDirectoryFullPath = GameProjectPath.ToAbsolute(ProjectDirectory, dataDirectory);
+        if (File.Exists(Path.Combine(dataDirectoryFullPath, "phontab")))
+        {
+            voice.DataDirectory = dataDirectory;
+            return;
+        }
+
+        string nested = Path.Combine(dataDirectoryFullPath, "espeak-ng-data");
+        if (File.Exists(Path.Combine(nested, "phontab")))
+        {
+            voice.DataDirectory = GameProjectPath.ToProjectRelative(ProjectDirectory, nested);
+        }
+    }
+
+    private string CopyDirectoryResourceIntoProject(string sourceDirectory, string assetSubdirectory)
+    {
+        string targetRoot = Path.Combine(ProjectDirectory, "assets", assetSubdirectory);
+        Directory.CreateDirectory(targetRoot);
+        string targetDirectory = MakeUniqueDirectory(Path.Combine(targetRoot, SafeFileStem(Path.GetFileName(sourceDirectory))));
+        CopyDirectoryContents(sourceDirectory, targetDirectory);
+        return GameProjectPath.ToProjectRelative(ProjectDirectory, targetDirectory);
+    }
+
+    private string ResolveImportPath(string path)
+    {
+        string normalized = GameProjectPath.NormalizePathText(path);
+        if (Path.IsPathRooted(normalized)
+            || normalized.StartsWith("project:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameProjectPath.ToAbsolute(ProjectDirectory, normalized);
+        }
+
+        string projectRelative = GameProjectPath.ToAbsolute(ProjectDirectory, normalized);
+        if (File.Exists(projectRelative) || Directory.Exists(projectRelative))
+        {
+            return projectRelative;
+        }
+
+        return Path.GetFullPath(normalized);
+    }
+
+    private static string GetResourceImportCacheKey(string fullPath)
+    {
+        return Path.GetFullPath(fullPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static bool ShouldImportResource(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        string trimmed = GameProjectPath.NormalizePathText(path);
+        return !trimmed.StartsWith("app:", StringComparison.OrdinalIgnoreCase)
+            && !trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase)
+            && !trimmed.Replace('\\', '/').StartsWith("Resources/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly record struct ResourceImportSummary(bool HasWarnings, string Message);
+
     public void ApplyCameraSettings()
     {
         CameraSettings camera = Project.Scene.Camera;
+        EnsureSceneCameras();
+        SceneCameraSettings mainCamera = Project.Scene.Cameras.First(item => item.IsMain);
+        camera = mainCamera.Camera;
+        Project.Scene.Camera = camera;
+        Project.Scene.MainCamera = mainCamera.Name;
         _camera.SetLookAt(camera.Position.ToVector3(), camera.Target.ToVector3());
         _camera.ProjectionMode = NormalizeProjectionMode(camera.ProjectionMode) == "orthographic"
             ? CameraProjectionMode.Orthographic
@@ -563,6 +1006,72 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _camera.OrthographicSize = camera.OrthographicSize;
         _camera.NearClipPlane = camera.NearClipPlane;
         _camera.FarClipPlane = camera.FarClipPlane;
+        _renderTextureManager?.SyncCameras(_camera);
+    }
+
+    private void EnsureSceneCameras()
+    {
+        if (Project.Scene.Cameras.Count == 0)
+        {
+            Project.Scene.Cameras.Add(new SceneCameraSettings
+            {
+                Name = string.IsNullOrWhiteSpace(Project.Scene.MainCamera) ? "Main Camera" : Project.Scene.MainCamera,
+                IsMain = true,
+                Camera = Project.Scene.Camera
+            });
+        }
+
+        SceneCameraSettings? main = Project.Scene.Cameras.FirstOrDefault(camera => camera.IsMain)
+            ?? Project.Scene.Cameras.FirstOrDefault(camera => string.Equals(camera.Name, Project.Scene.MainCamera, StringComparison.OrdinalIgnoreCase))
+            ?? Project.Scene.Cameras[0];
+        foreach (SceneCameraSettings camera in Project.Scene.Cameras)
+        {
+            camera.IsMain = ReferenceEquals(camera, main);
+        }
+
+        Project.Scene.MainCamera = main.Name;
+        Project.Scene.Camera = main.Camera;
+    }
+
+    private void ApplyRuntimeCamera(OrbitCamera camera)
+    {
+        foreach (EditorPmxObject item in _pmxObjects)
+        {
+            item.Model.Camera = camera;
+        }
+
+        foreach (EditorParticleObject item in _particleObjects)
+        {
+            item.Component.Camera = camera;
+        }
+
+        foreach (EditorWaterObject item in _waterObjects)
+        {
+            item.Component.Camera = camera;
+        }
+
+        foreach (EditorPlaneObject item in _planeObjects)
+        {
+            item.Component.Camera = camera;
+        }
+
+        if (_skybox is not null)
+        {
+            _skybox.Camera = camera;
+        }
+    }
+
+    private IReadOnlyList<DrawableGameComponent> GetRenderTextureExcludedComponents()
+    {
+        List<DrawableGameComponent> excluded = [];
+        if (_overlay is not null)
+        {
+            excluded.Add(_overlay);
+        }
+
+        excluded.AddRange(Components.OfType<EditorDebugAxesComponent>());
+        excluded.AddRange(Components.OfType<EditorColliderWireframeComponent>());
+        return excluded;
     }
 
     private static string NormalizeProjectionMode(string projectionMode)
@@ -571,6 +1080,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         return normalized is "orthographic" or "ortho"
             ? "orthographic"
             : "perspective";
+    }
+
+    private static bool IsEmptyEntity(GameEntity entity)
+    {
+        string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized is "empty" or "empty_object" or "game_object";
     }
 
     public void PlayOrPauseAudio(AudioAsset audioAsset)
@@ -681,6 +1196,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         if (!string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
         {
+            if (IsEmptyEntity(entity))
+            {
+                UpdateStatus($"Loaded empty object: {entity.Name}");
+                return true;
+            }
+
             if (string.Equals(entity.Type, "particle_system", StringComparison.OrdinalIgnoreCase))
             {
                 return TryLoadParticleRuntime(entity);
@@ -689,6 +1210,11 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             if (string.Equals(entity.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
             {
                 return TryLoadWaterRuntime(entity);
+            }
+
+            if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+            {
+                return TryLoadPlaneRuntime(entity);
             }
 
             UpdateStatus($"Unsupported entity type: {entity.Type}");
@@ -708,6 +1234,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             model = new PmxModelComponent(fullPath)
             {
                 Camera = _camera,
+                RuntimeTextureProvider = _renderTextureManager,
                 DrawOrder = 100
             };
             _ = AddComponent(model);
@@ -835,6 +1362,24 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ApplyEntityToWater(entity, runtime.Component);
     }
 
+    public void ApplySelectedPlaneToRuntime()
+    {
+        GameEntity? entity = SelectedEntity;
+        if (entity is null || !string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        EditorPlaneObject? runtime = _planeObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
+        if (runtime is null)
+        {
+            TryLoadPlaneRuntime(entity);
+            return;
+        }
+
+        ApplyEntityToPlane(entity, runtime.Component);
+    }
+
     private bool TryLoadParticleRuntime(GameEntity entity)
     {
         ParticleSystemComponent? component = null;
@@ -844,6 +1389,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 _camera,
                 ParticleEntitySettingsMapper.ToSettings(entity.Particle))
             {
+                RuntimeTextureProvider = _renderTextureManager,
                 DrawOrder = 130
             };
             _ = AddComponent(component);
@@ -897,6 +1443,37 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    private bool TryLoadPlaneRuntime(GameEntity entity)
+    {
+        TexturedPlaneComponent? component = null;
+        try
+        {
+            component = new TexturedPlaneComponent(_camera, ResolvePlaneTexturePath(entity))
+            {
+                RuntimeTextureProvider = _renderTextureManager,
+                DrawOrder = 115
+            };
+            _ = AddComponent(component);
+            ApplyEntityToPlane(entity, component);
+            _planeObjects.Add(new EditorPlaneObject
+            {
+                Entity = entity,
+                Component = component
+            });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (component is not null)
+            {
+                _ = RemoveComponent(component);
+            }
+
+            UpdateStatus($"Failed to load textured plane: {ex.Message}");
+            return false;
+        }
+    }
+
     private static void ApplyEntityToParticle(GameEntity entity, ParticleSystemComponent component, bool resetParticles)
     {
         component.Position = entity.Transform.Position.ToVector3();
@@ -921,6 +1498,32 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
     }
 
+    private void ApplyEntityToPlane(GameEntity entity, TexturedPlaneComponent component)
+    {
+        component.Position = entity.Transform.Position.ToVector3();
+        component.Rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
+        component.Scale = entity.Transform.Scale.ToVector3();
+        component.Visible = entity.IsPlaying;
+        component.TexturePath = ResolvePlaneTexturePath(entity);
+        component.Width = Math.Max(entity.Plane.Width, 0.001f);
+        component.Height = Math.Max(entity.Plane.Height, 0.001f);
+        component.Billboard = entity.Plane.Billboard;
+        component.Tint = entity.Plane.Tint.ToVector4();
+        component.Opacity = entity.Plane.Opacity;
+    }
+
+    private string ResolvePlaneTexturePath(GameEntity entity)
+    {
+        string path = !string.IsNullOrWhiteSpace(entity.Plane.TexturePath)
+            ? entity.Plane.TexturePath
+            : entity.AssetPath;
+        return string.IsNullOrWhiteSpace(path)
+            ? string.Empty
+            : path.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase)
+                ? path.Trim()
+                : GameProjectPath.ToAbsolute(ProjectDirectory, path);
+    }
+
     private void ApplyLightingToModel(PmxModelComponent model)
     {
         LightingSettings lighting = Project.Scene.Lighting;
@@ -929,6 +1532,73 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         model.AmbientLightColor = lighting.AmbientColor.ToVector3();
         model.AmbientLightStrength = lighting.AmbientStrength;
         model.ShadowColor = lighting.ShadowColor.ToVector4();
+    }
+
+    private void UpdateWaterInteractions(GameTime gameTime)
+    {
+        double now = gameTime.TotalSeconds;
+        foreach (EditorWaterObject waterObject in _waterObjects)
+        {
+            GameEntity waterEntity = waterObject.Entity;
+            if (!waterEntity.Water.EnableInteraction)
+            {
+                continue;
+            }
+
+            float waterY = waterEntity.Transform.Position.Y;
+            float waterHalfSize = Math.Max(waterEntity.Water.Size, 0.1f) * MathF.Max(MathF.Abs(waterEntity.Transform.Scale.X), MathF.Abs(waterEntity.Transform.Scale.Z));
+            foreach (GameEntity entity in Project.Scene.Entities)
+            {
+                if (ReferenceEquals(entity, waterEntity))
+                {
+                    continue;
+                }
+
+                foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(entity))
+                {
+                    if (!collider.Enabled || !TryGetColliderApproximation(entity, collider, out Vector3 center, out float radius))
+                    {
+                        continue;
+                    }
+
+                    if (MathF.Abs(center.Y - waterY) > radius)
+                    {
+                        continue;
+                    }
+
+                    Vector3 delta = center - waterEntity.Transform.Position.ToVector3();
+                    if (MathF.Abs(delta.X) <= waterHalfSize && MathF.Abs(delta.Z) <= waterHalfSize)
+                    {
+                        string rippleKey = $"{waterEntity.Id}:{entity.Id}:{collider.Id}";
+                        if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= 0.35)
+                        {
+                            _waterRippleTimes[rippleKey] = now;
+                            waterObject.Component.AddRipple(new Vector3(center.X, waterY, center.Z), waterEntity.Water.InteractionRadius, waterEntity.Water.InteractionStrength);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool TryGetColliderApproximation(GameEntity entity, ColliderSettings collider, out Vector3 center, out float radius)
+    {
+        center = default;
+        radius = 0.0f;
+        Vector3 position = entity.Transform.Position.ToVector3();
+        Quaternion rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
+        Vector3 scale = entity.Transform.Scale.ToVector3();
+        ColliderGeometry geometry = CollisionGeometry.CreateCollider(collider, position, rotation, scale);
+        if (geometry.Shape == "box")
+        {
+            center = geometry.Box.Center;
+            radius = geometry.Box.HalfExtents.Length();
+            return true;
+        }
+
+        center = geometry.Capsule.Center;
+        radius = geometry.Capsule.Radius + (Vector3.Distance(geometry.Capsule.Start, geometry.Capsule.End) * 0.5f);
+        return true;
     }
 
     private void TryLoadAudioRuntime(AudioAsset audioAsset)
@@ -993,6 +1663,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _waterObjects.Clear();
 
+        foreach (EditorPlaneObject item in _planeObjects.ToArray())
+        {
+            RemoveComponent(item.Component);
+        }
+
+        _planeObjects.Clear();
+
         foreach (AudioSource source in _audioSources.Values)
         {
             source.Dispose();
@@ -1020,6 +1697,366 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             {
                 EnsureCleanEntityScriptTemplate(binding);
             }
+        }
+    }
+
+    private ScriptValidationSummary PrepareAndValidateScripts()
+    {
+        List<ScriptValidationResult> results = [];
+        foreach (ScriptBinding binding in Project.Scene.LoadingScripts)
+        {
+            results.Add(PrepareScriptBinding(binding, "scene loading script"));
+        }
+
+        foreach (GameEntity entity in Project.Scene.Entities)
+        {
+            foreach (ScriptBinding binding in entity.Scripts)
+            {
+                results.Add(PrepareScriptBinding(binding, $"entity '{entity.Name}' script"));
+            }
+        }
+
+        int errors = results.Count(result => !result.Success);
+        int warnings = results.Count(result => result.Success && !string.IsNullOrWhiteSpace(result.Message));
+        string message = errors > 0
+            ? $"Script check failed: {errors} error(s), {warnings} warning(s).\n{string.Join('\n', results.Where(result => !result.Success).Take(5).Select(result => result.Message))}"
+            : $"Script check passed: {results.Count} script(s).";
+        return new ScriptValidationSummary(errors > 0, message);
+    }
+
+    private ScriptValidationResult PrepareScriptBinding(ScriptBinding binding, string context)
+    {
+        try
+        {
+            NormalizeScriptLanguageAndPath(binding);
+            CopyExternalScriptIntoProject(binding);
+            EnsureScriptTemplateForBinding(binding);
+            return ValidateScriptBinding(binding, context);
+        }
+        catch (Exception ex)
+        {
+            return ScriptValidationResult.Error($"{context}: {ex.Message}");
+        }
+    }
+
+    private void NormalizeScriptLanguageAndPath(ScriptBinding binding)
+    {
+        binding.Language = NormalizeScriptLanguage(binding.Language, binding.Path);
+        if (string.IsNullOrWhiteSpace(binding.Path))
+        {
+            string extension = binding.Language == "python" ? ".py" : ".csx";
+            binding.Path = $"scripts/script_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{extension}";
+        }
+    }
+
+    private void CopyExternalScriptIntoProject(ScriptBinding binding)
+    {
+        if (string.IsNullOrWhiteSpace(binding.Path))
+        {
+            return;
+        }
+
+        string originalPath = binding.Path.Trim().Trim('"');
+        if (originalPath.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        string fullPath = ResolveScriptPath(originalPath);
+        if (!File.Exists(fullPath))
+        {
+            return;
+        }
+
+        if (IsPathInsideDirectory(fullPath, ProjectDirectory))
+        {
+            return;
+        }
+
+        string targetDirectory = Path.Combine(ProjectDirectory, "scripts");
+        Directory.CreateDirectory(targetDirectory);
+        string targetPath = MakeUniqueFilePath(targetDirectory, Path.GetFileName(fullPath));
+        File.Copy(fullPath, targetPath);
+        binding.Path = GameProjectPath.ToProjectRelative(ProjectDirectory, targetPath);
+    }
+
+    private void EnsureScriptTemplateForBinding(ScriptBinding binding)
+    {
+        if (Path.IsPathRooted(binding.Path)
+            || binding.Path.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (IsLoadingScriptTemplate(binding))
+        {
+            EnsureLoadingScriptTemplate(binding);
+        }
+        else
+        {
+            EnsureCleanEntityScriptTemplate(binding);
+        }
+    }
+
+    private ScriptValidationResult ValidateScriptBinding(ScriptBinding binding, string context)
+    {
+        if (!binding.Enabled)
+        {
+            return ScriptValidationResult.Ok($"{context}: disabled.");
+        }
+
+        string fullPath = GameProjectPath.ToAbsolute(ProjectDirectory, binding.Path);
+        if (!File.Exists(fullPath))
+        {
+            return ScriptValidationResult.Error($"{context}: script file not found: {fullPath}");
+        }
+
+        string language = NormalizeScriptLanguage(binding.Language, binding.Path);
+        binding.Language = language;
+        return language == "python"
+            ? ValidatePythonScript(fullPath, context)
+            : ValidateCSharpScript(fullPath, context);
+    }
+
+    private static ScriptValidationResult ValidateCSharpScript(string fullPath, string context)
+    {
+        string source = File.ReadAllText(fullPath);
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(
+            source,
+            new CSharpParseOptions(kind: SourceCodeKind.Script),
+            fullPath);
+        Diagnostic? error = tree.GetDiagnostics().FirstOrDefault(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        if (error is null)
+        {
+            return ScriptValidationResult.Ok($"{context}: C# syntax OK.");
+        }
+
+        FileLinePositionSpan span = error.Location.GetLineSpan();
+        return ScriptValidationResult.Error($"{context}: C# syntax error {Path.GetFileName(fullPath)}:{span.StartLinePosition.Line + 1}:{span.StartLinePosition.Character + 1} {error.GetMessage()}");
+    }
+
+    private static ScriptValidationResult ValidatePythonScript(string fullPath, string context)
+    {
+        try
+        {
+            string source = File.ReadAllText(fullPath);
+            PythonSyntaxChecker.Check(source, fullPath);
+            return ScriptValidationResult.Ok($"{context}: Python syntax OK.");
+        }
+        catch (Exception ex)
+        {
+            return ScriptValidationResult.Error($"{context}: Python syntax error {ex.Message}");
+        }
+    }
+
+    private string ResolveScriptPath(string path)
+    {
+        string normalized = path.Trim().Trim('"');
+        if (Path.IsPathRooted(normalized)
+            || normalized.StartsWith("project:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameProjectPath.ToAbsolute(ProjectDirectory, normalized);
+        }
+
+        string projectRelative = GameProjectPath.ToAbsolute(ProjectDirectory, normalized);
+        if (File.Exists(projectRelative))
+        {
+            return projectRelative;
+        }
+
+        return Path.GetFullPath(normalized);
+    }
+
+    private static bool IsPathInsideDirectory(string path, string directory)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string fullDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return fullPath.Equals(fullDirectory, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(fullDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(fullDirectory + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string MakeUniqueFilePath(string directory, string fileName)
+    {
+        string candidate = Path.Combine(directory, string.IsNullOrWhiteSpace(fileName) ? "script.csx" : fileName);
+        if (!File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        string stem = Path.GetFileNameWithoutExtension(candidate);
+        string extension = Path.GetExtension(candidate);
+        string parent = Path.GetDirectoryName(candidate) ?? directory;
+        for (int i = 1; ; i++)
+        {
+            string next = Path.Combine(parent, $"{stem}_{i}{extension}");
+            if (!File.Exists(next))
+            {
+                return next;
+            }
+        }
+    }
+
+    private static bool IsLoadingScriptTemplate(ScriptBinding binding)
+    {
+        string path = (binding.Path ?? string.Empty).Replace('\\', '/');
+        return path.Contains("scene_loading", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("loading", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeScriptLanguage(string language, string path)
+    {
+        string normalized = (language ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized is "python" or "py")
+        {
+            return "python";
+        }
+
+        if (normalized is "csharp" or "cs" or "csx")
+        {
+            return "csharp";
+        }
+
+        return string.Equals(Path.GetExtension(path), ".py", StringComparison.OrdinalIgnoreCase)
+            ? "python"
+            : "csharp";
+    }
+
+    private readonly record struct ScriptValidationSummary(bool HasErrors, string Message);
+
+    private readonly record struct ScriptValidationResult(bool Success, string Message)
+    {
+        public static ScriptValidationResult Ok(string message) => new(true, message);
+
+        public static ScriptValidationResult Error(string message) => new(false, message);
+
+        public string ToStatusMessage(string prefix)
+        {
+            return string.IsNullOrWhiteSpace(Message)
+                ? prefix
+                : $"{prefix}\n{Message}";
+        }
+    }
+
+    private static class PythonSyntaxChecker
+    {
+        public static void Check(string source, string filePath)
+        {
+            string? python = ResolvePythonExecutable();
+            if (string.IsNullOrWhiteSpace(python))
+            {
+                throw new InvalidOperationException("python executable was not found in PATH.");
+            }
+
+            string tempPath = Path.Combine(Path.GetTempPath(), $"dw_python_syntax_{Guid.NewGuid():N}.py");
+            try
+            {
+                File.WriteAllText(tempPath, source);
+                using Process process = new()
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = python,
+                        UseShellExecute = false,
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true
+                    }
+                };
+
+                process.StartInfo.ArgumentList.Add("-m");
+                process.StartInfo.ArgumentList.Add("py_compile");
+                process.StartInfo.ArgumentList.Add(tempPath);
+                if (!process.Start())
+                {
+                    throw new InvalidOperationException("failed to start python syntax checker.");
+                }
+
+                string stderr = process.StandardError.ReadToEnd();
+                string stdout = process.StandardOutput.ReadToEnd();
+                process.WaitForExit(5000);
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    throw new TimeoutException("python syntax checker timed out.");
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    string message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                    throw new InvalidOperationException($"{Path.GetFileName(filePath)}: {NormalizePythonError(message)}");
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
+                }
+                catch
+                {
+                    // Ignore temp cleanup failures.
+                }
+            }
+        }
+
+        private static string? ResolvePythonExecutable()
+        {
+            string[] candidates = OperatingSystem.IsWindows()
+                ? ["python.exe", "py.exe"]
+                : ["python3", "python"];
+            foreach (string candidate in candidates)
+            {
+                if (CanStart(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool CanStart(string fileName)
+        {
+            try
+            {
+                using Process process = new()
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = fileName,
+                        UseShellExecute = false,
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true
+                    }
+                };
+                process.StartInfo.ArgumentList.Add("--version");
+                if (!process.Start())
+                {
+                    return false;
+                }
+
+                process.WaitForExit(3000);
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    return false;
+                }
+
+                return process.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string NormalizePythonError(string message)
+        {
+            return string.Join(' ', message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(item => item.Trim()));
         }
     }
 

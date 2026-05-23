@@ -27,6 +27,8 @@ public sealed class RuntimeInput
 
     public bool IsControlDown => _game.Input.IsControlDown;
 
+    public bool IsShiftDown => IsKeyDown("ShiftLeft") || IsKeyDown("ShiftRight");
+
     public bool IsMouseButtonDown(string button)
     {
         return TryParseMouseButton(button, out MouseButton parsed) && _game.Input.IsMouseButtonDown(parsed);

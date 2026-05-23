@@ -107,7 +107,19 @@ public sealed class RuntimeVoice : IDisposable
 
     public void Speak(RuntimeEntity entity, string text, RuntimeVoiceOptions? options = null)
     {
-        if (!_settings.Enabled || !entity.IsPmxModel || string.IsNullOrWhiteSpace(text))
+        if (!_settings.Enabled)
+        {
+            Console.Error.WriteLine($"Entity speech ignored for '{entity.Name}' because Voice.Enabled is false.");
+            return;
+        }
+
+        if (!entity.IsPmxModel)
+        {
+            Console.Error.WriteLine($"Entity speech ignored for '{entity.Name}' because it is not a PMX model.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
         {
             return;
         }
@@ -335,14 +347,15 @@ public sealed class RuntimeVoice : IDisposable
                 }
             }
 
-            double milliseconds = vowelCount > 0
-                ? audioDuration.TotalMilliseconds / vowelCount
-                : 180.0;
+            if (vowelCount <= 0)
+            {
+                return TimeSpan.FromMilliseconds(180.0);
+            }
 
-            milliseconds = Math.Clamp(
-                milliseconds,
-                Math.Max(1.0f, _settings.LipSync.MinFramePeriodMilliseconds),
-                Math.Max(_settings.LipSync.MinFramePeriodMilliseconds, _settings.LipSync.MaxFramePeriodMilliseconds));
+            double targetDurationMilliseconds = Math.Max(1.0, audioDuration.TotalMilliseconds);
+            double milliseconds = Math.Max(
+                targetDurationMilliseconds / vowelCount,
+                Math.Max(1.0f, _settings.LipSync.MinFramePeriodMilliseconds));
             return TimeSpan.FromMilliseconds(milliseconds);
         }
         catch
@@ -363,17 +376,25 @@ public sealed class RuntimeVoice : IDisposable
             throw new NotSupportedException($"Unsupported voice TTS provider: {_settings.TtsProvider}");
         }
 
+        SpeechSynthesisModelKind modelKind = ParseModelKind(_settings.ModelKind);
         string modelPath = ResolveRequiredPath(_settings.ModelPath, "Voice.ModelPath");
         string tokensPath = ResolveRequiredPath(_settings.TokensPath, "Voice.TokensPath");
+        string? dataDirectory = ResolveOptionalPath(_settings.DataDirectory);
+        string? dictDirectory = ResolveOptionalPath(_settings.DictDirectory);
+        if (modelKind == SpeechSynthesisModelKind.Matcha)
+        {
+            dataDirectory = ResolveMatchaDataDirectory(modelPath, dataDirectory, dictDirectory);
+        }
+
         _synthesizer = new SherpaOnnxTextToSpeechSynthesizer(
             new SherpaOnnxTtsOptions
             {
                 ModelPath = modelPath,
                 TokensPath = tokensPath,
-                ModelKind = ParseModelKind(_settings.ModelKind),
+                ModelKind = modelKind,
                 LexiconPath = ResolveOptionalPath(_settings.LexiconPath),
-                DataDirectory = ResolveOptionalPath(_settings.DataDirectory),
-                DictDirectory = ResolveOptionalPath(_settings.DictDirectory),
+                DataDirectory = dataDirectory,
+                DictDirectory = dictDirectory,
                 VocoderPath = ResolveOptionalPath(_settings.VocoderPath),
                 RuleFars = ResolveOptionalPath(_settings.RuleFars),
                 RuleFsts = ResolveRuleFsts(_settings.RuleFsts),
@@ -383,6 +404,42 @@ public sealed class RuntimeVoice : IDisposable
             NullLogger<SherpaOnnxTextToSpeechSynthesizer>.Instance);
 
         return _synthesizer;
+    }
+
+    private static string ResolveMatchaDataDirectory(string modelPath, string? dataDirectory, string? dictDirectory)
+    {
+        foreach (string? candidate in new[]
+        {
+            dataDirectory,
+            dictDirectory,
+            Path.GetDirectoryName(modelPath)
+        })
+        {
+            string? resolved = ResolveEspeakDataDirectory(candidate);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                return resolved;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "SherpaOnnx Matcha TTS requires Voice.DataDirectory to point to an espeak-ng-data directory that contains phontab.");
+    }
+
+    private static string? ResolveEspeakDataDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return null;
+        }
+
+        if (File.Exists(Path.Combine(directory, "phontab")))
+        {
+            return directory;
+        }
+
+        string nested = Path.Combine(directory, "espeak-ng-data");
+        return File.Exists(Path.Combine(nested, "phontab")) ? nested : null;
     }
 
     private SpeechDictionarySet EnsureSpeechDictionaries()
@@ -423,7 +480,7 @@ public sealed class RuntimeVoice : IDisposable
             return null;
         }
 
-        string trimmed = path.Trim();
+        string trimmed = GameProjectPath.NormalizePathText(path);
         if (Path.IsPathRooted(trimmed))
         {
             return Path.GetFullPath(trimmed);

@@ -9,6 +9,8 @@ public sealed class RuntimeScene
     private readonly IReadOnlyDictionary<string, RuntimeEntity> _entitiesByName;
     private readonly RuntimeWindowControl _window;
     private readonly RuntimeCamera _camera;
+    private readonly RuntimeDebug _debug;
+    private readonly RuntimeSaveStore _save;
     private readonly Action<string> _requestSceneChange;
     private readonly Action<RuntimeEntity, string> _dispatchSpeechEvent;
 
@@ -18,6 +20,8 @@ public sealed class RuntimeScene
         IReadOnlyDictionary<string, RuntimeEntity> entitiesByName,
         RuntimeWindowControl window,
         RuntimeCamera camera,
+        RuntimeDebug debug,
+        RuntimeSaveStore save,
         Action<RuntimeEntity, string> dispatchSpeechEvent,
         Action<string> requestSceneChange)
     {
@@ -26,6 +30,8 @@ public sealed class RuntimeScene
         _entitiesByName = entitiesByName;
         _window = window;
         _camera = camera;
+        _debug = debug;
+        _save = save;
         _dispatchSpeechEvent = dispatchSpeechEvent;
         _requestSceneChange = requestSceneChange;
     }
@@ -41,6 +47,12 @@ public sealed class RuntimeScene
     public RuntimeWindowControl Window => _window;
 
     public RuntimeCamera Camera => _camera;
+
+    public RuntimeDebug Debug => _debug;
+
+    public RuntimeSaveStore Save => _save;
+
+    public string RenderTexture(string renderTextureName) => _camera.RenderTexture(renderTextureName);
 
     public RuntimeEntity? GetEntity(string idOrName)
     {

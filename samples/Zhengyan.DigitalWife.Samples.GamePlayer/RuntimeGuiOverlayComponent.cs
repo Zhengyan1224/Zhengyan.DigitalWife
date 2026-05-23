@@ -22,6 +22,8 @@ internal sealed class RuntimeGuiOverlayComponent(
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private ImGuiController? _controller;
 
+    public IRuntimeTextureProvider? RuntimeTextureProvider { get; set; }
+
     protected override void Initialize()
     {
         if (Game is null)
@@ -101,8 +103,8 @@ internal sealed class RuntimeGuiOverlayComponent(
             .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            Texture2D? texture = GetSpriteTexture(sprite.Path);
-            if (texture is null)
+            uint textureId = GetSpriteTextureId(sprite.Path);
+            if (textureId == 0)
             {
                 continue;
             }
@@ -110,7 +112,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             Vector2 min = new(sprite.X, sprite.Y);
             Vector2 spriteMax = min + new Vector2(Math.Max(sprite.Width, 1.0f), Math.Max(sprite.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, texture.Id, min, spriteMax, sprite.RotationDegrees, tint);
+            AddSpriteImage(drawList, textureId, min, spriteMax, sprite.RotationDegrees, tint);
         }
 
         drawList.PopClipRect();
@@ -166,6 +168,16 @@ internal sealed class RuntimeGuiOverlayComponent(
         return texture;
     }
 
+    private uint GetSpriteTextureId(string path)
+    {
+        if (RuntimeTextureProvider is not null && RuntimeTextureProvider.TryGetTexture(path, out uint textureId))
+        {
+            return textureId;
+        }
+
+        return GetSpriteTexture(path)?.Id ?? 0;
+    }
+
     private void DrawControl(GuiControlSettings control)
     {
         ImGui.SetNextWindowPos(new Vector2(control.X, control.Y), ImGuiCond.Always);
@@ -176,6 +188,10 @@ internal sealed class RuntimeGuiOverlayComponent(
             | ImGuiWindowFlags.NoResize;
 
         GuiControlStyleSettings style = control.Style;
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Math.Max(style.Rounding, 0.0f));
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, Math.Max(style.BorderThickness, 0.0f));
         ImGui.PushStyleColor(ImGuiCol.Text, style.TextColor.ToVector4());
@@ -196,11 +212,13 @@ internal sealed class RuntimeGuiOverlayComponent(
         if (!ImGui.Begin(windowId, flags))
         {
             ImGui.PopStyleColor(13);
-            ImGui.PopStyleVar(2);
+            ImGui.PopStyleVar(6);
             ImGui.End();
             return;
         }
 
+        Vector2 controlSize = new(Math.Max(control.Width, 1.0f), Math.Max(control.Height, 1.0f));
+        ImGui.SetCursorPos(Vector2.Zero);
         string type = control.Type.ToLowerInvariant();
         if (type == "label")
         {
@@ -227,14 +245,15 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
         else
         {
-            if (ImGui.Button(control.Text, new Vector2(-1.0f, -1.0f)))
+            string buttonText = string.IsNullOrWhiteSpace(control.Text) ? control.Name : control.Text;
+            if (ImGui.Button($"{buttonText}##{control.Id}", controlSize))
             {
                 _dispatchEvent(control, string.IsNullOrWhiteSpace(control.EventName) ? "clicked" : control.EventName);
             }
         }
 
         ImGui.PopStyleColor(13);
-        ImGui.PopStyleVar(2);
+        ImGui.PopStyleVar(6);
         ImGui.End();
     }
 

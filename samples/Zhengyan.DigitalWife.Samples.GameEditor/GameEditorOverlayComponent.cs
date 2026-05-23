@@ -75,11 +75,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         _controller.Update((float)gameTime.ElapsedSeconds);
 
         DrawViewport();
-        DrawProjectPanel();
-        DrawHierarchyPanel();
-        DrawInspectorPanel();
-        DrawAssetsPanel();
-        DrawStatusBar();
+        DrawEditorPanel();
 
         _controller.Render();
     }
@@ -124,6 +120,54 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             new Vector2(1.0f, 0.0f));
         DrawSpritePreview(imageMin, new Vector2(width, height));
         DrawGuiPreview(imageMin, new Vector2(width, height));
+
+        ImGui.End();
+    }
+
+    private void DrawEditorPanel()
+    {
+        ImGui.SetNextWindowSize(new Vector2(520.0f, 820.0f), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowPos(new Vector2(16.0f, 68.0f), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Editor Panel"))
+        {
+            ImGui.End();
+            return;
+        }
+
+        if (ImGui.BeginTabBar("EditorPanelTabs"))
+        {
+            if (ImGui.BeginTabItem("Project"))
+            {
+                DrawProjectPanel();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Assets"))
+            {
+                DrawAssetsPanel();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Hierarchy"))
+            {
+                DrawHierarchyPanel();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Inspector"))
+            {
+                DrawInspectorPanel();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Status"))
+            {
+                DrawStatusBar();
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
 
         ImGui.End();
     }
@@ -373,13 +417,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawProjectPanel()
     {
-        ImGui.SetNextWindowSize(new Vector2(430.0f, 260.0f), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Project"))
-        {
-            ImGui.End();
-            return;
-        }
-
         DrawPathInput("Project directory", ref _projectDirectory, 1024, "projectDirectory");
         if (ImGui.Button("Use Directory"))
         {
@@ -449,7 +486,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         DrawVoiceSettings(project.Voice);
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
-        ImGui.End();
     }
 
     private void DrawWindowSettings(GameWindowSettings window)
@@ -628,13 +664,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawHierarchyPanel()
     {
-        ImGui.SetNextWindowSize(new Vector2(320.0f, 520.0f), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Hierarchy"))
-        {
-            ImGui.End();
-            return;
-        }
-
         ImGui.TextUnformatted(_editorGame.Project.Scene.Name);
         ImGui.Separator();
 
@@ -646,6 +675,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             {
                 "particle_system" => "[FX]",
                 "water_surface" => "[Water]",
+                "textured_plane" => "[Plane]",
+                "empty" or "empty_object" or "game_object" => "[Empty]",
                 _ => "[PMX]"
             };
             if (ImGui.Selectable($"{prefix} {entity.Name}##entity{i}", selected))
@@ -659,19 +690,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             _editorGame.RemoveSelectedEntity();
         }
-
-        ImGui.End();
     }
 
     private void DrawInspectorPanel()
     {
-        ImGui.SetNextWindowSize(new Vector2(460.0f, 720.0f), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Inspector"))
-        {
-            ImGui.End();
-            return;
-        }
-
         DrawSceneInspector();
         DrawGuiInspector();
         ImGui.Separator();
@@ -680,7 +702,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         if (entity is null)
         {
             ImGui.TextWrapped("Select an entity to edit its transform, rendering flags, and scripts.");
-            ImGui.End();
             return;
         }
 
@@ -748,6 +769,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplySelectedEntityToRuntime();
         }
 
+        DrawColliderInspector(entity);
+
         if (string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
         {
             DrawRelationInspector(entity);
@@ -760,6 +783,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         else if (string.Equals(entity.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
         {
             DrawWaterInspector(entity);
+        }
+        else if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+        {
+            DrawPlaneInspector(entity);
         }
 
         if (ImGui.Button("Reload Runtime Object"))
@@ -786,7 +813,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 script.Language = language;
             }
 
-            if (ImGui.InputText("Path", ref path, 512))
+            bool pathEdited = ImGui.InputText("Path", ref path, 512);
+            bool pathCommitted = pathEdited && ImGui.IsItemDeactivatedAfterEdit();
+            if (pathEdited)
             {
                 script.Path = path;
             }
@@ -795,6 +824,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             {
                 PasteClipboard(ref path);
                 script.Path = path;
+                pathCommitted = true;
+            }
+
+            if (pathCommitted)
+            {
+                _editorGame.NormalizeAndValidateScriptBinding(script, $"entity '{entity.Name}' script");
             }
 
             ImGui.PopID();
@@ -810,8 +845,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             _editorGame.AddScriptToSelected("python");
         }
-
-        ImGui.End();
     }
 
     private void DrawSceneInspector()
@@ -876,8 +909,246 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplySceneSettings();
         }
 
+        DrawSkyboxInspector(scene);
+        DrawCamerasInspector(scene);
+        DrawRenderTexturesInspector(scene);
         DrawLoadingScreenInspector(scene);
         DrawSceneLoadingScriptsInspector(scene);
+    }
+
+    private static void EnsureCameraList(GameProjectScene scene)
+    {
+        if (scene.Cameras.Count == 0)
+        {
+            scene.Cameras.Add(new SceneCameraSettings
+            {
+                Name = string.IsNullOrWhiteSpace(scene.MainCamera) ? "Main Camera" : scene.MainCamera,
+                IsMain = true,
+                Camera = scene.Camera
+            });
+        }
+
+        SceneCameraSettings? main = scene.Cameras.FirstOrDefault(camera => camera.IsMain)
+            ?? scene.Cameras.FirstOrDefault(camera => string.Equals(camera.Name, scene.MainCamera, StringComparison.OrdinalIgnoreCase))
+            ?? scene.Cameras[0];
+        foreach (SceneCameraSettings camera in scene.Cameras)
+        {
+            camera.IsMain = ReferenceEquals(camera, main);
+        }
+
+        scene.MainCamera = main.Name;
+        scene.Camera = main.Camera;
+    }
+
+    private void DrawCamerasInspector(GameProjectScene scene)
+    {
+        if (!ImGui.CollapsingHeader("Cameras"))
+        {
+            return;
+        }
+
+        EnsureCameraList(scene);
+        int mainIndex = Math.Max(0, scene.Cameras.FindIndex(camera => camera.IsMain));
+        string[] names = scene.Cameras.Select(camera => camera.Name).ToArray();
+        if (ImGui.Combo("Main camera", ref mainIndex, names, names.Length))
+        {
+            for (int i = 0; i < scene.Cameras.Count; i++)
+            {
+                scene.Cameras[i].IsMain = i == mainIndex;
+            }
+
+            scene.MainCamera = scene.Cameras[mainIndex].Name;
+            scene.Camera = scene.Cameras[mainIndex].Camera;
+            _editorGame.ApplyCameraSettings();
+        }
+
+        if (ImGui.Button("Add Camera"))
+        {
+            scene.Cameras.Add(new SceneCameraSettings
+            {
+                Name = $"Camera {scene.Cameras.Count + 1}",
+                Camera = new CameraSettings
+                {
+                    Position = scene.Camera.Position,
+                    Target = scene.Camera.Target,
+                    ProjectionMode = scene.Camera.ProjectionMode,
+                    Fov = scene.Camera.Fov,
+                    OrthographicSize = scene.Camera.OrthographicSize,
+                    NearClipPlane = scene.Camera.NearClipPlane,
+                    FarClipPlane = scene.Camera.FarClipPlane
+                }
+            });
+            _editorGame.ApplyCameraSettings();
+        }
+
+        int removeIndex = -1;
+        for (int i = 0; i < scene.Cameras.Count; i++)
+        {
+            SceneCameraSettings camera = scene.Cameras[i];
+            ImGui.PushID($"camera{i}");
+            if (ImGui.TreeNodeEx(camera.Name, ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                string name = camera.Name;
+                bool enabled = camera.Enabled;
+                Vector3 position = camera.Camera.Position.ToVector3();
+                Vector3 target = camera.Camera.Target.ToVector3();
+                string[] projectionModes = ["perspective", "orthographic"];
+                int projectionIndex = NormalizeProjectionMode(camera.Camera.ProjectionMode) == "orthographic" ? 1 : 0;
+                float fov = camera.Camera.Fov;
+                float orthoSize = camera.Camera.OrthographicSize;
+                float nearClip = camera.Camera.NearClipPlane;
+                float farClip = camera.Camera.FarClipPlane;
+                bool changed = false;
+
+                changed |= ImGui.InputText("Name", ref name, 256);
+                changed |= ImGui.Checkbox("Enabled", ref enabled);
+                changed |= ImGui.DragFloat3("Position", ref position, 0.05f);
+                changed |= ImGui.DragFloat3("Target", ref target, 0.05f);
+                if (ImGui.Combo("Projection", ref projectionIndex, projectionModes, projectionModes.Length))
+                {
+                    changed = true;
+                }
+
+                changed |= ImGui.SliderFloat("FOV", ref fov, 10.0f, 90.0f);
+                changed |= ImGui.DragFloat("Orthographic size", ref orthoSize, 0.05f, 0.01f, 10000.0f);
+                changed |= ImGui.DragFloat("Near clip", ref nearClip, 0.01f, 0.001f, 10000.0f);
+                changed |= ImGui.DragFloat("Far clip", ref farClip, 1.0f, 0.01f, 1000000.0f);
+                if (changed)
+                {
+                    camera.Name = string.IsNullOrWhiteSpace(name) ? camera.Name : name.Trim();
+                    camera.Enabled = enabled;
+                    camera.Camera.Position = Vector3Dto.FromVector3(position);
+                    camera.Camera.Target = Vector3Dto.FromVector3(target);
+                    camera.Camera.ProjectionMode = projectionModes[projectionIndex];
+                    camera.Camera.Fov = fov;
+                    camera.Camera.OrthographicSize = Math.Max(0.01f, orthoSize);
+                    camera.Camera.NearClipPlane = Math.Max(0.001f, nearClip);
+                    camera.Camera.FarClipPlane = Math.Max(camera.Camera.NearClipPlane + 0.001f, farClip);
+                    if (camera.IsMain)
+                    {
+                        scene.MainCamera = camera.Name;
+                        scene.Camera = camera.Camera;
+                    }
+
+                    _editorGame.ApplyCameraSettings();
+                }
+
+                if (!camera.IsMain && ImGui.SmallButton("Remove Camera"))
+                {
+                    removeIndex = i;
+                }
+
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+        }
+
+        if (removeIndex >= 0)
+        {
+            scene.Cameras.RemoveAt(removeIndex);
+            _editorGame.ApplyCameraSettings();
+        }
+    }
+
+    private void DrawRenderTexturesInspector(GameProjectScene scene)
+    {
+        if (!ImGui.CollapsingHeader("Render Textures"))
+        {
+            return;
+        }
+
+        EnsureCameraList(scene);
+        if (ImGui.Button("Add Render Texture"))
+        {
+            scene.RenderTextures.Add(new RenderTextureSettings
+            {
+                Name = $"RenderTexture{scene.RenderTextures.Count + 1}",
+                Camera = scene.MainCamera
+            });
+        }
+
+        string[] cameraNames = scene.Cameras.Select(camera => camera.Name).ToArray();
+        int removeIndex = -1;
+        for (int i = 0; i < scene.RenderTextures.Count; i++)
+        {
+            RenderTextureSettings renderTexture = scene.RenderTextures[i];
+            ImGui.PushID($"renderTexture{i}");
+            ImGui.Separator();
+            string name = renderTexture.Name;
+            bool enabled = renderTexture.Enabled;
+            int cameraIndex = Math.Max(0, Array.FindIndex(cameraNames, name => string.Equals(name, renderTexture.Camera, StringComparison.OrdinalIgnoreCase)));
+            int width = renderTexture.Width;
+            int height = renderTexture.Height;
+            Vector4 clearColor = renderTexture.ClearColor.ToVector4();
+            bool changed = false;
+
+            changed |= ImGui.InputText("Name", ref name, 256);
+            changed |= ImGui.Checkbox("Enabled", ref enabled);
+            if (cameraNames.Length > 0 && ImGui.Combo("Camera", ref cameraIndex, cameraNames, cameraNames.Length))
+            {
+                changed = true;
+            }
+
+            changed |= ImGui.DragInt("Width", ref width, 1.0f, 1, 8192);
+            changed |= ImGui.DragInt("Height", ref height, 1.0f, 1, 8192);
+            changed |= ImGui.ColorEdit4("Clear color", ref clearColor);
+            if (changed)
+            {
+                renderTexture.Name = string.IsNullOrWhiteSpace(name) ? renderTexture.Name : name.Trim();
+                renderTexture.Enabled = enabled;
+                renderTexture.Camera = cameraNames.Length == 0 ? renderTexture.Camera : cameraNames[cameraIndex];
+                renderTexture.Width = Math.Max(1, width);
+                renderTexture.Height = Math.Max(1, height);
+                renderTexture.ClearColor = Vector4Dto.FromVector4(clearColor);
+            }
+
+            ImGui.TextUnformatted($"Reference: rt:{renderTexture.Name}");
+            if (ImGui.SmallButton("Remove Render Texture"))
+            {
+                removeIndex = i;
+            }
+
+            ImGui.PopID();
+        }
+
+        if (removeIndex >= 0)
+        {
+            scene.RenderTextures.RemoveAt(removeIndex);
+        }
+    }
+
+    private void DrawSkyboxInspector(GameProjectScene scene)
+    {
+        if (!ImGui.CollapsingHeader("Skybox", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        SkyboxSettings skybox = scene.Skybox;
+        bool enabled = skybox.Enabled;
+        string texturePath = skybox.TexturePath;
+        float exposure = skybox.Exposure;
+        Vector3 tint = skybox.Tint.ToVector3();
+        bool changed = false;
+
+        changed |= ImGui.Checkbox("Enable skybox", ref enabled);
+        if (DrawPathInput("Skybox texture", ref texturePath, 1024, "skyboxTexturePath"))
+        {
+            changed = true;
+        }
+
+        changed |= ImGui.DragFloat("Skybox exposure", ref exposure, 0.01f, 0.0f, 10.0f);
+        changed |= ImGui.ColorEdit3("Skybox tint", ref tint);
+
+        if (changed)
+        {
+            skybox.Enabled = enabled;
+            skybox.TexturePath = texturePath;
+            skybox.Exposure = Math.Max(0.0f, exposure);
+            skybox.Tint = Vector3Dto.FromVector3(tint);
+            _editorGame.ApplySceneSettings();
+        }
     }
 
     private static string NormalizeProjectionMode(string projectionMode)
@@ -953,7 +1224,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 script.Language = language;
             }
 
-            if (ImGui.InputText("Path", ref path, 512))
+            bool pathEdited = ImGui.InputText("Path", ref path, 512);
+            bool pathCommitted = pathEdited && ImGui.IsItemDeactivatedAfterEdit();
+            if (pathEdited)
             {
                 script.Path = path;
             }
@@ -963,6 +1236,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             {
                 PasteClipboard(ref path);
                 script.Path = path;
+                pathCommitted = true;
+            }
+
+            if (pathCommitted)
+            {
+                _editorGame.NormalizeAndValidateScriptBinding(script, "scene loading script");
             }
 
             if (ImGui.SmallButton("Remove Loading Script"))
@@ -1309,13 +1588,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawAssetsPanel()
     {
-        ImGui.SetNextWindowSize(new Vector2(620.0f, 300.0f), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Assets"))
-        {
-            ImGui.End();
-            return;
-        }
-
         ImGui.Checkbox("Copy imported files into project", ref _copyAssets);
 
         ImGui.SeparatorText("PMX");
@@ -1323,6 +1595,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         if (ImGui.Button("Add PMX Entity") && !string.IsNullOrWhiteSpace(_pmxPath))
         {
             TryRun(() => _editorGame.AddPmxEntityFromPath(_pmxPath, _copyAssets));
+        }
+
+        ImGui.SeparatorText("Empty Object");
+        if (ImGui.Button("Add Empty Object"))
+        {
+            TryRun(_editorGame.AddEmptyEntity);
         }
 
         ImGui.SeparatorText("Audio");
@@ -1344,6 +1622,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         if (ImGui.Button("Add Sprite") && !string.IsNullOrWhiteSpace(_spritePath))
         {
             TryRun(() => _editorGame.AddSpriteFromPath(_spritePath, _copyAssets));
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Add Textured Plane") && !string.IsNullOrWhiteSpace(_spritePath))
+        {
+            TryRun(() => _editorGame.AddTexturedPlaneFromPath(_spritePath, _copyAssets));
         }
 
         ImGui.SeparatorText("Particles");
@@ -1431,8 +1715,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
             ImGui.PopID();
         }
-
-        ImGui.End();
     }
 
     private void DrawSpriteAssetList()
@@ -1457,6 +1739,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
             changed |= ImGui.InputText("Name", ref name, 256);
             if (DrawPathInput("Path", ref path, 1024, "spriteAssetPath"))
+            {
+                changed = true;
+            }
+            if (DrawRenderTextureCombo("Render texture", ref path))
             {
                 changed = true;
             }
@@ -1498,23 +1784,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawStatusBar()
     {
-        ImGui.SetNextWindowPos(new Vector2(12.0f, 12.0f), ImGuiCond.Always);
-        ImGui.SetNextWindowBgAlpha(0.82f);
-        ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration
-            | ImGuiWindowFlags.AlwaysAutoResize
-            | ImGuiWindowFlags.NoSavedSettings
-            | ImGuiWindowFlags.NoFocusOnAppearing
-            | ImGuiWindowFlags.NoNav;
-
-        if (ImGui.Begin("Status", flags))
-        {
-            ImGui.TextUnformatted("Zhengyan Game Editor");
-            ImGui.TextWrapped(_editorGame.StatusMessage);
-            ImGui.TextWrapped(_editorGame.AudioSummary);
-            ImGui.TextWrapped("Camera: RMB orbit, MMB pan, wheel zoom.");
-        }
-
-        ImGui.End();
+        ImGui.TextUnformatted("Zhengyan Game Editor");
+        ImGui.Separator();
+        ImGui.TextWrapped(_editorGame.StatusMessage);
+        ImGui.TextWrapped(_editorGame.AudioSummary);
+        ImGui.TextWrapped("Camera: RMB orbit, MMB pan, wheel zoom.");
     }
 
     private void TryRun(Action action)
@@ -1578,6 +1852,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         if (ImGui.SmallButton("Paste##particleTexturePath"))
         {
             PasteClipboard(ref texturePath);
+            changed = true;
+        }
+        if (DrawRenderTextureCombo("Render texture", ref texturePath))
+        {
             changed = true;
         }
 
@@ -1681,6 +1959,124 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
     }
 
+    private void DrawColliderInspector(GameEntity entity)
+    {
+        ImGui.Separator();
+        if (!ImGui.CollapsingHeader("Colliders", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        GameEntityCollision.MigrateLegacyCollision(entity);
+
+        if (ImGui.Button("Add Capsule Collider"))
+        {
+            entity.Colliders.Add(new ColliderSettings
+            {
+                Name = $"Capsule Collider {entity.Colliders.Count + 1}",
+                Shape = "capsule",
+                Position = new Vector3Dto(0.0f, 1.0f, 0.0f),
+                Radius = 0.5f,
+                Height = 2.0f,
+                Axis = "y"
+            });
+            _editorGame.ApplySelectedEntityToRuntime();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Add Box Collider"))
+        {
+            entity.Colliders.Add(new ColliderSettings
+            {
+                Name = $"Box Collider {entity.Colliders.Count + 1}",
+                Shape = "box",
+                Position = new Vector3Dto(0.0f, 0.5f, 0.0f),
+                Size = Vector3Dto.One
+            });
+            _editorGame.ApplySelectedEntityToRuntime();
+        }
+
+        int removeIndex = -1;
+        for (int i = 0; i < entity.Colliders.Count; i++)
+        {
+            ColliderSettings collider = entity.Colliders[i];
+            ImGui.PushID($"collider{i}");
+            ImGui.Separator();
+
+            string header = string.IsNullOrWhiteSpace(collider.Name) ? $"Collider {i + 1}" : collider.Name;
+            if (ImGui.TreeNodeEx(header, ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                bool enabled = collider.Enabled;
+                string name = collider.Name;
+                string shape = NormalizeChoice(collider.Shape, "capsule", ["capsule", "box"]);
+                Vector3 position = collider.Position.ToVector3();
+                Vector3 rotation = collider.RotationDegrees.ToVector3();
+                bool changed = false;
+
+                changed |= ImGui.Checkbox("Enabled", ref enabled);
+                changed |= ImGui.InputText("Name", ref name, 256);
+                changed |= DrawStringCombo("Shape", ref shape, ["capsule", "box"]);
+                changed |= ImGui.DragFloat3("Local position", ref position, 0.02f);
+                changed |= ImGui.DragFloat3("Local rotation", ref rotation, 0.5f);
+
+                if (shape == "box")
+                {
+                    Vector3 size = collider.Size.ToVector3();
+                    changed |= ImGui.DragFloat3("Size", ref size, 0.02f, 0.001f, 10000.0f);
+                    if (changed)
+                    {
+                        collider.Size = new Vector3Dto(
+                            Math.Max(0.001f, size.X),
+                            Math.Max(0.001f, size.Y),
+                            Math.Max(0.001f, size.Z));
+                    }
+                }
+                else
+                {
+                    float radius = collider.Radius;
+                    float height = collider.Height;
+                    string axis = NormalizeChoice(collider.Axis, "y", ["x", "y", "z"]);
+                    changed |= ImGui.DragFloat("Radius", ref radius, 0.01f, 0.001f, 1000.0f);
+                    changed |= ImGui.DragFloat("Height", ref height, 0.01f, 0.0f, 10000.0f);
+                    changed |= DrawStringCombo("Axis", ref axis, ["x", "y", "z"]);
+                    if (changed)
+                    {
+                        collider.Radius = Math.Max(0.001f, radius);
+                        collider.Height = Math.Max(0.0f, height);
+                        collider.Axis = NormalizeChoice(axis, "y", ["x", "y", "z"]);
+                    }
+                }
+
+                if (changed)
+                {
+                    collider.Enabled = enabled;
+                    collider.Name = string.IsNullOrWhiteSpace(name) ? $"Collider {i + 1}" : name;
+                    collider.Shape = NormalizeChoice(shape, "capsule", ["capsule", "box"]);
+                    collider.Position = Vector3Dto.FromVector3(position);
+                    collider.RotationDegrees = Vector3Dto.FromVector3(rotation);
+                    _editorGame.ApplySelectedEntityToRuntime();
+                }
+
+                if (ImGui.SmallButton("Remove Collider"))
+                {
+                    removeIndex = i;
+                }
+
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+        }
+
+        if (removeIndex >= 0)
+        {
+            entity.Colliders.RemoveAt(removeIndex);
+            _editorGame.ApplySelectedEntityToRuntime();
+        }
+
+        ImGui.TextWrapped("Colliders are local to the entity. Moving or rotating the entity moves all attached colliders while preserving their local offsets.");
+    }
+
     private void DrawRelationInspector(GameEntity entity)
     {
         ImGui.Separator();
@@ -1747,6 +2143,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.ColorEdit3("Deep color", ref deepColor);
         changed |= ImGui.ColorEdit3("Reflection tint", ref reflectionTint);
         changed |= ImGui.SliderFloat("Sky reflection", ref skyReflectionStrength, 0.0f, 1.0f);
+        bool enableInteraction = water.EnableInteraction;
+        float interactionRadius = water.InteractionRadius;
+        float interactionStrength = water.InteractionStrength;
+        changed |= ImGui.Checkbox("Enable water interaction", ref enableInteraction);
+        changed |= ImGui.DragFloat("Interaction radius", ref interactionRadius, 0.01f, 0.001f, 100.0f);
+        changed |= ImGui.SliderFloat("Interaction strength", ref interactionStrength, 0.0f, 4.0f);
 
         if (changed)
         {
@@ -1757,7 +2159,52 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.DeepColor = Vector3Dto.FromVector3(deepColor);
             water.ReflectionTint = Vector3Dto.FromVector3(reflectionTint);
             water.SkyReflectionStrength = Math.Clamp(skyReflectionStrength, 0.0f, 1.0f);
+            water.EnableInteraction = enableInteraction;
+            water.InteractionRadius = Math.Max(0.001f, interactionRadius);
+            water.InteractionStrength = Math.Clamp(interactionStrength, 0.0f, 4.0f);
             _editorGame.ApplySelectedWaterToRuntime();
+        }
+    }
+
+    private void DrawPlaneInspector(GameEntity entity)
+    {
+        ImGui.Separator();
+        ImGui.TextUnformatted("Textured Plane");
+
+        TexturedPlaneSettings plane = entity.Plane;
+        string texturePath = plane.TexturePath;
+        float width = plane.Width;
+        float height = plane.Height;
+        bool billboard = plane.Billboard;
+        float opacity = plane.Opacity;
+        Vector4 tint = plane.Tint.ToVector4();
+        bool changed = false;
+
+        if (DrawPathInput("Texture path", ref texturePath, 1024, "planeTexturePath"))
+        {
+            changed = true;
+        }
+        if (DrawRenderTextureCombo("Render texture", ref texturePath))
+        {
+            changed = true;
+        }
+
+        changed |= ImGui.DragFloat("Width", ref width, 0.01f, 0.001f, 10000.0f);
+        changed |= ImGui.DragFloat("Height", ref height, 0.01f, 0.001f, 10000.0f);
+        changed |= ImGui.Checkbox("Billboard", ref billboard);
+        changed |= ImGui.SliderFloat("Opacity", ref opacity, 0.0f, 1.0f);
+        changed |= ImGui.ColorEdit4("Tint", ref tint);
+
+        if (changed)
+        {
+            plane.TexturePath = texturePath;
+            entity.AssetPath = texturePath;
+            plane.Width = Math.Max(0.001f, width);
+            plane.Height = Math.Max(0.001f, height);
+            plane.Billboard = billboard;
+            plane.Opacity = Math.Clamp(opacity, 0.0f, 1.0f);
+            plane.Tint = Vector4Dto.FromVector4(tint);
+            _editorGame.ApplySelectedPlaneToRuntime();
         }
     }
 
@@ -1772,6 +2219,38 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         return changed;
+    }
+
+    private bool DrawRenderTextureCombo(string label, ref string value)
+    {
+        List<string> options = ["(file texture)"];
+        options.AddRange(_editorGame.Project.Scene.RenderTextures.Select(renderTexture => renderTexture.Name));
+        int selectedIndex = 0;
+        if (value.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
+        {
+            string name = value.Trim()["rt:".Length..].Trim();
+            int match = options.FindIndex(option => string.Equals(option, name, StringComparison.OrdinalIgnoreCase));
+            selectedIndex = Math.Max(0, match);
+        }
+
+        if (!ImGui.Combo(label, ref selectedIndex, options.ToArray(), options.Count))
+        {
+            return false;
+        }
+
+        if (selectedIndex <= 0)
+        {
+            if (value.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
+            {
+                value = string.Empty;
+                return true;
+            }
+
+            return false;
+        }
+
+        value = $"rt:{options[selectedIndex]}";
+        return true;
     }
 
     private void PasteClipboard(ref string target)

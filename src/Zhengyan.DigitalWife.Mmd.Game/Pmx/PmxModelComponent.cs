@@ -90,6 +90,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private readonly Dictionary<Zhengyan.DigitalWife.Mmd.MMDMaterial, MaterialTextures> _materials = [];
     private readonly Dictionary<(string Path, GLEnum WrapMode), Texture2D> _textures = [];
+    private readonly Dictionary<int, string> _materialTextureOverrides = [];
     private readonly TransformUpdaterManager _transformUpdaters = new();
     private readonly List<MotionLayerConfig> _initialMotionLayers = [];
 
@@ -166,6 +167,12 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public int MeshCount => _meshes.Length;
 
     public int MaterialCount => _materials.Count;
+
+    public IReadOnlyList<string> MaterialNames => _model?.GetMaterials()
+        .Select((material, index) => string.IsNullOrWhiteSpace(material.Name) ? $"Material {index}" : material.Name)
+        .ToArray() ?? [];
+
+    public IRuntimeTextureProvider? RuntimeTextureProvider { get; set; }
 
     public int VertexCount => _model?.GetVertexCount() ?? 0;
 
@@ -784,7 +791,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 continue;
             }
 
-            DrawMesh(gl, mesh, mmdMaterial, materialTextures);
+            DrawMesh(gl, mesh, mmdMaterial, materialTextures, GetMaterialIndex(mmdMaterial));
 
             _lastOpaqueMeshDrawCount++;
         }
@@ -911,7 +918,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.DepthMask(true);
     }
 
-    private void DrawMesh(GL gl, Zhengyan.DigitalWife.Mmd.MMDMesh mesh, Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial, MaterialTextures materialTextures)
+    private void DrawMesh(GL gl, Zhengyan.DigitalWife.Mmd.MMDMesh mesh, Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial, MaterialTextures materialTextures, int materialIndex)
     {
         if (_mmdShader is null || _defaultTexture is null)
         {
@@ -925,7 +932,15 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.SetUniform(_mmdShader.UniAlpha, mmdMaterial.Alpha);
 
         gl.ActiveTexture(TextureUnit.Texture0);
-        if (materialTextures.Texture is not null)
+        uint overrideTextureId = ResolveMaterialOverrideTextureId(materialIndex);
+        if (overrideTextureId != 0)
+        {
+            gl.SetUniform(_mmdShader.UniTexMode, 1);
+            gl.SetUniform(_mmdShader.UniTexMulFactor, mmdMaterial.TextureMulFactor);
+            gl.SetUniform(_mmdShader.UniTexAddFactor, mmdMaterial.TextureAddFactor);
+            gl.BindTexture(GLEnum.Texture2D, overrideTextureId);
+        }
+        else if (materialTextures.Texture is not null)
         {
             int texMode = materialTextures.Texture.AlphaMode switch
             {
@@ -989,6 +1004,96 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
+    }
+
+    public bool SetMaterialTexture(int materialIndex, string textureReference)
+    {
+        if (_model is null || materialIndex < 0 || materialIndex >= _model.GetMaterials().Count())
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(textureReference))
+        {
+            _materialTextureOverrides.Remove(materialIndex);
+            return true;
+        }
+
+        _materialTextureOverrides[materialIndex] = textureReference.Trim();
+        return true;
+    }
+
+    public bool SetMaterialTexture(string materialName, string textureReference)
+    {
+        if (_model is null || string.IsNullOrWhiteSpace(materialName))
+        {
+            return false;
+        }
+
+        int index = 0;
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMaterial material in _model.GetMaterials())
+        {
+            if (string.Equals(material.Name, materialName, StringComparison.OrdinalIgnoreCase))
+            {
+                return SetMaterialTexture(index, textureReference);
+            }
+
+            index++;
+        }
+
+        return false;
+    }
+
+    public void ClearMaterialTextureOverride(int materialIndex)
+    {
+        _materialTextureOverrides.Remove(materialIndex);
+    }
+
+    public void ClearMaterialTextureOverrides()
+    {
+        _materialTextureOverrides.Clear();
+    }
+
+    private uint ResolveMaterialOverrideTextureId(int materialIndex)
+    {
+        if (!_materialTextureOverrides.TryGetValue(materialIndex, out string? textureReference)
+            || string.IsNullOrWhiteSpace(textureReference))
+        {
+            return 0;
+        }
+
+        if (RuntimeTextureProvider is not null && RuntimeTextureProvider.TryGetTexture(textureReference, out uint runtimeTextureId))
+        {
+            return runtimeTextureId;
+        }
+
+        if (Game is null || !File.Exists(textureReference))
+        {
+            return 0;
+        }
+
+        return GetTexture(Game.GraphicsDevice.Gl, textureReference, GLEnum.Repeat).Id;
+    }
+
+    private int GetMaterialIndex(Zhengyan.DigitalWife.Mmd.MMDMaterial material)
+    {
+        if (_model is null)
+        {
+            return -1;
+        }
+
+        int index = 0;
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMaterial candidate in _model.GetMaterials())
+        {
+            if (ReferenceEquals(candidate, material))
+            {
+                return index;
+            }
+
+            index++;
+        }
+
+        return -1;
     }
 
     public override void Dispose()

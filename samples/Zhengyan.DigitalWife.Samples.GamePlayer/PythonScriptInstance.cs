@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Text.Json;
+using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 
@@ -13,13 +14,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly string _scriptPath;
     private readonly Process _process;
 
-    public PythonScriptInstance(string scriptPath)
+    public PythonScriptInstance(string scriptPath, string projectDirectory)
     {
-        _scriptPath = scriptPath;
-        _process = StartWorker(scriptPath);
+        _process = StartWorker(scriptPath, projectDirectory);
     }
 
     public void Start(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio)
@@ -122,8 +121,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
         }
     }
 
-    private static Process StartWorker(string scriptPath)
+    private static Process StartWorker(string scriptPath, string projectDirectory)
     {
+        string saveDirectory = Path.Combine(projectDirectory, "saves");
+        Directory.CreateDirectory(saveDirectory);
+
         ProcessStartInfo startInfo = new()
         {
             FileName = ResolvePythonExecutable(),
@@ -138,6 +140,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add(BuildWorkerSource());
         startInfo.ArgumentList.Add(scriptPath);
+        startInfo.ArgumentList.Add(saveDirectory);
 
         Process process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start python process.");
@@ -162,13 +165,32 @@ internal sealed class PythonScriptInstance : IScriptInstance
         return """
                import importlib.util
                import json
+               import os
                import sys
 
                COMMAND_MARKER = "__DW_COMMANDS__"
                script_path = sys.argv[1]
+               save_directory = os.path.abspath(sys.argv[2])
+               os.makedirs(save_directory, exist_ok=True)
                spec = importlib.util.spec_from_file_location("game_script", script_path)
                module = importlib.util.module_from_spec(spec)
                spec.loader.exec_module(module)
+
+               def resolve_save_path(file_name):
+                   if not file_name or str(file_name).strip() == "":
+                       raise ValueError("save file name cannot be empty")
+                   normalized = str(file_name).strip().strip("\"").replace("\\", os.sep).replace("/", os.sep)
+                   full_path = os.path.abspath(os.path.join(save_directory, normalized))
+                   root = save_directory
+                   if full_path != root and not full_path.startswith(root + os.sep):
+                       raise ValueError("save path is outside the save directory")
+                   return full_path
+
+               def render_texture(name):
+                   text = str(name).strip()
+                   if text.lower().startswith("rt:"):
+                       return text
+                   return "rt:" + text
 
                class Entity:
                    def __init__(self, data, commands):
@@ -177,6 +199,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.type = data.get("type", "")
                        self.position = data.get("position", [0, 0, 0])
                        self.scale = data.get("scale", [1, 1, 1])
+                       self.rotation = data.get("rotation", [0, 0, 0, 1])
+                       self.material_names = data.get("materialNames", [])
+                       self.colliders = data.get("colliders", [])
+                       self.collider = data.get("collider", {})
                        self._commands = commands
 
                    def set_position(self, x, y, z):
@@ -224,6 +250,28 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def clear_motion(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "clear_motion"})
 
+                   def set_material_texture(self, material, texture):
+                       command = {"target": "entity", "entity": self.id, "action": "set_material_texture", "texture": texture}
+                       if isinstance(material, int):
+                           command["index"] = int(material)
+                       else:
+                           command["name"] = str(material)
+                       self._commands.append(command)
+
+                   def set_material_render_texture(self, material, render_texture_name):
+                       self.set_material_texture(material, render_texture(render_texture_name))
+
+                   def clear_material_texture_override(self, material):
+                       command = {"target": "entity", "entity": self.id, "action": "clear_material_texture_override"}
+                       if isinstance(material, int):
+                           command["index"] = int(material)
+                       else:
+                           command["name"] = str(material)
+                       self._commands.append(command)
+
+                   def clear_material_texture_overrides(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_material_texture_overrides"})
+
                    def speak(self, text, speaker_id=None, speed=None, volume=None, on_completed=None):
                        command = {"target": "entity", "entity": self.id, "action": "speak", "text": text}
                        if speaker_id is not None:
@@ -251,6 +299,97 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def clear_relation(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "clear_relation"})
+
+                   def set_capsule_collider(self, radius, height, center_x=0.0, center_y=1.0, center_z=0.0, axis="y"):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_capsule_collider",
+                           "radius": radius,
+                           "height": height,
+                           "x": center_x,
+                           "y": center_y,
+                           "z": center_z,
+                           "axis": axis
+                       })
+
+                   def add_capsule_collider(self, name="Capsule Collider", radius=0.5, height=2.0, center_x=0.0, center_y=1.0, center_z=0.0, axis="y", rotation_x=0.0, rotation_y=0.0, rotation_z=0.0):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "add_capsule_collider",
+                           "name": name,
+                           "radius": radius,
+                           "height": height,
+                           "x": center_x,
+                           "y": center_y,
+                           "z": center_z,
+                           "axis": axis,
+                           "rotationX": rotation_x,
+                           "rotationY": rotation_y,
+                           "rotationZ": rotation_z
+                       })
+
+                   def add_box_collider(self, name="Box Collider", size_x=1.0, size_y=1.0, size_z=1.0, center_x=0.0, center_y=0.5, center_z=0.0, rotation_x=0.0, rotation_y=0.0, rotation_z=0.0):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "add_box_collider",
+                           "name": name,
+                           "sizeX": size_x,
+                           "sizeY": size_y,
+                           "sizeZ": size_z,
+                           "x": center_x,
+                           "y": center_y,
+                           "z": center_z,
+                           "rotationX": rotation_x,
+                           "rotationY": rotation_y,
+                           "rotationZ": rotation_z
+                       })
+
+                   def remove_collider(self, id_or_name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "remove_collider", "name": id_or_name})
+
+                   def clear_colliders(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_colliders"})
+
+                   def disable_collider(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "disable_collider"})
+
+                   def capsule(self):
+                       for collider in make_colliders(self):
+                           if collider.get("shape") == "capsule":
+                               return collider
+                       return None
+
+                   def raycast(self, ray):
+                       best = None
+                       for collider in make_colliders(self):
+                           hit = ray.intersect_collider(collider)
+                           if hit is not None and (best is None or hit["distance"] < best["distance"]):
+                               hit["collider"] = collider.get("name", "")
+                               hit["shape"] = collider.get("shape", "")
+                               best = hit
+                       return best
+
+                   def check_collision(self, other):
+                       if other is None:
+                           return False
+                       for left in make_colliders(self):
+                           for right in make_colliders(other):
+                               if collider_distance(left, right) <= 0.0:
+                                   return True
+                       return False
+
+                   def distance_to_collider(self, other):
+                       if other is None:
+                           return None
+                       best = None
+                       for left in make_colliders(self):
+                           for right in make_colliders(other):
+                               distance = collider_distance(left, right)
+                               best = distance if best is None else min(best, distance)
+                       return best
 
                class Ray:
                    def __init__(self, origin, direction):
@@ -292,6 +431,327 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        distance = near if near >= 0 else far
                        return distance if distance >= 0 else None
 
+                   def intersect_capsule(self, capsule):
+                       distance = ray_capsule_distance(self.origin, self.direction, capsule)
+                       if distance is None:
+                           return None
+                       return {
+                           "distance": distance,
+                           "point": self.get_point(distance)
+                       }
+
+                   def intersect_box(self, box):
+                       distance = ray_box_distance(self.origin, self.direction, box)
+                       if distance is None:
+                           return None
+                       return {
+                           "distance": distance,
+                           "point": self.get_point(distance)
+                       }
+
+                   def intersect_collider(self, collider):
+                       if collider.get("shape") == "box":
+                           return self.intersect_box(collider)
+                       return self.intersect_capsule(collider)
+
+               def dot(a, b):
+                   return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
+
+               def sub(a, b):
+                   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+               def add(a, b):
+                   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+
+               def mul(a, s):
+                   return [a[0] * s, a[1] * s, a[2] * s]
+
+               def length(a):
+                   return max(dot(a, a), 0.0) ** 0.5
+
+               def normalize(a, fallback=None):
+                   value_len = length(a)
+                   if value_len <= 0.000001:
+                       return fallback or [0, 1, 0]
+                   return [a[0] / value_len, a[1] / value_len, a[2] / value_len]
+
+               def transform_point(local, position, rotation, scale):
+                   return add(rotate_vector([local[0] * scale[0], local[1] * scale[1], local[2] * scale[2]], rotation), position)
+
+               def transform_direction(local, rotation, scale):
+                   return rotate_vector([local[0] * scale[0], local[1] * scale[1], local[2] * scale[2]], rotation)
+
+               def rotate_vector(v, q):
+                   x, y, z, w = q
+                   tx = 2.0 * ((y * v[2]) - (z * v[1]))
+                   ty = 2.0 * ((z * v[0]) - (x * v[2]))
+                   tz = 2.0 * ((x * v[1]) - (y * v[0]))
+                   return [
+                       v[0] + (w * tx) + ((y * tz) - (z * ty)),
+                       v[1] + (w * ty) + ((z * tx) - (x * tz)),
+                       v[2] + (w * tz) + ((x * ty) - (y * tx))
+                   ]
+
+               def cross(a, b):
+                   return [
+                       (a[1] * b[2]) - (a[2] * b[1]),
+                       (a[2] * b[0]) - (a[0] * b[2]),
+                       (a[0] * b[1]) - (a[1] * b[0])
+                   ]
+
+               def quat_mul(a, b):
+                   ax, ay, az, aw = a
+                   bx, by, bz, bw = b
+                   return [
+                       (aw * bx) + (ax * bw) + (ay * bz) - (az * by),
+                       (aw * by) - (ax * bz) + (ay * bw) + (az * bx),
+                       (aw * bz) + (ax * by) - (ay * bx) + (az * bw),
+                       (aw * bw) - (ax * bx) - (ay * by) - (az * bz)
+                   ]
+
+               def quat_from_degrees(degrees):
+                   import math
+                   rx = math.radians(float(degrees[0]))
+                   ry = math.radians(float(degrees[1]))
+                   rz = math.radians(float(degrees[2]))
+                   sx, cx = math.sin(rx * 0.5), math.cos(rx * 0.5)
+                   sy, cy = math.sin(ry * 0.5), math.cos(ry * 0.5)
+                   sz, cz = math.sin(rz * 0.5), math.cos(rz * 0.5)
+                   qx = [sx, 0.0, 0.0, cx]
+                   qy = [0.0, sy, 0.0, cy]
+                   qz = [0.0, 0.0, sz, cz]
+                   return quat_mul(quat_mul(qz, qx), qy)
+
+               def make_colliders(entity):
+                   result = []
+                   for collider in entity.colliders or []:
+                       if not collider.get("enabled", False):
+                           continue
+                       shape = str(collider.get("shape", "capsule")).lower()
+                       if shape == "box":
+                           result.append(make_box(entity, collider))
+                       else:
+                           result.append(make_capsule(entity, collider))
+                   return [item for item in result if item is not None]
+
+               def make_capsule(entity):
+                   collider = entity.collider or {}
+                   return make_capsule(entity, collider)
+
+               def make_capsule(entity, collider):
+                   if not collider.get("enabled", False) or collider.get("shape", "capsule") != "capsule":
+                       return None
+                   axis_name = str(collider.get("axis", "y")).lower()
+                   axis = [1, 0, 0] if axis_name == "x" else ([0, 0, 1] if axis_name == "z" else [0, 1, 0])
+                   local_rotation = quat_from_degrees(collider.get("rotationDegrees", [0.0, 0.0, 0.0]))
+                   world_rotation = quat_mul(local_rotation, entity.rotation)
+                   axis_vector = transform_direction(axis, world_rotation, entity.scale)
+                   axis_scale = max(length(axis_vector), 0.0001)
+                   axis_direction = normalize(axis_vector)
+                   radius_scale = max(abs(entity.scale[1]), abs(entity.scale[2])) if axis_name == "x" else (max(abs(entity.scale[0]), abs(entity.scale[1])) if axis_name == "z" else max(abs(entity.scale[0]), abs(entity.scale[2])))
+                   radius = max(float(collider.get("radius", 0.5)) * radius_scale, 0.0001)
+                   height = max(float(collider.get("height", 2.0)) * axis_scale, 0.0)
+                   center = transform_point(collider.get("position", collider.get("center", [0.0, 1.0, 0.0])), entity.position, entity.rotation, entity.scale)
+                   half_segment = max((height * 0.5) - radius, 0.0)
+                   return {
+                       "id": collider.get("id", ""),
+                       "name": collider.get("name", ""),
+                       "shape": "capsule",
+                       "center": center,
+                       "start": sub(center, mul(axis_direction, half_segment)),
+                       "end": add(center, mul(axis_direction, half_segment)),
+                       "radius": radius
+                   }
+
+               def make_box(entity, collider):
+                   local_rotation = quat_from_degrees(collider.get("rotationDegrees", [0.0, 0.0, 0.0]))
+                   world_rotation = quat_mul(local_rotation, entity.rotation)
+                   size = collider.get("size", [1.0, 1.0, 1.0])
+                   half_extents = [
+                       max(abs(float(size[0]) * float(entity.scale[0])) * 0.5, 0.0001),
+                       max(abs(float(size[1]) * float(entity.scale[1])) * 0.5, 0.0001),
+                       max(abs(float(size[2]) * float(entity.scale[2])) * 0.5, 0.0001)
+                   ]
+                   return {
+                       "id": collider.get("id", ""),
+                       "name": collider.get("name", ""),
+                       "shape": "box",
+                       "center": transform_point(collider.get("position", [0.0, 0.5, 0.0]), entity.position, entity.rotation, entity.scale),
+                       "axisX": normalize(rotate_vector([1, 0, 0], world_rotation), [1, 0, 0]),
+                       "axisY": normalize(rotate_vector([0, 1, 0], world_rotation), [0, 1, 0]),
+                       "axisZ": normalize(rotate_vector([0, 0, 1], world_rotation), [0, 0, 1]),
+                       "halfExtents": half_extents
+                   }
+
+               def ray_capsule_distance(origin, direction, capsule):
+                   direction = normalize(direction, [0, 0, -1])
+                   closest, ray_t = closest_distance_ray_segment(origin, direction, capsule["start"], capsule["end"])
+                   return ray_t if ray_t >= 0.0 and closest <= capsule["radius"] else None
+
+               def ray_box_distance(origin, direction, box):
+                   direction = normalize(direction, [0, 0, -1])
+                   local_origin = to_box_local(origin, box)
+                   local_direction = to_box_local_direction(direction, box)
+                   return ray_aabb_distance(local_origin, local_direction, [-v for v in box["halfExtents"]], box["halfExtents"])
+
+               def ray_aabb_distance(origin, direction, min_v, max_v):
+                   t_min = 0.0
+                   t_max = 1.0e30
+                   for i in range(3):
+                       if abs(direction[i]) < 0.000001:
+                           if origin[i] < min_v[i] or origin[i] > max_v[i]:
+                               return None
+                       else:
+                           inv = 1.0 / direction[i]
+                           t1 = (min_v[i] - origin[i]) * inv
+                           t2 = (max_v[i] - origin[i]) * inv
+                           if t1 > t2:
+                               t1, t2 = t2, t1
+                           t_min = max(t_min, t1)
+                           t_max = min(t_max, t2)
+                           if t_min > t_max:
+                               return None
+                   return t_min
+
+               def segment_aabb_intersects(start, end, min_v, max_v):
+                   direction = sub(end, start)
+                   t_min = 0.0
+                   t_max = 1.0
+                   for i in range(3):
+                       if abs(direction[i]) < 0.000001:
+                           if start[i] < min_v[i] or start[i] > max_v[i]:
+                               return False
+                       else:
+                           inv = 1.0 / direction[i]
+                           t1 = (min_v[i] - start[i]) * inv
+                           t2 = (max_v[i] - start[i]) * inv
+                           if t1 > t2:
+                               t1, t2 = t2, t1
+                           t_min = max(t_min, t1)
+                           t_max = min(t_max, t2)
+                           if t_min > t_max:
+                               return False
+                   return True
+
+               def to_box_local(point, box):
+                   delta = sub(point, box["center"])
+                   return [dot(delta, box["axisX"]), dot(delta, box["axisY"]), dot(delta, box["axisZ"])]
+
+               def to_box_local_direction(direction, box):
+                   return [dot(direction, box["axisX"]), dot(direction, box["axisY"]), dot(direction, box["axisZ"])]
+
+               def capsule_distance(left, right):
+                   axis_distance = closest_distance_segment_segment(left["start"], left["end"], right["start"], right["end"])
+                   return max(axis_distance - left["radius"] - right["radius"], 0.0)
+
+               def collider_distance(left, right):
+                   if left.get("shape") == "capsule" and right.get("shape") == "capsule":
+                       return capsule_distance(left, right)
+                   if left.get("shape") == "box" and right.get("shape") == "box":
+                       return 0.0 if box_box_intersects(left, right) else max(length(sub(left["center"], right["center"])) - length(left["halfExtents"]) - length(right["halfExtents"]), 0.0)
+                   capsule = right if right.get("shape") == "capsule" else left
+                   box = left if left.get("shape") == "box" else right
+                   expanded = [box["halfExtents"][0] + capsule["radius"], box["halfExtents"][1] + capsule["radius"], box["halfExtents"][2] + capsule["radius"]]
+                   start = to_box_local(capsule["start"], box)
+                   end = to_box_local(capsule["end"], box)
+                   if segment_aabb_intersects(start, end, [-v for v in expanded], expanded):
+                       return 0.0
+                   return max(length(sub(capsule["center"], box["center"])) - capsule["radius"] - length(box["halfExtents"]), 0.0)
+
+               def box_box_intersects(left, right):
+                   left_axes = [left["axisX"], left["axisY"], left["axisZ"]]
+                   right_axes = [right["axisX"], right["axisY"], right["axisZ"]]
+                   left_extents = left["halfExtents"]
+                   right_extents = right["halfExtents"]
+                   rotation = [[dot(left_axes[i], right_axes[j]) for j in range(3)] for i in range(3)]
+                   abs_rotation = [[abs(rotation[i][j]) + 0.00001 for j in range(3)] for i in range(3)]
+                   delta = sub(right["center"], left["center"])
+                   t = [dot(delta, left_axes[i]) for i in range(3)]
+
+                   for i in range(3):
+                       ra = left_extents[i]
+                       rb = (right_extents[0] * abs_rotation[i][0]) + (right_extents[1] * abs_rotation[i][1]) + (right_extents[2] * abs_rotation[i][2])
+                       if abs(t[i]) > ra + rb:
+                           return False
+
+                   for j in range(3):
+                       ra = (left_extents[0] * abs_rotation[0][j]) + (left_extents[1] * abs_rotation[1][j]) + (left_extents[2] * abs_rotation[2][j])
+                       rb = right_extents[j]
+                       projection = abs((t[0] * rotation[0][j]) + (t[1] * rotation[1][j]) + (t[2] * rotation[2][j]))
+                       if projection > ra + rb:
+                           return False
+
+                   for i in range(3):
+                       for j in range(3):
+                           ra = (left_extents[(i + 1) % 3] * abs_rotation[(i + 2) % 3][j]) + (left_extents[(i + 2) % 3] * abs_rotation[(i + 1) % 3][j])
+                           rb = (right_extents[(j + 1) % 3] * abs_rotation[i][(j + 2) % 3]) + (right_extents[(j + 2) % 3] * abs_rotation[i][(j + 1) % 3])
+                           projection = abs((t[(i + 2) % 3] * rotation[(i + 1) % 3][j]) - (t[(i + 1) % 3] * rotation[(i + 2) % 3][j]))
+                           if projection > ra + rb:
+                               return False
+
+                   return True
+
+               def closest_distance_ray_segment(origin, direction, segment_start, segment_end):
+                   u = direction
+                   v = sub(segment_end, segment_start)
+                   w = sub(origin, segment_start)
+                   a = dot(u, u)
+                   b = dot(u, v)
+                   c = dot(v, v)
+                   d = dot(u, w)
+                   e = dot(v, w)
+                   denom = (a * c) - (b * b)
+                   if denom < 0.000001:
+                       s = 0.0
+                       t = max(0.0, min(1.0, e / c)) if c > 0.000001 else 0.0
+                   else:
+                       s = ((b * e) - (c * d)) / denom
+                       t = ((a * e) - (b * d)) / denom
+                       if s < 0.0:
+                           s = 0.0
+                           t = max(0.0, min(1.0, e / c)) if c > 0.000001 else 0.0
+                       elif t < 0.0:
+                           t = 0.0
+                           s = max(0.0, -d / a)
+                       elif t > 1.0:
+                           t = 1.0
+                           s = max(0.0, (b - d) / a)
+                   ray_point = add(origin, mul(u, s))
+                   segment_point = add(segment_start, mul(v, t))
+                   return length(sub(ray_point, segment_point)), max(0.0, s)
+
+               def closest_distance_segment_segment(p1, q1, p2, q2):
+                   d1 = sub(q1, p1)
+                   d2 = sub(q2, p2)
+                   r = sub(p1, p2)
+                   a = dot(d1, d1)
+                   e = dot(d2, d2)
+                   f = dot(d2, r)
+                   if a <= 0.000001 and e <= 0.000001:
+                       return length(sub(p1, p2))
+                   if a <= 0.000001:
+                       s = 0.0
+                       t = max(0.0, min(1.0, f / e))
+                   else:
+                       c = dot(d1, r)
+                       if e <= 0.000001:
+                           t = 0.0
+                           s = max(0.0, min(1.0, -c / a))
+                       else:
+                           b = dot(d1, d2)
+                           denom = (a * e) - (b * b)
+                           s = max(0.0, min(1.0, ((b * f) - (c * e)) / denom)) if denom != 0.0 else 0.0
+                           t = (b * s + f) / e
+                           if t < 0.0:
+                               t = 0.0
+                               s = max(0.0, min(1.0, -c / a))
+                           elif t > 1.0:
+                               t = 1.0
+                               s = max(0.0, min(1.0, (b - c) / a))
+                   c1 = add(p1, mul(d1, s))
+                   c2 = add(p2, mul(d2, t))
+                   return length(sub(c1, c2))
+
                class Camera:
                    def __init__(self, data, commands):
                        self.position = data.get("position", [0, 0, 0])
@@ -299,6 +759,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.forward = data.get("forward", [0, 0, -1])
                        self.up = data.get("up", [0, 1, 0])
                        self.right = data.get("right", [1, 0, 0])
+                       self.main_camera = data.get("mainCamera", "")
+                       self.camera_names = data.get("cameraNames", [])
+                       self.render_texture_names = data.get("renderTextureNames", [])
                        self.control_mode = data.get("controlMode", "editor")
                        self.projection_mode = data.get("projectionMode", "perspective")
                        self.fov = data.get("fov", 45)
@@ -343,6 +806,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_look_at(self, px, py, pz, tx, ty, tz):
                        self._commands.append({"target": "camera", "action": "set_look_at", "x": px, "y": py, "z": pz, "targetX": tx, "targetY": ty, "targetZ": tz})
+
+                   def set_main_camera(self, camera_name):
+                       self._commands.append({"target": "camera", "action": "set_main_camera", "name": camera_name})
+
+                   def set_camera_look_at(self, camera_name, px, py, pz, tx, ty, tz):
+                       self._commands.append({"target": "camera", "action": "set_camera_look_at", "name": camera_name, "x": px, "y": py, "z": pz, "targetX": tx, "targetY": ty, "targetZ": tz})
+
+                   def bind_render_texture_camera(self, render_texture_name, camera_name):
+                       self._commands.append({"target": "camera", "action": "bind_render_texture_camera", "name": render_texture_name, "camera": camera_name})
+
+                   def render_texture(self, name):
+                       return render_texture(name)
 
                    def use_custom_mode(self):
                        self.set_control_mode("custom")
@@ -436,11 +911,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
                class Scene:
                    def __init__(self, data, commands):
                        self.name = data.get("name", "")
+                       self.main_camera = data.get("mainCamera", "")
+                       self.camera_names = data.get("cameraNames", [])
+                       self.render_texture_names = data.get("renderTextureNames", [])
                        self._entities = data.get("entities", [])
                        self._gui_controls = data.get("guiControls", [])
                        self._sprites = data.get("sprites", [])
                        self.window = Window(data.get("window", {}), commands)
                        self.camera = Camera(data.get("camera", {}), commands)
+                       self.debug = Debug(commands)
+                       self.save = SaveStore()
                        self._commands = commands
 
                    def get_entity(self, id_or_name):
@@ -463,6 +943,88 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def load_scene(self, scene_path):
                        self._commands.append({"target": "scene", "action": "load_scene", "path": scene_path})
+
+                   def render_texture(self, name):
+                       return render_texture(name)
+
+               class SaveStore:
+                   @property
+                   def directory(self):
+                       return save_directory
+
+                   def write_text(self, file_name, text):
+                       path = resolve_save_path(file_name)
+                       os.makedirs(os.path.dirname(path), exist_ok=True)
+                       with open(path, "w", encoding="utf-8") as f:
+                           f.write("" if text is None else str(text))
+
+                   def read_text(self, file_name, fallback=""):
+                       path = resolve_save_path(file_name)
+                       if not os.path.exists(path):
+                           return fallback
+                       with open(path, "r", encoding="utf-8") as f:
+                           return f.read()
+
+                   def write_json(self, file_name, value):
+                       self.write_text(file_name, json.dumps(value, ensure_ascii=False, indent=2))
+
+                   def read_json(self, file_name, fallback=None):
+                       path = resolve_save_path(file_name)
+                       if not os.path.exists(path):
+                           return fallback
+                       with open(path, "r", encoding="utf-8") as f:
+                           return json.load(f)
+
+                   def exists(self, file_name):
+                       return os.path.exists(resolve_save_path(file_name))
+
+                   def delete(self, file_name):
+                       path = resolve_save_path(file_name)
+                       if not os.path.exists(path):
+                           return False
+                       os.remove(path)
+                       return True
+
+               class Debug:
+                   def __init__(self, commands):
+                       self._commands = commands
+
+                   def draw_ray(self, origin, direction, length=10.0, color=None, duration=0.1):
+                       color = color or [1.0, 0.2, 0.1, 1.0]
+                       self._commands.append({
+                           "target": "debug",
+                           "action": "draw_ray",
+                           "x": origin[0],
+                           "y": origin[1],
+                           "z": origin[2],
+                           "directionX": direction[0],
+                           "directionY": direction[1],
+                           "directionZ": direction[2],
+                           "length": length,
+                           "colorR": color[0],
+                           "colorG": color[1],
+                           "colorB": color[2],
+                           "colorA": color[3] if len(color) > 3 else 1.0,
+                           "duration": duration
+                       })
+
+                   def draw_line(self, start, end, color=None, duration=0.1):
+                       color = color or [1.0, 1.0, 0.1, 1.0]
+                       self._commands.append({
+                           "target": "debug",
+                           "action": "draw_line",
+                           "x": start[0],
+                           "y": start[1],
+                           "z": start[2],
+                           "targetX": end[0],
+                           "targetY": end[1],
+                           "targetZ": end[2],
+                           "colorR": color[0],
+                           "colorG": color[1],
+                           "colorB": color[2],
+                           "colorA": color[3] if len(color) > 3 else 1.0,
+                           "duration": duration
+                       })
 
                class Window:
                    def __init__(self, data, commands):
@@ -493,6 +1055,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def __init__(self, data, commands):
                        self.id = data.get("id", "")
                        self.name = data.get("name", "")
+                       self.path = data.get("path", "")
+                       self.texture = data.get("texture", self.path)
                        self.x = data.get("x", 0)
                        self.y = data.get("y", 0)
                        self.width = data.get("width", 1)
@@ -512,6 +1076,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_opacity(self, opacity):
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_opacity", "value": opacity})
+
+                   def set_texture(self, texture):
+                       self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_texture", "texture": texture})
+
+                   def set_render_texture(self, render_texture_name):
+                       self.set_texture(render_texture(render_texture_name))
 
                    def show(self):
                        self.set_visible(True)
@@ -568,7 +1138,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                class Input:
                    def __init__(self, data):
-                       self._keys = set(data.get("keysDown", []))
+                       self._keys = set()
+                       for key in data.get("keysDown", []):
+                           value = str(key)
+                           self._keys.add(value)
+                           self._keys.add(value.lower())
                        self._mouse_buttons = set(data.get("mouseButtonsDown", []))
                        self.mouse_x = data.get("mouseX", 0)
                        self.mouse_y = data.get("mouseY", 0)
@@ -578,9 +1152,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.scroll_y = data.get("scrollY", 0)
                        self.alt_down = bool(data.get("altDown", False))
                        self.control_down = bool(data.get("controlDown", False))
+                       self.shift_down = bool(data.get("shiftDown", False))
 
                    def is_key_down(self, key):
-                       return key in self._keys
+                       return str(key) in self._keys or str(key).lower() in self._keys
 
                    def is_mouse_button_down(self, button):
                        return str(button).lower() in self._mouse_buttons
@@ -668,6 +1243,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 continue;
             }
 
+            if (string.Equals(command.Target, "debug", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyDebugCommand(command, scene);
+                continue;
+            }
+
             if (string.Equals(command.Target, "sprite", StringComparison.OrdinalIgnoreCase))
             {
                 ApplySpriteCommand(command, scene);
@@ -691,6 +1272,22 @@ internal sealed class PythonScriptInstance : IScriptInstance
         RuntimeCamera camera = scene.Camera;
         switch (command.Action?.ToLowerInvariant())
         {
+            case "set_main_camera" when !string.IsNullOrWhiteSpace(command.Name):
+                camera.SetMainCamera(command.Name!);
+                break;
+            case "set_camera_look_at" when !string.IsNullOrWhiteSpace(command.Name) && TryGetLookAt(command, out Vector3 position, out Vector3 target):
+                camera.SetCameraLookAt(
+                    command.Name!,
+                    position.X,
+                    position.Y,
+                    position.Z,
+                    target.X,
+                    target.Y,
+                    target.Z);
+                break;
+            case "bind_render_texture_camera" when !string.IsNullOrWhiteSpace(command.Name) && !string.IsNullOrWhiteSpace(command.Camera):
+                camera.BindRenderTextureCamera(command.Name!, command.Camera!);
+                break;
             case "set_control_mode" when !string.IsNullOrWhiteSpace(command.Mode):
             case "set_mode" when !string.IsNullOrWhiteSpace(command.Mode):
                 camera.SetControlMode(command.Mode!);
@@ -822,6 +1419,29 @@ internal sealed class PythonScriptInstance : IScriptInstance
         }
     }
 
+    private static void ApplyDebugCommand(PythonCommand command, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "draw_ray" when TryGetVector(command, out float x, out float y, out float z)
+                && command.DirectionX.HasValue && command.DirectionY.HasValue && command.DirectionZ.HasValue:
+                scene.Debug.DrawRay(
+                    new Vector3(x, y, z),
+                    new Vector3((float)command.DirectionX.Value, (float)command.DirectionY.Value, (float)command.DirectionZ.Value),
+                    (float)(command.Length ?? 10.0),
+                    GetCommandColor(command, new Vector4(1.0f, 0.2f, 0.1f, 1.0f)),
+                    (float)(command.Duration ?? 0.1));
+                break;
+            case "draw_line" when TryGetLookAt(command, out Vector3 start, out Vector3 end):
+                scene.Debug.DrawLine(
+                    start,
+                    end,
+                    GetCommandColor(command, new Vector4(1.0f, 1.0f, 0.1f, 1.0f)),
+                    (float)(command.Duration ?? 0.1));
+                break;
+        }
+    }
+
     private static void ApplyWindowCommand(PythonCommand command, RuntimeScene scene)
     {
         switch (command.Action?.ToLowerInvariant())
@@ -870,6 +1490,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_opacity" when command.Value.HasValue:
                 sprite.Opacity = (float)command.Value.Value;
+                break;
+            case "set_texture" when command.Texture is not null:
+                sprite.Texture = command.Texture;
+                break;
+            case "set_render_texture" when !string.IsNullOrWhiteSpace(command.Name):
+                sprite.SetRenderTexture(command.Name!);
                 break;
         }
     }
@@ -942,10 +1568,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
     private static void ApplySceneCommand(PythonCommand command, RuntimeScene scene)
     {
-        if (string.Equals(command.Action, "load_scene", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrWhiteSpace(command.Path))
+        switch (command.Action?.ToLowerInvariant())
         {
-            scene.LoadScene(command.Path);
+            case "load_scene" when !string.IsNullOrWhiteSpace(command.Path):
+                scene.LoadScene(command.Path);
+                break;
         }
     }
 
@@ -998,6 +1625,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "clear_motion":
                 entity.ClearMotion();
                 break;
+            case "set_material_texture" when command.Texture is not null && TryApplyMaterialTexture(entity, command):
+                break;
+            case "set_material_render_texture" when !string.IsNullOrWhiteSpace(command.Name) && TryApplyMaterialRenderTexture(entity, command):
+                break;
+            case "clear_material_texture_override" when TryApplyClearMaterialTextureOverride(entity, command):
+                break;
+            case "clear_material_texture_overrides":
+                entity.ClearMaterialTextureOverrides();
+                break;
             case "speak" when !string.IsNullOrWhiteSpace(command.Text):
                 entity.Speak(command.Text, new RuntimeVoiceOptions
                 {
@@ -1021,7 +1657,99 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "clear_relation":
                 entity.ClearRelationBinding();
                 break;
+            case "set_capsule_collider" when command.Radius.HasValue && command.Height.HasValue && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetCapsuleCollider(
+                    (float)command.Radius.Value,
+                    (float)command.Height.Value,
+                    x,
+                    y,
+                    z,
+                    command.Axis ?? "y");
+                break;
+            case "add_capsule_collider" when command.Radius.HasValue && command.Height.HasValue && TryGetVector(command, out float x, out float y, out float z):
+                entity.AddCapsuleCollider(
+                    command.Name ?? "Capsule Collider",
+                    (float)command.Radius.Value,
+                    (float)command.Height.Value,
+                    x,
+                    y,
+                    z,
+                    command.Axis ?? "y",
+                    (float)(command.RotationX ?? 0.0),
+                    (float)(command.RotationY ?? 0.0),
+                    (float)(command.RotationZ ?? 0.0));
+                break;
+            case "add_box_collider" when command.SizeX.HasValue && command.SizeY.HasValue && command.SizeZ.HasValue && TryGetVector(command, out float x, out float y, out float z):
+                entity.AddBoxCollider(
+                    command.Name ?? "Box Collider",
+                    (float)command.SizeX.Value,
+                    (float)command.SizeY.Value,
+                    (float)command.SizeZ.Value,
+                    x,
+                    y,
+                    z,
+                    (float)(command.RotationX ?? 0.0),
+                    (float)(command.RotationY ?? 0.0),
+                    (float)(command.RotationZ ?? 0.0));
+                break;
+            case "remove_collider" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.RemoveCollider(command.Name);
+                break;
+            case "clear_colliders":
+                entity.ClearColliders();
+                break;
+            case "disable_collider":
+                entity.DisableCollider();
+                break;
         }
+    }
+
+    private static bool TryApplyMaterialTexture(RuntimeEntity entity, PythonCommand command)
+    {
+        if (command.Texture is null)
+        {
+            return false;
+        }
+
+        if (command.Index.HasValue)
+        {
+            return entity.SetMaterialTexture(command.Index.Value, command.Texture);
+        }
+
+        return !string.IsNullOrWhiteSpace(command.Name) && entity.SetMaterialTexture(command.Name!, command.Texture);
+    }
+
+    private static bool TryApplyMaterialRenderTexture(RuntimeEntity entity, PythonCommand command)
+    {
+        if (command.Index.HasValue)
+        {
+            return entity.SetMaterialRenderTexture(command.Index.Value, command.Name!);
+        }
+
+        return !string.IsNullOrWhiteSpace(command.Material) && entity.SetMaterialRenderTexture(command.Material!, command.Name!);
+    }
+
+    private static bool TryApplyClearMaterialTextureOverride(RuntimeEntity entity, PythonCommand command)
+    {
+        if (command.Index.HasValue)
+        {
+            entity.ClearMaterialTextureOverride(command.Index.Value);
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(command.Name))
+        {
+            return false;
+        }
+
+        int index = Array.FindIndex(entity.MaterialNames.ToArray(), name => string.Equals(name, command.Name, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return false;
+        }
+
+        entity.ClearMaterialTextureOverride(index);
+        return true;
     }
 
     private static bool TryGetVector(PythonCommand command, out float x, out float y, out float z)
@@ -1056,6 +1784,17 @@ internal sealed class PythonScriptInstance : IScriptInstance
     private static float? ToFloat(double? value)
     {
         return value.HasValue ? (float)value.Value : null;
+    }
+
+    private static Vector4 GetCommandColor(PythonCommand command, Vector4 fallback)
+    {
+        return command.ColorR.HasValue || command.ColorG.HasValue || command.ColorB.HasValue || command.ColorA.HasValue
+            ? new Vector4(
+                (float)(command.ColorR ?? fallback.X),
+                (float)(command.ColorG ?? fallback.Y),
+                (float)(command.ColorB ?? fallback.Z),
+                (float)(command.ColorA ?? fallback.W))
+            : fallback;
     }
 
     private sealed class PythonEvent
@@ -1105,6 +1844,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Scene = new PythonScene
                 {
                     Name = scene.Name,
+                    MainCamera = scene.Camera.MainCamera,
+                    CameraNames = scene.Camera.CameraNames.ToArray(),
+                    RenderTextureNames = scene.Camera.RenderTextureNames.ToArray(),
                     Entities = scene.Entities.Select(PythonEntity.FromRuntime).ToArray(),
                     GuiControls = scene.GuiControls.Select(PythonGuiControl.FromRuntime).ToArray(),
                     Sprites = scene.Sprites.Select(PythonSprite.FromRuntime).ToArray(),
@@ -1128,15 +1870,71 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float[] Scale { get; set; } = [1.0f, 1.0f, 1.0f];
 
+        public float[] Rotation { get; set; } = [0.0f, 0.0f, 0.0f, 1.0f];
+
+        public string[] MaterialNames { get; set; } = [];
+
+        public PythonCollider Collider { get; set; } = new();
+
+        public PythonCollider[] Colliders { get; set; } = [];
+
         public static PythonEntity FromRuntime(RuntimeEntity entity)
         {
+            PythonCollider[] colliders = entity.EffectiveColliders.Select(PythonCollider.FromSettings).ToArray();
             return new PythonEntity
             {
                 Id = entity.Id,
                 Name = entity.Name,
                 Type = entity.Type,
                 Position = [entity.Position.X, entity.Position.Y, entity.Position.Z],
-                Scale = [entity.Scale.X, entity.Scale.Y, entity.Scale.Z]
+                Scale = [entity.Scale.X, entity.Scale.Y, entity.Scale.Z],
+                Rotation = [entity.Rotation.X, entity.Rotation.Y, entity.Rotation.Z, entity.Rotation.W],
+                MaterialNames = entity.MaterialNames.ToArray(),
+                Collider = colliders.FirstOrDefault() ?? new PythonCollider(),
+                Colliders = colliders
+            };
+        }
+    }
+
+    private sealed class PythonCollider
+    {
+        public string Id { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public bool Enabled { get; set; }
+
+        public string Shape { get; set; } = "capsule";
+
+        public float[] Center { get; set; } = [0.0f, 1.0f, 0.0f];
+
+        public float[] Position { get; set; } = [0.0f, 1.0f, 0.0f];
+
+        public float[] RotationDegrees { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float[] Size { get; set; } = [1.0f, 1.0f, 1.0f];
+
+        public float Radius { get; set; }
+
+        public float Height { get; set; }
+
+        public string Axis { get; set; } = "y";
+
+        public static PythonCollider FromSettings(ColliderSettings collider)
+        {
+            return new PythonCollider
+            {
+                Id = collider.Id,
+                Name = collider.Name,
+                Enabled = collider.Enabled,
+                Shape = collider.Shape,
+                Center = [collider.Position.X, collider.Position.Y, collider.Position.Z],
+                Position = [collider.Position.X, collider.Position.Y, collider.Position.Z],
+                RotationDegrees = [collider.RotationDegrees.X, collider.RotationDegrees.Y, collider.RotationDegrees.Z],
+                Size = [collider.Size.X, collider.Size.Y, collider.Size.Z],
+                Radius = collider.Radius,
+                Height = collider.Height,
+                Axis = collider.Axis
             };
         }
     }
@@ -1144,6 +1942,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
     private sealed class PythonScene
     {
         public string Name { get; set; } = string.Empty;
+
+        public string MainCamera { get; set; } = string.Empty;
+
+        public string[] CameraNames { get; set; } = [];
+
+        public string[] RenderTextureNames { get; set; } = [];
 
         public PythonEntity[] Entities { get; set; } = [];
 
@@ -1167,6 +1971,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public float[] Up { get; set; } = [0.0f, 1.0f, 0.0f];
 
         public float[] Right { get; set; } = [1.0f, 0.0f, 0.0f];
+
+        public string MainCamera { get; set; } = string.Empty;
+
+        public string[] CameraNames { get; set; } = [];
+
+        public string[] RenderTextureNames { get; set; } = [];
 
         public string ProjectionMode { get; set; } = "perspective";
 
@@ -1195,6 +2005,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Forward = [camera.Forward.X, camera.Forward.Y, camera.Forward.Z],
                 Up = [camera.Up.X, camera.Up.Y, camera.Up.Z],
                 Right = [camera.Right.X, camera.Right.Y, camera.Right.Z],
+                MainCamera = camera.MainCamera,
+                CameraNames = camera.CameraNames.ToArray(),
+                RenderTextureNames = camera.RenderTextureNames.ToArray(),
                 ControlMode = camera.ControlMode,
                 ProjectionMode = camera.ProjectionMode,
                 Fov = camera.Fov,
@@ -1241,6 +2054,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string Name { get; set; } = string.Empty;
 
+        public string Path { get; set; } = string.Empty;
+
+        public string Texture { get; set; } = string.Empty;
+
         public float X { get; set; }
 
         public float Y { get; set; }
@@ -1259,6 +2076,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
             {
                 Id = sprite.Id,
                 Name = sprite.Name,
+                Path = sprite.Path,
+                Texture = sprite.Texture,
                 X = sprite.X,
                 Y = sprite.Y,
                 Width = sprite.Width,
@@ -1322,9 +2141,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
     {
         private static readonly string[] ProbedKeys =
         [
-            "W", "A", "S", "D", "Q", "E",
+            "W", "A", "S", "D", "Q", "E", "R", "F", "Z", "X", "C", "V",
             "Space", "Enter", "Escape",
-            "Up", "Down", "Left", "Right"
+            "Tab", "Backspace", "Delete",
+            "Up", "Down", "Left", "Right",
+            "Number0", "Number1", "Number2", "Number3", "Number4",
+            "Number5", "Number6", "Number7", "Number8", "Number9",
+            "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9",
+            "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+            "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight"
         ];
 
         public string[] KeysDown { get; set; } = [];
@@ -1347,6 +2172,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool ControlDown { get; set; }
 
+        public bool ShiftDown { get; set; }
+
         public static PythonInput FromRuntime(RuntimeInput input)
         {
             return new PythonInput
@@ -1360,7 +2187,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 ScrollX = input.ScrollX,
                 ScrollY = input.ScrollY,
                 AltDown = input.IsAltDown,
-                ControlDown = input.IsControlDown
+                ControlDown = input.IsControlDown,
+                ShiftDown = input.IsShiftDown
             };
         }
     }
@@ -1378,6 +2206,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public string? Sprite { get; set; }
 
         public string? Name { get; set; }
+
+        public string? Camera { get; set; }
+
+        public string? Material { get; set; }
+
+        public string? Texture { get; set; }
 
         public string? Path { get; set; }
 
@@ -1399,9 +2233,29 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public double? TargetZ { get; set; }
 
+        public double? DirectionX { get; set; }
+
+        public double? DirectionY { get; set; }
+
+        public double? DirectionZ { get; set; }
+
         public double? Width { get; set; }
 
         public double? Height { get; set; }
+
+        public double? Radius { get; set; }
+
+        public double? SizeX { get; set; }
+
+        public double? SizeY { get; set; }
+
+        public double? SizeZ { get; set; }
+
+        public double? Length { get; set; }
+
+        public double? Duration { get; set; }
+
+        public string? Axis { get; set; }
 
         public double? Distance { get; set; }
 
@@ -1433,9 +2287,23 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public double? ZoomSensitivity { get; set; }
 
+        public double? ColorR { get; set; }
+
+        public double? ColorG { get; set; }
+
+        public double? ColorB { get; set; }
+
+        public double? ColorA { get; set; }
+
         public double? Value { get; set; }
 
         public double? Degrees { get; set; }
+
+        public double? RotationX { get; set; }
+
+        public double? RotationY { get; set; }
+
+        public double? RotationZ { get; set; }
 
         public double? Volume { get; set; }
 

@@ -67,6 +67,18 @@ public sealed class RuntimeSpriteControl
         set => _sprite.DrawOrder = value;
     }
 
+    public string Texture
+    {
+        get => _sprite.Path;
+        set => _sprite.Path = value ?? string.Empty;
+    }
+
+    public string Path
+    {
+        get => _sprite.Path;
+        set => _sprite.Path = value ?? string.Empty;
+    }
+
     public void SetPosition(float x, float y)
     {
         X = x;
@@ -87,5 +99,16 @@ public sealed class RuntimeSpriteControl
     public void Hide()
     {
         Visible = false;
+    }
+
+    public void SetRenderTexture(string renderTextureName)
+    {
+        _sprite.Path = ToRenderTextureReference(renderTextureName);
+    }
+
+    private static string ToRenderTextureReference(string renderTextureName)
+    {
+        string trimmed = (renderTextureName ?? string.Empty).Trim();
+        return trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? trimmed : $"rt:{trimmed}";
     }
 }
