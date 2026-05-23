@@ -85,7 +85,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         _sceneRenderTarget = new SceneRenderTarget(GraphicsDevice.Gl);
         _sceneRenderTarget.EnsureSize(GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
-        _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents());
+        _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
 
         ApplyCameraSettings();
         ApplySceneSettings();
@@ -583,6 +583,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _planeObjects.Remove(planeRuntime);
         }
 
+        RemoveWaterRippleEntries(entity.Id);
+        ApplyAllRelationsToRuntime();
         SelectedEntityIndex = Math.Min(SelectedEntityIndex, Project.Scene.Entities.Count - 1);
         UpdateStatus($"Removed entity: {entity.Name}");
     }
@@ -1090,6 +1092,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void PlayOrPauseAudio(AudioAsset audioAsset)
     {
+        PruneAudioRuntime();
         if (!_audioSources.TryGetValue(audioAsset.Path, out AudioSource? source))
         {
             TryLoadAudioRuntime(audioAsset);
@@ -1609,6 +1612,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        PruneAudioRuntime();
         if (_audioSources.ContainsKey(audioAsset.Path))
         {
             return;
@@ -1621,14 +1625,18 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        AudioClip? clip = null;
+        AudioSource? source = null;
+        bool registered = false;
+
         try
         {
-            AudioClip clip = Audio.LoadClip(fullPath);
-            AudioSource source = Audio.CreateSource(clip);
+            clip = Audio.LoadClip(fullPath);
+            source = Audio.CreateSource(clip);
             source.Volume = audioAsset.Volume;
             source.Looping = audioAsset.Loop;
-            _audioClips[audioAsset.Path] = clip;
-            _audioSources[audioAsset.Path] = source;
+            RegisterAudioRuntime(audioAsset.Path, clip, source);
+            registered = true;
             if (audioAsset.PlayOnStart)
             {
                 source.Play();
@@ -1636,6 +1644,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
         catch (Exception ex)
         {
+            if (!registered)
+            {
+                source?.Dispose();
+                clip?.Dispose();
+            }
+
             UpdateStatus($"Failed to load audio: {ex.Message}");
         }
     }
@@ -1669,19 +1683,103 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         _planeObjects.Clear();
+        _waterRippleTimes.Clear();
 
-        foreach (AudioSource source in _audioSources.Values)
+        DisposeAudioRuntime();
+    }
+
+    private void RegisterAudioRuntime(string path, AudioClip clip, AudioSource source)
+    {
+        HashSet<AudioSource> replacedSources = [];
+        HashSet<AudioClip> replacedClips = [];
+
+        if (_audioSources.TryGetValue(path, out AudioSource? replacedSource) && !ReferenceEquals(replacedSource, source))
+        {
+            replacedSources.Add(replacedSource);
+        }
+
+        if (_audioClips.TryGetValue(path, out AudioClip? replacedClip) && !ReferenceEquals(replacedClip, clip))
+        {
+            replacedClips.Add(replacedClip);
+        }
+
+        _audioSources[path] = source;
+        _audioClips[path] = clip;
+        DisposeUnreferencedAudio(replacedSources, replacedClips);
+    }
+
+    private void PruneAudioRuntime()
+    {
+        HashSet<string> activePaths = Project.Scene.Audio
+            .Select(audio => audio.Path)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string stalePath in _audioSources.Keys.Where(path => !activePaths.Contains(path)).ToArray())
+        {
+            AudioSource source = _audioSources[stalePath];
+            _audioSources.Remove(stalePath);
+            if (!_audioSources.Values.Any(item => ReferenceEquals(item, source)))
+            {
+                source.Dispose();
+            }
+        }
+
+        foreach (string stalePath in _audioClips.Keys.Where(path => !activePaths.Contains(path)).ToArray())
+        {
+            AudioClip clip = _audioClips[stalePath];
+            _audioClips.Remove(stalePath);
+            if (!_audioClips.Values.Any(item => ReferenceEquals(item, clip)))
+            {
+                clip.Dispose();
+            }
+        }
+    }
+
+    private void DisposeAudioRuntime()
+    {
+        foreach (AudioSource source in _audioSources.Values.ToHashSet())
         {
             source.Dispose();
         }
 
-        foreach (AudioClip clip in _audioClips.Values)
+        foreach (AudioClip clip in _audioClips.Values.ToHashSet())
         {
             clip.Dispose();
         }
 
         _audioSources.Clear();
         _audioClips.Clear();
+    }
+
+    private void DisposeUnreferencedAudio(IEnumerable<AudioSource> replacedSources, IEnumerable<AudioClip> replacedClips)
+    {
+        foreach (AudioSource source in replacedSources)
+        {
+            if (!_audioSources.Values.Any(item => ReferenceEquals(item, source)))
+            {
+                source.Dispose();
+            }
+        }
+
+        foreach (AudioClip clip in replacedClips)
+        {
+            if (!_audioClips.Values.Any(item => ReferenceEquals(item, clip)))
+            {
+                clip.Dispose();
+            }
+        }
+    }
+
+    private void RemoveWaterRippleEntries(string entityId)
+    {
+        foreach (string rippleKey in _waterRippleTimes.Keys
+            .Where(key => key.StartsWith($"{entityId}:", StringComparison.OrdinalIgnoreCase)
+                || key.Contains($":{entityId}:", StringComparison.OrdinalIgnoreCase))
+            .ToArray())
+        {
+            _waterRippleTimes.Remove(rippleKey);
+        }
     }
 
     private void EnsureDefaultScripts()

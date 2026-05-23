@@ -11,7 +11,7 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 {
     private readonly Zhengyan.DigitalWife.Mmd.Game.Game _game;
     private readonly Func<GameProjectScene> _getScene;
-    private readonly IReadOnlyList<DrawableGameComponent> _excludedComponents;
+    private readonly Func<IReadOnlyList<DrawableGameComponent>> _getExcludedComponents;
     private readonly Dictionary<string, OrbitCamera> _cameras = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RenderTexture> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _isRendering;
@@ -19,11 +19,11 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
     public SceneRenderTextureManager(
         Zhengyan.DigitalWife.Mmd.Game.Game game,
         Func<GameProjectScene> getScene,
-        IReadOnlyList<DrawableGameComponent> excludedComponents)
+        Func<IReadOnlyList<DrawableGameComponent>> getExcludedComponents)
     {
         _game = game;
         _getScene = getScene;
-        _excludedComponents = excludedComponents;
+        _getExcludedComponents = getExcludedComponents;
     }
 
     public IReadOnlyDictionary<string, OrbitCamera> Cameras => _cameras;
@@ -182,9 +182,10 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 
     private void DrawSceneComponents(GameTime gameTime)
     {
+        IReadOnlyList<DrawableGameComponent> excludedComponents = _getExcludedComponents();
         foreach (DrawableGameComponent component in _game.Components
             .OfType<DrawableGameComponent>()
-            .Where(component => component.Visible && !_excludedComponents.Contains(component))
+            .Where(component => component.Visible && !excludedComponents.Contains(component))
             .OrderBy(component => component.DrawOrder))
         {
             component.Draw(gameTime);

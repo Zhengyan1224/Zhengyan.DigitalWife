@@ -94,12 +94,15 @@ internal sealed class RuntimeGuiOverlayComponent(
             return;
         }
 
+        IReadOnlyList<SpriteSettings> sprites = _getSprites();
+        PruneSpriteTextureCache(sprites);
+
         ImDrawListPtr drawList = ImGui.GetBackgroundDrawList();
         Vector2 origin = Vector2.Zero;
         Vector2 max = new(Game.Window.Size.X, Game.Window.Size.Y);
         drawList.PushClipRect(origin, max, true);
 
-        foreach (SpriteSettings sprite in _getSprites()
+        foreach (SpriteSettings sprite in sprites
             .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
@@ -151,7 +154,11 @@ internal sealed class RuntimeGuiOverlayComponent(
             return null;
         }
 
-        string fullPath = _resolvePath(path);
+        if (!TryResolveSpriteTexturePath(path, out string fullPath))
+        {
+            return null;
+        }
+
         if (!File.Exists(fullPath))
         {
             return null;
@@ -176,6 +183,48 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
 
         return GetSpriteTexture(path)?.Id ?? 0;
+    }
+
+    private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)
+    {
+        HashSet<string> activePaths = new(StringComparer.OrdinalIgnoreCase);
+        foreach (SpriteSettings sprite in sprites)
+        {
+            if (!sprite.Visible || string.IsNullOrWhiteSpace(sprite.Path) || IsRuntimeTextureReference(sprite.Path))
+            {
+                continue;
+            }
+
+            if (TryResolveSpriteTexturePath(sprite.Path, out string fullPath) && File.Exists(fullPath))
+            {
+                activePaths.Add(fullPath);
+            }
+        }
+
+        foreach (string stalePath in _spriteTextures.Keys.Where(path => !activePaths.Contains(path)).ToArray())
+        {
+            _spriteTextures[stalePath].Dispose();
+            _spriteTextures.Remove(stalePath);
+        }
+    }
+
+    private bool TryResolveSpriteTexturePath(string path, out string fullPath)
+    {
+        try
+        {
+            fullPath = _resolvePath(path);
+            return !string.IsNullOrWhiteSpace(fullPath);
+        }
+        catch
+        {
+            fullPath = string.Empty;
+            return false;
+        }
+    }
+
+    private static bool IsRuntimeTextureReference(string path)
+    {
+        return path.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase);
     }
 
     private void DrawControl(GuiControlSettings control)

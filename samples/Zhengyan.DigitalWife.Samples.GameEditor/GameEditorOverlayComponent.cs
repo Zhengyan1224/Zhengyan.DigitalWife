@@ -174,6 +174,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawSpritePreview(Vector2 viewportMin, Vector2 viewportSize)
     {
+        PruneSpriteTextureCache(_editorGame.Project.Scene.Sprites);
+
         ImDrawListPtr drawList = ImGui.GetWindowDrawList();
         drawList.PushClipRect(viewportMin, viewportMin + viewportSize, true);
 
@@ -229,7 +231,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return null;
         }
 
-        string fullPath = GameProjectPath.ToAbsolute(_editorGame.ProjectDirectory, path);
+        if (!TryResolveSpriteTexturePath(path, out string fullPath))
+        {
+            return null;
+        }
+
         if (!File.Exists(fullPath))
         {
             return null;
@@ -244,6 +250,48 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         texture.LoadFromFile(fullPath);
         _spriteTextures[fullPath] = texture;
         return texture;
+    }
+
+    private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)
+    {
+        HashSet<string> activePaths = new(StringComparer.OrdinalIgnoreCase);
+        foreach (SpriteSettings sprite in sprites)
+        {
+            if (!sprite.Visible || string.IsNullOrWhiteSpace(sprite.Path) || IsRuntimeTextureReference(sprite.Path))
+            {
+                continue;
+            }
+
+            if (TryResolveSpriteTexturePath(sprite.Path, out string fullPath) && File.Exists(fullPath))
+            {
+                activePaths.Add(fullPath);
+            }
+        }
+
+        foreach (string stalePath in _spriteTextures.Keys.Where(path => !activePaths.Contains(path)).ToArray())
+        {
+            _spriteTextures[stalePath].Dispose();
+            _spriteTextures.Remove(stalePath);
+        }
+    }
+
+    private bool TryResolveSpriteTexturePath(string path, out string fullPath)
+    {
+        try
+        {
+            fullPath = GameProjectPath.ToAbsolute(_editorGame.ProjectDirectory, path);
+            return !string.IsNullOrWhiteSpace(fullPath);
+        }
+        catch
+        {
+            fullPath = string.Empty;
+            return false;
+        }
+    }
+
+    private static bool IsRuntimeTextureReference(string path)
+    {
+        return path.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase);
     }
 
     private void DrawGuiPreview(Vector2 viewportMin, Vector2 viewportSize)

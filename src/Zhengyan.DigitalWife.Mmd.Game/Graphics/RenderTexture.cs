@@ -5,6 +5,7 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 public sealed unsafe class RenderTexture : IDisposable
 {
     private readonly GL _gl;
+    private bool _disposed;
 
     public RenderTexture(GL gl, string name)
     {
@@ -68,6 +69,12 @@ public sealed unsafe class RenderTexture : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _gl.DeleteFramebuffer(FramebufferId);
         _gl.DeleteTexture(ColorTextureId);
         _gl.DeleteRenderbuffer(DepthStencilRenderbufferId);

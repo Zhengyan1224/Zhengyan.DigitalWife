@@ -19,9 +19,11 @@ public sealed class RuntimeVoice : IDisposable
     private readonly Dictionary<string, SpeechTransformUpdater> _speechUpdaters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ActiveSpeech> _activeSpeeches = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sync = new();
+    private readonly object _resourceSync = new();
     private SpeechDictionarySet? _dictionaries;
     private SherpaOnnxTextToSpeechSynthesizer? _synthesizer;
     private bool _disposed;
+    private int _sceneVersion;
 
     internal RuntimeVoice(
         GamePlayerGame game,
@@ -39,7 +41,7 @@ public sealed class RuntimeVoice : IDisposable
 
     public void Preload()
     {
-        if (!_settings.Enabled || !_settings.PreloadOnSceneLoad)
+        if (_disposed || !_settings.Enabled || !_settings.PreloadOnSceneLoad)
         {
             return;
         }
@@ -107,6 +109,11 @@ public sealed class RuntimeVoice : IDisposable
 
     public void Speak(RuntimeEntity entity, string text, RuntimeVoiceOptions? options = null)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         if (!_settings.Enabled)
         {
             Console.Error.WriteLine($"Entity speech ignored for '{entity.Name}' because Voice.Enabled is false.");
@@ -126,12 +133,17 @@ public sealed class RuntimeVoice : IDisposable
 
         string utteranceText = text.Trim();
         RuntimeVoiceOptions effectiveOptions = options ?? new RuntimeVoiceOptions();
+        int sceneVersion = Volatile.Read(ref _sceneVersion);
 
         _ = Task.Run(async () =>
         {
             try
             {
-                await SpeakAsync(entity, utteranceText, effectiveOptions).ConfigureAwait(false);
+                await SpeakAsync(entity, utteranceText, effectiveOptions, sceneVersion).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The scene or player was disposed while speech was being prepared.
             }
             catch (Exception ex)
             {
@@ -161,6 +173,8 @@ public sealed class RuntimeVoice : IDisposable
 
     internal void ClearScene()
     {
+        Interlocked.Increment(ref _sceneVersion);
+
         foreach (SpeechTransformUpdater updater in _speechUpdaters.Values)
         {
             updater.Stop(resetFace: true);
@@ -189,12 +203,24 @@ public sealed class RuntimeVoice : IDisposable
         _disposed = true;
 
         ClearScene();
-        _synthesizer?.Dispose();
-        _synthesizer = null;
+        SherpaOnnxTextToSpeechSynthesizer? synthesizer;
+        lock (_resourceSync)
+        {
+            synthesizer = _synthesizer;
+            _synthesizer = null;
+            _dictionaries = null;
+        }
+
+        synthesizer?.Dispose();
     }
 
-    private async Task SpeakAsync(RuntimeEntity entity, string text, RuntimeVoiceOptions options)
+    private async Task SpeakAsync(RuntimeEntity entity, string text, RuntimeVoiceOptions options, int sceneVersion)
     {
+        if (_disposed || sceneVersion != Volatile.Read(ref _sceneVersion))
+        {
+            return;
+        }
+
         SherpaOnnxTextToSpeechSynthesizer synthesizer = EnsureSynthesizer();
         int speakerId = options.SpeakerId ?? _settings.DefaultSpeakerId;
         float speed = Math.Clamp(options.Speed ?? _settings.DefaultSpeed, 0.1f, 5.0f);
@@ -209,7 +235,18 @@ public sealed class RuntimeVoice : IDisposable
                 Speed = speed
             }).ConfigureAwait(false);
 
-        _dispatcher.Post(() => PlaySpeechOnMainThread(entity, text, audio, volume, options.OnCompleted));
+        if (sceneVersion != Volatile.Read(ref _sceneVersion))
+        {
+            return;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            if (sceneVersion == Volatile.Read(ref _sceneVersion))
+            {
+                PlaySpeechOnMainThread(entity, text, audio, volume, options.OnCompleted);
+            }
+        });
     }
 
     private void PlaySpeechOnMainThread(RuntimeEntity entity, string text, AudioData audio, float volume, Action? onCompleted)
@@ -366,44 +403,51 @@ public sealed class RuntimeVoice : IDisposable
 
     private SherpaOnnxTextToSpeechSynthesizer EnsureSynthesizer()
     {
-        if (_synthesizer is not null)
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        lock (_resourceSync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            if (_synthesizer is not null)
+            {
+                return _synthesizer;
+            }
+
+            if (!string.Equals(_settings.TtsProvider, "sherpa-onnx", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new NotSupportedException($"Unsupported voice TTS provider: {_settings.TtsProvider}");
+            }
+
+            SpeechSynthesisModelKind modelKind = ParseModelKind(_settings.ModelKind);
+            string modelPath = ResolveRequiredPath(_settings.ModelPath, "Voice.ModelPath");
+            string tokensPath = ResolveRequiredPath(_settings.TokensPath, "Voice.TokensPath");
+            string? dataDirectory = ResolveOptionalPath(_settings.DataDirectory);
+            string? dictDirectory = ResolveOptionalPath(_settings.DictDirectory);
+            if (modelKind == SpeechSynthesisModelKind.Matcha)
+            {
+                dataDirectory = ResolveMatchaDataDirectory(modelPath, dataDirectory, dictDirectory);
+            }
+
+            _synthesizer = new SherpaOnnxTextToSpeechSynthesizer(
+                new SherpaOnnxTtsOptions
+                {
+                    ModelPath = modelPath,
+                    TokensPath = tokensPath,
+                    ModelKind = modelKind,
+                    LexiconPath = ResolveOptionalPath(_settings.LexiconPath),
+                    DataDirectory = dataDirectory,
+                    DictDirectory = dictDirectory,
+                    VocoderPath = ResolveOptionalPath(_settings.VocoderPath),
+                    RuleFars = ResolveOptionalPath(_settings.RuleFars),
+                    RuleFsts = ResolveRuleFsts(_settings.RuleFsts),
+                    Provider = string.IsNullOrWhiteSpace(_settings.InferenceProvider) ? "cpu" : _settings.InferenceProvider,
+                    Threads = Math.Max(1, _settings.Threads)
+                },
+                NullLogger<SherpaOnnxTextToSpeechSynthesizer>.Instance);
+
             return _synthesizer;
         }
-
-        if (!string.Equals(_settings.TtsProvider, "sherpa-onnx", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new NotSupportedException($"Unsupported voice TTS provider: {_settings.TtsProvider}");
-        }
-
-        SpeechSynthesisModelKind modelKind = ParseModelKind(_settings.ModelKind);
-        string modelPath = ResolveRequiredPath(_settings.ModelPath, "Voice.ModelPath");
-        string tokensPath = ResolveRequiredPath(_settings.TokensPath, "Voice.TokensPath");
-        string? dataDirectory = ResolveOptionalPath(_settings.DataDirectory);
-        string? dictDirectory = ResolveOptionalPath(_settings.DictDirectory);
-        if (modelKind == SpeechSynthesisModelKind.Matcha)
-        {
-            dataDirectory = ResolveMatchaDataDirectory(modelPath, dataDirectory, dictDirectory);
-        }
-
-        _synthesizer = new SherpaOnnxTextToSpeechSynthesizer(
-            new SherpaOnnxTtsOptions
-            {
-                ModelPath = modelPath,
-                TokensPath = tokensPath,
-                ModelKind = modelKind,
-                LexiconPath = ResolveOptionalPath(_settings.LexiconPath),
-                DataDirectory = dataDirectory,
-                DictDirectory = dictDirectory,
-                VocoderPath = ResolveOptionalPath(_settings.VocoderPath),
-                RuleFars = ResolveOptionalPath(_settings.RuleFars),
-                RuleFsts = ResolveRuleFsts(_settings.RuleFsts),
-                Provider = string.IsNullOrWhiteSpace(_settings.InferenceProvider) ? "cpu" : _settings.InferenceProvider,
-                Threads = Math.Max(1, _settings.Threads)
-            },
-            NullLogger<SherpaOnnxTextToSpeechSynthesizer>.Instance);
-
-        return _synthesizer;
     }
 
     private static string ResolveMatchaDataDirectory(string modelPath, string? dataDirectory, string? dictDirectory)
@@ -444,22 +488,29 @@ public sealed class RuntimeVoice : IDisposable
 
     private SpeechDictionarySet EnsureSpeechDictionaries()
     {
-        if (_dictionaries is not null)
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        lock (_resourceSync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            if (_dictionaries is not null)
+            {
+                return _dictionaries;
+            }
+
+            string dictionaryDirectory = ResolveOptionalPath(_settings.LipSync.DictionaryDirectory)
+                ?? Path.Combine(AppContext.BaseDirectory, "Resources", "SpeechLipSyncDictionaries");
+            SpeechDictionaryLanguage language = Enum.TryParse(
+                _settings.LipSync.DictionaryLanguage,
+                ignoreCase: true,
+                out SpeechDictionaryLanguage parsed)
+                ? parsed
+                : SpeechDictionaryLanguage.Chinese;
+
+            _dictionaries = SpeechDictionarySet.LoadFromDirectory(dictionaryDirectory, language);
             return _dictionaries;
         }
-
-        string dictionaryDirectory = ResolveOptionalPath(_settings.LipSync.DictionaryDirectory)
-            ?? Path.Combine(AppContext.BaseDirectory, "Resources", "SpeechLipSyncDictionaries");
-        SpeechDictionaryLanguage language = Enum.TryParse(
-            _settings.LipSync.DictionaryLanguage,
-            ignoreCase: true,
-            out SpeechDictionaryLanguage parsed)
-            ? parsed
-            : SpeechDictionaryLanguage.Chinese;
-
-        _dictionaries = SpeechDictionarySet.LoadFromDirectory(dictionaryDirectory, language);
-        return _dictionaries;
     }
 
     private string ResolveRequiredPath(string path, string settingName)

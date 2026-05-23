@@ -98,7 +98,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         });
 
         _runtimeInput = new RuntimeInput(this);
-        _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents());
+        _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
 
         _ = AddComponent(new GroundShadowPassComponent(this)
         {
@@ -513,19 +513,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _planeObjects.Clear();
         _entitiesById.Clear();
         _entitiesByName.Clear();
+        _waterRippleTimes.Clear();
 
-        foreach (AudioSource source in _audioSources.Values)
-        {
-            source.Dispose();
-        }
-
-        foreach (AudioClip clip in _audioClips.Values)
-        {
-            clip.Dispose();
-        }
-
-        _audioSources.Clear();
-        _audioClips.Clear();
+        DisposeAudioRuntime();
     }
 
     private void LoadEntities()
@@ -716,18 +706,18 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        AudioClip? clip = null;
+        AudioSource? source = null;
+        bool registered = false;
+
         try
         {
-            AudioClip clip = Audio.LoadClip(fullPath);
-            AudioSource source = Audio.CreateSource(clip);
+            clip = Audio.LoadClip(fullPath);
+            source = Audio.CreateSource(clip);
             source.Volume = audioAsset.Volume;
             source.Looping = audioAsset.Loop;
-            _audioClips[audioAsset.Name] = clip;
-            _audioSources[audioAsset.Name] = source;
-            if (!string.Equals(audioAsset.Name, audioAsset.Path, StringComparison.OrdinalIgnoreCase))
-            {
-                _audioSources[audioAsset.Path] = source;
-            }
+            RegisterAudioRuntime(audioAsset, clip, source);
+            registered = true;
 
             if (audioAsset.PlayOnStart)
             {
@@ -736,7 +726,87 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
         catch (Exception ex)
         {
+            if (!registered)
+            {
+                source?.Dispose();
+                clip?.Dispose();
+            }
+
             Console.Error.WriteLine($"Failed to load audio '{audioAsset.Name}': {ex.Message}");
+        }
+    }
+
+    private void RegisterAudioRuntime(AudioAsset audioAsset, AudioClip clip, AudioSource source)
+    {
+        string[] aliases = GetAudioAliases(audioAsset).ToArray();
+        HashSet<AudioSource> replacedSources = [];
+        HashSet<AudioClip> replacedClips = [];
+
+        foreach (string alias in aliases)
+        {
+            if (_audioSources.TryGetValue(alias, out AudioSource? replacedSource) && !ReferenceEquals(replacedSource, source))
+            {
+                replacedSources.Add(replacedSource);
+            }
+
+            if (_audioClips.TryGetValue(alias, out AudioClip? replacedClip) && !ReferenceEquals(replacedClip, clip))
+            {
+                replacedClips.Add(replacedClip);
+            }
+
+            _audioSources[alias] = source;
+            _audioClips[alias] = clip;
+        }
+
+        DisposeUnreferencedAudio(replacedSources, replacedClips);
+    }
+
+    private void DisposeAudioRuntime()
+    {
+        foreach (AudioSource source in _audioSources.Values.ToHashSet())
+        {
+            source.Dispose();
+        }
+
+        foreach (AudioClip clip in _audioClips.Values.ToHashSet())
+        {
+            clip.Dispose();
+        }
+
+        _audioSources.Clear();
+        _audioClips.Clear();
+    }
+
+    private void DisposeUnreferencedAudio(IEnumerable<AudioSource> replacedSources, IEnumerable<AudioClip> replacedClips)
+    {
+        foreach (AudioSource source in replacedSources)
+        {
+            if (!_audioSources.Values.Any(item => ReferenceEquals(item, source)))
+            {
+                source.Dispose();
+            }
+        }
+
+        foreach (AudioClip clip in replacedClips)
+        {
+            if (!_audioClips.Values.Any(item => ReferenceEquals(item, clip)))
+            {
+                clip.Dispose();
+            }
+        }
+    }
+
+    private static IEnumerable<string> GetAudioAliases(AudioAsset audioAsset)
+    {
+        if (!string.IsNullOrWhiteSpace(audioAsset.Name))
+        {
+            yield return audioAsset.Name;
+        }
+
+        if (!string.IsNullOrWhiteSpace(audioAsset.Path)
+            && !string.Equals(audioAsset.Path, audioAsset.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return audioAsset.Path;
         }
     }
 

@@ -5,6 +5,7 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Audio;
 public sealed class AudioClip : IDisposable
 {
     private readonly AL _al;
+    private bool _disposed;
 
     internal AudioClip(AL al, uint bufferId, string? name, int channels, int sampleRate, TimeSpan duration)
     {
@@ -28,6 +29,12 @@ public sealed class AudioClip : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _al.DeleteBuffer(BufferId);
         GC.SuppressFinalize(this);
     }

@@ -18,6 +18,7 @@ public unsafe class Texture2D : IDisposable
 {
     private readonly GL _gl;
     private const float SoftAlphaOverlayThreshold = 0.25f;
+    private bool _disposed;
 
     public uint Id { get; }
 
@@ -99,6 +100,12 @@ public unsafe class Texture2D : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _gl.DeleteTexture(Id);
         GC.SuppressFinalize(this);
     }

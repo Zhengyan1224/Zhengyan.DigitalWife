@@ -5,6 +5,7 @@ namespace Zhengyan.DigitalWife.Samples.GameEditor;
 internal sealed unsafe class SceneRenderTarget : IDisposable
 {
     private readonly GL _gl;
+    private bool _disposed;
 
     public SceneRenderTarget(GL gl)
     {
@@ -81,6 +82,12 @@ internal sealed unsafe class SceneRenderTarget : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _gl.DeleteFramebuffer(FramebufferId);
         _gl.DeleteTexture(ColorTextureId);
         _gl.DeleteRenderbuffer(DepthStencilRenderbufferId);
