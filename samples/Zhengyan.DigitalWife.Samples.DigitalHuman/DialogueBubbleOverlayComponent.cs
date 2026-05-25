@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.InteropServices;
 using ImGuiNET;
 using Silk.NET.OpenGLES.Extensions.ImGui;
 using Zhengyan.DigitalWife.Mmd.Game;
@@ -28,7 +27,7 @@ internal sealed class DialogueBubbleOverlayComponent(
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (TryGetCjkFontPath(out string fontPath))
+        if (ImGuiFontResolver.TryGetCjkFontPath(out string fontPath))
         {
             _controller = new ImGuiController(
                 Game.GraphicsDevice.Gl,
@@ -267,63 +266,6 @@ internal sealed class DialogueBubbleOverlayComponent(
         io.Fonts.AddFontFromFileTTF(fontPath, 18.0f, default, io.Fonts.GetGlyphRangesChineseFull());
     }
 
-    private static bool TryGetCjkFontPath(out string fontPath)
-    {
-        IEnumerable<string> candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? GetWindowsFontCandidates()
-            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                ? GetMacFontCandidates()
-                : GetLinuxFontCandidates();
-
-        foreach (string candidate in candidates)
-        {
-            if (File.Exists(candidate))
-            {
-                fontPath = candidate;
-                return true;
-            }
-        }
-
-        fontPath = string.Empty;
-        return false;
-    }
-
-    private static IEnumerable<string> GetWindowsFontCandidates()
-    {
-        string fontsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts");
-        return
-        [
-            Path.Combine(fontsDir, "msyh.ttc"),
-            Path.Combine(fontsDir, "msyhbd.ttc"),
-            Path.Combine(fontsDir, "simsun.ttc"),
-            Path.Combine(fontsDir, "arialuni.ttf"),
-            Path.Combine(fontsDir, "meiryo.ttc"),
-            Path.Combine(fontsDir, "YuGothM.ttc"),
-            Path.Combine(fontsDir, "msgothic.ttc")
-        ];
-    }
-
-    private static IEnumerable<string> GetLinuxFontCandidates()
-    {
-        return
-        [
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        ];
-    }
-
-    private static IEnumerable<string> GetMacFontCandidates()
-    {
-        return
-        [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
-        ];
-    }
 }
 
 internal readonly record struct DialogueBubbleSnapshot(

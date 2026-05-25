@@ -62,6 +62,27 @@ app:Resources/Skybox/autumn_field_puresky.jpg
 
 该路径表示从程序输出目录开始查找。示例项目构建后会复制为 `bin/Debug/net10.0/Resources/Skybox/autumn_field_puresky.jpg`。图片来自 Poly Haven 的 CC0 `autumn_field_puresky` 天空全景图。
 
+### `Fonts/`
+
+ImGui 界面使用的内置中文字体：
+
+- `NotoSansCJKsc-Regular.otf`
+
+供以下示例界面使用：
+
+- `GameEditor`
+- `GamePlayer`
+- `DigitalHuman`
+- `MmdDemo`
+
+示例项目启动时会优先从输出目录读取：
+
+```text
+Resources/Fonts/NotoSansCJKsc-Regular.otf
+```
+
+如果该文件不存在，才会回退到系统字体。这样 Linux 发行版即使没有安装 CJK 字体包，也不会导致 ImGui 中文乱码。字体来自 Google Noto CJK，采用 SIL Open Font License 1.1。
+
 ### `Particles/`
 
 粒子预设默认贴图：

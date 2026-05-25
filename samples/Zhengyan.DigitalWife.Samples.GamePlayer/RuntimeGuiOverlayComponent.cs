@@ -1,6 +1,5 @@
 using System.Numerics;
 using ImGuiNET;
-using System.Runtime.InteropServices;
 using Silk.NET.OpenGLES;
 using Silk.NET.OpenGLES.Extensions.ImGui;
 using Zhengyan.DigitalWife.GameProjects;
@@ -31,7 +30,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (TryGetCjkFontPath(out string cjkFontPath))
+        if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
         {
             try
             {
@@ -390,59 +389,4 @@ internal sealed class RuntimeGuiOverlayComponent(
         io.Fonts.AddFontFromFileTTF(fontPath, 18.0f, default, io.Fonts.GetGlyphRangesChineseFull());
     }
 
-    private static bool TryGetCjkFontPath(out string fontPath)
-    {
-        IEnumerable<string> candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? GetWindowsFontCandidates()
-            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                ? GetMacFontCandidates()
-                : GetLinuxFontCandidates();
-
-        foreach (string candidate in candidates)
-        {
-            if (File.Exists(candidate))
-            {
-                fontPath = candidate;
-                return true;
-            }
-        }
-
-        fontPath = string.Empty;
-        return false;
-    }
-
-    private static IEnumerable<string> GetWindowsFontCandidates()
-    {
-        string windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        string fontsDir = Path.Combine(windowsDir, "Fonts");
-
-        return
-        [
-            Path.Combine(fontsDir, "msyh.ttc"),
-            Path.Combine(fontsDir, "msyhbd.ttc"),
-            Path.Combine(fontsDir, "simsun.ttc"),
-            Path.Combine(fontsDir, "arialuni.ttf"),
-            Path.Combine(fontsDir, "meiryo.ttc")
-        ];
-    }
-
-    private static IEnumerable<string> GetLinuxFontCandidates()
-    {
-        return
-        [
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        ];
-    }
-
-    private static IEnumerable<string> GetMacFontCandidates()
-    {
-        return
-        [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
-        ];
-    }
 }
