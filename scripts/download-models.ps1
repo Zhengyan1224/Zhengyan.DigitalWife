@@ -55,6 +55,13 @@ if (-not $SkipTts) {
         $downloadsRoot
     )
 
+    Invoke-ModelInstaller @(
+        "download-and-extract-tarbz2",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2",
+        (Join-Path $modelsRoot "tts"),
+        $downloadsRoot
+    )
+
     $matchaDir = Join-Path $modelsRoot "tts\matcha-icefall-zh-en"
     New-Item -ItemType Directory -Force -Path $matchaDir | Out-Null
     Invoke-ModelInstaller @(
@@ -75,4 +82,3 @@ if (-not $SkipWhisper) {
 }
 
 Write-Host "Model download complete."
-

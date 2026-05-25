@@ -232,6 +232,21 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_playback_speed(self, value):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_playback_speed", "value": value})
 
+                   def set_loop_motion(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_loop_motion", "flag": bool(enabled)})
+
+                   def set_reset_physics_on_motion_loop(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_reset_physics_on_motion_loop", "flag": bool(enabled)})
+
+                   def set_edge_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_edge_enabled", "flag": bool(enabled)})
+
+                   def set_shadow_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_shadow_enabled", "flag": bool(enabled)})
+
+                   def set_draw_shadow_in_main_pass(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_draw_shadow_in_main_pass", "flag": bool(enabled)})
+
                    def apply_motion(self, path):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "apply_motion", "path": path})
 
@@ -1606,6 +1621,21 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_playback_speed" when command.Value.HasValue:
                 entity.PlaybackSpeed = (float)command.Value.Value;
+                break;
+            case "set_loop_motion" when command.Flag.HasValue:
+                entity.LoopMotion = command.Flag.Value;
+                break;
+            case "set_reset_physics_on_motion_loop" when command.Flag.HasValue:
+                entity.ResetPhysicsOnMotionLoop = command.Flag.Value;
+                break;
+            case "set_edge_enabled" when command.Flag.HasValue:
+                entity.EnableEdge = command.Flag.Value;
+                break;
+            case "set_shadow_enabled" when command.Flag.HasValue:
+                entity.EnableShadow = command.Flag.Value;
+                break;
+            case "set_draw_shadow_in_main_pass" when command.Flag.HasValue:
+                entity.DrawShadowInMainPass = command.Flag.Value;
                 break;
             case "apply_motion" when !string.IsNullOrWhiteSpace(command.Path):
                 entity.ApplyMotion(command.Path);

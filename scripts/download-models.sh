@@ -29,6 +29,12 @@ dotnet run --project "$ROOT/tools/Zhengyan.DigitalWife.Tools.ModelInstaller/Zhen
   "$MODELS_ROOT/tts" \
   "$DOWNLOADS_ROOT"
 
+dotnet run --project "$ROOT/tools/Zhengyan.DigitalWife.Tools.ModelInstaller/Zhengyan.DigitalWife.Tools.ModelInstaller.csproj" -- \
+  download-and-extract-tarbz2 \
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2" \
+  "$MODELS_ROOT/tts" \
+  "$DOWNLOADS_ROOT"
+
 mkdir -p "$MODELS_ROOT/tts/matcha-icefall-zh-en"
 dotnet run --project "$ROOT/tools/Zhengyan.DigitalWife.Tools.ModelInstaller/Zhengyan.DigitalWife.Tools.ModelInstaller.csproj" -- \
   download-file \
@@ -42,4 +48,3 @@ dotnet run --project "$ROOT/tools/Zhengyan.DigitalWife.Tools.ModelInstaller/Zhen
   "$MODELS_ROOT/whisper/ggml-base.bin"
 
 echo "Model download complete."
-

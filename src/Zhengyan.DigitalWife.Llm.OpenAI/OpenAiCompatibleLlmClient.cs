@@ -155,7 +155,9 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
 
     private static string CombineUrl(string baseUrl, string path)
     {
-        if (Uri.TryCreate(path, UriKind.Absolute, out var absolute))
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)
+            && (string.Equals(absolute.Scheme, "http", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(absolute.Scheme, "https", StringComparison.OrdinalIgnoreCase)))
         {
             return absolute.ToString();
         }

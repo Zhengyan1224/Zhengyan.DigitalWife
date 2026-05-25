@@ -99,6 +99,80 @@ dotnet build Zhengyan.DigitalWife.sln
 dotnet build Zhengyan.DigitalWife.slnx
 ```
 
+## Linux 运行依赖
+
+下面这组依赖按 `Ubuntu / Debian` 整理。
+
+适用范围：
+
+- 纯语音 / 服务端：`AssistantConsole`、`RealtimeVoice`
+- 3D / GUI：`DigitalHuman`、`GameEditor`、`GamePlayer`、`MmdQuickStart`、`MmdDemo`
+
+基础依赖：
+
+```bash
+sudo apt update
+sudo apt install -y \
+  python3 \
+  libopenal1 \
+  libportaudio2 \
+  libasound2 \
+  libsndfile1 \
+  ca-certificates
+```
+
+如果要运行 3D / GUI 样例，再安装：
+
+```bash
+sudo apt install -y \
+  libgl1-mesa-dri \
+  libegl1 \
+  libgles2 \
+  libx11-6 \
+  libxi6 \
+  libxcursor1 \
+  libxinerama1 \
+  libxrandr2 \
+  libxxf86vm1 \
+  libfontconfig1 \
+  fonts-noto-cjk \
+  mesa-utils \
+  alsa-utils
+```
+
+模型下载：
+
+```bash
+chmod +x ./scripts/download-models.sh
+./scripts/download-models.sh
+```
+
+常用排查命令：
+
+```bash
+dotnet --info
+python3 --version
+ldconfig -p | grep -Ei 'openal|portaudio|sndfile'
+ldconfig -p | grep -Ei 'libGL|libEGL|libGLESv2'
+fc-match "Noto Sans CJK SC"
+aplay -l
+arecord -l
+```
+
+如果你要跑 3D / GUI，再加：
+
+```bash
+glxinfo -B
+```
+
+排查重点：
+
+- `python3 --version` 失败：Python 脚本桥不可用。
+- `ldconfig -p | grep openal` 没结果：TTS / 音频播放大概率起不来。
+- `ldconfig -p | grep portaudio` 没结果：录音和扬声器设备枚举会失败。
+- `fc-match "Noto Sans CJK SC"` 找不到中文字体：GUI 中文可能退回乱码或方块。
+- `glxinfo -B` 失败：3D / GUI 样例通常缺少 OpenGL / Mesa 运行环境。
+
 ## 快速开始
 
 ### 语音示例

@@ -149,6 +149,34 @@ Entity.SetMaterialRenderTexture(0, "PortraitRT");
 Entity.SetMaterialTexture("Body", "project:assets/textures/body_alt.png");
 ```
 
+PMX 脚本控制示例：
+
+```csharp
+if (Entity.IsPmxModel)
+{
+    Entity.IsPlaying = true;
+    Entity.PlaybackSpeed = 1.05f;
+    Entity.LoopMotion = true;
+    Entity.ResetPhysicsOnMotionLoop = true;
+
+    Entity.EnableEdge = true;
+    Entity.EnableShadow = true;
+    Entity.DrawShadowInMainPass = false;
+}
+```
+
+```python
+if entity.type == "pmx_model":
+    entity.set_playing(True)
+    entity.set_playback_speed(1.05)
+    entity.set_loop_motion(True)
+    entity.set_reset_physics_on_motion_loop(True)
+
+    entity.set_edge_enabled(True)
+    entity.set_shadow_enabled(True)
+    entity.set_draw_shadow_in_main_pass(False)
+```
+
 ## TTS
 
 `Project -> Voice / TTS` 配置 `GamePlayer` 的人物说话能力。启用后脚本可调用 `Entity.Speak(...)` 或 `entity.speak(...)`，运行器会合成语音、播放音频并驱动 PMX 口型。

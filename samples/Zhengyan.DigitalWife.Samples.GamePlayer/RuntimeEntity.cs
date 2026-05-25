@@ -291,6 +291,7 @@ public sealed class RuntimeEntity
         get => _model?.LoopMotion ?? _definition.LoopMotion;
         set
         {
+            _definition.LoopMotion = value;
             if (_model is not null)
             {
                 _model.LoopMotion = value;
@@ -303,9 +304,49 @@ public sealed class RuntimeEntity
         get => _model?.ResetPhysicsOnMotionLoop ?? _definition.ResetPhysicsOnMotionLoop;
         set
         {
+            _definition.ResetPhysicsOnMotionLoop = value;
             if (_model is not null)
             {
                 _model.ResetPhysicsOnMotionLoop = value;
+            }
+        }
+    }
+
+    public bool EnableEdge
+    {
+        get => _model?.EnableEdge ?? _definition.EnableEdge;
+        set
+        {
+            _definition.EnableEdge = value;
+            if (_model is not null)
+            {
+                _model.EnableEdge = value;
+            }
+        }
+    }
+
+    public bool EnableShadow
+    {
+        get => _model?.EnableShadow ?? _definition.EnableShadow;
+        set
+        {
+            _definition.EnableShadow = value;
+            if (_model is not null)
+            {
+                _model.EnableShadow = value;
+            }
+        }
+    }
+
+    public bool DrawShadowInMainPass
+    {
+        get => _model?.DrawShadowInMainPass ?? _definition.DrawShadowInMainPass;
+        set
+        {
+            _definition.DrawShadowInMainPass = value;
+            if (_model is not null)
+            {
+                _model.DrawShadowInMainPass = value;
             }
         }
     }
@@ -696,6 +737,9 @@ public sealed class RuntimeEntity
             _definition.PlaybackSpeed = _model.PlaybackSpeed;
             _definition.LoopMotion = _model.LoopMotion;
             _definition.ResetPhysicsOnMotionLoop = _model.ResetPhysicsOnMotionLoop;
+            _definition.EnableEdge = _model.EnableEdge;
+            _definition.EnableShadow = _model.EnableShadow;
+            _definition.DrawShadowInMainPass = _model.DrawShadowInMainPass;
         }
         else if (_particle is not null)
         {

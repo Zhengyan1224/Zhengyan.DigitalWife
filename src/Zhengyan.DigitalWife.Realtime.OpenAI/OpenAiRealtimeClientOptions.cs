@@ -26,7 +26,7 @@ public sealed class OpenAiRealtimeClientOptions
 
     public Uri BuildEndpoint()
     {
-        Uri endpoint = TryBuildAbsoluteEndpoint(RealtimePath)
+        Uri endpoint = TryBuildAbsoluteEndpoint(RealtimePath, "http", "https", "ws", "wss")
             ?? TryBuildRelativeEndpoint()
             ?? throw new InvalidOperationException("Unable to build the Realtime endpoint URI.");
 
@@ -44,7 +44,7 @@ public sealed class OpenAiRealtimeClientOptions
 
     public Uri BuildAudioSpeechEndpoint()
     {
-        return TryBuildAbsoluteEndpoint(AudioSpeechPath)
+        return TryBuildAbsoluteEndpoint(AudioSpeechPath, "http", "https")
             ?? TryBuildRelativeEndpoint(AudioSpeechPath)
             ?? throw new InvalidOperationException("Unable to build the audio speech endpoint URI.");
     }
@@ -74,14 +74,21 @@ public sealed class OpenAiRealtimeClientOptions
         }
     }
 
-    private Uri? TryBuildAbsoluteEndpoint(string value)
+    private static Uri? TryBuildAbsoluteEndpoint(string value, params string[] allowedSchemes)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
             return null;
         }
 
-        return Uri.TryCreate(value, UriKind.Absolute, out Uri? absolute) ? absolute : null;
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? absolute))
+        {
+            return null;
+        }
+
+        // On Linux, bare absolute paths like "/v1/realtime" parse as file:// URIs.
+        // Treat only network-style schemes as valid absolute endpoints here.
+        return allowedSchemes.Contains(absolute.Scheme, StringComparer.OrdinalIgnoreCase) ? absolute : null;
     }
 
     private Uri? TryBuildRelativeEndpoint()

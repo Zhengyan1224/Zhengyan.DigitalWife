@@ -193,6 +193,11 @@ def update(entity, scene, input, audio, delta_seconds):
 | `Visible` | 无直接快照字段 | 是否可见。Python 用 `set_visible` 修改。 |
 | `IsPlaying` | 无直接快照字段 | PMX 动作/粒子/水面是否播放。Python 用 `set_playing` 修改。 |
 | `PlaybackSpeed` | 无直接快照字段 | PMX 动作或粒子模拟速度。 |
+| `LoopMotion` | 无直接快照字段 | PMX 动作是否循环。Python 用 `set_loop_motion` 修改。 |
+| `ResetPhysicsOnMotionLoop` | 无直接快照字段 | PMX 动作循环时是否重置物理。Python 用 `set_reset_physics_on_motion_loop` 修改。 |
+| `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
+| `EnableShadow` | 无直接快照字段 | PMX 是否参与阴影绘制。Python 用 `set_shadow_enabled` 修改。 |
+| `DrawShadowInMainPass` | 无直接快照字段 | PMX 是否在主渲染通道直接绘制地面影子。Python 用 `set_draw_shadow_in_main_pass` 修改。 |
 | `MaterialNames` | `material_names` | PMX 材质名称列表。 |
 | `Colliders` | `colliders` | 碰撞体快照。 |
 
@@ -208,6 +213,11 @@ Entity.RotateZ(5);
 Entity.Visible = true;
 Entity.IsPlaying = true;
 Entity.PlaybackSpeed = 1.2f;
+Entity.LoopMotion = true;
+Entity.ResetPhysicsOnMotionLoop = true;
+Entity.EnableEdge = true;
+Entity.EnableShadow = true;
+Entity.DrawShadowInMainPass = false;
 ```
 
 ```python
@@ -220,6 +230,11 @@ entity.rotate_z(5)
 entity.set_visible(True)
 entity.set_playing(True)
 entity.set_playback_speed(1.2)
+entity.set_loop_motion(True)
+entity.set_reset_physics_on_motion_loop(True)
+entity.set_edge_enabled(True)
+entity.set_shadow_enabled(True)
+entity.set_draw_shadow_in_main_pass(False)
 ```
 
 C# 额外可读/可写属性：
@@ -229,6 +244,9 @@ C# 额外可读/可写属性：
 | `IsPmxModel` | 当前实体是否有 PMX 运行时对象。 |
 | `LoopMotion` | PMX 动作是否循环。 |
 | `ResetPhysicsOnMotionLoop` | PMX 动作循环时是否重置物理。 |
+| `EnableEdge` | PMX 是否绘制描边。 |
+| `EnableShadow` | PMX 是否参与阴影绘制。 |
+| `DrawShadowInMainPass` | PMX 是否在主渲染通道直接绘制地面影子。 |
 | `RelationEnabled` | 是否启用 PMX 绑定关系。 |
 | `RelationEntity` | 绑定目标实体名称或 Id。 |
 | `RelationBindComponentTransform` | 是否绑定组件 Transform。 |
@@ -293,6 +311,38 @@ entity.set_motion_layer_reset_physics_on_loop("assets/motions/wave.vmd", True)
 entity.remove_motion_layer("assets/motions/wave.vmd")
 entity.clear_motion()
 ```
+
+PMX 运行时渲染与播放控制：
+
+```csharp
+Entity.IsPlaying = true;
+Entity.PlaybackSpeed = 1.0f;
+Entity.LoopMotion = true;
+Entity.ResetPhysicsOnMotionLoop = true;
+
+Entity.EnableEdge = true;
+Entity.EnableShadow = true;
+Entity.DrawShadowInMainPass = false;
+```
+
+```python
+entity.set_playing(True)
+entity.set_playback_speed(1.0)
+entity.set_loop_motion(True)
+entity.set_reset_physics_on_motion_loop(True)
+
+entity.set_edge_enabled(True)
+entity.set_shadow_enabled(True)
+entity.set_draw_shadow_in_main_pass(False)
+```
+
+说明：
+
+- `IsPlaying` 只对当前实体的可播放能力生效。对 PMX 表示动作播放，对粒子/水面表示系统启停。
+- `PlaybackSpeed` 对 PMX 表示动作倍速，对粒子系统表示模拟速度。
+- `LoopMotion` 和 `ResetPhysicsOnMotionLoop` 仅对 PMX 有意义。
+- `EnableEdge`、`EnableShadow`、`DrawShadowInMainPass` 仅对 PMX 有意义。
+- `DrawShadowInMainPass = false` 时，地面影子会交给独立的地面阴影 pass 处理；`true` 时在 PMX 主绘制阶段直接绘制。
 
 材质贴图覆盖：
 

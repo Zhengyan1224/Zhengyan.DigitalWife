@@ -92,6 +92,9 @@ internal sealed class SamplePathResolver
             LexiconPath = ResolveOptionalFile(options.LexiconPath),
             DataDirectory = ResolveOptionalDirectory(options.DataDirectory),
             DictDirectory = ResolveOptionalDirectory(options.DictDirectory),
+            VocoderPath = ResolveOptionalFile(options.VocoderPath),
+            RuleFars = ResolveOptionalFile(options.RuleFars),
+            RuleFsts = ResolveRuleFsts(options.RuleFsts),
             Provider = options.Provider,
             Threads = options.Threads,
             NoiseScale = options.NoiseScale,
@@ -169,6 +172,21 @@ internal sealed class SamplePathResolver
         }
 
         return Path.GetFullPath(Path.Combine(_baseDirectory, path));
+    }
+
+    private string? ResolveRuleFsts(string? ruleFsts)
+    {
+        if (string.IsNullOrWhiteSpace(ruleFsts))
+        {
+            return null;
+        }
+
+        string[] resolved = ruleFsts
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(ruleFst => ResolveRequiredFile(ruleFst))
+            .ToArray();
+
+        return string.Join(",", resolved);
     }
 
     private IEnumerable<string> EnumerateCandidates(string path)
