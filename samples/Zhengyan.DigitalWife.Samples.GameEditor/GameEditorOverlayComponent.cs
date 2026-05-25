@@ -1583,6 +1583,13 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         return choices.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? fallback;
     }
 
+    private static string GetRelationLabel(GameEntity entity)
+    {
+        return string.IsNullOrWhiteSpace(entity.Name)
+            ? entity.Id
+            : $"{entity.Name} ({entity.Id[..Math.Min(entity.Id.Length, 8)]})";
+    }
+
     private bool DrawEntityTargetCombo(string label, ref string targetEntity)
     {
         GameProjectScene scene = _editorGame.Project.Scene;
@@ -2144,15 +2151,29 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         if (pmxEntities.Count > 0)
         {
-            string[] labels = pmxEntities.Select(item => item.Name).ToArray();
-            int relationIndex = Math.Max(0, pmxEntities.FindIndex(item =>
+            GameEntity? matchedRelation = pmxEntities.FirstOrDefault(item =>
                 string.Equals(item.Id, relationEntity, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(item.Name, relationEntity, StringComparison.OrdinalIgnoreCase)));
-            if (ImGui.Combo("Relation PMX", ref relationIndex, labels, labels.Length))
+                || string.Equals(item.Name, relationEntity, StringComparison.OrdinalIgnoreCase));
+
+            if (enabled && string.IsNullOrWhiteSpace(relationEntity) && pmxEntities.Count == 1)
             {
-                relationEntity = pmxEntities[relationIndex].Name;
+                matchedRelation = pmxEntities[0];
+                relationEntity = matchedRelation.Id;
                 changed = true;
             }
+
+            List<string> labels = ["(none)"];
+            labels.AddRange(pmxEntities.Select(GetRelationLabel));
+            int relationIndex = matchedRelation is null ? 0 : pmxEntities.IndexOf(matchedRelation) + 1;
+            if (ImGui.Combo("Relation PMX", ref relationIndex, labels.ToArray(), labels.Count))
+            {
+                relationEntity = relationIndex <= 0 ? string.Empty : pmxEntities[relationIndex - 1].Id;
+                changed = true;
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("No other PMX entity can be used as relation target.");
         }
 
         changed |= ImGui.InputText("Relation entity", ref relationEntity, 256);

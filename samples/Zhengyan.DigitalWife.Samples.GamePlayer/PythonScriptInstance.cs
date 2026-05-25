@@ -265,6 +265,39 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def clear_motion(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "clear_motion"})
 
+                   def play_motion(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "play_motion"})
+
+                   def pause_motion(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "pause_motion"})
+
+                   def stop_motion(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "stop_motion"})
+
+                   def reset_motion(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "reset_motion"})
+
+                   def reset_motion_physics(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "reset_motion_physics"})
+
+                   def seek_motion_time(self, time_seconds):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "seek_motion_time", "value": time_seconds})
+
+                   def seek_motion_frame(self, frame):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "seek_motion_frame", "value": frame})
+
+                   def play_motion_layer(self, path):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "play_motion_layer", "path": path})
+
+                   def pause_motion_layer(self, path):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "pause_motion_layer", "path": path})
+
+                   def set_motion_layer_time(self, path, time_seconds):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_time", "path": path, "value": time_seconds})
+
+                   def set_motion_layer_frame(self, path, frame):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_frame", "path": path, "value": frame})
+
                    def set_material_texture(self, material, texture):
                        command = {"target": "entity", "entity": self.id, "action": "set_material_texture", "texture": texture}
                        if isinstance(material, int):
@@ -1654,6 +1687,39 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "clear_motion":
                 entity.ClearMotion();
+                break;
+            case "play_motion":
+                entity.PlayMotion();
+                break;
+            case "pause_motion":
+                entity.PauseMotion();
+                break;
+            case "stop_motion":
+                entity.StopMotion();
+                break;
+            case "reset_motion":
+                entity.ResetMotion();
+                break;
+            case "reset_motion_physics":
+                entity.ResetMotionPhysics();
+                break;
+            case "seek_motion_time" when command.Value.HasValue:
+                entity.SeekMotionTime((float)command.Value.Value);
+                break;
+            case "seek_motion_frame" when command.Value.HasValue:
+                entity.SeekMotionFrame((float)command.Value.Value);
+                break;
+            case "play_motion_layer" when !string.IsNullOrWhiteSpace(command.Path):
+                entity.PlayMotionLayer(command.Path);
+                break;
+            case "pause_motion_layer" when !string.IsNullOrWhiteSpace(command.Path):
+                entity.PauseMotionLayer(command.Path);
+                break;
+            case "set_motion_layer_time" when !string.IsNullOrWhiteSpace(command.Path) && command.Value.HasValue:
+                entity.SetMotionLayerTime(command.Path, (float)command.Value.Value);
+                break;
+            case "set_motion_layer_frame" when !string.IsNullOrWhiteSpace(command.Path) && command.Value.HasValue:
+                entity.SetMotionLayerFrame(command.Path, (float)command.Value.Value);
                 break;
             case "set_material_texture" when command.Texture is not null && TryApplyMaterialTexture(entity, command):
                 break;

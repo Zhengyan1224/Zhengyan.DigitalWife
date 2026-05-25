@@ -30,17 +30,18 @@ public readonly struct MotionLayerDefinition
 public readonly struct MotionLayerInfo
 {
     public MotionLayerInfo(string motionPath, float weight, float timeSeconds, int durationFrames)
-        : this(motionPath, weight, timeSeconds, durationFrames, true)
+        : this(motionPath, weight, timeSeconds, durationFrames, true, true)
     {
     }
 
-    public MotionLayerInfo(string motionPath, float weight, float timeSeconds, int durationFrames, bool resetPhysicsOnLoop)
+    public MotionLayerInfo(string motionPath, float weight, float timeSeconds, int durationFrames, bool resetPhysicsOnLoop, bool isPlaying)
     {
         MotionPath = motionPath;
         Weight = weight;
         TimeSeconds = timeSeconds;
         DurationFrames = durationFrames;
         ResetPhysicsOnLoop = resetPhysicsOnLoop;
+        IsPlaying = isPlaying;
     }
 
     public string MotionPath { get; }
@@ -52,6 +53,8 @@ public readonly struct MotionLayerInfo
     public int DurationFrames { get; }
 
     public bool ResetPhysicsOnLoop { get; }
+
+    public bool IsPlaying { get; }
 }
 
 public unsafe class PmxModelComponent : DrawableGameComponent
@@ -81,6 +84,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         public bool ResetPhysicsOnLoop { get; set; }
 
         public float TimeSeconds { get; set; }
+
+        public bool IsPlaying { get; set; } = true;
 
         public void Dispose()
         {
@@ -325,7 +330,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 layer.Weight,
                 layer.TimeSeconds,
                 layer.Animation.MaxKeyTime,
-                layer.ResetPhysicsOnLoop);
+                layer.ResetPhysicsOnLoop,
+                layer.IsPlaying);
         }
 
         return result;
@@ -504,6 +510,34 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         return true;
     }
 
+    public bool TrySetMotionLayerPlaying(string motionPath, bool isPlaying)
+    {
+        string normalizedMotionPath = NormalizeMotionLookupPath(motionPath);
+
+        if (Game is null || !_loaded || _model is null)
+        {
+            return FindMotionLayerConfigIndex(_initialMotionLayers, normalizedMotionPath) >= 0;
+        }
+
+        int existingRuntimeIndex = FindMotionLayerStateIndex(_motionLayers, normalizedMotionPath);
+        if (existingRuntimeIndex < 0)
+        {
+            return false;
+        }
+
+        _motionLayers[existingRuntimeIndex].IsPlaying = isPlaying;
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetMotionLayerPlaying(string motionPath, bool isPlaying)
+    {
+        if (!TrySetMotionLayerPlaying(motionPath, isPlaying))
+        {
+            throw new KeyNotFoundException($"Motion layer not found: {motionPath}");
+        }
+    }
+
     public bool TrySetMotionLayerResetPhysicsOnLoop(string motionPath, bool resetPhysicsOnLoop)
     {
         string normalizedMotionPath = NormalizeMotionLookupPath(motionPath);
@@ -550,9 +584,94 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
+    public bool TrySetMotionLayerTime(string motionPath, float timeSeconds)
+    {
+        string normalizedMotionPath = NormalizeMotionLookupPath(motionPath);
+        float clamped = MathF.Max(0.0f, timeSeconds);
+
+        if (Game is null || !_loaded || _model is null)
+        {
+            return FindMotionLayerConfigIndex(_initialMotionLayers, normalizedMotionPath) >= 0;
+        }
+
+        int existingRuntimeIndex = FindMotionLayerStateIndex(_motionLayers, normalizedMotionPath);
+        if (existingRuntimeIndex < 0)
+        {
+            return false;
+        }
+
+        MotionLayerState layer = _motionLayers[existingRuntimeIndex];
+        float durationSeconds = GetMotionDurationSeconds(layer);
+        layer.TimeSeconds = durationSeconds > 0.0f ? MathF.Min(clamped, durationSeconds) : clamped;
+        layer.Animation.ResetPlaybackCursor();
+        _vertexBuffersDirty = true;
+        UpdateMotionMetadataFromRuntimeLayers();
+        return true;
+    }
+
+    public void SetMotionLayerTime(string motionPath, float timeSeconds)
+    {
+        if (!TrySetMotionLayerTime(motionPath, timeSeconds))
+        {
+            throw new KeyNotFoundException($"Motion layer not found: {motionPath}");
+        }
+    }
+
+    public bool TrySetMotionLayerFrame(string motionPath, float frame)
+    {
+        return TrySetMotionLayerTime(motionPath, MathF.Max(0.0f, frame) / 30.0f);
+    }
+
+    public void SetMotionLayerFrame(string motionPath, float frame)
+    {
+        if (!TrySetMotionLayerFrame(motionPath, frame))
+        {
+            throw new KeyNotFoundException($"Motion layer not found: {motionPath}");
+        }
+    }
+
     public void ClearMotion()
     {
         SetMotionLayersCore([]);
+    }
+
+    public void PauseMotion()
+    {
+        IsPlaying = false;
+    }
+
+    public void PlayMotion()
+    {
+        if (_motionLayers.Count == 0 && _initialMotionLayers.Count == 0)
+        {
+            return;
+        }
+
+        IsPlaying = true;
+        _skipPhysicsOnNextPlayFrame = true;
+    }
+
+    public void StopMotion()
+    {
+        ResetAnimation();
+    }
+
+    public void SeekMotionTime(float timeSeconds)
+    {
+        float clamped = MathF.Max(0.0f, timeSeconds);
+        AnimationTimeSeconds = clamped;
+        for (int i = 0; i < _motionLayers.Count; i++)
+        {
+            _motionLayers[i].Animation.ResetPlaybackCursor();
+        }
+
+        _skipPhysicsOnNextPlayFrame = true;
+        UpdateMotionMetadataFromRuntimeLayers();
+    }
+
+    public void SeekMotionFrame(float frame)
+    {
+        SeekMotionTime(MathF.Max(0.0f, frame) / 30.0f);
     }
 
     private void Load(string normalizedModelPath, IReadOnlyList<MotionLayerConfig> normalizedMotionLayers)
@@ -1829,6 +1948,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private bool AdvanceMotionLayerTime(MotionLayerState layer, float playbackElapsed)
     {
+        if (!layer.IsPlaying)
+        {
+            return false;
+        }
+
         layer.TimeSeconds = MathF.Max(0.0f, layer.TimeSeconds + (playbackElapsed * PlaybackSpeed));
 
         if (layer.Animation.MaxKeyTime <= 0)
@@ -1857,6 +1981,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         return false;
+    }
+
+    private static float GetMotionDurationSeconds(MotionLayerState layer)
+    {
+        return layer.Animation.MaxKeyTime <= 0 ? 0.0f : layer.Animation.MaxKeyTime / 30.0f;
     }
 
     private void ApplyResetPhysicsOnLoopToAllMotionLayers(bool resetPhysicsOnLoop)

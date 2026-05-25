@@ -299,6 +299,17 @@ Entity.ApplyMotion("assets/motions/idle.vmd");
 Entity.AddMotionLayer("assets/motions/wave.vmd", weight: 0.5f);
 Entity.SetMotionLayerWeight("assets/motions/wave.vmd", 1.0f);
 Entity.SetMotionLayerResetPhysicsOnLoop("assets/motions/wave.vmd", true);
+Entity.PlayMotion();
+Entity.PauseMotion();
+Entity.SeekMotionFrame(45);
+Entity.SeekMotionTime(1.5f);
+Entity.ResetMotionPhysics();
+Entity.ResetMotion();
+Entity.StopMotion();
+Entity.PlayMotionLayer("assets/motions/wave.vmd");
+Entity.PauseMotionLayer("assets/motions/wave.vmd");
+Entity.SetMotionLayerFrame("assets/motions/wave.vmd", 30);
+Entity.SetMotionLayerTime("assets/motions/wave.vmd", 1.0f);
 Entity.RemoveMotionLayer("assets/motions/wave.vmd");
 Entity.ClearMotion();
 ```
@@ -308,6 +319,17 @@ entity.apply_motion("assets/motions/idle.vmd")
 entity.add_motion_layer("assets/motions/wave.vmd", weight=0.5)
 entity.set_motion_layer_weight("assets/motions/wave.vmd", 1.0)
 entity.set_motion_layer_reset_physics_on_loop("assets/motions/wave.vmd", True)
+entity.play_motion()
+entity.pause_motion()
+entity.seek_motion_frame(45)
+entity.seek_motion_time(1.5)
+entity.reset_motion_physics()
+entity.reset_motion()
+entity.stop_motion()
+entity.play_motion_layer("assets/motions/wave.vmd")
+entity.pause_motion_layer("assets/motions/wave.vmd")
+entity.set_motion_layer_frame("assets/motions/wave.vmd", 30)
+entity.set_motion_layer_time("assets/motions/wave.vmd", 1.0)
 entity.remove_motion_layer("assets/motions/wave.vmd")
 entity.clear_motion()
 ```
@@ -343,6 +365,29 @@ entity.set_draw_shadow_in_main_pass(False)
 - `LoopMotion` 和 `ResetPhysicsOnMotionLoop` 仅对 PMX 有意义。
 - `EnableEdge`、`EnableShadow`、`DrawShadowInMainPass` 仅对 PMX 有意义。
 - `DrawShadowInMainPass = false` 时，地面影子会交给独立的地面阴影 pass 处理；`true` 时在 PMX 主绘制阶段直接绘制。
+- `PlayMotion` / `PauseMotion` 只改变播放状态，不会清掉已加载动作层。
+- `StopMotion` 会把动作停下并重置到起始状态，效果接近“停止并回到 0 帧”。
+- `ResetMotion` 会重置动作与姿态；`ResetMotionPhysics` 只重置物理。
+- `SeekMotionFrame` / `SeekMotionTime` 会把当前 PMX 动作层一起跳到指定帧或秒。
+- `PlayMotionLayer` / `PauseMotionLayer` / `SetMotionLayerFrame` / `SetMotionLayerTime` 只作用于指定动作层。
+
+C# 额外动作查询：
+
+```csharp
+float currentTime = Entity.AnimationTimeSeconds;
+int layerCount = Entity.MotionLayerCount;
+IReadOnlyList<MotionLayerInfo> layers = Entity.GetMotionLayers();
+MotionLayerInfo? wave = Entity.GetMotionLayer("assets/motions/wave.vmd");
+```
+
+`MotionLayerInfo` 包含：
+
+- `MotionPath`
+- `Weight`
+- `TimeSeconds`
+- `DurationFrames`
+- `ResetPhysicsOnLoop`
+- `IsPlaying`
 
 材质贴图覆盖：
 

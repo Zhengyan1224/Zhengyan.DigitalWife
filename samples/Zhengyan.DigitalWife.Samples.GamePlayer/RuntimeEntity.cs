@@ -378,6 +378,20 @@ public sealed class RuntimeEntity
         }
     }
 
+    public float AnimationTimeSeconds
+    {
+        get => _model?.AnimationTimeSeconds ?? 0.0f;
+        set
+        {
+            if (_model is not null)
+            {
+                _model.AnimationTimeSeconds = MathF.Max(0.0f, value);
+            }
+        }
+    }
+
+    public int MotionLayerCount => _model?.MotionLayerCount ?? 0;
+
     public void SetPosition(float x, float y, float z)
     {
         Position = new Vector3(x, y, z);
@@ -542,6 +556,93 @@ public sealed class RuntimeEntity
         _model?.ClearMotion();
     }
 
+    public IReadOnlyList<MotionLayerInfo> GetMotionLayers()
+    {
+        return _model?.GetMotionLayers() ?? [];
+    }
+
+    public MotionLayerInfo? GetMotionLayer(string motionPath)
+    {
+        string resolvedPath = _resolvePath(motionPath);
+        return GetMotionLayers().FirstOrDefault(layer =>
+            string.Equals(layer.MotionPath, resolvedPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+    }
+
+    public void PlayMotion()
+    {
+        _model?.PlayMotion();
+    }
+
+    public void PauseMotion()
+    {
+        _model?.PauseMotion();
+    }
+
+    public void StopMotion()
+    {
+        _model?.StopMotion();
+    }
+
+    public void ResetMotion()
+    {
+        _model?.ResetAnimation();
+    }
+
+    public void ResetMotionPhysics()
+    {
+        _model?.ResetPhysics();
+    }
+
+    public void SeekMotionTime(float timeSeconds)
+    {
+        _model?.SeekMotionTime(timeSeconds);
+    }
+
+    public void SeekMotionFrame(float frame)
+    {
+        _model?.SeekMotionFrame(frame);
+    }
+
+    public bool TrySetMotionLayerPlaying(string motionPath, bool isPlaying)
+    {
+        return _model?.TrySetMotionLayerPlaying(_resolvePath(motionPath), isPlaying) == true;
+    }
+
+    public void SetMotionLayerPlaying(string motionPath, bool isPlaying)
+    {
+        _model?.SetMotionLayerPlaying(_resolvePath(motionPath), isPlaying);
+    }
+
+    public bool TrySetMotionLayerTime(string motionPath, float timeSeconds)
+    {
+        return _model?.TrySetMotionLayerTime(_resolvePath(motionPath), timeSeconds) == true;
+    }
+
+    public void SetMotionLayerTime(string motionPath, float timeSeconds)
+    {
+        _model?.SetMotionLayerTime(_resolvePath(motionPath), timeSeconds);
+    }
+
+    public bool TrySetMotionLayerFrame(string motionPath, float frame)
+    {
+        return _model?.TrySetMotionLayerFrame(_resolvePath(motionPath), frame) == true;
+    }
+
+    public void SetMotionLayerFrame(string motionPath, float frame)
+    {
+        _model?.SetMotionLayerFrame(_resolvePath(motionPath), frame);
+    }
+
+    public bool PauseMotionLayer(string motionPath)
+    {
+        return TrySetMotionLayerPlaying(motionPath, false);
+    }
+
+    public bool PlayMotionLayer(string motionPath)
+    {
+        return TrySetMotionLayerPlaying(motionPath, true);
+    }
+
     public bool SetMaterialTexture(int materialIndex, string textureReference)
     {
         return _model?.SetMaterialTexture(materialIndex, ResolveRuntimeTextureReference(textureReference)) == true;
@@ -661,15 +762,20 @@ public sealed class RuntimeEntity
 
     public void BindRelation(string targetEntityIdOrName, bool bindComponentTransform = true, bool bindLighting = false)
     {
+        _ = TryBindRelation(targetEntityIdOrName, bindComponentTransform, bindLighting);
+    }
+
+    public bool TryBindRelation(string targetEntityIdOrName, bool bindComponentTransform = true, bool bindLighting = false)
+    {
         if (_model is null || _scene is null || string.IsNullOrWhiteSpace(targetEntityIdOrName))
         {
-            return;
+            return false;
         }
 
         RuntimeEntity? relation = _scene.GetEntity(targetEntityIdOrName);
         if (relation?._model is null || ReferenceEquals(relation, this))
         {
-            return;
+            return false;
         }
 
         ClearRelationBinding();
@@ -680,6 +786,7 @@ public sealed class RuntimeEntity
         _definition.Relation.RelationEntity = targetEntityIdOrName;
         _definition.Relation.BindComponentTransform = bindComponentTransform;
         _definition.Relation.BindLighting = bindLighting;
+        return true;
     }
 
     public void ClearRelationBinding()

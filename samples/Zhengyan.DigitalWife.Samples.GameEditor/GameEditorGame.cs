@@ -209,6 +209,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         ClearSceneRuntime();
         Project = GameProjectStore.Load(ProjectDirectory);
+        int relationFixes = NormalizeRelationBindings();
         ApplyCameraSettings();
         ApplySceneSettings();
 
@@ -224,19 +225,116 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         ApplyAllRelationsToRuntime();
         SelectedEntityIndex = Project.Scene.Entities.Count > 0 ? 0 : -1;
-        UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}");
+        string relationMessage = relationFixes > 0 ? $"\nNormalized {relationFixes} PMX relation binding(s)." : string.Empty;
+        UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}{relationMessage}");
     }
 
     public void SaveProject()
     {
         Directory.CreateDirectory(ProjectDirectory);
+        int relationFixes = NormalizeRelationBindings();
+        int guiTargetFixes = NormalizeGuiTargets();
+        if (relationFixes > 0)
+        {
+            ApplyAllRelationsToRuntime();
+        }
+
         ResourceImportSummary resourceImport = PrepareAndImportResources();
         ScriptValidationSummary validation = PrepareAndValidateScripts();
         GameProjectStore.Save(ProjectDirectory, Project);
         string projectPath = Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName);
+        string relationMessage = relationFixes > 0 ? $"\nNormalized {relationFixes} PMX relation binding(s)." : string.Empty;
+        string guiTargetMessage = guiTargetFixes > 0 ? $"\nNormalized {guiTargetFixes} GUI target binding(s)." : string.Empty;
         UpdateStatus(validation.HasErrors
-            ? $"Saved project with script errors: {projectPath}\n{resourceImport.Message}\n{validation.Message}"
-            : $"Saved project: {projectPath}\n{resourceImport.Message}\n{validation.Message}");
+            ? $"Saved project with script errors: {projectPath}\n{resourceImport.Message}\n{validation.Message}{relationMessage}{guiTargetMessage}"
+            : $"Saved project: {projectPath}\n{resourceImport.Message}\n{validation.Message}{relationMessage}{guiTargetMessage}");
+    }
+
+    private int NormalizeRelationBindings()
+    {
+        List<GameEntity> pmxEntities = Project.Scene.Entities
+            .Where(entity => string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        int changes = 0;
+
+        foreach (GameEntity entity in pmxEntities)
+        {
+            if (!entity.Relation.Enabled)
+            {
+                continue;
+            }
+
+            string relationEntity = entity.Relation.RelationEntity.Trim();
+            List<GameEntity> candidates = pmxEntities
+                .Where(candidate => !ReferenceEquals(candidate, entity))
+                .ToList();
+
+            if (string.IsNullOrWhiteSpace(relationEntity))
+            {
+                if (candidates.Count == 1)
+                {
+                    entity.Relation.RelationEntity = candidates[0].Id;
+                    changes++;
+                }
+
+                continue;
+            }
+
+            GameEntity? match = candidates.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, relationEntity, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate.Name, relationEntity, StringComparison.OrdinalIgnoreCase));
+            if (match is not null && !string.Equals(entity.Relation.RelationEntity, match.Id, StringComparison.Ordinal))
+            {
+                entity.Relation.RelationEntity = match.Id;
+                changes++;
+            }
+            else if (!string.Equals(entity.Relation.RelationEntity, relationEntity, StringComparison.Ordinal))
+            {
+                entity.Relation.RelationEntity = relationEntity;
+                changes++;
+            }
+        }
+
+        return changes;
+    }
+
+    private int NormalizeGuiTargets()
+    {
+        int changes = 0;
+        foreach (GuiControlSettings control in Project.Scene.GuiControls)
+        {
+            string targetEntity = control.TargetEntity.Trim();
+            if (string.IsNullOrWhiteSpace(targetEntity))
+            {
+                continue;
+            }
+
+            GameEntity? match = Project.Scene.Entities.FirstOrDefault(entity =>
+                string.Equals(entity.Id, targetEntity, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(entity.Name, targetEntity, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                if (!string.Equals(control.TargetEntity, match.Id, StringComparison.Ordinal))
+                {
+                    control.TargetEntity = match.Id;
+                    changes++;
+                }
+
+                continue;
+            }
+
+            List<GameEntity> scriptedPmxEntities = Project.Scene.Entities
+                .Where(entity => string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase)
+                    && entity.Scripts.Any(script => script.Enabled))
+                .ToList();
+            if (scriptedPmxEntities.Count == 1)
+            {
+                control.TargetEntity = scriptedPmxEntities[0].Id;
+                changes++;
+            }
+        }
+
+        return changes;
     }
 
     public void AddPmxEntityFromPath(string sourcePath, bool copyIntoProject)

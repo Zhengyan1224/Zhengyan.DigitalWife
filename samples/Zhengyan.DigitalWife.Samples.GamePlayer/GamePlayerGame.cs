@@ -873,13 +873,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
-        RuntimeEntity? target = !string.IsNullOrWhiteSpace(control.TargetEntity)
-            ? _runtimeScene.GetEntity(control.TargetEntity)
-            : null;
-        if (target is null)
-        {
-            target = _scriptTargets.FirstOrDefault().Entity;
-        }
+        RuntimeEntity? target = ResolveGuiEventTarget(control, eventName);
 
         if (target is null)
         {
@@ -915,6 +909,61 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    private RuntimeEntity? ResolveGuiEventTarget(GuiControlSettings control, string eventName)
+    {
+        if (_runtimeScene is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(control.TargetEntity))
+        {
+            RuntimeEntity? configuredTarget = _runtimeScene.GetEntity(control.TargetEntity);
+            if (configuredTarget is not null)
+            {
+                return configuredTarget;
+            }
+
+            Console.Error.WriteLine($"GUI event '{eventName}' from '{control.Name}' has missing target entity '{control.TargetEntity}'. Falling back to a scripted PMX entity.");
+        }
+
+        RuntimeEntity? scriptedPmx = SelectBestScriptedPmxTarget();
+        if (scriptedPmx is not null)
+        {
+            return scriptedPmx;
+        }
+
+        return _scriptTargets
+            .Where(target => target.Scripts.Count > 0)
+            .Select(target => target.Entity)
+            .FirstOrDefault();
+    }
+
+    private RuntimeEntity? SelectBestScriptedPmxTarget()
+    {
+        List<RuntimeEntity> scriptedPmxTargets = _scriptTargets
+            .Where(target => target.Scripts.Count > 0 && target.Entity.IsPmxModel)
+            .Select(target => target.Entity)
+            .ToList();
+        if (scriptedPmxTargets.Count <= 1)
+        {
+            return scriptedPmxTargets.FirstOrDefault();
+        }
+
+        HashSet<string> relationTargets = _entitiesById.Values
+            .Where(entity => entity.IsPmxModel && entity.RelationEnabled && !string.IsNullOrWhiteSpace(entity.RelationEntity))
+            .Select(entity => ResolveRuntimeEntity(entity.RelationEntity))
+            .Where(entity => entity is not null)
+            .Select(entity => entity!.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return scriptedPmxTargets
+            .OrderByDescending(entity => relationTargets.Contains(entity.Id))
+            .ThenBy(entity => entity.RelationEnabled)
+            .ThenBy(entity => entity.Name, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
     private void DispatchSpeechEvent(RuntimeEntity target, string callbackName)
     {
         if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
@@ -947,9 +996,26 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         foreach (RuntimeEntity entity in _entitiesById.Values)
         {
-            if (entity.RelationEnabled && !string.IsNullOrWhiteSpace(entity.RelationEntity))
+            if (!entity.RelationEnabled)
             {
-                entity.BindRelation(entity.RelationEntity, entity.RelationBindComponentTransform, entity.RelationBindLighting);
+                continue;
+            }
+
+            string relationTarget = entity.RelationEntity;
+            if (string.IsNullOrWhiteSpace(relationTarget))
+            {
+                List<RuntimeEntity> candidates = _entitiesById.Values
+                    .Where(candidate => !ReferenceEquals(candidate, entity) && candidate.IsPmxModel)
+                    .ToList();
+                if (candidates.Count == 1)
+                {
+                    relationTarget = candidates[0].Id;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(relationTarget))
+            {
+                _ = entity.TryBindRelation(relationTarget, entity.RelationBindComponentTransform, entity.RelationBindLighting);
             }
         }
     }
