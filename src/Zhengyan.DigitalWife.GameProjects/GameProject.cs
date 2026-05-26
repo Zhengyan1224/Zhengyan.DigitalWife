@@ -17,6 +17,8 @@ public sealed class GameProject
 
     public GameProjectVoiceSettings Voice { get; set; } = new();
 
+    public GameProjectLlmSettings Llm { get; set; } = new();
+
     public GameWindowSettings Window { get; set; } = new();
 
     [JsonIgnore]
@@ -69,6 +71,27 @@ public sealed class GameProjectVoiceSettings
     public string WarmUpText { get; set; } = "你好";
 
     public GameProjectLipSyncSettings LipSync { get; set; } = new();
+}
+
+public sealed class GameProjectLlmSettings
+{
+    public bool Enabled { get; set; }
+
+    public string Provider { get; set; } = "openai-compatible";
+
+    public string BaseUrl { get; set; } = "https://api.openai.com";
+
+    public string ApiKey { get; set; } = string.Empty;
+
+    public string ApiKeyEnvironmentVariable { get; set; } = "OPENAI_API_KEY";
+
+    public string Model { get; set; } = "gpt-4o-mini";
+
+    public string ChatCompletionsPath { get; set; } = "/v1/chat/completions";
+
+    public int TimeoutSeconds { get; set; } = 300;
+
+    public float? DefaultTemperature { get; set; }
 }
 
 public sealed class GameWindowSettings
@@ -283,6 +306,8 @@ public sealed class GuiControlSettings
 
     public string Text { get; set; } = "Button";
 
+    public bool Multiline { get; set; }
+
     public float X { get; set; } = 24.0f;
 
     public float Y { get; set; } = 24.0f;
@@ -348,6 +373,8 @@ public sealed class GuiControlStyleSettings
     public float BorderThickness { get; set; } = 1.5f;
 
     public float Rounding { get; set; } = 6.0f;
+
+    public float FontSize { get; set; } = 18.0f;
 
     public string HorizontalAlignment { get; set; } = "center";
 

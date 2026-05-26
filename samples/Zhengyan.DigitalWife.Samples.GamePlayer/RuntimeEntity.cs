@@ -63,6 +63,14 @@ public sealed class RuntimeEntity
 
     public IReadOnlyList<string> MaterialNames => _model?.MaterialNames ?? [];
 
+    public IReadOnlyList<string> MorphNames => _model?.MorphNames ?? [];
+
+    public IReadOnlyList<string> NodeNames => _model?.NodeNames ?? [];
+
+    public IReadOnlyDictionary<string, float> MorphWeights => _model?.MorphWeights ?? new Dictionary<string, float>();
+
+    public IReadOnlyDictionary<string, float> MorphSaveAnimWeights => _model?.MorphSaveAnimWeights ?? new Dictionary<string, float>();
+
     public bool RelationEnabled => _definition.Relation.Enabled;
 
     public string RelationEntity => _definition.Relation.RelationEntity;
@@ -641,6 +649,239 @@ public sealed class RuntimeEntity
     public bool PlayMotionLayer(string motionPath)
     {
         return TrySetMotionLayerPlaying(motionPath, true);
+    }
+
+    public bool TryGetMorphWeight(string morphName, out float weight)
+    {
+        weight = 0.0f;
+        return _model?.TryGetMorphWeight(morphName, out weight) == true;
+    }
+
+    public float GetMorphWeight(string morphName)
+    {
+        return _model?.GetMorphWeight(morphName) ?? throw new InvalidOperationException("Entity is not a PMX model.");
+    }
+
+    public bool TrySetMorphWeight(string morphName, float weight, bool overrideAnimation = true)
+    {
+        return _model?.TrySetMorphWeight(morphName, weight, overrideAnimation) == true;
+    }
+
+    public void SetMorphWeight(string morphName, float weight, bool overrideAnimation = true)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetMorphWeight(morphName, weight, overrideAnimation);
+    }
+
+    public bool TryGetMorphSaveAnimWeight(string morphName, out float weight)
+    {
+        weight = 0.0f;
+        return _model?.TryGetMorphSaveAnimWeight(morphName, out weight) == true;
+    }
+
+    public float GetMorphSaveAnimWeight(string morphName)
+    {
+        return _model?.GetMorphSaveAnimWeight(morphName) ?? throw new InvalidOperationException("Entity is not a PMX model.");
+    }
+
+    public bool TrySetMorphSaveAnimWeight(string morphName, float weight)
+    {
+        return _model?.TrySetMorphSaveAnimWeight(morphName, weight) == true;
+    }
+
+    public void SetMorphSaveAnimWeight(string morphName, float weight)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetMorphSaveAnimWeight(morphName, weight);
+    }
+
+    public bool SaveMorphAnimWeight(string morphName)
+    {
+        return _model?.SaveMorphAnimWeight(morphName) == true;
+    }
+
+    public bool SaveAnimWeight(string morphName)
+    {
+        return SaveMorphAnimWeight(morphName);
+    }
+
+    public bool LoadMorphAnimWeight(string morphName)
+    {
+        return _model?.LoadMorphAnimWeight(morphName) == true;
+    }
+
+    public bool ClearMorphAnimWeight(string morphName)
+    {
+        return _model?.ClearMorphAnimWeight(morphName) == true;
+    }
+
+    public bool ClearMorphWeightOverride(string morphName)
+    {
+        return _model?.ClearMorphWeightOverride(morphName) == true;
+    }
+
+    public void ClearMorphWeightOverrides()
+    {
+        _model?.ClearMorphWeightOverrides();
+    }
+
+    public void SaveBaseAnimation()
+    {
+        _model?.SaveBaseAnimation();
+    }
+
+    public void LoadBaseAnimation()
+    {
+        _model?.LoadBaseAnimation();
+    }
+
+    public void ClearBaseAnimation()
+    {
+        _model?.ClearBaseAnimation();
+    }
+
+    public bool TryGetNodeState(string nodeName, out PmxNodeState state)
+    {
+        state = default;
+        return _model?.TryGetNodeState(nodeName, out state) == true;
+    }
+
+    public PmxNodeState GetNodeState(string nodeName)
+    {
+        return _model?.GetNodeState(nodeName) ?? throw new InvalidOperationException("Entity is not a PMX model.");
+    }
+
+    public bool TrySetNodeTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        return _model?.TrySetNodeTranslate(nodeName, translate, overrideAnimation) == true;
+    }
+
+    public void SetNodeTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetNodeTranslate(nodeName, translate, overrideAnimation);
+    }
+
+    public void SetNodeTranslate(string nodeName, float x, float y, float z, bool overrideAnimation = true)
+    {
+        SetNodeTranslate(nodeName, new Vector3(x, y, z), overrideAnimation);
+    }
+
+    public bool TrySetNodeRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        return _model?.TrySetNodeRotate(nodeName, rotate, overrideAnimation) == true;
+    }
+
+    public void SetNodeRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetNodeRotate(nodeName, rotate, overrideAnimation);
+    }
+
+    public void SetNodeRotateEuler(string nodeName, float xDegrees, float yDegrees, float zDegrees, bool overrideAnimation = true)
+    {
+        SetNodeRotate(nodeName, ToQuaternion(new Vector3(xDegrees, yDegrees, zDegrees)), overrideAnimation);
+    }
+
+    public bool TrySetNodeScale(string nodeName, Vector3 scale, bool overrideAnimation = true)
+    {
+        return _model?.TrySetNodeScale(nodeName, scale, overrideAnimation) == true;
+    }
+
+    public void SetNodeScale(string nodeName, Vector3 scale, bool overrideAnimation = true)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetNodeScale(nodeName, scale, overrideAnimation);
+    }
+
+    public void SetNodeScale(string nodeName, float x, float y, float z, bool overrideAnimation = true)
+    {
+        SetNodeScale(nodeName, new Vector3(x, y, z), overrideAnimation);
+    }
+
+    public bool TrySetNodeAnimTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        return _model?.TrySetNodeAnimTranslate(nodeName, translate, overrideAnimation) == true;
+    }
+
+    public void SetNodeAnimTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetNodeAnimTranslate(nodeName, translate, overrideAnimation);
+    }
+
+    public void SetNodeAnimTranslate(string nodeName, float x, float y, float z, bool overrideAnimation = true)
+    {
+        SetNodeAnimTranslate(nodeName, new Vector3(x, y, z), overrideAnimation);
+    }
+
+    public bool TrySetNodeAnimRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        return _model?.TrySetNodeAnimRotate(nodeName, rotate, overrideAnimation) == true;
+    }
+
+    public void SetNodeAnimRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Entity is not a PMX model.");
+        }
+
+        _model.SetNodeAnimRotate(nodeName, rotate, overrideAnimation);
+    }
+
+    public void SetNodeAnimRotateEuler(string nodeName, float xDegrees, float yDegrees, float zDegrees, bool overrideAnimation = true)
+    {
+        SetNodeAnimRotate(nodeName, ToQuaternion(new Vector3(xDegrees, yDegrees, zDegrees)), overrideAnimation);
+    }
+
+    public bool SaveNodeBaseAnimation(string nodeName)
+    {
+        return _model?.SaveNodeBaseAnimation(nodeName) == true;
+    }
+
+    public bool LoadNodeBaseAnimation(string nodeName)
+    {
+        return _model?.LoadNodeBaseAnimation(nodeName) == true;
+    }
+
+    public bool ClearNodeBaseAnimation(string nodeName)
+    {
+        return _model?.ClearNodeBaseAnimation(nodeName) == true;
+    }
+
+    public bool ClearNodeOverrides(string nodeName)
+    {
+        return _model?.ClearNodeOverrides(nodeName) == true;
+    }
+
+    public void ClearAllNodeOverrides()
+    {
+        _model?.ClearAllNodeOverrides();
     }
 
     public bool SetMaterialTexture(int materialIndex, string textureReference)

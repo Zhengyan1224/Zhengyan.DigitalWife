@@ -1,7 +1,12 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 
@@ -20,33 +25,47 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             .WithReferences(GetScriptReferences())
             .WithImports(
                 "System",
+                "System.Collections.Generic",
+                "System.Globalization",
+                "System.IO",
+                "System.Linq",
                 "System.Numerics",
+                "System.Text",
+                "System.Text.Json",
+                "System.Text.RegularExpressions",
+                "System.Threading",
+                "System.Threading.Tasks",
                 "Zhengyan.DigitalWife.Samples.GamePlayer");
     }
 
     public void Start(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty);
+        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null);
     }
 
     public void Update(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, double deltaSeconds)
     {
-        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty);
+        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null);
     }
 
     public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string eventName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isLoadingEvent: false, isSpeechEvent: false, controlId, eventName, string.Empty, 0.0f, string.Empty, string.Empty);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, controlId, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null);
     }
 
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: true, isSpeechEvent: false, string.Empty, string.Empty, eventName, progress, message, string.Empty);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, string.Empty, string.Empty, eventName, progress, message, string.Empty, null);
     }
 
     public void SpeechEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: true, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null);
+    }
+
+    public void LlmEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
+    {
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent);
     }
 
     public void Dispose()
@@ -64,12 +83,14 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         bool isGuiEvent,
         bool isLoadingEvent,
         bool isSpeechEvent,
+        bool isLlmEvent,
         string guiControlId,
         string guiEventName,
         string loadingEventName,
         float loadingProgress,
         string loadingMessage,
-        string speechCallbackName)
+        string speechCallbackName,
+        RuntimeLlmScriptEvent? llmEvent)
     {
         _runner ??= CSharpScript
             .Create<object?>(File.ReadAllText(_scriptPath), _options, typeof(CSharpScriptGlobals))
@@ -87,6 +108,8 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             IsGuiEvent = isGuiEvent,
             IsLoadingEvent = isLoadingEvent,
             IsSpeechEvent = isSpeechEvent,
+            IsLlmEvent = isLlmEvent,
+            LlmEvent = llmEvent,
             GuiControlId = guiControlId,
             GuiEventName = guiEventName,
             LoadingEventName = loadingEventName,
@@ -100,8 +123,32 @@ internal sealed class CSharpScriptInstance : IScriptInstance
 
     private static IEnumerable<Assembly> GetScriptReferences()
     {
-        return AppDomain.CurrentDomain
-            .GetAssemblies()
-            .Where(assembly => !assembly.IsDynamic && !string.IsNullOrWhiteSpace(assembly.Location));
+        Assembly[] commonAssemblies =
+        [
+            typeof(object).Assembly,
+            typeof(Console).Assembly,
+            typeof(Enumerable).Assembly,
+            typeof(List<>).Assembly,
+            typeof(StringBuilder).Assembly,
+            typeof(JsonSerializer).Assembly,
+            typeof(Regex).Assembly,
+            typeof(System.Numerics.Vector3).Assembly,
+            typeof(Zhengyan.DigitalWife.Llm.OpenAI.OpenAiCompatibleLlmClient).Assembly,
+            typeof(RuntimeEntity).Assembly
+        ];
+
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies().Concat(commonAssemblies))
+        {
+            if (assembly.IsDynamic || string.IsNullOrWhiteSpace(assembly.Location))
+            {
+                continue;
+            }
+
+            if (seen.Add(assembly.Location))
+            {
+                yield return assembly;
+            }
+        }
     }
 }

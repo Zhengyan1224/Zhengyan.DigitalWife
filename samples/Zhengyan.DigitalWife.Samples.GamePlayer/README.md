@@ -92,7 +92,7 @@ def start(entity, scene, input, audio):
 
 ## GUI 控件事件
 
-场景支持 `button`、`label`、`checkbox` 和 `dropdown` 控件。按钮点击时会派发 `clicked`，复选框和下拉框变化时建议派发 `changed`。
+场景支持 `button`、`label`、`checkbox`、`dropdown` 和 `textbox` 控件。按钮点击时会派发 `clicked`，复选框、下拉框和文本框变化时建议派发 `changed`。
 
 C#：
 
@@ -120,9 +120,11 @@ RuntimeGuiControl? button = Scene.GetGuiControl("Button 1");
 if (button is not null)
 {
     button.Text = "继续";
+    button.Value = "继续";
     button.SetPosition(40, 80);
     button.SetSize(220, 44);
     button.Visible = true;
+    button.SetMultiline(true);
     button.SetChecked(false);
     button.SetItems("普通", "困难", "专家");
     button.SetSelectedIndex(0);
@@ -133,12 +135,35 @@ if (button is not null)
 button = scene.get_gui_control("Button 1")
 if button is not None:
     button.set_text("继续")
+    button.set_value("继续")
     button.set_position(40, 80)
     button.set_size(220, 44)
+    button.set_multiline(True)
     button.set_checked(False)
     button.set_items(["普通", "困难", "专家"])
     button.set_selected_index(0)
     button.show()
+```
+
+文本框输入值保存在 `Text`，也可以通过 `Value` 读取。多行文本框使用 ImGui `InputTextMultiline`，Windows、Linux、macOS 走同一套运行时逻辑：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "changed")
+{
+    RuntimeGuiControl? input = Scene.GetGuiControl(GuiControlId);
+    if (input is not null && input.Type == "textbox")
+    {
+        Entity.Speak(input.Value);
+    }
+}
+```
+
+```python
+def gui_event(entity, scene, input, audio, control_id, event_name):
+    if event_name == "changed":
+        textbox = scene.get_gui_control(control_id)
+        if textbox is not None and textbox.type == "textbox":
+            entity.speak(textbox.value)
 ```
 
 ## 窗口、Timing 和 2D 精灵

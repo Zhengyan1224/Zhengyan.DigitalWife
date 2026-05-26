@@ -31,6 +31,12 @@ public sealed class RuntimeGuiControl
         set => _control.Text = value ?? string.Empty;
     }
 
+    public string Value
+    {
+        get => Text;
+        set => Text = value;
+    }
+
     public bool Visible
     {
         get => _control.Visible;
@@ -85,9 +91,25 @@ public sealed class RuntimeGuiControl
         set => _control.WordWrap = value;
     }
 
+    public bool Multiline
+    {
+        get => _control.Multiline;
+        set => _control.Multiline = value;
+    }
+
     public void SetWordWrap(bool value)
     {
         WordWrap = value;
+    }
+
+    public void SetMultiline(bool value)
+    {
+        Multiline = value;
+    }
+
+    public void SetValue(string value)
+    {
+        Value = value;
     }
 
     public IReadOnlyList<string> Items => _control.Items;

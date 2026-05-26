@@ -57,6 +57,45 @@ public readonly struct MotionLayerInfo
     public bool IsPlaying { get; }
 }
 
+public readonly struct PmxNodeState
+{
+    public PmxNodeState(
+        string name,
+        Vector3 translate,
+        Quaternion rotate,
+        Vector3 scale,
+        Vector3 animTranslate,
+        Quaternion animRotate,
+        Vector3 baseAnimTranslate,
+        Quaternion baseAnimRotate)
+    {
+        Name = name;
+        Translate = translate;
+        Rotate = rotate;
+        Scale = scale;
+        AnimTranslate = animTranslate;
+        AnimRotate = animRotate;
+        BaseAnimTranslate = baseAnimTranslate;
+        BaseAnimRotate = baseAnimRotate;
+    }
+
+    public string Name { get; }
+
+    public Vector3 Translate { get; }
+
+    public Quaternion Rotate { get; }
+
+    public Vector3 Scale { get; }
+
+    public Vector3 AnimTranslate { get; }
+
+    public Quaternion AnimRotate { get; }
+
+    public Vector3 BaseAnimTranslate { get; }
+
+    public Quaternion BaseAnimRotate { get; }
+}
+
 public unsafe class PmxModelComponent : DrawableGameComponent
 {
     private const float MotionWeightEpsilon = 0.0001f;
@@ -96,6 +135,12 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private readonly Dictionary<Zhengyan.DigitalWife.Mmd.MMDMaterial, MaterialTextures> _materials = [];
     private readonly Dictionary<(string Path, GLEnum WrapMode), Texture2D> _textures = [];
     private readonly Dictionary<int, string> _materialTextureOverrides = [];
+    private readonly Dictionary<string, float> _manualMorphWeights = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Vector3> _manualNodeTranslateOverrides = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Quaternion> _manualNodeRotateOverrides = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Vector3> _manualNodeScaleOverrides = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Vector3> _manualNodeAnimTranslateOverrides = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Quaternion> _manualNodeAnimRotateOverrides = new(StringComparer.Ordinal);
     private readonly TransformUpdaterManager _transformUpdaters = new();
     private readonly List<MotionLayerConfig> _initialMotionLayers = [];
 
@@ -176,6 +221,18 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public IReadOnlyList<string> MaterialNames => _model?.GetMaterials()
         .Select((material, index) => string.IsNullOrWhiteSpace(material.Name) ? $"Material {index}" : material.Name)
         .ToArray() ?? [];
+
+    public IReadOnlyList<string> MorphNames => _model?.GetMorphs()
+        .Select(morph => morph.Name)
+        .ToArray() ?? [];
+
+    public IReadOnlyList<string> NodeNames => _model?.GetNodes()
+        .Select(node => node.Name)
+        .ToArray() ?? [];
+
+    public IReadOnlyDictionary<string, float> MorphWeights => GetMorphWeightMap(static morph => morph.Weight);
+
+    public IReadOnlyDictionary<string, float> MorphSaveAnimWeights => GetMorphWeightMap(static morph => morph.SaveAnimWeight);
 
     public IRuntimeTextureProvider? RuntimeTextureProvider { get; set; }
 
@@ -630,6 +687,419 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
+    public bool TryGetMorphWeight(string morphName, out float weight)
+    {
+        weight = 0.0f;
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        weight = morph.Weight;
+        return true;
+    }
+
+    public float GetMorphWeight(string morphName)
+    {
+        if (!TryGetMorphWeight(morphName, out float weight))
+        {
+            throw new KeyNotFoundException($"Morph not found: {morphName}");
+        }
+
+        return weight;
+    }
+
+    public bool TrySetMorphWeight(string morphName, float weight, bool overrideAnimation = true)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        float normalizedWeight = NormalizeMorphWeight(weight);
+        morph.Weight = normalizedWeight;
+        if (overrideAnimation)
+        {
+            _manualMorphWeights[morph.Name] = normalizedWeight;
+        }
+
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetMorphWeight(string morphName, float weight, bool overrideAnimation = true)
+    {
+        if (!TrySetMorphWeight(morphName, weight, overrideAnimation))
+        {
+            throw new KeyNotFoundException($"Morph not found: {morphName}");
+        }
+    }
+
+    public bool TryGetMorphSaveAnimWeight(string morphName, out float weight)
+    {
+        weight = 0.0f;
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        weight = morph.SaveAnimWeight;
+        return true;
+    }
+
+    public float GetMorphSaveAnimWeight(string morphName)
+    {
+        if (!TryGetMorphSaveAnimWeight(morphName, out float weight))
+        {
+            throw new KeyNotFoundException($"Morph not found: {morphName}");
+        }
+
+        return weight;
+    }
+
+    public bool TrySetMorphSaveAnimWeight(string morphName, float weight)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        morph.SaveAnimWeight = NormalizeMorphWeight(weight);
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetMorphSaveAnimWeight(string morphName, float weight)
+    {
+        if (!TrySetMorphSaveAnimWeight(morphName, weight))
+        {
+            throw new KeyNotFoundException($"Morph not found: {morphName}");
+        }
+    }
+
+    public bool SaveMorphAnimWeight(string morphName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        morph.SaveBaseAnimation();
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public bool SaveAnimWeight(string morphName)
+    {
+        return SaveMorphAnimWeight(morphName);
+    }
+
+    public bool LoadMorphAnimWeight(string morphName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        morph.LoadBaseAnimation();
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public bool ClearMorphAnimWeight(string morphName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        if (morph is null)
+        {
+            return false;
+        }
+
+        morph.ClearBaseAnimation();
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public bool ClearMorphWeightOverride(string morphName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDMorph? morph = FindMorphByName(morphName);
+        bool removed = morph is not null
+            ? _manualMorphWeights.Remove(morph.Name)
+            : _manualMorphWeights.Remove(morphName);
+        if (removed)
+        {
+            _vertexBuffersDirty = true;
+        }
+
+        return removed;
+    }
+
+    public void ClearMorphWeightOverrides()
+    {
+        if (_manualMorphWeights.Count == 0)
+        {
+            return;
+        }
+
+        _manualMorphWeights.Clear();
+        _vertexBuffersDirty = true;
+    }
+
+    public void SaveBaseAnimation()
+    {
+        _model?.SaveBaseAnimation();
+        _vertexBuffersDirty = true;
+    }
+
+    public void LoadBaseAnimation()
+    {
+        _model?.LoadBaseAnimation();
+        _vertexBuffersDirty = true;
+    }
+
+    public void ClearBaseAnimation()
+    {
+        _model?.ClearBaseAnimation();
+        _vertexBuffersDirty = true;
+    }
+
+    public bool TryGetNodeState(string nodeName, out PmxNodeState state)
+    {
+        state = default;
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        state = CreateNodeState(node);
+        return true;
+    }
+
+    public PmxNodeState GetNodeState(string nodeName)
+    {
+        if (!TryGetNodeState(nodeName, out PmxNodeState state))
+        {
+            throw new KeyNotFoundException($"Node not found: {nodeName}");
+        }
+
+        return state;
+    }
+
+    public bool TrySetNodeTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        Vector3 value = NormalizeVector(translate, Vector3.Zero);
+        node.Translate = value;
+        node.InitTranslate = value;
+        if (overrideAnimation)
+        {
+            _manualNodeTranslateOverrides[node.Name] = value;
+        }
+
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetNodeTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        if (!TrySetNodeTranslate(nodeName, translate, overrideAnimation))
+        {
+            throw new KeyNotFoundException($"Node not found: {nodeName}");
+        }
+    }
+
+    public bool TrySetNodeRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        Quaternion value = NormalizeQuaternion(rotate);
+        node.Rotate = value;
+        node.InitRotate = value;
+        if (overrideAnimation)
+        {
+            _manualNodeRotateOverrides[node.Name] = value;
+        }
+
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetNodeRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        if (!TrySetNodeRotate(nodeName, rotate, overrideAnimation))
+        {
+            throw new KeyNotFoundException($"Node not found: {nodeName}");
+        }
+    }
+
+    public bool TrySetNodeScale(string nodeName, Vector3 scale, bool overrideAnimation = true)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        Vector3 value = NormalizeVector(scale, Vector3.One);
+        node.Scale = value;
+        node.InitScale = value;
+        if (overrideAnimation)
+        {
+            _manualNodeScaleOverrides[node.Name] = value;
+        }
+
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetNodeScale(string nodeName, Vector3 scale, bool overrideAnimation = true)
+    {
+        if (!TrySetNodeScale(nodeName, scale, overrideAnimation))
+        {
+            throw new KeyNotFoundException($"Node not found: {nodeName}");
+        }
+    }
+
+    public bool TrySetNodeAnimTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        Vector3 value = NormalizeVector(translate, Vector3.Zero);
+        node.AnimTranslate = value;
+        if (overrideAnimation)
+        {
+            _manualNodeAnimTranslateOverrides[node.Name] = value;
+        }
+
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetNodeAnimTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true)
+    {
+        if (!TrySetNodeAnimTranslate(nodeName, translate, overrideAnimation))
+        {
+            throw new KeyNotFoundException($"Node not found: {nodeName}");
+        }
+    }
+
+    public bool TrySetNodeAnimRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        Quaternion value = NormalizeQuaternion(rotate);
+        node.AnimRotate = value;
+        if (overrideAnimation)
+        {
+            _manualNodeAnimRotateOverrides[node.Name] = value;
+        }
+
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public void SetNodeAnimRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true)
+    {
+        if (!TrySetNodeAnimRotate(nodeName, rotate, overrideAnimation))
+        {
+            throw new KeyNotFoundException($"Node not found: {nodeName}");
+        }
+    }
+
+    public bool SaveNodeBaseAnimation(string nodeName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        node.SaveBaseAnimation();
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public bool LoadNodeBaseAnimation(string nodeName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        node.LoadBaseAnimation();
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public bool ClearNodeBaseAnimation(string nodeName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        node.ClearBaseAnimation();
+        _vertexBuffersDirty = true;
+        return true;
+    }
+
+    public bool ClearNodeOverrides(string nodeName)
+    {
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        string key = node?.Name ?? nodeName;
+        bool removed = _manualNodeTranslateOverrides.Remove(key);
+        removed |= _manualNodeRotateOverrides.Remove(key);
+        removed |= _manualNodeScaleOverrides.Remove(key);
+        removed |= _manualNodeAnimTranslateOverrides.Remove(key);
+        removed |= _manualNodeAnimRotateOverrides.Remove(key);
+        if (removed)
+        {
+            _vertexBuffersDirty = true;
+        }
+
+        return removed;
+    }
+
+    public void ClearAllNodeOverrides()
+    {
+        if (_manualNodeTranslateOverrides.Count == 0
+            && _manualNodeRotateOverrides.Count == 0
+            && _manualNodeScaleOverrides.Count == 0
+            && _manualNodeAnimTranslateOverrides.Count == 0
+            && _manualNodeAnimRotateOverrides.Count == 0)
+        {
+            return;
+        }
+
+        ClearAllNodeOverrideDictionaries();
+        _vertexBuffersDirty = true;
+    }
+
     public void ClearMotion()
     {
         SetMotionLayersCore([]);
@@ -765,6 +1235,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         if (_model is not null)
         {
             _model.LoadBaseAnimation();
+            ApplyManualNodeBaseOverrides(_model);
+            ApplyManualMorphWeights(_model);
+            ApplyManualNodeAnimationOverrides(_model);
             foreach (MotionLayerState layer in _motionLayers)
             {
                 layer.Animation.ResetPlaybackCursor();
@@ -838,7 +1311,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         _model.BeginAnimation();
+        ApplyManualNodeBaseOverrides(_model);
         EvaluateMotionLayers(_model, _motionLayers);
+        ApplyManualMorphWeights(_model);
+        ApplyManualNodeAnimationOverrides(_model);
 
         _transformUpdaters.UpdateStage(TransformUpdaterStage.PreAnimation, this, updaterElapsed);
         _model.UpdateMorphAnimation();
@@ -1361,6 +1837,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         DisposeMotionLayers(_motionLayers);
         _motionLayers.Clear();
+        _manualMorphWeights.Clear();
+        ClearAllNodeOverrideDictionaries();
 
         _model?.Dispose();
         _model = null;
@@ -1479,10 +1957,168 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
+    private IReadOnlyDictionary<string, float> GetMorphWeightMap(Func<Zhengyan.DigitalWife.Mmd.MMDMorph, float> selector)
+    {
+        Dictionary<string, float> weights = new(StringComparer.Ordinal);
+        if (_model is null)
+        {
+            return weights;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMorph morph in _model.GetMorphs())
+        {
+            weights[morph.Name] = selector(morph);
+        }
+
+        return weights;
+    }
+
+    private Zhengyan.DigitalWife.Mmd.MMDMorph? FindMorphByName(string morphName)
+    {
+        if (_model is null || string.IsNullOrWhiteSpace(morphName))
+        {
+            return null;
+        }
+
+        string trimmedName = morphName.Trim();
+        return _model.FindMorph(morph => string.Equals(morph.Name, trimmedName, StringComparison.Ordinal))
+            ?? _model.FindMorph(morph => string.Equals(morph.Name, trimmedName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private Zhengyan.DigitalWife.Mmd.MMDNode? FindNodeByName(string nodeName)
+    {
+        if (_model is null || string.IsNullOrWhiteSpace(nodeName))
+        {
+            return null;
+        }
+
+        string trimmedName = nodeName.Trim();
+        return _model.FindNode(node => string.Equals(node.Name, trimmedName, StringComparison.Ordinal))
+            ?? _model.FindNode(node => string.Equals(node.Name, trimmedName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void ApplyManualMorphWeights(Zhengyan.DigitalWife.Mmd.MMDModel model)
+    {
+        if (_manualMorphWeights.Count == 0)
+        {
+            return;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMorph morph in model.GetMorphs())
+        {
+            if (_manualMorphWeights.TryGetValue(morph.Name, out float weight))
+            {
+                morph.Weight = weight;
+            }
+        }
+    }
+
+    private void ApplyManualNodeBaseOverrides(Zhengyan.DigitalWife.Mmd.MMDModel model)
+    {
+        if (_manualNodeTranslateOverrides.Count == 0
+            && _manualNodeRotateOverrides.Count == 0
+            && _manualNodeScaleOverrides.Count == 0)
+        {
+            return;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDNode node in model.GetNodes())
+        {
+            if (_manualNodeTranslateOverrides.TryGetValue(node.Name, out Vector3 translate))
+            {
+                node.Translate = translate;
+                node.InitTranslate = translate;
+            }
+
+            if (_manualNodeRotateOverrides.TryGetValue(node.Name, out Quaternion rotate))
+            {
+                node.Rotate = rotate;
+                node.InitRotate = rotate;
+            }
+
+            if (_manualNodeScaleOverrides.TryGetValue(node.Name, out Vector3 scale))
+            {
+                node.Scale = scale;
+                node.InitScale = scale;
+            }
+        }
+    }
+
+    private void ApplyManualNodeAnimationOverrides(Zhengyan.DigitalWife.Mmd.MMDModel model)
+    {
+        if (_manualNodeAnimTranslateOverrides.Count == 0 && _manualNodeAnimRotateOverrides.Count == 0)
+        {
+            return;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDNode node in model.GetNodes())
+        {
+            if (_manualNodeAnimTranslateOverrides.TryGetValue(node.Name, out Vector3 animTranslate))
+            {
+                node.AnimTranslate = animTranslate;
+            }
+
+            if (_manualNodeAnimRotateOverrides.TryGetValue(node.Name, out Quaternion animRotate))
+            {
+                node.AnimRotate = animRotate;
+            }
+        }
+    }
+
+    private static PmxNodeState CreateNodeState(Zhengyan.DigitalWife.Mmd.MMDNode node)
+    {
+        return new PmxNodeState(
+            node.Name,
+            node.Translate,
+            node.Rotate,
+            node.Scale,
+            node.AnimTranslate,
+            node.AnimRotate,
+            node.BaseAnimTranslate,
+            node.BaseAnimRotate);
+    }
+
+    private void ClearAllNodeOverrideDictionaries()
+    {
+        _manualNodeTranslateOverrides.Clear();
+        _manualNodeRotateOverrides.Clear();
+        _manualNodeScaleOverrides.Clear();
+        _manualNodeAnimTranslateOverrides.Clear();
+        _manualNodeAnimRotateOverrides.Clear();
+    }
+
+    private static float NormalizeMorphWeight(float weight)
+    {
+        return float.IsNaN(weight) || float.IsInfinity(weight) ? 0.0f : weight;
+    }
+
+    private static Vector3 NormalizeVector(Vector3 value, Vector3 fallback)
+    {
+        return IsFinite(value.X) && IsFinite(value.Y) && IsFinite(value.Z) ? value : fallback;
+    }
+
+    private static Quaternion NormalizeQuaternion(Quaternion value)
+    {
+        if (!IsFinite(value.X) || !IsFinite(value.Y) || !IsFinite(value.Z) || !IsFinite(value.W))
+        {
+            return Quaternion.Identity;
+        }
+
+        return value.LengthSquared() <= MotionWeightEpsilon ? Quaternion.Identity : Quaternion.Normalize(value);
+    }
+
+    private static bool IsFinite(float value)
+    {
+        return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
     private void RebuildPose(Zhengyan.DigitalWife.Mmd.MMDModel model, IReadOnlyList<MotionLayerState> motionLayers)
     {
         model.BeginAnimation();
+        ApplyManualNodeBaseOverrides(model);
         EvaluateMotionLayers(model, motionLayers);
+        ApplyManualMorphWeights(model);
+        ApplyManualNodeAnimationOverrides(model);
         model.UpdateMorphAnimation();
         model.UpdateNodeAnimation(false);
         model.UpdateNodeAnimation(true);
@@ -1503,7 +2139,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         {
             float warmupWeight = (1.0f + i) / warmupFrameCount;
             model.BeginAnimation();
+            ApplyManualNodeBaseOverrides(model);
             EvaluateMotionLayers(model, motionLayers, warmupWeight, forceFrame: 0.0f);
+            ApplyManualMorphWeights(model);
+            ApplyManualNodeAnimationOverrides(model);
             model.UpdateMorphAnimation();
             model.UpdateNodeAnimation(false);
             model.UpdatePhysicsAnimation(1.0f / 30.0f);

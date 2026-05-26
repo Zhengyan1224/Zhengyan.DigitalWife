@@ -11,6 +11,8 @@ public sealed class RuntimeScene
     private readonly RuntimeCamera _camera;
     private readonly RuntimeDebug _debug;
     private readonly RuntimeSaveStore _save;
+    private readonly RuntimeLlm _llm;
+    private readonly RuntimePerformance _performance;
     private readonly Action<string> _requestSceneChange;
     private readonly Action<RuntimeEntity, string> _dispatchSpeechEvent;
 
@@ -22,6 +24,8 @@ public sealed class RuntimeScene
         RuntimeCamera camera,
         RuntimeDebug debug,
         RuntimeSaveStore save,
+        RuntimeLlm llm,
+        RuntimePerformance performance,
         Action<RuntimeEntity, string> dispatchSpeechEvent,
         Action<string> requestSceneChange)
     {
@@ -32,6 +36,8 @@ public sealed class RuntimeScene
         _camera = camera;
         _debug = debug;
         _save = save;
+        _llm = llm;
+        _performance = performance;
         _dispatchSpeechEvent = dispatchSpeechEvent;
         _requestSceneChange = requestSceneChange;
     }
@@ -51,6 +57,18 @@ public sealed class RuntimeScene
     public RuntimeDebug Debug => _debug;
 
     public RuntimeSaveStore Save => _save;
+
+    public RuntimeLlm Llm => _llm;
+
+    public RuntimePerformance Performance => _performance;
+
+    public double Fps => _performance.Fps;
+
+    public double RawFps => _performance.RawFps;
+
+    public double DeltaSeconds => _performance.DeltaSeconds;
+
+    public long FrameCount => _performance.FrameCount;
 
     public string RenderTexture(string renderTextureName) => _camera.RenderTexture(renderTextureName);
 

@@ -309,7 +309,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 position = viewportMin + new Vector2(control.X, control.Y);
             Vector2 size = new(Math.Max(control.Width, 1.0f), Math.Max(control.Height, 1.0f));
             Vector2 max = position + size;
-            string text = string.IsNullOrWhiteSpace(control.Text) ? control.Name : control.Text;
 
             GuiControlStyleSettings style = control.Style;
             Vector4 backgroundColor = style.BackgroundColor.ToVector4();
@@ -318,6 +317,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             float rounding = Math.Max(style.Rounding, 0.0f);
             float borderThickness = Math.Max(style.BorderThickness, 0.0f);
             string type = control.Type.ToLowerInvariant();
+            string text = type == "textbox"
+                ? control.Text
+                : string.IsNullOrWhiteSpace(control.Text) ? control.Name : control.Text;
 
             if (type == "label")
             {
@@ -340,10 +342,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     drawList.AddLine(boxMin + new Vector2(boxSize * 0.42f, boxSize - 4.0f), boxMin + new Vector2(boxSize - 3.0f, 4.0f), ImGui.GetColorU32(textColor), 2.0f);
                 }
 
-                Vector2 textSize = ImGui.CalcTextSize(text);
+                float fontSize = ResolveGuiFontSize(style);
+                Vector2 textSize = CalcScaledTextSize(text, fontSize);
                 Vector2 textMin = position + new Vector2(boxSize + 16.0f, 0.0f);
                 Vector2 textMax = max - new Vector2(8.0f, 0.0f);
-                drawList.AddText(GetAlignedTextPosition(textMin, textMax, textSize, style), ImGui.GetColorU32(textColor), text);
+                AddScaledText(drawList, GetAlignedTextPosition(textMin, textMax, textSize, style), ImGui.GetColorU32(textColor), text, fontSize);
             }
             else if (type == "dropdown")
             {
@@ -358,17 +361,26 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     arrowCenter + new Vector2(5.0f, -2.0f),
                     arrowCenter + new Vector2(0.0f, 4.0f),
                     ImGui.GetColorU32(textColor));
-                Vector2 textSize = ImGui.CalcTextSize(selectedText);
-                drawList.AddText(GetAlignedTextPosition(position + new Vector2(8.0f, 0.0f), max - new Vector2(28.0f, 0.0f), textSize, style), ImGui.GetColorU32(textColor), selectedText);
+                float fontSize = ResolveGuiFontSize(style);
+                Vector2 textSize = CalcScaledTextSize(selectedText, fontSize);
+                AddScaledText(drawList, GetAlignedTextPosition(position + new Vector2(8.0f, 0.0f), max - new Vector2(28.0f, 0.0f), textSize, style), ImGui.GetColorU32(textColor), selectedText, fontSize);
+            }
+            else if (type == "textbox")
+            {
+                Vector2 padding = new(8.0f, 5.0f);
+                drawList.AddRectFilled(position, max, ImGui.GetColorU32(backgroundColor), rounding);
+                drawList.AddRect(position, max, ImGui.GetColorU32(borderColor), rounding, ImDrawFlags.None, borderThickness);
+                DrawTextBlock(drawList, position + padding, max - padding, text, textColor, style, control.Multiline || control.WordWrap);
             }
             else
             {
                 drawList.AddRectFilled(position, max, ImGui.GetColorU32(backgroundColor), rounding);
                 drawList.AddRect(position, max, ImGui.GetColorU32(borderColor), rounding, ImDrawFlags.None, borderThickness);
 
-                Vector2 textSize = ImGui.CalcTextSize(text);
+                float fontSize = ResolveGuiFontSize(style);
+                Vector2 textSize = CalcScaledTextSize(text, fontSize);
                 Vector2 textPosition = GetAlignedTextPosition(position + new Vector2(6.0f, 4.0f), max - new Vector2(6.0f, 4.0f), textSize, style);
-                drawList.AddText(textPosition, ImGui.GetColorU32(textColor), text);
+                AddScaledText(drawList, textPosition, ImGui.GetColorU32(textColor), text, fontSize);
             }
         }
 
@@ -393,8 +405,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool wordWrap)
     {
         Vector2 available = Vector2.Max(max - min, Vector2.One);
-        string[] lines = BuildTextLines(text, available.X, wordWrap);
-        float lineHeight = Math.Max(ImGui.CalcTextSize("Ag").Y, 1.0f);
+        float fontSize = ResolveGuiFontSize(style);
+        string[] lines = BuildTextLines(text, available.X, wordWrap, fontSize);
+        float lineHeight = Math.Max(CalcScaledTextSize("Ag", fontSize).Y, 1.0f);
         float blockHeight = lineHeight * lines.Length;
         float startY = min.Y + ResolveVerticalOffset(style.VerticalAlignment, available.Y, blockHeight);
         uint textColor = ImGui.GetColorU32(color);
@@ -403,16 +416,16 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         for (int i = 0; i < lines.Length; i++)
         {
             string line = lines[i];
-            Vector2 lineSize = ImGui.CalcTextSize(line);
+            Vector2 lineSize = CalcScaledTextSize(line, fontSize);
             float x = min.X + ResolveHorizontalOffset(style.HorizontalAlignment, available.X, lineSize.X);
             float y = startY + (lineHeight * i);
-            drawList.AddText(new Vector2(x, y), textColor, line);
+            AddScaledText(drawList, new Vector2(x, y), textColor, line, fontSize);
         }
 
         drawList.PopClipRect();
     }
 
-    private static string[] BuildTextLines(string text, float maxWidth, bool wordWrap)
+    private static string[] BuildTextLines(string text, float maxWidth, bool wordWrap, float fontSize)
     {
         if (!wordWrap)
         {
@@ -426,7 +439,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             foreach (char ch in paragraph)
             {
                 string candidate = current + ch;
-                if (current.Length > 0 && ImGui.CalcTextSize(candidate).X > maxWidth)
+                if (current.Length > 0 && CalcScaledTextSize(candidate, fontSize).X > maxWidth)
                 {
                     lines.Add(current);
                     current = ch.ToString();
@@ -440,6 +453,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         return lines.Count == 0 ? [string.Empty] : [.. lines];
+    }
+
+    private static float ResolveGuiFontSize(GuiControlStyleSettings style)
+    {
+        return Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
+    }
+
+    private static Vector2 CalcScaledTextSize(string text, float fontSize)
+    {
+        float scale = fontSize / Math.Max(ImGui.GetFontSize(), 1.0f);
+        return ImGui.CalcTextSize(text) * scale;
+    }
+
+    private static void AddScaledText(ImDrawListPtr drawList, Vector2 position, uint color, string text, float fontSize)
+    {
+        drawList.AddText(ImGui.GetFont(), fontSize, position, color, text);
     }
 
     private static float ResolveHorizontalOffset(string alignment, float available, float content)
@@ -530,9 +559,85 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             project.ScriptRuntime.PreferredLanguage = languages[_preferredLanguageIndex];
         }
 
+        DrawLlmSettings(project.Llm);
         DrawVoiceSettings(project.Voice);
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
+    }
+
+    private static void DrawLlmSettings(GameProjectLlmSettings llm)
+    {
+        if (!ImGui.CollapsingHeader("LLM / OpenAI-compatible"))
+        {
+            return;
+        }
+
+        bool enabled = llm.Enabled;
+        if (ImGui.Checkbox("Enable runtime LLM", ref enabled))
+        {
+            llm.Enabled = enabled;
+        }
+
+        string provider = llm.Provider;
+        if (ImGui.InputText("LLM provider", ref provider, 128))
+        {
+            llm.Provider = provider;
+        }
+
+        string baseUrl = llm.BaseUrl;
+        if (ImGui.InputText("Base URL", ref baseUrl, 1024))
+        {
+            llm.BaseUrl = baseUrl;
+        }
+
+        string apiKeyEnvironmentVariable = llm.ApiKeyEnvironmentVariable;
+        if (ImGui.InputText("API key env var", ref apiKeyEnvironmentVariable, 128))
+        {
+            llm.ApiKeyEnvironmentVariable = apiKeyEnvironmentVariable;
+        }
+
+        string apiKey = llm.ApiKey;
+        if (ImGui.InputText("API key override", ref apiKey, 1024, ImGuiInputTextFlags.Password))
+        {
+            llm.ApiKey = apiKey;
+        }
+
+        string model = llm.Model;
+        if (ImGui.InputText("Model", ref model, 256))
+        {
+            llm.Model = model;
+        }
+
+        string chatCompletionsPath = llm.ChatCompletionsPath;
+        if (ImGui.InputText("Chat completions path", ref chatCompletionsPath, 256))
+        {
+            llm.ChatCompletionsPath = string.IsNullOrWhiteSpace(chatCompletionsPath)
+                ? "/v1/chat/completions"
+                : chatCompletionsPath;
+        }
+
+        int timeoutSeconds = llm.TimeoutSeconds;
+        if (ImGui.DragInt("Timeout seconds", ref timeoutSeconds, 1.0f, 1, 3600))
+        {
+            llm.TimeoutSeconds = Math.Clamp(timeoutSeconds, 1, 3600);
+        }
+
+        bool useDefaultTemperature = llm.DefaultTemperature.HasValue;
+        if (ImGui.Checkbox("Use default temperature", ref useDefaultTemperature))
+        {
+            llm.DefaultTemperature = useDefaultTemperature ? 0.7f : null;
+        }
+
+        if (llm.DefaultTemperature.HasValue)
+        {
+            float temperature = llm.DefaultTemperature.Value;
+            if (ImGui.DragFloat("Default temperature", ref temperature, 0.01f, 0.0f, 2.0f, "%.2f"))
+            {
+                llm.DefaultTemperature = Math.Clamp(temperature, 0.0f, 2.0f);
+            }
+        }
+
+        ImGui.TextWrapped("Scripts call Scene.Llm / scene.llm. Prefer API key environment variables for project files that may be shared.");
     }
 
     private void DrawWindowSettings(GameWindowSettings window)
@@ -1373,6 +1478,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             });
         }
 
+        ImGui.SameLine();
+        if (ImGui.Button("Add Textbox"))
+        {
+            scene.GuiControls.Add(new GuiControlSettings
+            {
+                Name = $"Textbox {scene.GuiControls.Count + 1}",
+                Type = "textbox",
+                Text = string.Empty,
+                Width = 260.0f,
+                Height = 96.0f,
+                Multiline = true,
+                WordWrap = true,
+                EventName = "changed"
+            });
+        }
+
         int removeIndex = -1;
         for (int i = 0; i < scene.GuiControls.Count; i++)
         {
@@ -1388,13 +1509,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 position = new(control.X, control.Y);
             Vector2 size = new(control.Width, control.Height);
             bool wordWrap = control.WordWrap;
+            bool multiline = control.Multiline;
             bool checkedValue = control.Checked;
             int selectedIndex = control.SelectedIndex;
             bool changed = false;
 
             changed |= ImGui.Checkbox("Visible", ref visible);
             changed |= ImGui.InputText("Name", ref name, 128);
-            string[] types = ["button", "label", "checkbox", "dropdown"];
+            string[] types = ["button", "label", "checkbox", "dropdown", "textbox"];
             int typeIndex = Array.FindIndex(types, item => string.Equals(item, type, StringComparison.OrdinalIgnoreCase));
             typeIndex = Math.Max(0, typeIndex);
             if (ImGui.Combo("Type", ref typeIndex, types, types.Length))
@@ -1403,7 +1525,16 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 changed = true;
             }
 
-            changed |= ImGui.InputText("Text", ref text, 512);
+            if (string.Equals(type, "textbox", StringComparison.OrdinalIgnoreCase))
+            {
+                changed |= ImGui.InputTextMultiline("Text", ref text, 8192, new Vector2(Math.Max(size.X, 180.0f), 96.0f));
+                changed |= ImGui.Checkbox("Multiline", ref multiline);
+            }
+            else
+            {
+                changed |= ImGui.InputText("Text", ref text, 512);
+            }
+
             changed |= ImGui.Checkbox("Word wrap", ref wordWrap);
             changed |= ImGui.DragFloat2("Position", ref position, 1.0f);
             changed |= ImGui.DragFloat2("Size", ref size, 1.0f, 1.0f, 4096.0f);
@@ -1434,6 +1565,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 control.TargetEntity = targetEntity;
                 control.EventName = eventName;
                 control.WordWrap = wordWrap;
+                control.Multiline = multiline;
                 control.Checked = checkedValue;
                 control.SelectedIndex = Math.Clamp(selectedIndex, 0, Math.Max(control.Items.Count - 1, 0));
             }
@@ -1524,6 +1656,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector4 borderColor = style.BorderColor.ToVector4();
         float borderThickness = style.BorderThickness;
         float rounding = style.Rounding;
+        float fontSize = style.FontSize <= 0.0f ? 18.0f : style.FontSize;
         string horizontalAlignment = style.HorizontalAlignment;
         string verticalAlignment = style.VerticalAlignment;
         bool changed = false;
@@ -1535,6 +1668,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.ColorEdit4("Border", ref borderColor);
         changed |= ImGui.DragFloat("Border thickness", ref borderThickness, 0.05f, 0.0f, 16.0f, "%.2f");
         changed |= ImGui.DragFloat("Rounding", ref rounding, 0.1f, 0.0f, 64.0f, "%.1f");
+        changed |= ImGui.DragFloat("Font size", ref fontSize, 0.25f, 8.0f, 96.0f, "%.1f px");
         changed |= DrawStringCombo("Horizontal align", ref horizontalAlignment, ["left", "center", "right"]);
         changed |= DrawStringCombo("Vertical align", ref verticalAlignment, ["top", "middle", "bottom"]);
 
@@ -1547,6 +1681,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             style.BorderColor = Vector4Dto.FromVector4(borderColor);
             style.BorderThickness = Math.Max(0.0f, borderThickness);
             style.Rounding = Math.Max(0.0f, rounding);
+            style.FontSize = Math.Clamp(fontSize, 8.0f, 96.0f);
             style.HorizontalAlignment = NormalizeChoice(horizontalAlignment, "center", ["left", "center", "right"]);
             style.VerticalAlignment = NormalizeChoice(verticalAlignment, "middle", ["top", "middle", "bottom"]);
         }

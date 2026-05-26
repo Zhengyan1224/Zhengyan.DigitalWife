@@ -265,6 +265,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             return;
         }
 
+        ImGui.SetWindowFontScale(ResolveGuiFontScale(style));
         Vector2 controlSize = new(Math.Max(control.Width, 1.0f), Math.Max(control.Height, 1.0f));
         ImGui.SetCursorPos(Vector2.Zero);
         string type = control.Type.ToLowerInvariant();
@@ -288,6 +289,18 @@ internal sealed class RuntimeGuiOverlayComponent(
             if (ImGui.Combo($"##dropdown{control.Id}", ref selectedIndex, items, items.Length))
             {
                 control.SelectedIndex = selectedIndex;
+                _dispatchEvent(control, string.IsNullOrWhiteSpace(control.EventName) ? "changed" : control.EventName);
+            }
+        }
+        else if (type == "textbox")
+        {
+            string value = control.Text ?? string.Empty;
+            bool changed = control.Multiline
+                ? ImGui.InputTextMultiline($"##textbox{control.Id}", ref value, 8192, controlSize)
+                : ImGui.InputText($"##textbox{control.Id}", ref value, 8192);
+            if (changed)
+            {
+                control.Text = value;
                 _dispatchEvent(control, string.IsNullOrWhiteSpace(control.EventName) ? "changed" : control.EventName);
             }
         }
@@ -330,6 +343,12 @@ internal sealed class RuntimeGuiOverlayComponent(
 
         drawList.PopClipRect();
         ImGui.Dummy(available);
+    }
+
+    private static float ResolveGuiFontScale(GuiControlStyleSettings style)
+    {
+        float fontSize = Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
+        return fontSize / Math.Max(ImGui.GetFontSize(), 1.0f);
     }
 
     private static string[] BuildTextLines(string text, float maxWidth, bool wordWrap)

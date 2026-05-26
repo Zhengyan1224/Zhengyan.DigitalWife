@@ -34,15 +34,93 @@ C# 脚本：
 
 - 文件扩展名：`.csx`。
 - 运行环境：Roslyn C# Script。
-- 默认导入：`System`、`System.Numerics`、`Zhengyan.DigitalWife.Samples.GamePlayer`。
+- 默认导入：`System`、`System.Collections.Generic`、`System.Globalization`、`System.IO`、`System.Linq`、`System.Numerics`、`System.Text`、`System.Text.Json`、`System.Text.RegularExpressions`、`System.Threading`、`System.Threading.Tasks`、`Zhengyan.DigitalWife.Samples.GamePlayer`。
 - 默认可访问全局对象：`Entity`、`Scene`、`Input`、`Audio`。
 
 Python 脚本：
 
 - 文件扩展名：`.py`。
 - 运行环境：系统 `python` 或 `python3` 进程。
+- 预置标准库模块：`math`、`random`、`re`、`json`、`datetime`、`time`、`statistics`。
+- 仍然可以在脚本中正常 `import` 标准库或当前 Python 环境已安装的第三方包。
 - Python 脚本通过桥接命令修改 GamePlayer 状态。
 - Python 脚本中的对象属性大多是事件开始时的快照；例如调用 `entity.set_position(...)` 后，当前函数内的 `entity.position` 不会立刻更新，要到下一次事件快照才会反映。
+
+## 基础系统 API
+
+脚本层已经支持基础语言和系统 API。字符串、数值、集合、日期时间、正则、JSON、数学函数等不需要额外的引擎封装，可以直接使用 C# / Python 自身能力。
+
+边界说明：
+
+- C# `.csx` 是受信任本地脚本，运行在 GamePlayer 进程内，不是安全沙箱。
+- Python `.py` 是受信任本地脚本，运行在独立 Python 进程内，不是安全沙箱。
+- 游戏存档建议优先使用 `Scene.Save` / `scene.save`，这样路径会被限制在工程 `saves/` 目录内，更适合跨平台发布。
+- 如果直接使用 C# `System.IO` 或 Python `open()` 访问文件，需要自己处理 Windows / Linux / MacOS 的路径差异和权限问题。
+
+C# 常用能力：
+
+| 能力 | 可用 API |
+| --- | --- |
+| 字符串 | `string`、`StringBuilder`、`Trim`、`Split`、`Replace`、`Contains`、`StartsWith`、`EndsWith` |
+| 数值 | `int`、`float`、`double`、`decimal`、`Math`、`MathF`、`Random` |
+| 集合 | `List<T>`、`Dictionary<TKey,TValue>`、数组、LINQ |
+| 日期时间 | `DateTime`、`DateTimeOffset`、`TimeSpan` |
+| 正则 | `Regex` |
+| JSON | `JsonSerializer` |
+| 向量 | `Vector2`、`Vector3`、`Vector4`、`Quaternion` |
+| 异步 | `Task`、`CancellationToken` |
+
+C# 示例：
+
+```csharp
+if (IsStart)
+{
+    string raw = "  小雨@#$ 123 ABC  ";
+    string clean = Regex.Replace(raw.Trim(), @"[^\u4e00-\u9fa5a-zA-Z0-9\s,.!?]", "");
+
+    List<int> values = [1, 2, 3, 4, 5];
+    int total = values.Where(v => v % 2 == 1).Sum();
+
+    float wave = MathF.Sin((float)DateTime.UtcNow.TimeOfDay.TotalSeconds);
+    Vector3 next = Entity.Position + new Vector3(wave, 0.0f, 0.0f);
+    Entity.SetPosition(next.X, next.Y, next.Z);
+
+    string json = JsonSerializer.Serialize(new { clean, total });
+    Scene.Save.WriteText("system_api_demo.json", json);
+}
+```
+
+Python 常用能力：
+
+| 能力 | 可用 API |
+| --- | --- |
+| 字符串 | `str`、`strip`、`split`、`replace`、`in`、`startswith`、`endswith` |
+| 数值 | `int`、`float`、`round`、`abs`、`min`、`max`、`sum` |
+| 集合 | `list`、`dict`、`set`、`tuple`、列表推导式 |
+| 日期时间 | `datetime`、`time` |
+| 数学 | `math`、`random`、`statistics` |
+| 正则 | `re` |
+| JSON | `json` |
+
+Python 示例：
+
+```python
+def start(entity, scene, input, audio):
+    raw = "  小雨@#$ 123 ABC  "
+    clean = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9\s,.!?]", "", raw.strip())
+
+    values = [1, 2, 3, 4, 5]
+    total = sum(v for v in values if v % 2 == 1)
+
+    wave = math.sin(time.time())
+    entity.set_position(entity.position[0] + wave, entity.position[1], entity.position[2])
+
+    scene.save.write_json("system_api_demo.json", {
+        "clean": clean,
+        "total": total,
+        "created_at": datetime.datetime.now().isoformat()
+    })
+```
 
 ## 生命周期
 
@@ -389,6 +467,140 @@ MotionLayerInfo? wave = Entity.GetMotionLayer("assets/motions/wave.vmd");
 - `ResetPhysicsOnLoop`
 - `IsPlaying`
 
+PMX Morph 控制：
+
+```csharp
+// 列出模型中的 Morph 名称，名称必须和 PMX 文件里的 MMDMorph.Name 一致。
+foreach (string morphName in Entity.MorphNames)
+{
+    Console.WriteLine(morphName);
+}
+
+float smile = Entity.GetMorphWeight("笑い");
+Entity.SetMorphWeight("笑い", 1.0f);
+
+// 如果希望当前 Morph 权重作为动作混合基准保存下来。
+Entity.SaveMorphAnimWeight("笑い");
+Entity.SaveAnimWeight("笑い"); // SaveMorphAnimWeight 的别名，更贴近底层 MMDMorph.SaveAnimWeight 命名。
+float savedSmile = Entity.GetMorphSaveAnimWeight("笑い");
+Entity.SetMorphSaveAnimWeight("笑い", 0.5f);
+Entity.LoadMorphAnimWeight("笑い");
+Entity.ClearMorphAnimWeight("笑い");
+
+// 对整个 PMX 的骨骼、Morph、IK 保存/恢复/清空基准动画。
+Entity.SaveBaseAnimation();
+Entity.LoadBaseAnimation();
+Entity.ClearBaseAnimation();
+
+// 清除脚本对 Morph 的持续覆盖，让动作层重新完全接管这个 Morph。
+Entity.ClearMorphWeightOverride("笑い");
+Entity.ClearMorphWeightOverrides();
+```
+
+```python
+for morph_name in entity.morph_names:
+    print(morph_name)
+
+smile = entity.get_morph_weight("笑い")
+entity.set_morph_weight("笑い", 1.0)
+
+# 如果希望当前 Morph 权重作为动作混合基准保存下来。
+entity.save_morph_anim_weight("笑い")
+entity.save_anim_weight("笑い")  # save_morph_anim_weight 的别名。
+saved_smile = entity.get_morph_save_anim_weight("笑い")
+entity.set_morph_save_anim_weight("笑い", 0.5)
+entity.load_morph_anim_weight("笑い")
+entity.clear_morph_anim_weight("笑い")
+
+# 对整个 PMX 的骨骼、Morph、IK 保存/恢复/清空基准动画。
+entity.save_base_animation()
+entity.load_base_animation()
+entity.clear_base_animation()
+
+# 清除脚本对 Morph 的持续覆盖，让动作层重新完全接管这个 Morph。
+entity.clear_morph_weight_override("笑い")
+entity.clear_morph_weight_overrides()
+```
+
+Morph 说明：
+
+- `SetMorphWeight(name, weight)` / `entity.set_morph_weight(name, weight)` 默认会持续覆盖同名 Morph，即使当前正在播放 VMD 动作层，也会在动作采样后重新写入该权重。
+- 如果只想改一次当前帧权重，不想持续覆盖动作层，C# 可调用 `SetMorphWeight(name, weight, overrideAnimation: false)`，Python 可调用 `set_morph_weight(name, weight, override_animation=False)`。
+- `SaveMorphAnimWeight(name)` / `SaveAnimWeight(name)` 对应底层 `MMDMorph.SaveBaseAnimation()`，会把当前 `Weight` 保存到该 Morph 的 `SaveAnimWeight`。
+- `SaveBaseAnimation()`、`LoadBaseAnimation()`、`ClearBaseAnimation()` 作用于整个 PMX 模型的骨骼、Morph 和 IK 基准动画。
+- Morph 名称区分 PMX 文件内容，常见日文模型可能是 `笑い`、`まばたき`、`あ`、`い` 等；如果名称不存在，C# 抛出异常或 `Try*` 返回 `false`，Python 命令会由运行时忽略或在控制台输出脚本错误。
+
+PMX 骨骼 / MMDNode 控制：
+
+```csharp
+// 列出 PMX 骨骼名称，名称必须和 PMX 文件里的 MMDNode.Name 一致。
+foreach (string nodeName in Entity.NodeNames)
+{
+    Console.WriteLine(nodeName);
+}
+
+PmxNodeState head = Entity.GetNodeState("頭");
+Vector3 headTranslate = head.Translate;
+Quaternion headRotate = head.Rotate;
+Vector3 headScale = head.Scale;
+Vector3 headAnimTranslate = head.AnimTranslate;
+Quaternion headAnimRotate = head.AnimRotate;
+
+// 基础骨骼 TRS：影响 MMDNode.Translate / Rotate / Scale。
+Entity.SetNodeTranslate("頭", 0.0f, 0.05f, 0.0f);
+Entity.SetNodeRotateEuler("頭", 0.0f, 25.0f, 0.0f);
+Entity.SetNodeScale("頭", 1.05f, 1.05f, 1.05f);
+
+// 动画偏移：影响 MMDNode.AnimTranslate / AnimRotate，适合在动作层基础上叠加姿态。
+Entity.SetNodeAnimTranslate("右腕", 0.0f, 0.0f, 0.02f);
+Entity.SetNodeAnimRotateEuler("右腕", 0.0f, 0.0f, -20.0f);
+
+// 单个骨骼基准动画：保存/恢复/清空 AnimTranslate 与 AnimRotate。
+Entity.SaveNodeBaseAnimation("右腕");
+Entity.LoadNodeBaseAnimation("右腕");
+Entity.ClearNodeBaseAnimation("右腕");
+
+// 清除脚本对骨骼的持续覆盖，让 PMX 初始姿态和 VMD 动作重新接管。
+Entity.ClearNodeOverrides("右腕");
+Entity.ClearAllNodeOverrides();
+```
+
+```python
+for node_name in entity.node_names:
+    print(node_name)
+
+head = entity.get_node_state("頭")
+if head is not None:
+    print(head["translate"], head["rotate"], head["scale"])
+
+# 基础骨骼 TRS：影响 MMDNode.Translate / Rotate / Scale。
+entity.set_node_translate("頭", 0.0, 0.05, 0.0)
+entity.set_node_rotate_euler("頭", 0.0, 25.0, 0.0)
+entity.set_node_scale("頭", 1.05, 1.05, 1.05)
+
+# 动画偏移：影响 MMDNode.AnimTranslate / AnimRotate，适合在动作层基础上叠加姿态。
+entity.set_node_anim_translate("右腕", 0.0, 0.0, 0.02)
+entity.set_node_anim_rotate_euler("右腕", 0.0, 0.0, -20.0)
+
+# 单个骨骼基准动画：保存/恢复/清空 AnimTranslate 与 AnimRotate。
+entity.save_node_base_animation("右腕")
+entity.load_node_base_animation("右腕")
+entity.clear_node_base_animation("右腕")
+
+# 清除脚本对骨骼的持续覆盖，让 PMX 初始姿态和 VMD 动作重新接管。
+entity.clear_node_overrides("右腕")
+entity.clear_all_node_overrides()
+```
+
+骨骼控制说明：
+
+- `SetNodeTranslate/Rotate/Scale` 控制的是骨骼基础 TRS，即底层 `MMDNode.Translate`、`MMDNode.Rotate`、`MMDNode.Scale`。它会改变骨骼的本地基础姿态，适合做模型校正、挂点调整或非动作层姿态修改。
+- `SetNodeAnimTranslate/AnimRotate` 控制的是动作偏移，即底层 `MMDNode.AnimTranslate`、`MMDNode.AnimRotate`。它会在 VMD 动作层采样后覆盖同名骨骼，适合做运行时看向、手臂微调、程序化姿态叠加。
+- 上面这些设置默认会持续覆盖后续帧。C# 可传 `overrideAnimation: false`，Python 可传 `override_animation=False`，表示只写入当前值，不登记持续覆盖。
+- 旋转同时支持四元数和欧拉角。C# 可用 `SetNodeRotate(name, Quaternion)` / `SetNodeRotateEuler(name, xDeg, yDeg, zDeg)`；Python 可用 `set_node_rotate(name, x, y, z, w)` / `set_node_rotate_euler(name, x_deg, y_deg, z_deg)`。
+- `SaveNodeBaseAnimation(name)` 对应底层 `MMDNode.SaveBaseAnimation()`，保存当前 `AnimTranslate` 与 `AnimRotate` 到 `BaseAnimTranslate` / `BaseAnimRotate`。
+- 骨骼名称来自 PMX 文件，常见日文名如 `頭`、`首`、`上半身`、`右腕`、`左腕`。名称不存在时 C# 抛出异常或 `Try*` 返回 `false`，Python 命令会由运行时忽略或在控制台输出脚本错误。
+
 材质贴图覆盖：
 
 ```csharp
@@ -681,10 +893,58 @@ scene.load_scene("scenes/next.scene.json")
 | `Scene.Camera` | `scene.camera` | 相机控制。 |
 | `Scene.Debug` | `scene.debug` | 调试绘制。 |
 | `Scene.Save` | `scene.save` | 存档读写。 |
+| `Scene.Performance` | `scene.performance` | 性能指标快照，例如 FPS。 |
+| `Scene.Fps` | `scene.fps` | 平滑后的当前 FPS 快捷属性。 |
+| `Scene.RawFps` | `scene.raw_fps` | 当前帧瞬时 FPS。 |
 | `Scene.RenderTexture(name)` | `scene.render_texture(name)` | 返回 `rt:name` 引用。 |
 | `Scene.LoadScene(path)` | `scene.load_scene(path)` | 切换场景。 |
 
 场景切换会显示同一套加载遮罩，并触发目标场景的加载入口脚本。
+
+## Performance / FPS API
+
+脚本可以实时读取当前帧率。`Fps` 是平滑后的 FPS，适合显示给玩家；`RawFps` 是当前帧根据 `DeltaSeconds` 算出的瞬时 FPS，波动更大，适合调试。
+
+C#：
+
+```csharp
+if (IsUpdate)
+{
+    RuntimeGuiControl? fpsLabel = Scene.GetGuiControl("FPS Label");
+    fpsLabel?.SetValue($"FPS: {Scene.Fps:F1}");
+
+    if (Scene.Fps < 30.0)
+    {
+        Console.WriteLine($"Low FPS: {Scene.Fps:F1}, raw={Scene.RawFps:F1}");
+    }
+}
+```
+
+Python：
+
+```python
+def update(entity, scene, input, audio, delta_seconds):
+    fps_label = scene.get_gui_control("FPS Label")
+    if fps_label:
+        fps_label.set_value(f"FPS: {scene.fps:.1f}")
+
+    if scene.performance.fps < 30:
+        print("Low FPS", scene.performance.fps, "raw", scene.performance.raw_fps)
+```
+
+API：
+
+| C# | Python | 说明 |
+| --- | --- | --- |
+| `Scene.Fps` | `scene.fps` | 平滑后的 FPS。 |
+| `Scene.RawFps` | `scene.raw_fps` | 当前帧瞬时 FPS。 |
+| `Scene.DeltaSeconds` | `scene.delta_seconds` | 当前帧间隔秒数。 |
+| `Scene.FrameCount` | `scene.frame_count` | 当前运行帧编号。 |
+| `Scene.Performance.Fps` | `scene.performance.fps` | 同 `Scene.Fps`。 |
+| `Scene.Performance.RawFps` | `scene.performance.raw_fps` | 同 `Scene.RawFps`。 |
+| `Scene.Performance.DeltaSeconds` | `scene.performance.delta_seconds` | 同 `Scene.DeltaSeconds`。 |
+| `Scene.Performance.TotalSeconds` | `scene.performance.total_seconds` | 游戏运行总秒数。 |
+| `Scene.Performance.FrameCount` | `scene.performance.frame_count` | 同 `Scene.FrameCount`。 |
 
 ## 场景加载入口脚本
 
@@ -738,6 +998,7 @@ GUI 控件类型：
 | `label` | 无 | 文本标签。支持自动换行。 |
 | `checkbox` | `changed` | 复选框。 |
 | `dropdown` | `changed` | 下拉框。 |
+| `textbox` | `changed` | 文本输入框。输入内容保存在 `Text` / `Value`，支持单行或多行。 |
 
 GUI 控件属性：
 
@@ -745,8 +1006,9 @@ GUI 控件属性：
 | --- | --- | --- |
 | `Id` | `id` | 控件 Id。 |
 | `Name` | `name` | 控件名称。 |
-| `Type` | `type` | `button`、`label`、`checkbox`、`dropdown`。 |
-| `Text` | `text` | 显示文本。 |
+| `Type` | `type` | `button`、`label`、`checkbox`、`dropdown`、`textbox`。 |
+| `Text` | `text` | 显示文本；对 `textbox` 表示当前输入内容。 |
+| `Value` | `value` | `Text` 的别名，便于读取文本框输入。 |
 | `Visible` | `visible` | 是否显示。 |
 | `X` / `Y` | `x` / `y` | 屏幕像素坐标。 |
 | `Width` / `Height` | `width` / `height` | 控件尺寸。 |
@@ -754,9 +1016,21 @@ GUI 控件属性：
 | `EventName` | 无 | 事件名。 |
 | `Checked` | `checked` | 复选框状态。 |
 | `WordWrap` | `word_wrap` | 文本自动换行。 |
+| `Multiline` | `multiline` | 文本框是否使用多行输入。 |
 | `Items` | `items` | 下拉框项目。 |
 | `SelectedIndex` | `selected_index` | 下拉框选中项下标。 |
 | `SelectedItem` | 无 | C# 可直接取当前选中项。 |
+
+GUI 样式：
+
+| Style 字段 | 说明 |
+| --- | --- |
+| `Background` / `Hover` / `Active` / `Text` / `Border` | 控件背景、悬停、按下、文字和边框颜色。 |
+| `Border thickness` | 边框粗细。 |
+| `Rounding` | 圆角半径。 |
+| `Font size` | 控件字体大小，单位为像素，默认 `18.0`。GameEditor 预览和 GamePlayer 运行时都会按该值显示。 |
+| `Horizontal align` | 水平对齐：`left`、`center`、`right`。 |
+| `Vertical align` | 垂直对齐：`top`、`middle`、`bottom`。 |
 
 修改 GUI：
 
@@ -767,6 +1041,8 @@ if (control is not null)
     control.Text = "开始";
     control.SetPosition(40, 80);
     control.SetSize(180, 40);
+    control.SetValue("默认输入");
+    control.SetMultiline(true);
     control.SetWordWrap(true);
     control.Show();
 }
@@ -778,6 +1054,8 @@ if control is not None:
     control.set_text("开始")
     control.set_position(40, 80)
     control.set_size(180, 40)
+    control.set_value("默认输入")
+    control.set_multiline(True)
     control.set_word_wrap(True)
     control.show()
 ```
@@ -821,6 +1099,30 @@ mute = scene.get_gui_control("MuteCheckbox")
 if mute is not None and mute.checked:
     audio.set_volume("BGM", 0.0)
 ```
+
+读取文本框输入：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "changed")
+{
+    RuntimeGuiControl? inputBox = Scene.GetGuiControl(GuiControlId);
+    if (inputBox is not null && inputBox.Type == "textbox")
+    {
+        Console.WriteLine($"用户输入: {inputBox.Value}");
+        Entity.Speak(inputBox.Value);
+    }
+}
+```
+
+```python
+def gui_event(entity, scene, input, audio, control_id, event_name):
+    if event_name == "changed":
+        input_box = scene.get_gui_control(control_id)
+        if input_box is not None and input_box.type == "textbox":
+            print("用户输入:", input_box.value)
+```
+
+文本框在 GamePlayer 中使用 ImGui `InputText` / `InputTextMultiline`，输入法和键盘处理走 ImGui.NET + Silk.NET，Windows、Linux、macOS 使用同一套代码路径。Linux 发行版缺少系统 CJK 字体时，程序会优先使用内置 `Resources/Fonts/NotoSansCJKsc-Regular.otf`。
 
 样式配置在 GameEditor 中编辑，包括背景色、悬停色、按下色、文字色、边框色、边框宽度、圆角、水平对齐、垂直对齐。
 
@@ -1321,6 +1623,213 @@ API：
 | `Exists(fileName)` | `exists(file_name)` | 文件是否存在。 |
 | `Delete(fileName)` | `delete(file_name)` | 删除存档。 |
 | `GetFullPath(fileName)` | 无 | 获取完整路径。 |
+
+## LLM / OpenAI-compatible API
+
+GamePlayer 支持从脚本调用 OpenAI-compatible `/v1/chat/completions` 接口，并支持流式输出。配置在 GameEditor 的 `Project` 标签页 `LLM / OpenAI-compatible` 中，也会保存到 `game.project.json` 的 `llm` 节点。
+
+配置字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Enabled` | 是否启用脚本 LLM。未启用时调用会报错。 |
+| `BaseUrl` | API 根地址，例如 `https://api.openai.com` 或私有供应商地址。 |
+| `ApiKeyEnvironmentVariable` | API Key 环境变量名，默认 `OPENAI_API_KEY`。推荐使用它，避免把密钥写入工程文件。 |
+| `ApiKey` | 直接写入工程的 API Key 覆盖值。不建议提交到版本库。 |
+| `Model` | 默认模型名，例如 `gpt-4o-mini`、`qwen-plus`、私有模型名等。 |
+| `ChatCompletionsPath` | 默认 `/v1/chat/completions`。如果供应商路径不同可在这里改。 |
+| `TimeoutSeconds` | 请求超时时间。 |
+| `DefaultTemperature` | 默认温度；为空则不发送 `temperature` 字段。 |
+
+### C# LLM
+
+`Scene.Llm` 提供三类调用：
+
+- `await Scene.Llm.ChatAsync(...)`：等待完整结果，适合加载脚本、短请求或不介意等待的逻辑。
+- `await foreach (var update in Scene.Llm.StreamChatAsync(...))`：当前脚本事件内同步流式读取。注意如果在 GUI 事件里直接等待，会阻塞这次脚本事件，画面要等事件结束后才继续刷新。
+- `Scene.Llm.StartChat(...)`：后台请求，流式 delta 会通过 `IsLlmEvent` 回到同一个实体脚本，适合运行时 UI 和对话。
+
+C# 阻塞式完整结果：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    string answer = await Scene.Llm.ChatAsync(
+        "用一句话介绍这片海。",
+        systemPrompt: "你是游戏中的旁白，回答要短。");
+
+    Scene.GetGuiControl("LLM Output")?.SetValue(answer);
+}
+```
+
+C# 事件内同步流式读取：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    RuntimeGuiControl? output = Scene.GetGuiControl("LLM Output");
+    output?.SetValue("");
+
+    await foreach (RuntimeLlmStreamUpdate update in Scene.Llm.StreamChatAsync(
+        "写一句欢迎玩家进入海边场景的台词。",
+        systemPrompt: "你是游戏 NPC。",
+        temperature: 0.7f))
+    {
+        output?.SetValue(update.AccumulatedText);
+    }
+}
+```
+
+C# 后台流式输出，不阻塞渲染：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    Scene.GetGuiControl("LLM Output")?.SetValue("");
+
+    Scene.Llm.StartChat(
+        Entity,
+        "写一句欢迎玩家进入海边场景的台词。",
+        systemPrompt: "你是游戏 NPC。",
+        onDeltaCallback: "npc_reply_delta",
+        onCompletedCallback: "npc_reply_done",
+        onErrorCallback: "npc_reply_error");
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_reply_delta")
+{
+    Scene.GetGuiControl("LLM Output")?.SetValue(LlmText);
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_reply_done")
+{
+    Entity.Speak(LlmText);
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_reply_error")
+{
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+C# 消息列表调用：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    var messages = new[]
+    {
+        new RuntimeLlmChatMessage("system", "你是游戏任务设计助手。"),
+        new RuntimeLlmChatMessage("user", "给玩家一个 20 字以内的探索任务。")
+    };
+
+    await foreach (RuntimeLlmStreamUpdate update in Scene.Llm.StreamChatAsync(messages))
+    {
+        Scene.GetGuiControl("Quest Text")?.SetValue(update.AccumulatedText);
+    }
+}
+```
+
+### Python LLM
+
+`scene.llm` 提供三类调用：
+
+- `scene.llm.chat(...)`：等待完整结果。
+- `scene.llm.stream_chat(...)` / `stream_messages(...)`：在当前函数里同步流式迭代。适合加载脚本或测试；运行中 UI 建议用 `start_chat`，否则当前脚本事件会占用主循环。
+- `scene.llm.start_chat(...)`：后台请求，delta / completed / error 会回调到指定 Python 函数，不阻塞当前事件。
+
+Python 完整结果：
+
+```python
+def gui_event(entity, scene, input, audio, control_id, event_name):
+    if event_name != "clicked":
+        return
+
+    answer = scene.llm.chat(
+        "用一句话介绍这片海。",
+        system_prompt="你是游戏中的旁白，回答要短。")
+
+    output = scene.get_gui_control("LLM Output")
+    if output:
+        output.set_value(answer)
+```
+
+Python 当前函数内同步流式读取：
+
+```python
+def gui_event(entity, scene, input, audio, control_id, event_name):
+    if event_name != "clicked":
+        return
+
+    output = scene.get_gui_control("LLM Output")
+    if output:
+        output.set_value("")
+        scene.flush()
+
+    for update in scene.llm.stream_chat(
+        "写一句欢迎玩家进入海边场景的台词。",
+        system_prompt="你是游戏 NPC。",
+        temperature=0.7):
+        if output:
+            output.set_value(update["accumulated_text"])
+            scene.flush()
+```
+
+Python 后台流式输出，不阻塞渲染：
+
+```python
+def gui_event(entity, scene, input, audio, control_id, event_name):
+    if event_name != "clicked":
+        return
+
+    output = scene.get_gui_control("LLM Output")
+    if output:
+        output.set_value("")
+
+    scene.llm.start_chat(
+        "写一句欢迎玩家进入海边场景的台词。",
+        system_prompt="你是游戏 NPC。",
+        on_delta="npc_reply_delta",
+        on_completed="npc_reply_done",
+        on_error="npc_reply_error")
+
+def npc_reply_delta(entity, scene, input, audio, event):
+    output = scene.get_gui_control("LLM Output")
+    if output:
+        output.set_value(event["accumulatedText"])
+
+def npc_reply_done(entity, scene, input, audio, event):
+    entity.speak(event["accumulatedText"])
+
+def npc_reply_error(entity, scene, input, audio, event):
+    print("LLM error:", event["error"])
+```
+
+Python 消息列表调用：
+
+```python
+def gui_event(entity, scene, input, audio, control_id, event_name):
+    if event_name != "clicked":
+        return
+
+    messages = [
+        {"role": "system", "content": "你是游戏任务设计助手。"},
+        {"role": "user", "content": "给玩家一个 20 字以内的探索任务。"},
+    ]
+
+    output = scene.get_gui_control("Quest Text")
+    for update in scene.llm.stream_messages(messages):
+        if output:
+            output.set_value(update["accumulated_text"])
+            scene.flush()
+```
+
+注意事项：
+
+- LLM 请求是网络请求。同步 `ChatAsync` / `chat` / 当前函数内 `stream_chat` 会占用脚本事件执行时间；运行中实时 UI 建议用 `StartChat` / `start_chat`。
+- Python 的 `scene.flush()` 只会提交当前已累计的引擎命令，例如 GUI 文本变化、实体移动等；不会重新读取新的输入快照，也不会让被阻塞的主循环提前渲染新帧。
+- `start_chat` 的回调事件字段包括 `requestId`、`eventName`、`delta`、`accumulatedText`、`isFinal`、`error`、`callbackName`。
+- 当前 LLM API 面向文本 Chat Completions；图片、多模态、工具调用等还没有封装到脚本层。
 
 ## 常见脚本组合示例
 

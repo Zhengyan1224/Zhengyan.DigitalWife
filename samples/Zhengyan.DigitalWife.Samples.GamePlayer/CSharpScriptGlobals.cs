@@ -22,6 +22,24 @@ public sealed class CSharpScriptGlobals
 
     public bool IsSpeechEvent { get; init; }
 
+    public bool IsLlmEvent { get; init; }
+
+    public RuntimeLlmScriptEvent? LlmEvent { get; init; }
+
+    public string LlmRequestId => LlmEvent?.RequestId ?? string.Empty;
+
+    public string LlmEventName => LlmEvent?.EventName ?? string.Empty;
+
+    public string LlmDelta => LlmEvent?.Delta ?? string.Empty;
+
+    public string LlmText => LlmEvent?.AccumulatedText ?? string.Empty;
+
+    public bool LlmIsFinal => LlmEvent?.IsFinal ?? false;
+
+    public string LlmError => LlmEvent?.Error ?? string.Empty;
+
+    public string LlmCallbackName => LlmEvent?.CallbackName ?? string.Empty;
+
     public string SpeechCallbackName { get; init; } = string.Empty;
 
     public string LoadingEventName { get; init; } = string.Empty;

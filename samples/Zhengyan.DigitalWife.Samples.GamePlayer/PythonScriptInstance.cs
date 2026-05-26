@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Text;
 using System.Text.Json;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 
@@ -44,6 +46,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
     public void SpeechEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
     {
         SpeechCompleted(entity, scene, input, audio, callbackName);
+    }
+
+    public void LlmEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
+    {
+        SendEvent(
+            "llm_event",
+            entity,
+            scene,
+            input,
+            audio,
+            0.0,
+            llmEvent: llmEvent);
     }
 
     private void SpeechCompleted(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
@@ -92,14 +106,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
         string guiEventName = "",
         float loadingProgress = 0.0f,
         string loadingMessage = "",
-        string speechCallback = "")
+        string speechCallback = "",
+        RuntimeLlmScriptEvent? llmEvent = null)
     {
         if (_process.HasExited)
         {
             throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
         }
 
-        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, guiEventName, loadingProgress, loadingMessage, speechCallback);
+        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent);
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -115,6 +130,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             {
                 ApplyCommands(line[CommandMarker.Length..], entity, scene, input, audio);
                 return;
+            }
+
+            if (line.StartsWith("__DW_FLUSH__", StringComparison.Ordinal))
+            {
+                ApplyCommands(line["__DW_FLUSH__".Length..], entity, scene, input, audio);
+                continue;
             }
 
             Console.WriteLine(line);
@@ -164,16 +185,36 @@ internal sealed class PythonScriptInstance : IScriptInstance
     {
         return """
                import importlib.util
+               import datetime
                import json
+               import math
                import os
+               import random
+               import re
+               import statistics
                import sys
+               import time
+               import urllib.error
+               import urllib.request
 
                COMMAND_MARKER = "__DW_COMMANDS__"
+               FLUSH_MARKER = "__DW_FLUSH__"
                script_path = sys.argv[1]
                save_directory = os.path.abspath(sys.argv[2])
                os.makedirs(save_directory, exist_ok=True)
                spec = importlib.util.spec_from_file_location("game_script", script_path)
                module = importlib.util.module_from_spec(spec)
+
+               # Make common standard-library modules available without requiring
+               # every gameplay script to repeat the same boilerplate imports.
+               module.datetime = datetime
+               module.json = json
+               module.math = math
+               module.random = random
+               module.re = re
+               module.statistics = statistics
+               module.time = time
+
                spec.loader.exec_module(module)
 
                def resolve_save_path(file_name):
@@ -192,6 +233,53 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        return text
                    return "rt:" + text
 
+               def combine_url(base_url, path):
+                   base = str(base_url or "").rstrip("/")
+                   route = str(path or "/v1/chat/completions").strip()
+                   if route.startswith("http://") or route.startswith("https://"):
+                       return route
+                   return base + "/" + route.lstrip("/")
+
+               def get_env(name):
+                   if not name:
+                       return ""
+                   return os.environ.get(str(name), "")
+
+               def emit_commands(commands):
+                   print(FLUSH_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
+
+               def read_openai_sse(url, api_key, payload, timeout_seconds):
+                   body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                   request = urllib.request.Request(
+                       url,
+                       data=body,
+                       headers={
+                           "Content-Type": "application/json",
+                           "Accept": "text/event-stream",
+                           "Authorization": "Bearer " + str(api_key or "")
+                       },
+                       method="POST")
+                   with urllib.request.urlopen(request, timeout=max(1, int(timeout_seconds or 300))) as response:
+                       for raw_line in response:
+                           line = raw_line.decode("utf-8", errors="replace").strip()
+                           if not line or not line.lower().startswith("data:"):
+                               continue
+                           data = line[5:].strip()
+                           if data == "[DONE]":
+                               yield {"delta": "", "is_final": True}
+                               return
+                           try:
+                               chunk = json.loads(data)
+                           except Exception:
+                               continue
+                           choices = chunk.get("choices") or []
+                           if not choices:
+                               continue
+                           delta = ((choices[0].get("delta") or {}).get("content")) or ""
+                           if delta:
+                               yield {"delta": delta, "is_final": False}
+                       yield {"delta": "", "is_final": True}
+
                class Entity:
                    def __init__(self, data, commands):
                        self.id = data.get("id", "")
@@ -201,6 +289,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.scale = data.get("scale", [1, 1, 1])
                        self.rotation = data.get("rotation", [0, 0, 0, 1])
                        self.material_names = data.get("materialNames", [])
+                       self.morph_names = data.get("morphNames", [])
+                       self.morph_weights = data.get("morphWeights", {})
+                       self.morph_save_anim_weights = data.get("morphSaveAnimWeights", {})
+                       self.node_names = data.get("nodeNames", [])
+                       self.nodes = data.get("nodes", {})
                        self.colliders = data.get("colliders", [])
                        self.collider = data.get("collider", {})
                        self._commands = commands
@@ -297,6 +390,162 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_motion_layer_frame(self, path, frame):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_frame", "path": path, "value": frame})
+
+                   def get_morph_weight(self, name, default=0.0):
+                       return self.morph_weights.get(str(name), default)
+
+                   def get_morph_save_anim_weight(self, name, default=0.0):
+                       return self.morph_save_anim_weights.get(str(name), default)
+
+                   def set_morph_weight(self, name, weight, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_morph_weight",
+                           "name": str(name),
+                           "weight": weight,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_morph_save_anim_weight(self, name, weight):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_morph_save_anim_weight",
+                           "name": str(name),
+                           "weight": weight
+                       })
+
+                   def save_morph_anim_weight(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "save_morph_anim_weight", "name": str(name)})
+
+                   def save_anim_weight(self, name):
+                       self.save_morph_anim_weight(name)
+
+                   def load_morph_anim_weight(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "load_morph_anim_weight", "name": str(name)})
+
+                   def clear_morph_anim_weight(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_morph_anim_weight", "name": str(name)})
+
+                   def clear_morph_weight_override(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_morph_weight_override", "name": str(name)})
+
+                   def clear_morph_weight_overrides(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_morph_weight_overrides"})
+
+                   def save_base_animation(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "save_base_animation"})
+
+                   def load_base_animation(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "load_base_animation"})
+
+                   def clear_base_animation(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_base_animation"})
+
+                   def get_node_state(self, name):
+                       return self.nodes.get(str(name))
+
+                   def set_node_translate(self, name, x, y, z, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_translate",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_node_rotate(self, name, x, y, z, w, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_rotate",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z,
+                           "w": w,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_node_rotate_euler(self, name, x_degrees, y_degrees, z_degrees, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_rotate_euler",
+                           "name": str(name),
+                           "x": x_degrees,
+                           "y": y_degrees,
+                           "z": z_degrees,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_node_scale(self, name, x, y, z, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_scale",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_node_anim_translate(self, name, x, y, z, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_anim_translate",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_node_anim_rotate(self, name, x, y, z, w, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_anim_rotate",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z,
+                           "w": w,
+                           "flag": bool(override_animation)
+                       })
+
+                   def set_node_anim_rotate_euler(self, name, x_degrees, y_degrees, z_degrees, override_animation=True):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_node_anim_rotate_euler",
+                           "name": str(name),
+                           "x": x_degrees,
+                           "y": y_degrees,
+                           "z": z_degrees,
+                           "flag": bool(override_animation)
+                       })
+
+                   def save_node_base_animation(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "save_node_base_animation", "name": str(name)})
+
+                   def load_node_base_animation(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "load_node_base_animation", "name": str(name)})
+
+                   def clear_node_base_animation(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_node_base_animation", "name": str(name)})
+
+                   def clear_node_overrides(self, name):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_node_overrides", "name": str(name)})
+
+                   def clear_all_node_overrides(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_all_node_overrides"})
 
                    def set_material_texture(self, material, texture):
                        command = {"target": "entity", "entity": self.id, "action": "set_material_texture", "texture": texture}
@@ -965,6 +1214,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self._entities = data.get("entities", [])
                        self._gui_controls = data.get("guiControls", [])
                        self._sprites = data.get("sprites", [])
+                       self._llm = data.get("llm", {})
+                       self.performance = Performance(data.get("performance", {}))
+                       self.fps = self.performance.fps
+                       self.raw_fps = self.performance.raw_fps
+                       self.delta_seconds = self.performance.delta_seconds
+                       self.frame_count = self.performance.frame_count
                        self.window = Window(data.get("window", {}), commands)
                        self.camera = Camera(data.get("camera", {}), commands)
                        self.debug = Debug(commands)
@@ -994,6 +1249,93 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def render_texture(self, name):
                        return render_texture(name)
+
+                   @property
+                   def llm(self):
+                       return LlmClient(self, self._commands)
+
+                   def flush(self):
+                       if not self._commands:
+                           return
+                       pending = list(self._commands)
+                       self._commands.clear()
+                       emit_commands(pending)
+
+               class Performance:
+                   def __init__(self, data):
+                       self.fps = data.get("fps", 0.0)
+                       self.raw_fps = data.get("rawFps", 0.0)
+                       self.delta_seconds = data.get("deltaSeconds", 0.0)
+                       self.total_seconds = data.get("totalSeconds", 0.0)
+                       self.frame_count = data.get("frameCount", 0)
+
+               class LlmClient:
+                   def __init__(self, scene, commands):
+                       self._scene = scene
+                       self._commands = commands
+                       self._settings = scene._llm
+
+                   @property
+                   def enabled(self):
+                       return bool(self._settings.get("enabled", False))
+
+                   @property
+                   def model(self):
+                       return self._settings.get("model", "")
+
+                   def chat(self, text, system_prompt=None, model=None, temperature=None):
+                       result = ""
+                       for update in self.stream_chat(text, system_prompt=system_prompt, model=model, temperature=temperature):
+                           result = update["accumulated_text"]
+                       return result
+
+                   def stream_chat(self, text, system_prompt=None, model=None, temperature=None):
+                       messages = []
+                       if system_prompt:
+                           messages.append({"role": "system", "content": str(system_prompt)})
+                       messages.append({"role": "user", "content": str(text)})
+                       yield from self.stream_messages(messages, model=model, temperature=temperature)
+
+                   def stream_messages(self, messages, model=None, temperature=None):
+                       if not self.enabled:
+                           raise RuntimeError("Project LLM is disabled")
+                       model_name = model or self._settings.get("model", "")
+                       if not model_name:
+                           raise RuntimeError("Project LLM model is required")
+                       api_key = self._settings.get("apiKey", "") or get_env(self._settings.get("apiKeyEnvironmentVariable", ""))
+                       payload = {
+                           "model": model_name,
+                           "messages": messages,
+                           "stream": True
+                       }
+                       if temperature is not None:
+                           payload["temperature"] = float(temperature)
+                       elif self._settings.get("defaultTemperature") is not None:
+                           payload["temperature"] = float(self._settings.get("defaultTemperature"))
+                       accumulated = ""
+                       url = combine_url(self._settings.get("baseUrl", ""), self._settings.get("chatCompletionsPath", "/v1/chat/completions"))
+                       for chunk in read_openai_sse(url, api_key, payload, self._settings.get("timeoutSeconds", 300)):
+                           delta = chunk.get("delta", "")
+                           accumulated += delta
+                           yield {
+                               "delta": delta,
+                               "accumulated_text": accumulated,
+                               "is_final": bool(chunk.get("is_final", False))
+                           }
+
+                   def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
+                       self._commands.append({
+                           "target": "llm",
+                           "action": "start_chat",
+                           "text": text,
+                           "systemPrompt": system_prompt or "",
+                           "model": model or "",
+                           "temperature": temperature,
+                           "requestId": request_id or "",
+                           "onDelta": on_delta or "",
+                           "onCompleted": on_completed or "",
+                           "onError": on_error or ""
+                       })
 
                class SaveStore:
                    @property
@@ -1143,6 +1485,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.name = data.get("name", "")
                        self.type = data.get("type", "")
                        self.text = data.get("text", "")
+                       self.value = data.get("value", self.text)
                        self.x = data.get("x", 0)
                        self.y = data.get("y", 0)
                        self.width = data.get("width", 1)
@@ -1150,6 +1493,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.visible = bool(data.get("visible", True))
                        self.checked = bool(data.get("checked", False))
                        self.word_wrap = bool(data.get("wordWrap", True))
+                       self.multiline = bool(data.get("multiline", False))
                        self.items = data.get("items", [])
                        self.selected_index = data.get("selectedIndex", 0)
                        self._commands = commands
@@ -1170,13 +1514,21 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.set_visible(False)
 
                    def set_text(self, text):
+                       self.text = "" if text is None else str(text)
+                       self.value = self.text
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_text", "text": text})
+
+                   def set_value(self, value):
+                       self.set_text(value)
 
                    def set_checked(self, enabled):
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_checked", "flag": bool(enabled)})
 
                    def set_word_wrap(self, enabled):
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_word_wrap", "flag": bool(enabled)})
+
+                   def set_multiline(self, enabled):
+                       self._commands.append({"target": "gui", "control": self.id, "action": "set_multiline", "flag": bool(enabled)})
 
                    def set_items(self, items):
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_items", "items": list(items)})
@@ -1247,6 +1599,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                getattr(module, callback)(entity, scene, input, audio)
                            elif hasattr(module, "speech_completed"):
                                module.speech_completed(entity, scene, input, audio, callback)
+                       elif event == "llm_event":
+                           llm_event = ctx.get("llmEvent", {})
+                           callback = llm_event.get("callbackName", "")
+                           if callback and hasattr(module, callback):
+                               getattr(module, callback)(entity, scene, input, audio, llm_event)
+                           elif hasattr(module, "llm_event"):
+                               module.llm_event(entity, scene, input, audio, llm_event)
                        print(COMMAND_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
                    except Exception as ex:
                        print(COMMAND_MARKER + "[]", flush=True)
@@ -1264,6 +1623,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             if (string.Equals(command.Target, "scene", StringComparison.OrdinalIgnoreCase))
             {
                 ApplySceneCommand(command, scene);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "llm", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyLlmCommand(command, currentEntity, scene);
                 continue;
             }
 
@@ -1467,6 +1832,26 @@ internal sealed class PythonScriptInstance : IScriptInstance
         }
     }
 
+    private static void ApplyLlmCommand(PythonCommand command, RuntimeEntity callbackEntity, RuntimeScene scene)
+    {
+        if (!string.Equals(command.Action, "start_chat", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(command.Text))
+        {
+            return;
+        }
+
+        scene.Llm.StartChat(
+            callbackEntity,
+            command.Text,
+            command.SystemPrompt,
+            command.Model,
+            ToFloat(command.Temperature),
+            requestId: command.RequestId,
+            onDeltaCallback: command.OnDelta,
+            onCompletedCallback: command.OnCompleted,
+            onErrorCallback: command.OnError);
+    }
+
     private static void ApplyDebugCommand(PythonCommand command, RuntimeScene scene)
     {
         switch (command.Action?.ToLowerInvariant())
@@ -1575,11 +1960,17 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_text" when command.Text is not null:
                 control.Text = command.Text;
                 break;
+            case "set_value" when command.Text is not null:
+                control.Value = command.Text;
+                break;
             case "set_checked" when command.Flag.HasValue:
                 control.Checked = command.Flag.Value;
                 break;
             case "set_word_wrap" when command.Flag.HasValue:
                 control.WordWrap = command.Flag.Value;
+                break;
+            case "set_multiline" when command.Flag.HasValue:
+                control.Multiline = command.Flag.Value;
                 break;
             case "set_items" when command.Items is not null:
                 control.SetItems(command.Items);
@@ -1720,6 +2111,75 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_motion_layer_frame" when !string.IsNullOrWhiteSpace(command.Path) && command.Value.HasValue:
                 entity.SetMotionLayerFrame(command.Path, (float)command.Value.Value);
+                break;
+            case "set_morph_weight" when !string.IsNullOrWhiteSpace(command.Name) && command.Weight.HasValue:
+                entity.SetMorphWeight(command.Name, (float)command.Weight.Value, command.Flag ?? true);
+                break;
+            case "set_morph_save_anim_weight" when !string.IsNullOrWhiteSpace(command.Name) && command.Weight.HasValue:
+                entity.SetMorphSaveAnimWeight(command.Name, (float)command.Weight.Value);
+                break;
+            case "save_morph_anim_weight" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.SaveMorphAnimWeight(command.Name);
+                break;
+            case "save_anim_weight" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.SaveAnimWeight(command.Name);
+                break;
+            case "load_morph_anim_weight" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.LoadMorphAnimWeight(command.Name);
+                break;
+            case "clear_morph_anim_weight" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.ClearMorphAnimWeight(command.Name);
+                break;
+            case "clear_morph_weight_override" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.ClearMorphWeightOverride(command.Name);
+                break;
+            case "clear_morph_weight_overrides":
+                entity.ClearMorphWeightOverrides();
+                break;
+            case "save_base_animation":
+                entity.SaveBaseAnimation();
+                break;
+            case "load_base_animation":
+                entity.LoadBaseAnimation();
+                break;
+            case "clear_base_animation":
+                entity.ClearBaseAnimation();
+                break;
+            case "set_node_translate" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetNodeTranslate(command.Name, x, y, z, command.Flag ?? true);
+                break;
+            case "set_node_rotate" when !string.IsNullOrWhiteSpace(command.Name) && TryGetQuaternion(command, out Quaternion rotate):
+                entity.SetNodeRotate(command.Name, rotate, command.Flag ?? true);
+                break;
+            case "set_node_rotate_euler" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetNodeRotateEuler(command.Name, x, y, z, command.Flag ?? true);
+                break;
+            case "set_node_scale" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetNodeScale(command.Name, x, y, z, command.Flag ?? true);
+                break;
+            case "set_node_anim_translate" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetNodeAnimTranslate(command.Name, x, y, z, command.Flag ?? true);
+                break;
+            case "set_node_anim_rotate" when !string.IsNullOrWhiteSpace(command.Name) && TryGetQuaternion(command, out Quaternion rotate):
+                entity.SetNodeAnimRotate(command.Name, rotate, command.Flag ?? true);
+                break;
+            case "set_node_anim_rotate_euler" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetNodeAnimRotateEuler(command.Name, x, y, z, command.Flag ?? true);
+                break;
+            case "save_node_base_animation" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.SaveNodeBaseAnimation(command.Name);
+                break;
+            case "load_node_base_animation" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.LoadNodeBaseAnimation(command.Name);
+                break;
+            case "clear_node_base_animation" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.ClearNodeBaseAnimation(command.Name);
+                break;
+            case "clear_node_overrides" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.ClearNodeOverrides(command.Name);
+                break;
+            case "clear_all_node_overrides":
+                entity.ClearAllNodeOverrides();
                 break;
             case "set_material_texture" when command.Texture is not null && TryApplyMaterialTexture(entity, command):
                 break;
@@ -1862,6 +2322,22 @@ internal sealed class PythonScriptInstance : IScriptInstance
         return true;
     }
 
+    private static bool TryGetQuaternion(PythonCommand command, out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        if (!command.X.HasValue || !command.Y.HasValue || !command.Z.HasValue || !command.W.HasValue)
+        {
+            return false;
+        }
+
+        rotation = new Quaternion(
+            (float)command.X.Value,
+            (float)command.Y.Value,
+            (float)command.Z.Value,
+            (float)command.W.Value);
+        return true;
+    }
+
     private static bool TryGetLookAt(PythonCommand command, out Vector3 position, out Vector3 target)
     {
         position = default;
@@ -1909,6 +2385,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string SpeechCallback { get; set; } = string.Empty;
 
+        public PythonLlmEvent LlmEvent { get; set; } = new();
+
         public PythonEntity Entity { get; set; } = new();
 
         public PythonScene Scene { get; set; } = new();
@@ -1925,7 +2403,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
             string guiEventName,
             float loadingProgress,
             string loadingMessage,
-            string speechCallback)
+            string speechCallback,
+            RuntimeLlmScriptEvent? llmEvent)
         {
             return new PythonEvent
             {
@@ -1936,6 +2415,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 LoadingProgress = loadingProgress,
                 LoadingMessage = loadingMessage,
                 SpeechCallback = speechCallback,
+                LlmEvent = PythonLlmEvent.FromRuntime(llmEvent),
                 Entity = PythonEntity.FromRuntime(entity),
                 Scene = new PythonScene
                 {
@@ -1947,10 +2427,45 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     GuiControls = scene.GuiControls.Select(PythonGuiControl.FromRuntime).ToArray(),
                     Sprites = scene.Sprites.Select(PythonSprite.FromRuntime).ToArray(),
                     Camera = PythonCamera.FromRuntime(scene.Camera),
-                    Window = PythonWindow.FromRuntime(scene.Window)
+                    Window = PythonWindow.FromRuntime(scene.Window),
+                    Llm = PythonLlmSettings.FromRuntime(scene.Llm),
+                    Performance = PythonPerformance.FromRuntime(scene.Performance)
                 },
                 Input = PythonInput.FromRuntime(input)
             };
+        }
+    }
+
+    private sealed class PythonLlmEvent
+    {
+        public string RequestId { get; set; } = string.Empty;
+
+        public string EventName { get; set; } = string.Empty;
+
+        public string Delta { get; set; } = string.Empty;
+
+        public string AccumulatedText { get; set; } = string.Empty;
+
+        public bool IsFinal { get; set; }
+
+        public string Error { get; set; } = string.Empty;
+
+        public string CallbackName { get; set; } = string.Empty;
+
+        public static PythonLlmEvent FromRuntime(RuntimeLlmScriptEvent? llmEvent)
+        {
+            return llmEvent is null
+                ? new PythonLlmEvent()
+                : new PythonLlmEvent
+                {
+                    RequestId = llmEvent.RequestId,
+                    EventName = llmEvent.EventName,
+                    Delta = llmEvent.Delta,
+                    AccumulatedText = llmEvent.AccumulatedText,
+                    IsFinal = llmEvent.IsFinal,
+                    Error = llmEvent.Error,
+                    CallbackName = llmEvent.CallbackName
+                };
         }
     }
 
@@ -1970,6 +2485,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string[] MaterialNames { get; set; } = [];
 
+        public string[] MorphNames { get; set; } = [];
+
+        public Dictionary<string, float> MorphWeights { get; set; } = [];
+
+        public Dictionary<string, float> MorphSaveAnimWeights { get; set; } = [];
+
+        public string[] NodeNames { get; set; } = [];
+
+        public Dictionary<string, PythonNodeState> Nodes { get; set; } = [];
+
         public PythonCollider Collider { get; set; } = new();
 
         public PythonCollider[] Colliders { get; set; } = [];
@@ -1986,8 +2511,52 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Scale = [entity.Scale.X, entity.Scale.Y, entity.Scale.Z],
                 Rotation = [entity.Rotation.X, entity.Rotation.Y, entity.Rotation.Z, entity.Rotation.W],
                 MaterialNames = entity.MaterialNames.ToArray(),
+                MorphNames = entity.MorphNames.ToArray(),
+                MorphWeights = new Dictionary<string, float>(entity.MorphWeights, StringComparer.Ordinal),
+                MorphSaveAnimWeights = new Dictionary<string, float>(entity.MorphSaveAnimWeights, StringComparer.Ordinal),
+                NodeNames = entity.NodeNames.ToArray(),
+                Nodes = entity.NodeNames
+                    .Select(name => entity.TryGetNodeState(name, out PmxNodeState state)
+                        ? (Name: name, State: PythonNodeState.FromState(state))
+                        : (Name: name, State: null))
+                    .Where(item => item.State is not null)
+                    .ToDictionary(item => item.Name, item => item.State!, StringComparer.Ordinal),
                 Collider = colliders.FirstOrDefault() ?? new PythonCollider(),
                 Colliders = colliders
+            };
+        }
+    }
+
+    private sealed class PythonNodeState
+    {
+        public string Name { get; set; } = string.Empty;
+
+        public float[] Translate { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float[] Rotate { get; set; } = [0.0f, 0.0f, 0.0f, 1.0f];
+
+        public float[] Scale { get; set; } = [1.0f, 1.0f, 1.0f];
+
+        public float[] AnimTranslate { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float[] AnimRotate { get; set; } = [0.0f, 0.0f, 0.0f, 1.0f];
+
+        public float[] BaseAnimTranslate { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float[] BaseAnimRotate { get; set; } = [0.0f, 0.0f, 0.0f, 1.0f];
+
+        public static PythonNodeState FromState(PmxNodeState state)
+        {
+            return new PythonNodeState
+            {
+                Name = state.Name,
+                Translate = [state.Translate.X, state.Translate.Y, state.Translate.Z],
+                Rotate = [state.Rotate.X, state.Rotate.Y, state.Rotate.Z, state.Rotate.W],
+                Scale = [state.Scale.X, state.Scale.Y, state.Scale.Z],
+                AnimTranslate = [state.AnimTranslate.X, state.AnimTranslate.Y, state.AnimTranslate.Z],
+                AnimRotate = [state.AnimRotate.X, state.AnimRotate.Y, state.AnimRotate.Z, state.AnimRotate.W],
+                BaseAnimTranslate = [state.BaseAnimTranslate.X, state.BaseAnimTranslate.Y, state.BaseAnimTranslate.Z],
+                BaseAnimRotate = [state.BaseAnimRotate.X, state.BaseAnimRotate.Y, state.BaseAnimRotate.Z, state.BaseAnimRotate.W]
             };
         }
     }
@@ -2054,6 +2623,73 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public PythonCamera Camera { get; set; } = new();
 
         public PythonWindow Window { get; set; } = new();
+
+        public PythonLlmSettings Llm { get; set; } = new();
+
+        public PythonPerformance Performance { get; set; } = new();
+    }
+
+    private sealed class PythonPerformance
+    {
+        public double Fps { get; set; }
+
+        public double RawFps { get; set; }
+
+        public double DeltaSeconds { get; set; }
+
+        public double TotalSeconds { get; set; }
+
+        public long FrameCount { get; set; }
+
+        public static PythonPerformance FromRuntime(RuntimePerformance performance)
+        {
+            return new PythonPerformance
+            {
+                Fps = performance.Fps,
+                RawFps = performance.RawFps,
+                DeltaSeconds = performance.DeltaSeconds,
+                TotalSeconds = performance.TotalSeconds,
+                FrameCount = performance.FrameCount
+            };
+        }
+    }
+
+    private sealed class PythonLlmSettings
+    {
+        public bool Enabled { get; set; }
+
+        public string Provider { get; set; } = string.Empty;
+
+        public string BaseUrl { get; set; } = string.Empty;
+
+        public string ApiKey { get; set; } = string.Empty;
+
+        public string ApiKeyEnvironmentVariable { get; set; } = string.Empty;
+
+        public string Model { get; set; } = string.Empty;
+
+        public string ChatCompletionsPath { get; set; } = string.Empty;
+
+        public int TimeoutSeconds { get; set; }
+
+        public float? DefaultTemperature { get; set; }
+
+        public static PythonLlmSettings FromRuntime(RuntimeLlm llm)
+        {
+            GameProjectLlmSettings settings = llm.Settings;
+            return new PythonLlmSettings
+            {
+                Enabled = settings.Enabled,
+                Provider = settings.Provider,
+                BaseUrl = settings.BaseUrl,
+                ApiKey = settings.ApiKey,
+                ApiKeyEnvironmentVariable = settings.ApiKeyEnvironmentVariable,
+                Model = settings.Model,
+                ChatCompletionsPath = settings.ChatCompletionsPath,
+                TimeoutSeconds = settings.TimeoutSeconds,
+                DefaultTemperature = settings.DefaultTemperature
+            };
+        }
     }
 
     private sealed class PythonCamera
@@ -2194,6 +2830,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string Text { get; set; } = string.Empty;
 
+        public string Value { get; set; } = string.Empty;
+
         public float X { get; set; }
 
         public float Y { get; set; }
@@ -2208,6 +2846,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool WordWrap { get; set; }
 
+        public bool Multiline { get; set; }
+
         public string[] Items { get; set; } = [];
 
         public int SelectedIndex { get; set; }
@@ -2220,6 +2860,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Name = control.Name,
                 Type = control.Type,
                 Text = control.Text,
+                Value = control.Value,
                 X = control.X,
                 Y = control.Y,
                 Width = control.Width,
@@ -2227,6 +2868,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Visible = control.Visible,
                 Checked = control.Checked,
                 WordWrap = control.WordWrap,
+                Multiline = control.Multiline,
                 Items = control.Items.ToArray(),
                 SelectedIndex = control.SelectedIndex
             };
@@ -2323,6 +2965,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public double? Z { get; set; }
 
+        public double? W { get; set; }
+
         public double? TargetX { get; set; }
 
         public double? TargetY { get; set; }
@@ -2410,6 +3054,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public bool? RequireRightMouse { get; set; }
 
         public string? Text { get; set; }
+
+        public string? SystemPrompt { get; set; }
+
+        public string? Model { get; set; }
+
+        public double? Temperature { get; set; }
+
+        public string? RequestId { get; set; }
+
+        public string? OnDelta { get; set; }
+
+        public string? OnCompleted { get; set; }
+
+        public string? OnError { get; set; }
 
         public string? Callback { get; set; }
 
