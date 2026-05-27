@@ -899,7 +899,7 @@ scene.load_scene("scenes/next.scene.json")
 | `Scene.RenderTexture(name)` | `scene.render_texture(name)` | 返回 `rt:name` 引用。 |
 | `Scene.LoadScene(path)` | `scene.load_scene(path)` | 切换场景。 |
 
-场景切换会显示同一套加载遮罩，并触发目标场景的加载入口脚本。
+`path` 是工程相对的场景文件路径，通常来自 GameEditor 的 `Scenes` 面板，例如 `scenes/main.scene.json` 或 `scenes/battle.scene.json`。场景切换会显示同一套加载遮罩，并触发目标场景的加载入口脚本。
 
 ## Performance / FPS API
 
@@ -986,7 +986,15 @@ def loading_completed(entity, scene, input, audio, progress, message):
     print("加载完成")
 ```
 
-加载界面背景色、背景图和背景图透明度在 GameEditor 的场景属性里配置。
+加载界面背景色、背景图、背景图透明度和加载进度条在 GameEditor 的场景属性里配置。加载进度条支持：
+
+- `Visible`：是否显示。
+- `Layout mode`：`relative` 或 `absolute`。`relative` 会以 1280x720 的默认加载界面基准做缩放，适配实际窗口尺寸。
+- `Position` / `Size`：进度条位置和大小。
+- `Background` / `Track` / `Fill` / `Border`：外框、轨道、填充和边框颜色。
+- `Padding` / `Border thickness`：内边距和边框粗细。
+
+场景加载进度由 GamePlayer 的资源加载流程自动更新；加载入口脚本可以读取 `LoadingProgress` 和 `LoadingMessage`，但不需要手动设置系统加载进度条。
 
 ## GUI API
 
@@ -999,6 +1007,7 @@ GUI 控件类型：
 | `checkbox` | `changed` | 复选框。 |
 | `dropdown` | `changed` | 下拉框。 |
 | `textbox` | `changed` | 文本输入框。输入内容保存在 `Text` / `Value`，支持单行或多行。 |
+| `progress_bar` | 无 | 进度条。脚本通过 `Progress` / `set_progress(...)` 控制进度，范围 `0.0` 到 `1.0`。 |
 
 GUI 控件属性：
 
@@ -1006,15 +1015,17 @@ GUI 控件属性：
 | --- | --- | --- |
 | `Id` | `id` | 控件 Id。 |
 | `Name` | `name` | 控件名称。 |
-| `Type` | `type` | `button`、`label`、`checkbox`、`dropdown`、`textbox`。 |
+| `Type` | `type` | `button`、`label`、`checkbox`、`dropdown`、`textbox`、`progress_bar`。 |
 | `Text` | `text` | 显示文本；对 `textbox` 表示当前输入内容。 |
 | `Value` | `value` | `Text` 的别名，便于读取文本框输入。 |
 | `Visible` | `visible` | 是否显示。 |
 | `X` / `Y` | `x` / `y` | 屏幕像素坐标。 |
 | `Width` / `Height` | `width` / `height` | 控件尺寸。 |
+| `LayoutMode` | `layout_mode` | `absolute` 或 `relative`。`relative` 会按项目窗口基准分辨率缩放坐标、尺寸和字体大小。 |
 | `TargetEntity` | 无 | 事件目标实体，在编辑器里通常用下拉选择。 |
 | `EventName` | 无 | 事件名。 |
 | `Checked` | `checked` | 复选框状态。 |
+| `Progress` | `progress` | 进度条进度，范围 `0.0` 到 `1.0`。 |
 | `WordWrap` | `word_wrap` | 文本自动换行。 |
 | `Multiline` | `multiline` | 文本框是否使用多行输入。 |
 | `Items` | `items` | 下拉框项目。 |
@@ -1044,6 +1055,8 @@ if (control is not null)
     control.SetValue("默认输入");
     control.SetMultiline(true);
     control.SetWordWrap(true);
+    control.SetLayoutMode("relative");
+    control.SetFontSize(24.0f);
     control.Show();
 }
 ```
@@ -1057,6 +1070,8 @@ if control is not None:
     control.set_value("默认输入")
     control.set_multiline(True)
     control.set_word_wrap(True)
+    control.set_layout_mode("relative")
+    control.set_font_size(24.0)
     control.show()
 ```
 
@@ -1098,6 +1113,26 @@ if quality is not None:
 mute = scene.get_gui_control("MuteCheckbox")
 if mute is not None and mute.checked:
     audio.set_volume("BGM", 0.0)
+```
+
+控制进度条：
+
+```csharp
+RuntimeGuiControl? hp = Scene.GetGuiControl("HP Bar");
+if (hp is not null)
+{
+    hp.SetProgress(0.75f);
+    hp.Text = "HP 75%";
+    hp.SetLayoutMode("relative");
+}
+```
+
+```python
+hp = scene.get_gui_control("HP Bar")
+if hp is not None:
+    hp.set_progress(0.75)
+    hp.set_text("HP 75%")
+    hp.set_layout_mode("relative")
 ```
 
 读取文本框输入：
@@ -1228,7 +1263,7 @@ scene.window.set_timing_mode("time_synchronized")
 | `Forward` | `forward` | 前方向。 |
 | `Up` | `up` | 上方向。 |
 | `Right` | `right` | 右方向。 |
-| `Width` / `Height` | `width` / `height` | 当前渲染尺寸。 |
+| `Width` / `Height` | `width` / `height` | 当前渲染尺寸。启用 Camera Viewport 时，窗口主渲染仍按各 Viewport 区域绘制。 |
 | `ControlMode` | `control_mode` | 当前控制模式。 |
 | `ProjectionMode` | `projection_mode` | `perspective` 或 `orthographic`。 |
 | `Fov` | `fov` | 透视相机视野角。 |
@@ -1285,6 +1320,33 @@ scene.camera.configure_control(distance=6.0, height=1.8, smoothing=10.0)
 scene.camera.set_yaw_pitch(45.0, -12.0)
 scene.camera.set_mouse_look(True, require_right_mouse=True)
 ```
+
+Camera Viewport：
+
+```csharp
+// 以 Project -> Window / Runtime 的 Width / Height 为基准做相对缩放。
+Scene.Camera.SetCameraViewport("Main Camera", 0, 0, 960, 720, "relative");
+Scene.Camera.EnableCameraViewport("Main Camera", true);
+
+// 第二个相机渲染到右上角区域，形成分屏 / 小窗视角。
+Scene.Camera.SetCameraLookAt("Side Camera", 6, 3, 6, 0, 1, 0);
+Scene.Camera.SetCameraViewport("Side Camera", 960, 0, 320, 240, "relative");
+Scene.Camera.EnableCameraViewport("Side Camera", true);
+
+// 关闭后该相机不再参与窗口 Viewport 渲染。
+Scene.Camera.EnableCameraViewport("Side Camera", false);
+```
+
+```python
+scene.camera.set_camera_viewport("Main Camera", 0, 0, 960, 720, "relative")
+scene.camera.enable_camera_viewport("Main Camera", True)
+
+scene.camera.set_camera_look_at("Side Camera", 6, 3, 6, 0, 1, 0)
+scene.camera.set_camera_viewport("Side Camera", 960, 0, 320, 240, "relative")
+scene.camera.enable_camera_viewport("Side Camera", True)
+```
+
+`layout_mode` 可用 `relative` 或 `absolute`。`relative` 会以项目窗口基准分辨率缩放 Viewport；`absolute` 直接使用像素值。如果没有任何相机启用 Viewport，GamePlayer 使用主相机全屏渲染。
 
 相机模式：
 
@@ -1534,10 +1596,14 @@ foreach (string name in Scene.Camera.CameraNames)
 }
 
 Scene.Camera.SetMainCamera("Battle Camera");
+Scene.Camera.SetCameraViewport("Battle Camera", 0, 0, 960, 720, "relative");
+Scene.Camera.EnableCameraViewport("Battle Camera", true);
 Scene.Camera.SetCameraLookAt(
     "MiniMap Camera",
     positionX: 0, positionY: 20, positionZ: 0,
     targetX: 0, targetY: 0, targetZ: 0);
+Scene.Camera.SetCameraViewport("MiniMap Camera", 960, 0, 320, 240, "relative");
+Scene.Camera.EnableCameraViewport("MiniMap Camera", true);
 Scene.Camera.BindRenderTextureCamera("MiniMapRT", "MiniMap Camera");
 
 RuntimeSpriteControl? miniMap = Scene.GetSprite("MiniMap");
@@ -1554,7 +1620,11 @@ print(scene.camera.camera_names)
 print(scene.camera.render_texture_names)
 
 scene.camera.set_main_camera("Battle Camera")
+scene.camera.set_camera_viewport("Battle Camera", 0, 0, 960, 720, "relative")
+scene.camera.enable_camera_viewport("Battle Camera", True)
 scene.camera.set_camera_look_at("MiniMap Camera", 0, 20, 0, 0, 0, 0)
+scene.camera.set_camera_viewport("MiniMap Camera", 960, 0, 320, 240, "relative")
+scene.camera.enable_camera_viewport("MiniMap Camera", True)
 scene.camera.bind_render_texture_camera("MiniMapRT", "MiniMap Camera")
 
 mini_map = scene.get_sprite("MiniMap")
@@ -1568,6 +1638,7 @@ entity.set_material_render_texture(0, "MiniMapRT")
 
 - Render Texture 当前渲染 3D 场景对象。
 - 不包含 GamePlayer GUI、加载遮罩、Debug.DrawRay、编辑器坐标轴和编辑器 Collider 线框。
+- Camera Viewport 是窗口主渲染区域切分；Render Texture 是离屏渲染目标。两者可以同时使用。
 
 ## Save 存档 API
 
@@ -1922,7 +1993,7 @@ def gui_event(entity, scene, input, audio, control_id, event_name):
 
 - Python 对象是事件快照，修改命令在函数返回后由 GamePlayer 执行。
 - C# 脚本方法调用直接作用于运行时对象；但每次事件都会重新执行 `.csx` 文件，需要跨帧状态时建议使用 `static` 类型保存。
-- GUI 坐标、Sprite 坐标、鼠标坐标都是窗口像素坐标，左上角为 `(0, 0)`。
+- GUI 控件使用 `absolute` 时坐标和大小是窗口像素；使用 `relative` 时会以项目窗口基准分辨率缩放。Sprite 坐标和鼠标坐标仍是窗口像素，左上角为 `(0, 0)`。
 - 3D 世界坐标使用 `System.Numerics.Vector3`，通常 Y 轴向上。
 - 音频脚本只控制已注册 Audio 资源的播放状态，不负责动态加载文件。
 - 轻量 Collider 用于拾取、触发和简单碰撞判断，不是完整物理模拟。

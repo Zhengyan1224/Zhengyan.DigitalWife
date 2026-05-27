@@ -131,6 +131,8 @@ public abstract class Game : IDisposable
 
     protected virtual void Draw(GameTime gameTime) { }
 
+    public virtual bool ShouldDrawComponent(DrawableGameComponent component) => true;
+
     protected virtual void UnloadContent() { }
 
     public void Dispose()
@@ -237,7 +239,7 @@ public abstract class Game : IDisposable
 
         foreach (DrawableGameComponent component in _components.OfType<DrawableGameComponent>().OrderBy(component => component.DrawOrder))
         {
-            if (component.Visible)
+            if (component.Visible && ShouldDrawComponent(component))
             {
                 component.Draw(gameTime);
             }

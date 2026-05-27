@@ -48,6 +48,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private int _loadingDelayFrames;
     private bool _loadingReadyToFinish;
     private bool _isLoading;
+    private bool _renderedSceneThisFrame;
 
     public GamePlayerGame(string projectDirectory)
         : base(new GameOptions
@@ -115,6 +116,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
                 () => Project.Scene.GuiControls,
                 () => Project.Scene.Sprites,
+                () => Project.Window,
                 ResolveProjectPath,
                 DispatchGuiEvent)
             {
@@ -172,7 +174,89 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     protected override void Draw(GameTime gameTime)
     {
         _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
+        _renderedSceneThisFrame = false;
+
+        if (TryDrawCameraViewports(gameTime))
+        {
+            _renderedSceneThisFrame = true;
+            return;
+        }
+
         ApplyRuntimeCamera(_camera);
+    }
+
+    private bool TryDrawCameraViewports(GameTime gameTime)
+    {
+        if (_renderTextureManager is null || GraphicsDevice is null)
+        {
+            return false;
+        }
+
+        List<SceneCameraSettings> viewportCameras = Project.Scene.Cameras
+            .Where(camera => camera.Enabled && camera.Viewport.Enabled)
+            .ToList();
+        if (viewportCameras.Count == 0)
+        {
+            return false;
+        }
+
+        Silk.NET.OpenGLES.GL gl = GraphicsDevice.Gl;
+        int screenWidth = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+        int screenHeight = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        gl.BindFramebuffer(Silk.NET.OpenGLES.GLEnum.Framebuffer, 0);
+        gl.Disable(Silk.NET.OpenGLES.GLEnum.StencilTest);
+        gl.Enable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+
+        foreach (SceneCameraSettings settings in viewportCameras)
+        {
+            LayoutRect rect = LayoutResolver.Resolve(
+                settings.Viewport.LayoutMode,
+                settings.Viewport.X,
+                settings.Viewport.Y,
+                settings.Viewport.Width,
+                settings.Viewport.Height,
+                screenWidth,
+                screenHeight,
+                Project.Window.Width,
+                Project.Window.Height);
+            int x = Math.Clamp((int)MathF.Round(rect.X), 0, screenWidth - 1);
+            int yTop = Math.Clamp((int)MathF.Round(rect.Y), 0, screenHeight - 1);
+            int width = Math.Clamp((int)MathF.Round(rect.Width), 1, screenWidth - x);
+            int height = Math.Clamp((int)MathF.Round(rect.Height), 1, screenHeight - yTop);
+            int y = Math.Max(screenHeight - yTop - height, 0);
+
+            OrbitCamera camera = _renderTextureManager.ResolveCamera(settings.Name, _camera);
+            camera.Width = width;
+            camera.Height = height;
+
+            gl.Viewport(x, y, (uint)width, (uint)height);
+            gl.Scissor(x, y, (uint)width, (uint)height);
+            gl.ColorMask(true, true, true, true);
+            gl.DepthMask(true);
+            Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
+            gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
+            gl.Clear(Silk.NET.OpenGLES.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGLES.ClearBufferMask.DepthBufferBit | Silk.NET.OpenGLES.ClearBufferMask.StencilBufferBit);
+
+            ApplyRuntimeCamera(camera);
+            DrawSceneComponentsOnce(gameTime);
+        }
+
+        gl.Disable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+        gl.Viewport(0, 0, (uint)screenWidth, (uint)screenHeight);
+        ApplyRuntimeCamera(_camera);
+        return true;
+    }
+
+    private void DrawSceneComponentsOnce(GameTime gameTime)
+    {
+        IReadOnlyList<DrawableGameComponent> overlays = GetOverlayComponents();
+        foreach (DrawableGameComponent component in Components
+            .OfType<DrawableGameComponent>()
+            .Where(component => component.Visible && !overlays.Contains(component))
+            .OrderBy(component => component.DrawOrder))
+        {
+            component.Draw(gameTime);
+        }
     }
 
     protected override void UnloadContent()
@@ -1295,6 +1379,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     private IReadOnlyList<DrawableGameComponent> GetRenderTextureExcludedComponents()
     {
+        return GetOverlayComponents();
+    }
+
+    private IReadOnlyList<DrawableGameComponent> GetOverlayComponents()
+    {
         List<DrawableGameComponent> excluded = [];
         if (_guiOverlay is not null)
         {
@@ -1312,6 +1401,16 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         return excluded;
+    }
+
+    public override bool ShouldDrawComponent(DrawableGameComponent component)
+    {
+        if (!_renderedSceneThisFrame)
+        {
+            return true;
+        }
+
+        return GetOverlayComponents().Contains(component);
     }
 
     private static string NormalizeProjectionMode(string projectionMode)

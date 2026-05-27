@@ -1113,6 +1113,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def bind_render_texture_camera(self, render_texture_name, camera_name):
                        self._commands.append({"target": "camera", "action": "bind_render_texture_camera", "name": render_texture_name, "camera": camera_name})
 
+                   def set_camera_viewport(self, camera_name, x, y, width, height, layout_mode="relative"):
+                       self._commands.append({"target": "camera", "action": "set_camera_viewport", "name": camera_name, "x": x, "y": y, "width": width, "height": height, "mode": layout_mode})
+
+                   def enable_camera_viewport(self, camera_name, enabled=True):
+                       self._commands.append({"target": "camera", "action": "enable_camera_viewport", "name": camera_name, "flag": bool(enabled)})
+
                    def render_texture(self, name):
                        return render_texture(name)
 
@@ -1490,8 +1496,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.y = data.get("y", 0)
                        self.width = data.get("width", 1)
                        self.height = data.get("height", 1)
+                       self.layout_mode = data.get("layoutMode", "absolute")
                        self.visible = bool(data.get("visible", True))
                        self.checked = bool(data.get("checked", False))
+                       self.progress = float(data.get("progress", 0.0))
+                       self.font_size = float(data.get("fontSize", 18.0))
                        self.word_wrap = bool(data.get("wordWrap", True))
                        self.multiline = bool(data.get("multiline", False))
                        self.items = data.get("items", [])
@@ -1523,6 +1532,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_checked(self, enabled):
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_checked", "flag": bool(enabled)})
+
+                   def set_progress(self, value):
+                       self.progress = max(0.0, min(1.0, float(value)))
+                       self._commands.append({"target": "gui", "control": self.id, "action": "set_progress", "value": self.progress})
+
+                   def set_layout_mode(self, mode):
+                       self.layout_mode = str(mode)
+                       self._commands.append({"target": "gui", "control": self.id, "action": "set_layout_mode", "mode": self.layout_mode})
+
+                   def set_font_size(self, value):
+                       self.font_size = float(value)
+                       self._commands.append({"target": "gui", "control": self.id, "action": "set_font_size", "value": self.font_size})
 
                    def set_word_wrap(self, enabled):
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_word_wrap", "flag": bool(enabled)})
@@ -1700,6 +1721,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "bind_render_texture_camera" when !string.IsNullOrWhiteSpace(command.Name) && !string.IsNullOrWhiteSpace(command.Camera):
                 camera.BindRenderTextureCamera(command.Name!, command.Camera!);
+                break;
+            case "set_camera_viewport" when !string.IsNullOrWhiteSpace(command.Name) && command.X.HasValue && command.Y.HasValue && command.Width.HasValue && command.Height.HasValue:
+                camera.SetCameraViewport(
+                    command.Name!,
+                    (float)command.X.Value,
+                    (float)command.Y.Value,
+                    (float)command.Width.Value,
+                    (float)command.Height.Value,
+                    command.Mode ?? "relative");
+                break;
+            case "enable_camera_viewport" when !string.IsNullOrWhiteSpace(command.Name) && command.Flag.HasValue:
+                camera.EnableCameraViewport(command.Name!, command.Flag.Value);
                 break;
             case "set_control_mode" when !string.IsNullOrWhiteSpace(command.Mode):
             case "set_mode" when !string.IsNullOrWhiteSpace(command.Mode):
@@ -1965,6 +1998,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_checked" when command.Flag.HasValue:
                 control.Checked = command.Flag.Value;
+                break;
+            case "set_progress" when command.Value.HasValue:
+                control.Progress = (float)command.Value.Value;
+                break;
+            case "set_layout_mode" when !string.IsNullOrWhiteSpace(command.Mode):
+                control.LayoutMode = command.Mode!;
+                break;
+            case "set_font_size" when command.Value.HasValue:
+                control.FontSize = (float)command.Value.Value;
                 break;
             case "set_word_wrap" when command.Flag.HasValue:
                 control.WordWrap = command.Flag.Value;
@@ -2840,9 +2882,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float Height { get; set; }
 
+        public string LayoutMode { get; set; } = "absolute";
+
         public bool Visible { get; set; }
 
         public bool Checked { get; set; }
+
+        public float Progress { get; set; }
+
+        public float FontSize { get; set; }
 
         public bool WordWrap { get; set; }
 
@@ -2865,8 +2913,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Y = control.Y,
                 Width = control.Width,
                 Height = control.Height,
+                LayoutMode = control.LayoutMode,
                 Visible = control.Visible,
                 Checked = control.Checked,
+                Progress = control.Progress,
+                FontSize = control.FontSize,
                 WordWrap = control.WordWrap,
                 Multiline = control.Multiline,
                 Items = control.Items.ToArray(),

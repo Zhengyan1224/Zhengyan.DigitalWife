@@ -16,11 +16,6 @@ function Invoke-ModelInstaller {
         [string[]]$InstallerArgs
     )
 
-    $env:DOTNET_CLI_HOME = Join-Path $Root ".codex-dotnet-home"
-    $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
-    $env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
-    New-Item -ItemType Directory -Force -Path $env:DOTNET_CLI_HOME | Out-Null
-
     & dotnet run --project (Join-Path $Root "tools/Zhengyan.DigitalWife.Tools.ModelInstaller/Zhengyan.DigitalWife.Tools.ModelInstaller.csproj") -- @InstallerArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Zhengyan.DigitalWife.Tools.ModelInstaller failed with exit code $LASTEXITCODE"

@@ -213,6 +213,32 @@ public sealed class RuntimeCamera
         }
     }
 
+    public void SetCameraViewport(string cameraName, float x, float y, float width, float height, string layoutMode = "relative")
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is null)
+        {
+            return;
+        }
+
+        camera.Viewport.Enabled = true;
+        camera.Viewport.LayoutMode = LayoutResolver.NormalizeLayoutMode(layoutMode);
+        camera.Viewport.X = Math.Max(0.0f, x);
+        camera.Viewport.Y = Math.Max(0.0f, y);
+        camera.Viewport.Width = Math.Max(1.0f, width);
+        camera.Viewport.Height = Math.Max(1.0f, height);
+        _renderTextureManager?.SyncCameras(_camera);
+    }
+
+    public void EnableCameraViewport(string cameraName, bool enabled)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is not null)
+        {
+            camera.Viewport.Enabled = enabled;
+        }
+    }
+
     public void BindRenderTextureCamera(string renderTextureName, string cameraName)
     {
         RenderTextureSettings? renderTexture = _scene.RenderTextures.FirstOrDefault(item =>

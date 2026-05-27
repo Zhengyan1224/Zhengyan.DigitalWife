@@ -36,10 +36,6 @@ fi
 
 mkdir -p "$MODELS_ROOT" "$DOWNLOADS_ROOT"
 
-DOTNET_CLI_HOME="$REPO_ROOT/.codex-dotnet-home"
-export DOTNET_CLI_HOME DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
-mkdir -p "$DOTNET_CLI_HOME"
-
 run_installer() {
   dotnet run --project "$INSTALLER_PROJECT" -- "$@"
 }

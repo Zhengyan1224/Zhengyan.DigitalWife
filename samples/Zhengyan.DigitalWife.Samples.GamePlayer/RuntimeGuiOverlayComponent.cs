@@ -11,6 +11,7 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 internal sealed class RuntimeGuiOverlayComponent(
     Func<IReadOnlyList<GuiControlSettings>> getControls,
     Func<IReadOnlyList<SpriteSettings>> getSprites,
+    Func<GameWindowSettings> getWindowSettings,
     Func<string, string> resolvePath,
     Action<GuiControlSettings, string> dispatchEvent) : DrawableGameComponent
 {
@@ -18,6 +19,7 @@ internal sealed class RuntimeGuiOverlayComponent(
 
     private readonly Func<IReadOnlyList<GuiControlSettings>> _getControls = getControls;
     private readonly Func<IReadOnlyList<SpriteSettings>> _getSprites = getSprites;
+    private readonly Func<GameWindowSettings> _getWindowSettings = getWindowSettings;
     private readonly Func<string, string> _resolvePath = resolvePath;
     private readonly Action<GuiControlSettings, string> _dispatchEvent = dispatchEvent;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
@@ -230,8 +232,9 @@ internal sealed class RuntimeGuiOverlayComponent(
 
     private void DrawControl(GuiControlSettings control)
     {
-        ImGui.SetNextWindowPos(new Vector2(control.X, control.Y), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(new Vector2(Math.Max(control.Width, 1.0f), Math.Max(control.Height, 1.0f)), ImGuiCond.Always);
+        LayoutRect rect = ResolveGuiRect(control);
+        ImGui.SetNextWindowPos(new Vector2(rect.X, rect.Y), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f)), ImGuiCond.Always);
         ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration
             | ImGuiWindowFlags.NoSavedSettings
             | ImGuiWindowFlags.NoMove
@@ -257,18 +260,20 @@ internal sealed class RuntimeGuiOverlayComponent(
         ImGui.PushStyleColor(ImGuiCol.Header, style.BackgroundColor.ToVector4());
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, style.HoverColor.ToVector4());
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, style.ActiveColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.PlotHistogram, style.ActiveColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.PlotHistogramHovered, style.HoverColor.ToVector4());
 
         string windowId = $"gui:{control.Id}";
         if (!ImGui.Begin(windowId, flags))
         {
-            ImGui.PopStyleColor(13);
+            ImGui.PopStyleColor(15);
             ImGui.PopStyleVar(6);
             ImGui.End();
             return;
         }
 
-        ImGui.SetWindowFontScale(ResolveGuiFontScale(style));
-        Vector2 controlSize = new(Math.Max(control.Width, 1.0f), Math.Max(control.Height, 1.0f));
+        ImGui.SetWindowFontScale(ResolveGuiFontScale(control));
+        Vector2 controlSize = new(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
         ImGui.SetCursorPos(Vector2.Zero);
         string type = control.Type.ToLowerInvariant();
         if (type == "label")
@@ -306,6 +311,11 @@ internal sealed class RuntimeGuiOverlayComponent(
                 _dispatchEvent(control, string.IsNullOrWhiteSpace(control.EventName) ? "changed" : control.EventName);
             }
         }
+        else if (type == "progress_bar")
+        {
+            float progress = Math.Clamp(control.Progress, 0.0f, 1.0f);
+            ImGui.ProgressBar(progress, controlSize, string.IsNullOrWhiteSpace(control.Text) ? $"{progress:P0}" : control.Text);
+        }
         else
         {
             string buttonText = string.IsNullOrWhiteSpace(control.Text) ? control.Name : control.Text;
@@ -315,9 +325,29 @@ internal sealed class RuntimeGuiOverlayComponent(
             }
         }
 
-        ImGui.PopStyleColor(13);
+        ImGui.PopStyleColor(15);
         ImGui.PopStyleVar(6);
         ImGui.End();
+    }
+
+    private LayoutRect ResolveGuiRect(GuiControlSettings control)
+    {
+        if (Game is null)
+        {
+            return new LayoutRect(control.X, control.Y, control.Width, control.Height);
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        return LayoutResolver.Resolve(
+            control.LayoutMode,
+            control.X,
+            control.Y,
+            control.Width,
+            control.Height,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
     }
 
     private static void DrawAlignedTextBlock(GuiControlSettings control)
@@ -347,9 +377,23 @@ internal sealed class RuntimeGuiOverlayComponent(
         ImGui.Dummy(available);
     }
 
-    private static float ResolveGuiFontScale(GuiControlStyleSettings style)
+    private float ResolveGuiFontScale(GuiControlSettings control)
     {
+        if (Game is null)
+        {
+            return 1.0f;
+        }
+
+        GuiControlStyleSettings style = control.Style;
+        GameWindowSettings window = _getWindowSettings();
         float fontSize = Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
+        fontSize = LayoutResolver.ResolveFontSize(
+            control.LayoutMode,
+            fontSize,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
         return fontSize / BaseFontSize;
     }
 

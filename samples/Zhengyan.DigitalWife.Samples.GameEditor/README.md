@@ -49,9 +49,22 @@ DemoGame/
 
 1. 在 `Project` 面板选择工程目录并点击 `Use Directory`。
 2. 点击 `New Project` 或 `Load`。
-3. 在 `Assets` 面板导入 PMX、WAV/OGG、VMD、图片，或添加空对象、粒子、水面、3D 贴图矩形面。
-4. 在 `Hierarchy` 选择实体，在 `Inspector` 编辑 Transform、脚本、碰撞体和类型专属设置。
-5. 保存后用 `GamePlayer` 运行工程目录。
+3. 在 `Scenes` 面板新建、删除或切换场景。
+4. 在 `Assets` 面板导入 PMX、WAV/OGG、VMD、图片，或添加空对象、粒子、水面、3D 贴图矩形面。
+5. 在 `Hierarchy` 选择实体，在 `Inspector` 编辑 Transform、脚本、碰撞体和类型专属设置。
+6. 保存后用 `GamePlayer` 运行工程目录。
+
+## Scenes 面板
+
+`Scenes` 面板用于管理工程内的多个场景文件：
+
+- `Editor scene`：切换当前编辑的场景。切换前编辑器会先保存当前场景文件，再加载目标场景到 Viewport。
+- `GamePlayer startup scene`：设置游戏启动时加载的默认场景。它和当前编辑场景是分开的，切换编辑场景不会自动改变启动场景。
+- `New Scene`：根据输入名称创建新的 `scenes/<name>.scene.json`，并切换到该场景。
+- `Delete Active Scene`：删除当前场景文件。工程至少保留一个场景，所以最后一个场景不能删除。
+- 场景名称在 `Inspector -> Scene name` 中修改；场景文件路径由编辑器自动生成并保存在 `game.project.json` 的 `Scenes` 列表中。
+
+`GamePlayer` 启动时加载 `game.project.json` 的 `DefaultScene`。脚本切换场景仍使用工程相对路径，例如 `Scene.LoadScene("scenes/battle.scene.json")` 或 Python 的 `scene.load_scene("scenes/battle.scene.json")`。
 
 ## Assets 面板
 
@@ -112,14 +125,16 @@ DemoGame/
 
 场景 Inspector 可设置：
 
-- 多相机、主相机、Render Texture、相机位置、目标点、投影模式、FOV、正交大小、近远裁剪面。
+- 多相机、主相机、Camera Viewport、Render Texture、相机位置、目标点、投影模式、FOV、正交大小、近远裁剪面。
 - 灯光方向、环境光、清屏颜色。
-- 加载界面背景色、背景图和透明度。
+- 加载界面背景色、背景图、透明度和加载进度条样式。
 - 场景加载入口脚本。
-- GUI 控件。
+- GUI 控件，包括按钮、标签、复选框、下拉框、文本框和进度条。
 - 天空盒。默认内置天空盒路径是 `app:Resources/Skybox/autumn_field_puresky.jpg`，构建后会从程序输出目录的 `Resources/Skybox/` 读取。
 
 相机支持多种脚本控制模式，包括编辑器环绕、TPS、肩部、锁定、FPS、自由飞行、RTS、俯视、等距、横版、固定、电影跟随和自定义模式。相机射线 API 类似 Unity 的 `Camera.ScreenPointToRay(...)`。
+
+GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑器输入的像素位置和大小直接显示；`relative` 表示以 `Project -> Window / Runtime` 中配置的 Width / Height 为基准，运行时根据实际窗口尺寸缩放位置、大小和字体大小。这样可以在 1280x720 下排版，运行到 1920x1080 或其它窗口尺寸时自动适配。
 
 ## 3D 贴图矩形面、天空盒和水面交互
 
@@ -131,7 +146,9 @@ DemoGame/
 
 ## 多相机和 Render Texture
 
-场景 Inspector 的 `Cameras` 可以添加多个相机，并通过 `Main camera` 选择用于窗口渲染的主相机。`Render Textures` 可以创建离屏渲染目标，绑定到任意相机并设置尺寸、清屏色。每个 Render Texture 的引用格式是：
+场景 Inspector 的 `Cameras` 可以添加多个相机，并通过 `Main camera` 选择用于窗口渲染的主相机。每个相机都可以启用 `Viewport`，设置它在窗口中的渲染区域；多个启用 Viewport 的相机会分别渲染到不同屏幕区域，可用于分屏、多视角、监控画面等。没有任何相机启用 Viewport 时，GamePlayer 使用主相机全屏渲染。
+
+`Render Textures` 可以创建离屏渲染目标，绑定到任意相机并设置尺寸、清屏色。每个 Render Texture 的引用格式是：
 
 ```text
 rt:<RenderTextureName>
@@ -143,6 +160,10 @@ rt:<RenderTextureName>
 
 ```csharp
 Scene.Camera.SetMainCamera("Battle Camera");
+Scene.Camera.SetCameraViewport("Battle Camera", 0, 0, 960, 720, "relative");
+Scene.Camera.EnableCameraViewport("Battle Camera", true);
+Scene.Camera.SetCameraViewport("MiniMap Camera", 960, 0, 320, 240, "relative");
+Scene.Camera.EnableCameraViewport("MiniMap Camera", true);
 Scene.Camera.BindRenderTextureCamera("MiniMapRT", "MiniMap Camera");
 Scene.GetSprite("MiniMap")?.SetRenderTexture("MiniMapRT");
 Entity.SetMaterialRenderTexture(0, "PortraitRT");

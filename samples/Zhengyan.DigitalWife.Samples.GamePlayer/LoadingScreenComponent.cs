@@ -97,12 +97,7 @@ internal sealed unsafe class LoadingScreenComponent(
             gl.BindTexture(GLEnum.Texture2D, 0);
         }
 
-        DrawRect(gl, new Vector4(-0.46f, -0.05f, 0.46f, 0.05f), new Vector4(0.10f, 0.15f, 0.22f, 0.92f), useTexture: false);
-        DrawRect(gl, new Vector4(-0.44f, -0.025f, 0.44f, 0.025f), new Vector4(0.02f, 0.04f, 0.07f, 1.0f), useTexture: false);
-
-        float progress = Math.Clamp(_getProgress(), 0.0f, 1.0f);
-        float right = -0.44f + (0.88f * progress);
-        DrawRect(gl, new Vector4(-0.44f, -0.025f, right, 0.025f), new Vector4(0.30f, 0.62f, 1.0f, 1.0f), useTexture: false);
+        DrawProgressBar(gl, settings);
 
         _ = _getMessage();
 
@@ -192,6 +187,64 @@ internal sealed unsafe class LoadingScreenComponent(
         }
 
         gl.DrawArrays(GLEnum.Triangles, 0, 6);
+    }
+
+    private void DrawProgressBar(GL gl, LoadingScreenSettings settings)
+    {
+        if (Game is null || !settings.ProgressBar.Visible)
+        {
+            return;
+        }
+
+        LoadingProgressBarSettings progressBar = settings.ProgressBar;
+        LayoutRect pixelRect = LayoutResolver.Resolve(
+            progressBar.LayoutMode,
+            progressBar.X,
+            progressBar.Y,
+            progressBar.Width,
+            progressBar.Height,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            1280.0f,
+            720.0f);
+        DrawRect(gl, ToClipRect(pixelRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.BorderColor.ToVector4(), useTexture: false);
+
+        float border = Math.Clamp(progressBar.BorderThickness, 0.0f, MathF.Min(pixelRect.Width, pixelRect.Height) * 0.45f);
+        LayoutRect backgroundRect = new(
+            pixelRect.X + border,
+            pixelRect.Y + border,
+            Math.Max(pixelRect.Width - (border * 2.0f), 1.0f),
+            Math.Max(pixelRect.Height - (border * 2.0f), 1.0f));
+        DrawRect(gl, ToClipRect(backgroundRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.BackgroundColor.ToVector4(), useTexture: false);
+
+        float padding = Math.Clamp(progressBar.Padding, 0.0f, MathF.Min(backgroundRect.Width, backgroundRect.Height) * 0.45f);
+        LayoutRect trackRect = new(
+            backgroundRect.X + padding,
+            backgroundRect.Y + padding,
+            Math.Max(backgroundRect.Width - (padding * 2.0f), 1.0f),
+            Math.Max(backgroundRect.Height - (padding * 2.0f), 1.0f));
+        DrawRect(gl, ToClipRect(trackRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.TrackColor.ToVector4(), useTexture: false);
+
+        float progress = Math.Clamp(_getProgress(), 0.0f, 1.0f);
+        LayoutRect fillRect = trackRect with
+        {
+            Width = Math.Max(trackRect.Width * progress, 0.0f)
+        };
+        if (fillRect.Width > 0.0f)
+        {
+            DrawRect(gl, ToClipRect(fillRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.FillColor.ToVector4(), useTexture: false);
+        }
+    }
+
+    private static Vector4 ToClipRect(LayoutRect rect, float screenWidth, float screenHeight)
+    {
+        float safeWidth = Math.Max(screenWidth, 1.0f);
+        float safeHeight = Math.Max(screenHeight, 1.0f);
+        float left = (rect.X / safeWidth * 2.0f) - 1.0f;
+        float right = ((rect.X + rect.Width) / safeWidth * 2.0f) - 1.0f;
+        float top = 1.0f - (rect.Y / safeHeight * 2.0f);
+        float bottom = 1.0f - ((rect.Y + rect.Height) / safeHeight * 2.0f);
+        return new Vector4(left, bottom, right, top);
     }
 
     private const string VertexShaderSource = """

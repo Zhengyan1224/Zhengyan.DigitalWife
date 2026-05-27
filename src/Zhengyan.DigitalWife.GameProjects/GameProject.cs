@@ -11,6 +11,8 @@ public sealed class GameProject
 
     public string DefaultScene { get; set; } = "scenes/main.scene.json";
 
+    public string EditorScene { get; set; } = "scenes/main.scene.json";
+
     public List<string> Scenes { get; set; } = ["scenes/main.scene.json"];
 
     public GameProjectScriptRuntime ScriptRuntime { get; set; } = new();
@@ -178,6 +180,37 @@ public sealed class LoadingScreenSettings
     public string BackgroundImagePath { get; set; } = string.Empty;
 
     public float BackgroundImageOpacity { get; set; } = 1.0f;
+
+    public LoadingProgressBarSettings ProgressBar { get; set; } = new();
+}
+
+public sealed class LoadingProgressBarSettings
+{
+    public bool Visible { get; set; } = true;
+
+    public string LayoutMode { get; set; } = "relative";
+
+    public float X { get; set; } = 346.0f;
+
+    public float Y { get; set; } = 342.0f;
+
+    public float Width { get; set; } = 588.0f;
+
+    public float Height { get; set; } = 36.0f;
+
+    public Vector4Dto BackgroundColor { get; set; } = new(0.10f, 0.15f, 0.22f, 0.92f);
+
+    public Vector4Dto TrackColor { get; set; } = new(0.02f, 0.04f, 0.07f, 1.0f);
+
+    public Vector4Dto FillColor { get; set; } = new(0.30f, 0.62f, 1.0f, 1.0f);
+
+    public Vector4Dto BorderColor { get; set; } = new(0.14f, 0.20f, 0.30f, 0.95f);
+
+    public float BorderThickness { get; set; } = 2.0f;
+
+    public float Rounding { get; set; } = 0.0f;
+
+    public float Padding { get; set; } = 10.0f;
 }
 
 public sealed class CameraSettings
@@ -208,6 +241,23 @@ public sealed class SceneCameraSettings
     public bool Enabled { get; set; } = true;
 
     public CameraSettings Camera { get; set; } = new();
+
+    public CameraViewportSettings Viewport { get; set; } = new();
+}
+
+public sealed class CameraViewportSettings
+{
+    public bool Enabled { get; set; }
+
+    public string LayoutMode { get; set; } = "relative";
+
+    public float X { get; set; }
+
+    public float Y { get; set; }
+
+    public float Width { get; set; } = 1280.0f;
+
+    public float Height { get; set; } = 720.0f;
 }
 
 public sealed class RenderTextureSettings
@@ -316,6 +366,8 @@ public sealed class GuiControlSettings
 
     public float Height { get; set; } = 36.0f;
 
+    public string LayoutMode { get; set; } = "absolute";
+
     public bool Visible { get; set; } = true;
 
     public string TargetEntity { get; set; } = string.Empty;
@@ -325,6 +377,8 @@ public sealed class GuiControlSettings
     public bool WordWrap { get; set; } = true;
 
     public bool Checked { get; set; }
+
+    public float Progress { get; set; }
 
     public List<string> Items { get; set; } = [];
 

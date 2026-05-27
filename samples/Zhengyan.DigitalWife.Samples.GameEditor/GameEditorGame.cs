@@ -33,6 +33,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private SceneRenderTextureManager? _renderTextureManager;
     private SkyboxComponent? _skybox;
     private string _statusMessage = "Ready.";
+    private bool _renderedSceneThisFrame;
 
     public GameEditorGame()
         : base(new GameOptions
@@ -66,6 +67,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public IReadOnlyList<EditorPlaneObject> PlaneObjects => _planeObjects;
 
     public string StatusMessage => _statusMessage;
+
+    public string ActiveScenePath => GameProjectStore.NormalizeScenePath(Project.EditorScene);
 
     public int SelectedEntityIndex { get; set; } = -1;
 
@@ -153,7 +156,86 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _camera.Width = _sceneRenderTarget.Width;
         _camera.Height = _sceneRenderTarget.Height;
+        _renderedSceneThisFrame = false;
+        if (TryDrawCameraViewports(gameTime))
+        {
+            _renderedSceneThisFrame = true;
+            return;
+        }
+
         ApplyRuntimeCamera(_camera);
+    }
+
+    private bool TryDrawCameraViewports(GameTime gameTime)
+    {
+        if (_sceneRenderTarget is null || _renderTextureManager is null || GraphicsDevice is null)
+        {
+            return false;
+        }
+
+        List<SceneCameraSettings> viewportCameras = Project.Scene.Cameras
+            .Where(camera => camera.Enabled && camera.Viewport.Enabled)
+            .ToList();
+        if (viewportCameras.Count == 0)
+        {
+            return false;
+        }
+
+        GL gl = GraphicsDevice.Gl;
+        int screenWidth = Math.Max(_sceneRenderTarget.Width, 1);
+        int screenHeight = Math.Max(_sceneRenderTarget.Height, 1);
+        gl.Enable(GLEnum.ScissorTest);
+
+        foreach (SceneCameraSettings settings in viewportCameras)
+        {
+            LayoutRect rect = LayoutResolver.Resolve(
+                settings.Viewport.LayoutMode,
+                settings.Viewport.X,
+                settings.Viewport.Y,
+                settings.Viewport.Width,
+                settings.Viewport.Height,
+                screenWidth,
+                screenHeight,
+                Project.Window.Width,
+                Project.Window.Height);
+            int x = Math.Clamp((int)MathF.Round(rect.X), 0, screenWidth - 1);
+            int yTop = Math.Clamp((int)MathF.Round(rect.Y), 0, screenHeight - 1);
+            int width = Math.Clamp((int)MathF.Round(rect.Width), 1, screenWidth - x);
+            int height = Math.Clamp((int)MathF.Round(rect.Height), 1, screenHeight - yTop);
+            int y = Math.Max(screenHeight - yTop - height, 0);
+
+            OrbitCamera camera = _renderTextureManager.ResolveCamera(settings.Name, _camera);
+            camera.Width = width;
+            camera.Height = height;
+
+            gl.Viewport(x, y, (uint)width, (uint)height);
+            gl.Scissor(x, y, (uint)width, (uint)height);
+            gl.ColorMask(true, true, true, true);
+            gl.DepthMask(true);
+            Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
+            gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
+            gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+
+            ApplyRuntimeCamera(camera);
+            DrawSceneComponentsOnce(gameTime);
+        }
+
+        gl.Disable(GLEnum.ScissorTest);
+        gl.Viewport(0, 0, (uint)screenWidth, (uint)screenHeight);
+        ApplyRuntimeCamera(_camera);
+        return true;
+    }
+
+    private void DrawSceneComponentsOnce(GameTime gameTime)
+    {
+        IReadOnlyList<DrawableGameComponent> overlays = GetOverlayComponents();
+        foreach (DrawableGameComponent component in Components
+            .OfType<DrawableGameComponent>()
+            .Where(component => component.Visible && !overlays.Contains(component))
+            .OrderBy(component => component.DrawOrder))
+        {
+            component.Draw(gameTime);
+        }
     }
 
     protected override void UnloadContent()
@@ -209,22 +291,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         ClearSceneRuntime();
         Project = GameProjectStore.Load(ProjectDirectory);
-        int relationFixes = NormalizeRelationBindings();
-        ApplyCameraSettings();
-        ApplySceneSettings();
-
-        foreach (GameEntity entity in Project.Scene.Entities)
-        {
-            TryLoadEntityRuntime(entity);
-        }
-
-        foreach (AudioAsset audioAsset in Project.Scene.Audio)
-        {
-            TryLoadAudioRuntime(audioAsset);
-        }
-
-        ApplyAllRelationsToRuntime();
-        SelectedEntityIndex = Project.Scene.Entities.Count > 0 ? 0 : -1;
+        int relationFixes = ReloadActiveSceneRuntime(clearFirst: false);
         string relationMessage = relationFixes > 0 ? $"\nNormalized {relationFixes} PMX relation binding(s)." : string.Empty;
         UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}{relationMessage}");
     }
@@ -248,6 +315,120 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         UpdateStatus(validation.HasErrors
             ? $"Saved project with script errors: {projectPath}\n{resourceImport.Message}\n{validation.Message}{relationMessage}{guiTargetMessage}"
             : $"Saved project: {projectPath}\n{resourceImport.Message}\n{validation.Message}{relationMessage}{guiTargetMessage}");
+    }
+
+    public void CreateScene(string sceneName)
+    {
+        string normalizedName = string.IsNullOrWhiteSpace(sceneName) ? "New Scene" : sceneName.Trim();
+        SaveActiveSceneFile();
+
+        GameProjectStore.NormalizeScenes(Project);
+        string scenePath = GameProjectStore.CreateUniqueScenePath(ProjectDirectory, Project, normalizedName);
+        Project.Scenes.Add(scenePath);
+        Project.EditorScene = scenePath;
+        Project.Scene = new GameProjectScene
+        {
+            Name = normalizedName
+        };
+
+        _ = ReloadActiveSceneRuntime(clearFirst: true);
+        GameProjectStore.Save(ProjectDirectory, Project);
+        UpdateStatus($"Created scene: {scenePath}");
+    }
+
+    public void SwitchScene(string scenePath)
+    {
+        string normalizedScenePath = GameProjectStore.NormalizeScenePath(scenePath);
+        if (string.Equals(normalizedScenePath, ActiveScenePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        SaveActiveSceneFile();
+        Project.EditorScene = normalizedScenePath;
+        Project.Scene = GameProjectStore.LoadScene(ProjectDirectory, normalizedScenePath);
+        _ = ReloadActiveSceneRuntime(clearFirst: true);
+        GameProjectStore.Save(ProjectDirectory, Project);
+        UpdateStatus($"Switched scene: {normalizedScenePath}");
+    }
+
+    public void DeleteScene(string scenePath)
+    {
+        GameProjectStore.NormalizeScenes(Project);
+        if (Project.Scenes.Count <= 1)
+        {
+            UpdateStatus("Cannot delete the last scene.");
+            return;
+        }
+
+        string normalizedScenePath = GameProjectStore.NormalizeScenePath(scenePath);
+        int removeIndex = Project.Scenes.FindIndex(path => string.Equals(
+            GameProjectStore.NormalizeScenePath(path),
+            normalizedScenePath,
+            StringComparison.OrdinalIgnoreCase));
+        if (removeIndex < 0)
+        {
+            UpdateStatus($"Scene not found: {normalizedScenePath}");
+            return;
+        }
+
+        bool deletingActiveScene = string.Equals(normalizedScenePath, ActiveScenePath, StringComparison.OrdinalIgnoreCase);
+        if (!deletingActiveScene)
+        {
+            SaveActiveSceneFile();
+        }
+
+        Project.Scenes.RemoveAt(removeIndex);
+        GameProjectStore.DeleteScene(ProjectDirectory, normalizedScenePath);
+
+        if (deletingActiveScene)
+        {
+            Project.EditorScene = Project.Scenes[Math.Min(removeIndex, Project.Scenes.Count - 1)];
+            if (string.Equals(Project.DefaultScene, normalizedScenePath, StringComparison.OrdinalIgnoreCase))
+            {
+                Project.DefaultScene = Project.EditorScene;
+            }
+
+            Project.Scene = GameProjectStore.LoadScene(ProjectDirectory, Project.EditorScene);
+            _ = ReloadActiveSceneRuntime(clearFirst: true);
+        }
+
+        GameProjectStore.Save(ProjectDirectory, Project);
+        UpdateStatus($"Deleted scene: {normalizedScenePath}");
+    }
+
+    private void SaveActiveSceneFile()
+    {
+        Directory.CreateDirectory(ProjectDirectory);
+        _ = PrepareAndImportResources();
+        _ = PrepareAndValidateScripts();
+        GameProjectStore.SaveScene(ProjectDirectory, ActiveScenePath, Project.Scene);
+    }
+
+    private int ReloadActiveSceneRuntime(bool clearFirst)
+    {
+        if (clearFirst)
+        {
+            ClearSceneRuntime();
+        }
+
+        int relationFixes = NormalizeRelationBindings();
+        ApplyCameraSettings();
+        ApplySceneSettings();
+
+        foreach (GameEntity entity in Project.Scene.Entities)
+        {
+            TryLoadEntityRuntime(entity);
+        }
+
+        foreach (AudioAsset audioAsset in Project.Scene.Audio)
+        {
+            TryLoadAudioRuntime(audioAsset);
+        }
+
+        ApplyAllRelationsToRuntime();
+        SelectedEntityIndex = Project.Scene.Entities.Count > 0 ? 0 : -1;
+        return relationFixes;
     }
 
     private int NormalizeRelationBindings()
@@ -1163,6 +1344,11 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     private IReadOnlyList<DrawableGameComponent> GetRenderTextureExcludedComponents()
     {
+        return GetOverlayComponents();
+    }
+
+    private IReadOnlyList<DrawableGameComponent> GetOverlayComponents()
+    {
         List<DrawableGameComponent> excluded = [];
         if (_overlay is not null)
         {
@@ -1172,6 +1358,16 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         excluded.AddRange(Components.OfType<EditorDebugAxesComponent>());
         excluded.AddRange(Components.OfType<EditorColliderWireframeComponent>());
         return excluded;
+    }
+
+    public override bool ShouldDrawComponent(DrawableGameComponent component)
+    {
+        if (!_renderedSceneThisFrame)
+        {
+            return true;
+        }
+
+        return GetOverlayComponents().Contains(component);
     }
 
     private static string NormalizeProjectionMode(string projectionMode)

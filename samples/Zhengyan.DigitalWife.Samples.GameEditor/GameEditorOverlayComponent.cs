@@ -20,6 +20,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private string _audioPath = string.Empty;
     private string _motionPath = string.Empty;
     private string _spritePath = string.Empty;
+    private string _newSceneName = "New Scene";
     private int _selectedMotionAssetIndex;
     private string _particlePreset = "sakura";
     private bool _copyAssets = true;
@@ -138,6 +139,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             if (ImGui.BeginTabItem("Project"))
             {
                 DrawProjectPanel();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Scenes"))
+            {
+                DrawScenesPanel();
                 ImGui.EndTabItem();
             }
 
@@ -306,8 +313,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 continue;
             }
 
-            Vector2 position = viewportMin + new Vector2(control.X, control.Y);
-            Vector2 size = new(Math.Max(control.Width, 1.0f), Math.Max(control.Height, 1.0f));
+            LayoutRect rect = ResolveGuiRect(control, viewportSize);
+            Vector2 position = viewportMin + new Vector2(rect.X, rect.Y);
+            Vector2 size = new(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             Vector2 max = position + size;
 
             GuiControlStyleSettings style = control.Style;
@@ -326,7 +334,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 Vector2 padding = new(8.0f, 5.0f);
                 drawList.AddRectFilled(position, max, ImGui.GetColorU32(backgroundColor), rounding);
                 drawList.AddRect(position, max, ImGui.GetColorU32(borderColor), rounding, ImDrawFlags.None, borderThickness);
-                DrawTextBlock(drawList, position + padding, max - padding, text, textColor, style, control.WordWrap);
+                DrawTextBlock(drawList, position + padding, max - padding, text, textColor, style, control.WordWrap, control.LayoutMode, viewportSize);
             }
             else if (type == "checkbox")
             {
@@ -342,7 +350,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     drawList.AddLine(boxMin + new Vector2(boxSize * 0.42f, boxSize - 4.0f), boxMin + new Vector2(boxSize - 3.0f, 4.0f), ImGui.GetColorU32(textColor), 2.0f);
                 }
 
-                float fontSize = ResolveGuiFontSize(style);
+                float fontSize = ResolveGuiFontSize(style, control.LayoutMode, viewportSize);
                 Vector2 textSize = CalcScaledTextSize(text, fontSize);
                 Vector2 textMin = position + new Vector2(boxSize + 16.0f, 0.0f);
                 Vector2 textMax = max - new Vector2(8.0f, 0.0f);
@@ -361,7 +369,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     arrowCenter + new Vector2(5.0f, -2.0f),
                     arrowCenter + new Vector2(0.0f, 4.0f),
                     ImGui.GetColorU32(textColor));
-                float fontSize = ResolveGuiFontSize(style);
+                float fontSize = ResolveGuiFontSize(style, control.LayoutMode, viewportSize);
                 Vector2 textSize = CalcScaledTextSize(selectedText, fontSize);
                 AddScaledText(drawList, GetAlignedTextPosition(position + new Vector2(8.0f, 0.0f), max - new Vector2(28.0f, 0.0f), textSize, style), ImGui.GetColorU32(textColor), selectedText, fontSize);
             }
@@ -370,14 +378,28 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 Vector2 padding = new(8.0f, 5.0f);
                 drawList.AddRectFilled(position, max, ImGui.GetColorU32(backgroundColor), rounding);
                 drawList.AddRect(position, max, ImGui.GetColorU32(borderColor), rounding, ImDrawFlags.None, borderThickness);
-                DrawTextBlock(drawList, position + padding, max - padding, text, textColor, style, control.Multiline || control.WordWrap);
+                DrawTextBlock(drawList, position + padding, max - padding, text, textColor, style, control.Multiline || control.WordWrap, control.LayoutMode, viewportSize);
+            }
+            else if (type == "progress_bar")
+            {
+                float progress = Math.Clamp(control.Progress, 0.0f, 1.0f);
+                drawList.AddRectFilled(position, max, ImGui.GetColorU32(backgroundColor), rounding);
+                Vector2 fillMax = new(position.X + (size.X * progress), max.Y);
+                drawList.AddRectFilled(position, fillMax, ImGui.GetColorU32(style.ActiveColor.ToVector4()), rounding);
+                drawList.AddRect(position, max, ImGui.GetColorU32(borderColor), rounding, ImDrawFlags.None, borderThickness);
+
+                string progressText = string.IsNullOrWhiteSpace(text) ? $"{progress:P0}" : text;
+                float fontSize = ResolveGuiFontSize(style, control.LayoutMode, viewportSize);
+                Vector2 textSize = CalcScaledTextSize(progressText, fontSize);
+                Vector2 textPosition = GetAlignedTextPosition(position + new Vector2(6.0f, 4.0f), max - new Vector2(6.0f, 4.0f), textSize, style);
+                AddScaledText(drawList, textPosition, ImGui.GetColorU32(textColor), progressText, fontSize);
             }
             else
             {
                 drawList.AddRectFilled(position, max, ImGui.GetColorU32(backgroundColor), rounding);
                 drawList.AddRect(position, max, ImGui.GetColorU32(borderColor), rounding, ImDrawFlags.None, borderThickness);
 
-                float fontSize = ResolveGuiFontSize(style);
+                float fontSize = ResolveGuiFontSize(style, control.LayoutMode, viewportSize);
                 Vector2 textSize = CalcScaledTextSize(text, fontSize);
                 Vector2 textPosition = GetAlignedTextPosition(position + new Vector2(6.0f, 4.0f), max - new Vector2(6.0f, 4.0f), textSize, style);
                 AddScaledText(drawList, textPosition, ImGui.GetColorU32(textColor), text, fontSize);
@@ -395,17 +417,33 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         return min + new Vector2(x, y);
     }
 
-    private static void DrawTextBlock(
+    private LayoutRect ResolveGuiRect(GuiControlSettings control, Vector2 actualSize)
+    {
+        return LayoutResolver.Resolve(
+            control.LayoutMode,
+            control.X,
+            control.Y,
+            control.Width,
+            control.Height,
+            actualSize.X,
+            actualSize.Y,
+            _editorGame.Project.Window.Width,
+            _editorGame.Project.Window.Height);
+    }
+
+    private void DrawTextBlock(
         ImDrawListPtr drawList,
         Vector2 min,
         Vector2 max,
         string text,
         Vector4 color,
         GuiControlStyleSettings style,
-        bool wordWrap)
+        bool wordWrap,
+        string layoutMode,
+        Vector2 actualSize)
     {
         Vector2 available = Vector2.Max(max - min, Vector2.One);
-        float fontSize = ResolveGuiFontSize(style);
+        float fontSize = ResolveGuiFontSize(style, layoutMode, actualSize);
         string[] lines = BuildTextLines(text, available.X, wordWrap, fontSize);
         float lineHeight = Math.Max(CalcScaledTextSize("Ag", fontSize).Y, 1.0f);
         float blockHeight = lineHeight * lines.Length;
@@ -455,9 +493,15 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         return lines.Count == 0 ? [string.Empty] : [.. lines];
     }
 
-    private static float ResolveGuiFontSize(GuiControlStyleSettings style)
+    private float ResolveGuiFontSize(GuiControlStyleSettings style, string layoutMode, Vector2 actualSize)
     {
-        return Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
+        return LayoutResolver.ResolveFontSize(
+            layoutMode,
+            style.FontSize,
+            actualSize.X,
+            actualSize.Y,
+            _editorGame.Project.Window.Width,
+            _editorGame.Project.Window.Height);
     }
 
     private static Vector2 CalcScaledTextSize(string text, float fontSize)
@@ -563,6 +607,126 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         DrawVoiceSettings(project.Voice);
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
+    }
+
+    private void DrawScenesPanel()
+    {
+        GameProject project = _editorGame.Project;
+        GameProjectStore.NormalizeScenes(project);
+
+        string activeScenePath = _editorGame.ActiveScenePath;
+        string activePreview = BuildSceneLabel(project.Scene, activeScenePath);
+        if (ImGui.BeginCombo("Editor scene", activePreview))
+        {
+            foreach (string scenePath in project.Scenes)
+            {
+                string normalizedScenePath = GameProjectStore.NormalizeScenePath(scenePath);
+                bool selected = string.Equals(normalizedScenePath, activeScenePath, StringComparison.OrdinalIgnoreCase);
+                string label = selected && ReferenceEquals(project.Scene, _editorGame.Project.Scene)
+                    ? BuildSceneLabel(project.Scene, normalizedScenePath)
+                    : normalizedScenePath;
+
+                if (ImGui.Selectable($"{label}##scene_{normalizedScenePath}", selected))
+                {
+                    try
+                    {
+                        _editorGame.SwitchScene(normalizedScenePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        _editorGame.UpdateStatus($"Switch scene failed: {ex.Message}");
+                    }
+                }
+
+                if (selected)
+                {
+                    ImGui.SetItemDefaultFocus();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.TextWrapped($"Current path: {activeScenePath}");
+
+        string startupScene = GameProjectStore.NormalizeScenePath(project.DefaultScene);
+        int startupSceneIndex = Math.Max(0, project.Scenes.FindIndex(path =>
+            string.Equals(GameProjectStore.NormalizeScenePath(path), startupScene, StringComparison.OrdinalIgnoreCase)));
+        string[] scenePaths = project.Scenes
+            .Select(GameProjectStore.NormalizeScenePath)
+            .ToArray();
+        if (scenePaths.Length > 0 && ImGui.Combo("GamePlayer startup scene", ref startupSceneIndex, scenePaths, scenePaths.Length))
+        {
+            project.DefaultScene = scenePaths[startupSceneIndex];
+        }
+
+        ImGui.Separator();
+
+        ImGui.InputText("New scene name", ref _newSceneName, 256);
+        if (ImGui.Button("New Scene"))
+        {
+            try
+            {
+                _editorGame.CreateScene(_newSceneName);
+                _newSceneName = "New Scene";
+            }
+            catch (Exception ex)
+            {
+                _editorGame.UpdateStatus($"Create scene failed: {ex.Message}");
+            }
+        }
+
+        ImGui.SameLine();
+        bool canDelete = project.Scenes.Count > 1;
+        if (!canDelete)
+        {
+            ImGui.BeginDisabled();
+        }
+
+        if (ImGui.Button("Delete Active Scene"))
+        {
+            try
+            {
+                _editorGame.DeleteScene(activeScenePath);
+            }
+            catch (Exception ex)
+            {
+                _editorGame.UpdateStatus($"Delete scene failed: {ex.Message}");
+            }
+        }
+
+        if (!canDelete)
+        {
+            ImGui.EndDisabled();
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Scenes");
+        for (int i = 0; i < project.Scenes.Count; i++)
+        {
+            string scenePath = GameProjectStore.NormalizeScenePath(project.Scenes[i]);
+            bool selected = string.Equals(scenePath, activeScenePath, StringComparison.OrdinalIgnoreCase);
+            if (ImGui.Selectable($"{scenePath}##sceneList{i}", selected))
+            {
+                try
+                {
+                    _editorGame.SwitchScene(scenePath);
+                }
+                catch (Exception ex)
+                {
+                    _editorGame.UpdateStatus($"Switch scene failed: {ex.Message}");
+                }
+            }
+        }
+
+        ImGui.TextWrapped("Editor scene switching saves the current scene file first, then reloads the selected scene into the viewport. GamePlayer starts from the startup scene.");
+    }
+
+    private static string BuildSceneLabel(GameProjectScene scene, string scenePath)
+    {
+        return string.IsNullOrWhiteSpace(scene.Name)
+            ? scenePath
+            : $"{scene.Name} ({scenePath})";
     }
 
     private static void DrawLlmSettings(GameProjectLlmSettings llm)
@@ -1150,6 +1314,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 float orthoSize = camera.Camera.OrthographicSize;
                 float nearClip = camera.Camera.NearClipPlane;
                 float farClip = camera.Camera.FarClipPlane;
+                bool viewportEnabled = camera.Viewport.Enabled;
+                string viewportLayoutMode = camera.Viewport.LayoutMode;
+                Vector2 viewportPosition = new(camera.Viewport.X, camera.Viewport.Y);
+                Vector2 viewportSize = new(camera.Viewport.Width, camera.Viewport.Height);
                 bool changed = false;
 
                 changed |= ImGui.InputText("Name", ref name, 256);
@@ -1165,6 +1333,16 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 changed |= ImGui.DragFloat("Orthographic size", ref orthoSize, 0.05f, 0.01f, 10000.0f);
                 changed |= ImGui.DragFloat("Near clip", ref nearClip, 0.01f, 0.001f, 10000.0f);
                 changed |= ImGui.DragFloat("Far clip", ref farClip, 1.0f, 0.01f, 1000000.0f);
+                if (ImGui.TreeNode("Viewport"))
+                {
+                    changed |= ImGui.Checkbox("Enable viewport", ref viewportEnabled);
+                    changed |= DrawStringCombo("Layout mode", ref viewportLayoutMode, ["absolute", "relative"]);
+                    changed |= ImGui.DragFloat2("Viewport position", ref viewportPosition, 1.0f);
+                    changed |= ImGui.DragFloat2("Viewport size", ref viewportSize, 1.0f, 1.0f, 8192.0f);
+                    ImGui.TextWrapped("Disabled means this camera is not drawn directly to the window. The main camera still renders full screen when no camera viewport is enabled.");
+                    ImGui.TreePop();
+                }
+
                 if (changed)
                 {
                     camera.Name = string.IsNullOrWhiteSpace(name) ? camera.Name : name.Trim();
@@ -1176,6 +1354,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     camera.Camera.OrthographicSize = Math.Max(0.01f, orthoSize);
                     camera.Camera.NearClipPlane = Math.Max(0.001f, nearClip);
                     camera.Camera.FarClipPlane = Math.Max(camera.Camera.NearClipPlane + 0.001f, farClip);
+                    camera.Viewport.Enabled = viewportEnabled;
+                    camera.Viewport.LayoutMode = LayoutResolver.NormalizeLayoutMode(viewportLayoutMode);
+                    camera.Viewport.X = Math.Max(0.0f, viewportPosition.X);
+                    camera.Viewport.Y = Math.Max(0.0f, viewportPosition.Y);
+                    camera.Viewport.Width = Math.Max(1.0f, viewportSize.X);
+                    camera.Viewport.Height = Math.Max(1.0f, viewportSize.Y);
                     if (camera.IsMain)
                     {
                         scene.MainCamera = camera.Name;
@@ -1345,6 +1529,54 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             loadingScreen.BackgroundImagePath = backgroundImagePath;
             loadingScreen.BackgroundImageOpacity = Math.Clamp(backgroundImageOpacity, 0.0f, 1.0f);
         }
+
+        LoadingProgressBarSettings progressBar = loadingScreen.ProgressBar;
+        if (ImGui.TreeNode("Loading progress bar"))
+        {
+            bool visible = progressBar.Visible;
+            string layoutMode = progressBar.LayoutMode;
+            Vector2 position = new(progressBar.X, progressBar.Y);
+            Vector2 size = new(progressBar.Width, progressBar.Height);
+            Vector4 barBackground = progressBar.BackgroundColor.ToVector4();
+            Vector4 trackColor = progressBar.TrackColor.ToVector4();
+            Vector4 fillColor = progressBar.FillColor.ToVector4();
+            Vector4 borderColor = progressBar.BorderColor.ToVector4();
+            float borderThickness = progressBar.BorderThickness;
+            float rounding = progressBar.Rounding;
+            float padding = progressBar.Padding;
+            bool progressChanged = false;
+
+            progressChanged |= ImGui.Checkbox("Visible", ref visible);
+            progressChanged |= DrawStringCombo("Layout mode", ref layoutMode, ["absolute", "relative"]);
+            progressChanged |= ImGui.DragFloat2("Position", ref position, 1.0f);
+            progressChanged |= ImGui.DragFloat2("Size", ref size, 1.0f, 1.0f, 8192.0f);
+            progressChanged |= ImGui.ColorEdit4("Bar background", ref barBackground);
+            progressChanged |= ImGui.ColorEdit4("Track", ref trackColor);
+            progressChanged |= ImGui.ColorEdit4("Fill", ref fillColor);
+            progressChanged |= ImGui.ColorEdit4("Border", ref borderColor);
+            progressChanged |= ImGui.DragFloat("Border thickness", ref borderThickness, 0.05f, 0.0f, 32.0f, "%.2f");
+            progressChanged |= ImGui.DragFloat("Rounding", ref rounding, 0.1f, 0.0f, 64.0f, "%.1f");
+            progressChanged |= ImGui.DragFloat("Padding", ref padding, 0.1f, 0.0f, 64.0f, "%.1f");
+
+            if (progressChanged)
+            {
+                progressBar.Visible = visible;
+                progressBar.LayoutMode = LayoutResolver.NormalizeLayoutMode(layoutMode);
+                progressBar.X = Math.Max(0.0f, position.X);
+                progressBar.Y = Math.Max(0.0f, position.Y);
+                progressBar.Width = Math.Max(1.0f, size.X);
+                progressBar.Height = Math.Max(1.0f, size.Y);
+                progressBar.BackgroundColor = Vector4Dto.FromVector4(barBackground);
+                progressBar.TrackColor = Vector4Dto.FromVector4(trackColor);
+                progressBar.FillColor = Vector4Dto.FromVector4(fillColor);
+                progressBar.BorderColor = Vector4Dto.FromVector4(borderColor);
+                progressBar.BorderThickness = Math.Max(0.0f, borderThickness);
+                progressBar.Rounding = Math.Max(0.0f, rounding);
+                progressBar.Padding = Math.Max(0.0f, padding);
+            }
+
+            ImGui.TreePop();
+        }
     }
 
     private void DrawSceneLoadingScriptsInspector(GameProjectScene scene)
@@ -1494,6 +1726,20 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             });
         }
 
+        ImGui.SameLine();
+        if (ImGui.Button("Add Progress"))
+        {
+            scene.GuiControls.Add(new GuiControlSettings
+            {
+                Name = $"Progress {scene.GuiControls.Count + 1}",
+                Type = "progress_bar",
+                Text = string.Empty,
+                Width = 260.0f,
+                Height = 28.0f,
+                Progress = 0.35f
+            });
+        }
+
         int removeIndex = -1;
         for (int i = 0; i < scene.GuiControls.Count; i++)
         {
@@ -1508,15 +1754,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             string eventName = control.EventName;
             Vector2 position = new(control.X, control.Y);
             Vector2 size = new(control.Width, control.Height);
+            string layoutMode = control.LayoutMode;
             bool wordWrap = control.WordWrap;
             bool multiline = control.Multiline;
             bool checkedValue = control.Checked;
+            float progress = control.Progress;
             int selectedIndex = control.SelectedIndex;
             bool changed = false;
 
             changed |= ImGui.Checkbox("Visible", ref visible);
             changed |= ImGui.InputText("Name", ref name, 128);
-            string[] types = ["button", "label", "checkbox", "dropdown", "textbox"];
+            string[] types = ["button", "label", "checkbox", "dropdown", "textbox", "progress_bar"];
             int typeIndex = Array.FindIndex(types, item => string.Equals(item, type, StringComparison.OrdinalIgnoreCase));
             typeIndex = Math.Max(0, typeIndex);
             if (ImGui.Combo("Type", ref typeIndex, types, types.Length))
@@ -1536,11 +1784,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             }
 
             changed |= ImGui.Checkbox("Word wrap", ref wordWrap);
+            changed |= DrawStringCombo("Layout mode", ref layoutMode, ["absolute", "relative"]);
             changed |= ImGui.DragFloat2("Position", ref position, 1.0f);
             changed |= ImGui.DragFloat2("Size", ref size, 1.0f, 1.0f, 4096.0f);
             if (string.Equals(type, "checkbox", StringComparison.OrdinalIgnoreCase))
             {
                 changed |= ImGui.Checkbox("Checked", ref checkedValue);
+            }
+
+            if (string.Equals(type, "progress_bar", StringComparison.OrdinalIgnoreCase))
+            {
+                changed |= ImGui.SliderFloat("Progress", ref progress, 0.0f, 1.0f, "%.3f");
             }
 
             if (string.Equals(type, "dropdown", StringComparison.OrdinalIgnoreCase))
@@ -1558,6 +1812,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 control.Name = name;
                 control.Type = type;
                 control.Text = text;
+                control.LayoutMode = LayoutResolver.NormalizeLayoutMode(layoutMode);
                 control.X = Math.Max(0.0f, position.X);
                 control.Y = Math.Max(0.0f, position.Y);
                 control.Width = Math.Max(1.0f, size.X);
@@ -1567,6 +1822,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 control.WordWrap = wordWrap;
                 control.Multiline = multiline;
                 control.Checked = checkedValue;
+                control.Progress = Math.Clamp(progress, 0.0f, 1.0f);
                 control.SelectedIndex = Math.Clamp(selectedIndex, 0, Math.Max(control.Items.Count - 1, 0));
             }
 

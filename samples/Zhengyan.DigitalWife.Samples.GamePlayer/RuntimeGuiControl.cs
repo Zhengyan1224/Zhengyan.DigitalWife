@@ -67,6 +67,12 @@ public sealed class RuntimeGuiControl
         set => _control.Height = Math.Max(1.0f, value);
     }
 
+    public string LayoutMode
+    {
+        get => _control.LayoutMode;
+        set => _control.LayoutMode = LayoutResolver.NormalizeLayoutMode(value);
+    }
+
     public string TargetEntity
     {
         get => _control.TargetEntity;
@@ -83,6 +89,18 @@ public sealed class RuntimeGuiControl
     {
         get => _control.Checked;
         set => _control.Checked = value;
+    }
+
+    public float Progress
+    {
+        get => _control.Progress;
+        set => _control.Progress = Math.Clamp(value, 0.0f, 1.0f);
+    }
+
+    public float FontSize
+    {
+        get => _control.Style.FontSize;
+        set => _control.Style.FontSize = Math.Clamp(value, 8.0f, 96.0f);
     }
 
     public bool WordWrap
@@ -127,6 +145,21 @@ public sealed class RuntimeGuiControl
     public void SetChecked(bool value)
     {
         Checked = value;
+    }
+
+    public void SetProgress(float value)
+    {
+        Progress = value;
+    }
+
+    public void SetLayoutMode(string value)
+    {
+        LayoutMode = value;
+    }
+
+    public void SetFontSize(float value)
+    {
+        FontSize = value;
     }
 
     public void SetItems(params string[] items)
