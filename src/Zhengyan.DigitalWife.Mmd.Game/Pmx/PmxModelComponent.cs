@@ -1368,7 +1368,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.SetUniform(_mmdShader.UniSphereTex, 1);
         gl.SetUniform(_mmdShader.UniToonTex, 2);
         gl.SetUniform(_mmdShader.UniLightColor, LightColor);
-        gl.SetUniform(_mmdShader.UniLightDir, LightDirection);
+        // The shader evaluates normals in view space, so transform the configured
+        // world-space light direction into view space before uploading it.
+        Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(LightDirection, Camera.View));
+        gl.SetUniform(_mmdShader.UniLightDir, viewSpaceLightDirection);
         gl.SetUniform(_mmdShader.UniAmbientLightColor, AmbientLightColor);
         gl.SetUniform(_mmdShader.UniAmbientLightStrength, AmbientLightStrength);
         gl.SetUniform(_mmdShader.UniShadowMapEnabled, 0);

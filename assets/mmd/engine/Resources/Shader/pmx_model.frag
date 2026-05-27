@@ -67,16 +67,13 @@ float ComputeTextureAlpha(float textureAlpha) {
 }
 
 void main() {
-    vec3 eyeDir = normalize(vs_Pos);
-    vec3 lightDir = normalize(u_LightDir);
+    vec3 eyeDir = normalize(-vs_Pos);
+    vec3 lightDir = normalize(-u_LightDir);
     vec3 nor = normalize(vs_Nor);
-    float ln = dot(nor, lightDir);
-    ln = clamp(ln + 0.5, 0.0, 1.0);
-    vec3 color = vec3(0.0, 0.0, 0.0);
+    float ndotl = clamp(dot(nor, lightDir), 0.0, 1.0);
+    float toonCoord = clamp(dot(nor, lightDir) * 0.5 + 0.5, 0.0, 1.0);
+    vec3 albedo = u_Diffuse;
     float alpha = u_Alpha;
-    vec3 diffuseColor = u_Diffuse * u_LightColor;
-    color = diffuseColor;
-    vec3 ambientColor = u_Ambient * u_AmbientLightColor * u_AmbientLightStrength;
 
     if(u_ShadowMapEnabled != 0) {
         float z = -vs_Pos.z;
@@ -90,7 +87,8 @@ void main() {
         } else if(u_ShadowMapSplitPositions[3] <= z && z < u_ShadowMapSplitPositions[3 + 1]) {
             visibility = textureProj(u_ShadowMap3, vs_shadowMapCoord[3]);
         }
-        ln *= (1.0 - visibility);
+        ndotl *= (1.0 - visibility);
+        toonCoord = mix(0.0, toonCoord, 1.0 - visibility);
     }
 
     if(u_TexMode != 0) {
@@ -98,7 +96,7 @@ void main() {
         texColor.rgb = ComputeTexMulFactor(texColor.rgb, u_TexMulFactor);
         texColor.rgb = ComputeTexAddFactor(texColor.rgb, u_TexAddFactor);
 
-        color *= texColor.rgb;
+        albedo *= texColor.rgb;
         if(u_TexMode == 2 || u_TexMode == 4) {
             alpha *= ComputeTextureAlpha(texColor.a);
         }
@@ -107,6 +105,7 @@ void main() {
         discard;
     }
 
+    vec3 baseColor = albedo;
     if(u_SphereTexMode != 0) {
         vec2 spUV = vec2(0.0);
         spUV.x = nor.x * 0.5 + 0.5;
@@ -115,26 +114,29 @@ void main() {
         spColor = ComputeTexMulFactor(spColor, u_SphereTexMulFactor);
         spColor = ComputeTexAddFactor(spColor, u_SphereTexAddFactor);
         if(u_SphereTexMode == 1) {
-            color.rgb *= spColor.rgb;
+            baseColor *= spColor.rgb;
         } else if(u_SphereTexMode == 2) {
-            color.rgb += spColor.rgb;
+            baseColor += spColor.rgb;
         }
     }
 
+    vec3 ambientColor = albedo * u_Ambient * u_AmbientLightColor * u_AmbientLightStrength;
+    vec3 litColor = u_LightColor * ndotl;
     if(u_ToonTexMode != 0) {
-        vec3 toonColor = texture(u_ToonTex, vec2(0.0, ln)).rgb;
+        vec3 toonColor = texture(u_ToonTex, vec2(0.0, toonCoord)).rgb;
         toonColor = ComputeTexMulFactor(toonColor, u_ToonTexMulFactor);
         toonColor = ComputeTexAddFactor(toonColor, u_ToonTexAddFactor);
-        color.rgb *= toonColor.rgb;
+        litColor *= toonColor.rgb;
     }
 
     vec3 specular = vec3(0.0);
-    if(u_SpecularPower > 0.0) {
+    if(u_SpecularPower > 0.0 && ndotl > 0.0) {
         vec3 halfVec = normalize(eyeDir + lightDir);
         vec3 specularColor = u_Specular * u_LightColor;
         specular += pow(max(0.0, dot(halfVec, nor)), u_SpecularPower) * specularColor;
     }
 
+    vec3 color = baseColor * litColor;
     color += specular;
     color += ambientColor;
     color = clamp(color, 0.0, 1.0);

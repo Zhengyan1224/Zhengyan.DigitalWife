@@ -1208,17 +1208,20 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         Vector3 lightDirection = scene.Lighting.LightDirection.ToVector3();
+        Vector3 lightColor = scene.Lighting.LightColor.ToVector3();
         Vector3 ambientColor = scene.Lighting.AmbientColor.ToVector3();
         float ambientStrength = scene.Lighting.AmbientStrength;
         Vector4 clearColor = scene.Lighting.ClearColor.ToVector4();
         bool lightingChanged = false;
         lightingChanged |= ImGui.DragFloat3("Light direction", ref lightDirection, 0.02f);
+        lightingChanged |= ImGui.ColorEdit3("Light color", ref lightColor);
         lightingChanged |= ImGui.ColorEdit3("Ambient color", ref ambientColor);
         lightingChanged |= ImGui.SliderFloat("Ambient strength", ref ambientStrength, 0.0f, 2.0f);
         lightingChanged |= ImGui.ColorEdit4("Clear color", ref clearColor);
         if (lightingChanged)
         {
             scene.Lighting.LightDirection = Vector3Dto.FromVector3(lightDirection);
+            scene.Lighting.LightColor = Vector3Dto.FromVector3(lightColor);
             scene.Lighting.AmbientColor = Vector3Dto.FromVector3(ambientColor);
             scene.Lighting.AmbientStrength = ambientStrength;
             scene.Lighting.ClearColor = Vector4Dto.FromVector4(clearColor);
