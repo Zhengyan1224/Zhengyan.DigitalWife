@@ -2469,7 +2469,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                   # entity.bind_relation("body", bind_component_transform=True, bind_lighting=False)
                   pass
 
-              def gui_event(entity, scene, input, audio, control_id, event_name):
+              def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
                   if event_name == "clicked":
                       entity.speak("按钮被点击了")
 
@@ -2478,7 +2478,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
               """
             : """
               // Called by Zhengyan.DigitalWife.Samples.GamePlayer.
-              // Available globals: Entity, Scene, Input, Audio, DeltaSeconds.
+              // Available globals: Entity, Scene, Input, Audio, DeltaSeconds, GuiControlId, GuiControlName.
               if (IsStart)
               {
                   // Entity.SetPosition(0, 0, 0);
@@ -2517,7 +2517,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                   # entity.bind_relation("body", bind_component_transform=True, bind_lighting=False)
                   pass
 
-              def gui_event(entity, scene, input, audio, control_id, event_name):
+              def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
                   if event_name == "clicked":
                       entity.speak("按钮被点击了")
 
@@ -2532,7 +2532,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
               """
             : """
               // Called by Zhengyan.DigitalWife.Samples.GamePlayer.
-              // Available globals: Entity, Scene, Input, Audio, DeltaSeconds.
+              // Available globals: Entity, Scene, Input, Audio, DeltaSeconds, GuiControlId, GuiControlName.
               if (IsStart)
               {
                   // Entity.SetPosition(0, 0, 0);
@@ -2629,7 +2629,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
               def after_speak(entity, scene, input, audio):
                   print("speech completed")
 
-              def gui_event(entity, scene, input, audio, control_id, event_name):
+              def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
                   if event_name == "clicked":
                       entity.speak("按钮被点击了", on_completed="after_speak")
 
@@ -2644,7 +2644,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
               """
             : """
               // Called by Zhengyan.DigitalWife.Samples.GamePlayer.
-              // Available globals: Entity, Scene, Input, Audio, DeltaSeconds.
+              // Available globals: Entity, Scene, Input, Audio, DeltaSeconds, GuiControlId, GuiControlName.
               if (IsStart)
               {
                   // Entity.SetPosition(0, 0, 0);

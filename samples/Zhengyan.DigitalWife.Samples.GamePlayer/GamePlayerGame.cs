@@ -989,7 +989,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             {
                 try
                 {
-                    script.GuiEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, control.Id, eventName);
+                    script.GuiEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, control.Id, control.Name, eventName);
                     dispatched = true;
                 }
                 catch (Exception ex)

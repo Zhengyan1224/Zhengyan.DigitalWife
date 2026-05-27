@@ -141,7 +141,7 @@ if (IsUpdate)
 
 if (IsGuiEvent)
 {
-    Console.WriteLine($"{GuiControlId} -> {GuiEventName}");
+    Console.WriteLine($"{GuiControlName} ({GuiControlId}) -> {GuiEventName}");
 }
 
 if (IsLoadingEvent)
@@ -168,6 +168,7 @@ C# 全局变量：
 | `IsUpdate` | `bool` | 每帧更新事件。 |
 | `IsGuiEvent` | `bool` | GUI 控件事件。 |
 | `GuiControlId` | `string` | 触发事件的 GUI 控件 Id。 |
+| `GuiControlName` | `string` | 触发事件的 GUI 控件 Name，适合脚本按可读名称判断控件。 |
 | `GuiEventName` | `string` | GUI 事件名，例如 `clicked`、`changed`。 |
 | `IsLoadingEvent` | `bool` | 场景加载入口脚本事件。 |
 | `LoadingEventName` | `string` | `loading_started`、`loading_progress`、`loading_completed`。 |
@@ -207,8 +208,8 @@ def start(entity, scene, input, audio):
 def update(entity, scene, input, audio, delta_seconds):
     entity.rotate_y(30.0 * delta_seconds)
 
-def gui_event(entity, scene, input, audio, control_id, event_name):
-    print(control_id, event_name)
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    print(control_name, control_id, event_name)
 
 def loading_started(entity, scene, input, audio, progress, message):
     print("loading started", scene.name)
@@ -837,7 +838,7 @@ if (IsGuiEvent && GuiEventName == "clicked")
 ```
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name == "clicked":
         audio.play("ClickSfx")
 ```
@@ -1080,13 +1081,16 @@ if control is not None:
 ```csharp
 if (IsGuiEvent && GuiEventName == "clicked")
 {
-    Entity.Speak("按钮被点击了");
+    if (GuiControlName == "Start Button")
+    {
+        Entity.Speak("按钮被点击了");
+    }
 }
 ```
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
-    if event_name == "clicked":
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if event_name == "clicked" and control_name == "Start Button":
         entity.speak("按钮被点击了")
 ```
 
@@ -1150,7 +1154,7 @@ if (IsGuiEvent && GuiEventName == "changed")
 ```
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name == "changed":
         input_box = scene.get_gui_control(control_id)
         if input_box is not None and input_box.type == "textbox":
@@ -1812,7 +1816,7 @@ if (IsGuiEvent && GuiEventName == "clicked")
 Python 完整结果：
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name != "clicked":
         return
 
@@ -1828,7 +1832,7 @@ def gui_event(entity, scene, input, audio, control_id, event_name):
 Python 当前函数内同步流式读取：
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name != "clicked":
         return
 
@@ -1849,7 +1853,7 @@ def gui_event(entity, scene, input, audio, control_id, event_name):
 Python 后台流式输出，不阻塞渲染：
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name != "clicked":
         return
 
@@ -1879,7 +1883,7 @@ def npc_reply_error(entity, scene, input, audio, event):
 Python 消息列表调用：
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name != "clicked":
         return
 
@@ -1919,7 +1923,7 @@ if (IsSpeechEvent && SpeechCallbackName == "go_next")
 ```
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name == "clicked":
         entity.speak("准备切换场景", on_completed="go_next")
 
@@ -1975,7 +1979,7 @@ if (IsGuiEvent && GuiEventName == "changed")
 ```
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name != "changed":
         return
 

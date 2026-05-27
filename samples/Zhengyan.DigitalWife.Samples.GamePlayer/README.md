@@ -107,13 +107,13 @@ if (IsGuiEvent && GuiEventName == "clicked")
 Python：
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name == "clicked":
         entity.speak("按钮被点击了")
         scene.get_gui_control(control_id).hide()
 ```
 
-脚本可以按控件 `Id` 或 `Name` 获取 GUI 控件，并动态控制显示、坐标、尺寸、文字、复选状态和下拉选项：
+脚本可以按控件 `Id` 或 `Name` 获取 GUI 控件。C# GUI 事件全局变量包含 `GuiControlId` 和 `GuiControlName`；Python 新签名包含 `control_id` 和 `control_name`，旧的 `gui_event(..., control_id, event_name)` 仍兼容。脚本可动态控制显示、坐标、尺寸、文字、复选状态和下拉选项：
 
 ```csharp
 RuntimeGuiControl? button = Scene.GetGuiControl("Button 1");
@@ -159,7 +159,7 @@ if (IsGuiEvent && GuiEventName == "changed")
 ```
 
 ```python
-def gui_event(entity, scene, input, audio, control_id, event_name):
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name == "changed":
         textbox = scene.get_gui_control(control_id)
         if textbox is not None and textbox.type == "textbox":

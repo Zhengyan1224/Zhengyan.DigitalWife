@@ -50,5 +50,7 @@ public sealed class CSharpScriptGlobals
 
     public string GuiControlId { get; init; } = string.Empty;
 
+    public string GuiControlName { get; init; } = string.Empty;
+
     public string GuiEventName { get; init; } = string.Empty;
 }

@@ -33,14 +33,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
         SendEvent("update", entity, scene, input, audio, deltaSeconds);
     }
 
-    public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string eventName)
+    public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName)
     {
-        SendEvent("gui_event", entity, scene, input, audio, 0.0, controlId, eventName);
+        SendEvent("gui_event", entity, scene, input, audio, 0.0, controlId, controlName, eventName);
     }
 
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
     {
-        SendEvent(eventName, entity, scene, input, audio, 0.0, controlId: string.Empty, guiEventName: string.Empty, loadingProgress: progress, loadingMessage: message);
+        SendEvent(eventName, entity, scene, input, audio, 0.0, controlId: string.Empty, controlName: string.Empty, guiEventName: string.Empty, loadingProgress: progress, loadingMessage: message);
     }
 
     public void SpeechEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
@@ -70,6 +70,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             audio,
             0.0,
             controlId: string.Empty,
+            controlName: string.Empty,
             guiEventName: string.Empty,
             loadingProgress: 1.0f,
             loadingMessage: string.Empty,
@@ -103,6 +104,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         RuntimeAudio audio,
         double deltaSeconds,
         string controlId = "",
+        string controlName = "",
         string guiEventName = "",
         float loadingProgress = 0.0f,
         string loadingMessage = "",
@@ -114,7 +116,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
         }
 
-        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent);
+        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent);
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -186,6 +188,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         return """
                import importlib.util
                import datetime
+               import inspect
                import json
                import math
                import os
@@ -1611,7 +1614,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        elif event == "update" and hasattr(module, "update"):
                            module.update(entity, scene, input, audio, ctx.get("deltaSeconds", 0.0))
                        elif event == "gui_event" and hasattr(module, "gui_event"):
-                           module.gui_event(entity, scene, input, audio, ctx.get("controlId", ""), ctx.get("guiEventName", ""))
+                           control_id = ctx.get("controlId", "")
+                           control_name = ctx.get("controlName", "")
+                           gui_event_name = ctx.get("guiEventName", "")
+                           if len(inspect.signature(module.gui_event).parameters) >= 7:
+                               module.gui_event(entity, scene, input, audio, control_id, control_name, gui_event_name)
+                           else:
+                               module.gui_event(entity, scene, input, audio, control_id, gui_event_name)
                        elif event in ("loading_started", "loading_progress", "loading_completed") and hasattr(module, event):
                            getattr(module, event)(entity, scene, input, audio, ctx.get("loadingProgress", 0.0), ctx.get("loadingMessage", ""))
                        elif event == "speech_completed":
@@ -2419,6 +2428,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string ControlId { get; set; } = string.Empty;
 
+        public string ControlName { get; set; } = string.Empty;
+
         public string GuiEventName { get; set; } = string.Empty;
 
         public float LoadingProgress { get; set; }
@@ -2442,6 +2453,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             RuntimeInput input,
             double deltaSeconds,
             string controlId,
+            string controlName,
             string guiEventName,
             float loadingProgress,
             string loadingMessage,
@@ -2453,6 +2465,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Event = eventName,
                 DeltaSeconds = deltaSeconds,
                 ControlId = controlId,
+                ControlName = controlName,
                 GuiEventName = guiEventName,
                 LoadingProgress = loadingProgress,
                 LoadingMessage = loadingMessage,
