@@ -179,6 +179,15 @@ Vector3 Vector3_Transform_Matrix4x4(Vector3 position, Matrix4x4 matrix) {
                            (position.Z * matrix.M33) + matrix.M43);
 }
 
+Vector3 Vector3_TransformNormal_Matrix4x4(Vector3 normal, Matrix4x4 matrix) {
+  return CreateVector3((normal.X * matrix.M11) + (normal.Y * matrix.M21) +
+                           (normal.Z * matrix.M31),
+                       (normal.X * matrix.M12) + (normal.Y * matrix.M22) +
+                           (normal.Z * matrix.M32),
+                       (normal.X * matrix.M13) + (normal.Y * matrix.M23) +
+                           (normal.Z * matrix.M33));
+}
+
 Quaternion Quaternion_Slerp(Quaternion quaternion1, Quaternion quaternion2,
                             float amount) {
 
@@ -400,14 +409,14 @@ Run(global const Vector3 *positions, global const Vector3 *normals,
         Vector3_Multiply_Float(Vector3_Transform_Matrix4x4(cr1, m1), w1);
 
     updatePositions[i] = Vector3_Add_Vector3(Vector3_Add_Vector3(v1, v2), v3);
-    updateNormals[i] = Vector3_Transform_Matrix4x4(normal, rot_mat);
+    updateNormals[i] = Vector3_Normalize(Vector3_TransformNormal_Matrix4x4(normal, rot_mat));
   }
 
   if (vtxInfo.SkinningType != SDEF) {
     updatePositions[i] =
         Vector3_Transform_Matrix4x4(Vector3_Add_Vector3(position, morphPos), m);
     updateNormals[i] =
-        Vector3_Normalize(Vector3_Transform_Matrix4x4(normal, m));
+        Vector3_Normalize(Vector3_TransformNormal_Matrix4x4(normal, m));
   }
 
   updateUVs[i] = Vector2_Add_Vector2(uv, CreateVector2(morphUV.X, morphUV.Y));

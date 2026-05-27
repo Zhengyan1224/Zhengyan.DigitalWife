@@ -1439,7 +1439,7 @@ public unsafe class PmxModel : MMDModel
                         Matrix4x4 rot_mat = Matrix4x4.CreateFromQuaternion(Quaternion.Slerp(q0, q1, w1));
 
                         *updatePosition = Vector3.Transform(pos - center, rot_mat) + Vector3.Transform(cr0, m0) * w0 + Vector3.Transform(cr1, m1) * w1;
-                        *updateNormal = Vector3.Transform(*normal, rot_mat);
+                        *updateNormal = Vector3.Normalize(Vector3.TransformNormal(*normal, rot_mat));
                     }
                     break;
                 case SkinningType.DualQuaternion:
@@ -1450,7 +1450,7 @@ public unsafe class PmxModel : MMDModel
             if (vtxInfo->SkinningType != SkinningType.SDEF)
             {
                 *updatePosition = Vector3.Transform(*position + *morphPos, m);
-                *updateNormal = Vector3.Normalize(Vector3.Transform(*normal, m));
+                *updateNormal = Vector3.Normalize(Vector3.TransformNormal(*normal, m));
             }
 
             *updateUV = *uv + new Vector2((*morphUV).X, (*morphUV).Y);
