@@ -284,4 +284,4 @@ GUI 控件支持：
 - C#：`Text`、`Visible`、`WordWrap`、`Checked`、`SelectedIndex`、`SelectedItem`、`SetPosition`、`SetSize`、`SetWordWrap`、`SetChecked`、`SetItems`、`SetSelectedIndex`、`Show`、`Hide`
 - Python：`set_text`、`set_visible`、`set_position`、`set_size`、`set_word_wrap`、`set_checked`、`set_items`、`set_selected_index`、`show`、`hide`
 
-`audio` 支持 `Play`、`Pause`、`Stop`、`SetVolume`。
+`audio` 支持 `Play`、`Pause`、`Stop`、`SetVolume`、`SetLoop`。Python 对应 `play`、`pause`、`stop`、`set_volume`、`set_loop`。

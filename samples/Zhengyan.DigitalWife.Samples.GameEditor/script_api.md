@@ -776,6 +776,8 @@ def update(entity, scene, input, audio, delta_seconds):
 | `Audio.Pause(nameOrPath)` | `audio.pause(name)` | 暂停音频。 |
 | `Audio.Stop(nameOrPath)` | `audio.stop(name)` | 停止音频。 |
 | `Audio.SetVolume(nameOrPath, volume)` | `audio.set_volume(name, volume)` | 设置音量，通常 `0.0` 到 `1.0`。 |
+| `Audio.SetLoop(nameOrPath, loop)` | `audio.set_loop(name, loop)` | 设置运行时是否循环播放。 |
+| `Audio.GetLoop(nameOrPath)` | 无 | 读取当前运行时循环状态，找不到音频时返回 `false`。 |
 
 播放背景音乐：
 
@@ -783,6 +785,7 @@ def update(entity, scene, input, audio, delta_seconds):
 if (IsStart)
 {
     Audio.SetVolume("BGM", 0.7f);
+    Audio.SetLoop("BGM", true);
     Audio.Play("BGM");
 }
 ```
@@ -790,6 +793,7 @@ if (IsStart)
 ```python
 def start(entity, scene, input, audio):
     audio.set_volume("BGM", 0.7)
+    audio.set_loop("BGM", True)
     audio.play("BGM")
 ```
 
@@ -843,10 +847,32 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
         audio.play("ClickSfx")
 ```
 
+运行时切换循环：
+
+```csharp
+if (IsGuiEvent && GuiControlName == "Loop BGM" && GuiEventName == "changed")
+{
+    RuntimeGuiControl? checkbox = Scene.GetGuiControl(GuiControlId);
+    if (checkbox is not null)
+    {
+        Audio.SetLoop("BGM", checkbox.Checked);
+    }
+}
+```
+
+```python
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if control_name == "Loop BGM" and event_name == "changed":
+        checkbox = scene.get_gui_control(control_id)
+        if checkbox is not None:
+            audio.set_loop("BGM", checkbox.checked)
+```
+
 当前音频脚本边界：
 
 - 脚本不能动态加载未在项目里登记的音频源。
-- 脚本不能修改 `Loop` 和 `PlayOnStart`；这些在编辑器里配置。
+- 脚本可以修改当前运行时 `Loop` 状态；它不会回写到 `game.project.json`。
+- 脚本不能修改 `PlayOnStart`；这是场景加载时行为，在编辑器里配置。
 - `Play(name)` 找不到名称时会静默忽略，不会抛异常。
 
 ## Scene API

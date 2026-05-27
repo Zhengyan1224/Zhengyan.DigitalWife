@@ -1600,6 +1600,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_volume(self, name, volume):
                        self._commands.append({"target": "audio", "action": "set_volume", "name": name, "volume": volume})
 
+                   def set_loop(self, name, loop):
+                       self._commands.append({"target": "audio", "action": "set_loop", "name": name, "flag": bool(loop)})
+
                for raw in sys.stdin:
                    try:
                        ctx = json.loads(raw)
@@ -2052,6 +2055,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_volume" when command.Volume.HasValue:
                 audio.SetVolume(command.Name, (float)command.Volume.Value);
+                break;
+            case "set_loop" when command.Flag.HasValue:
+                audio.SetLoop(command.Name, command.Flag.Value);
                 break;
         }
     }

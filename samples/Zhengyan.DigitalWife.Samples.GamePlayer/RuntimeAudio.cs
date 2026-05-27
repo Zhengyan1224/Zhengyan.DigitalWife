@@ -42,4 +42,17 @@ public sealed class RuntimeAudio
             source.Volume = volume;
         }
     }
+
+    public void SetLoop(string nameOrPath, bool loop)
+    {
+        if (_sources.TryGetValue(nameOrPath, out AudioSource? source))
+        {
+            source.Looping = loop;
+        }
+    }
+
+    public bool GetLoop(string nameOrPath)
+    {
+        return _sources.TryGetValue(nameOrPath, out AudioSource? source) && source.Looping;
+    }
 }
