@@ -3,4 +3,5 @@ obj/
 models/
 artifacts/
 temp/
+.codex-dotnet-home/
 appsettings.Local.json

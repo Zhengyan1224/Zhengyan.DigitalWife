@@ -14,6 +14,8 @@ internal sealed class RuntimeGuiOverlayComponent(
     Func<string, string> resolvePath,
     Action<GuiControlSettings, string> dispatchEvent) : DrawableGameComponent
 {
+    private const float BaseFontSize = 18.0f;
+
     private readonly Func<IReadOnlyList<GuiControlSettings>> _getControls = getControls;
     private readonly Func<IReadOnlyList<SpriteSettings>> _getSprites = getSprites;
     private readonly Func<string, string> _resolvePath = resolvePath;
@@ -348,7 +350,7 @@ internal sealed class RuntimeGuiOverlayComponent(
     private static float ResolveGuiFontScale(GuiControlStyleSettings style)
     {
         float fontSize = Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
-        return fontSize / Math.Max(ImGui.GetFontSize(), 1.0f);
+        return fontSize / BaseFontSize;
     }
 
     private static string[] BuildTextLines(string text, float maxWidth, bool wordWrap)
@@ -405,7 +407,7 @@ internal sealed class RuntimeGuiOverlayComponent(
     {
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.Clear();
-        io.Fonts.AddFontFromFileTTF(fontPath, 18.0f, default, io.Fonts.GetGlyphRangesChineseFull());
+        io.Fonts.AddFontFromFileTTF(fontPath, BaseFontSize, default, io.Fonts.GetGlyphRangesChineseFull());
     }
 
 }
