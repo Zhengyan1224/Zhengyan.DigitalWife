@@ -1244,20 +1244,16 @@ public unsafe class PmxModel : MMDModel
 
     private void BeginMorphMaterial()
     {
-        MaterialFactor initMul = MaterialFactor.InitMul();
-
-        MaterialFactor initAdd = MaterialFactor.InitAdd();
-
         for (int i = 0; i < _materials.Count; i++)
         {
-            mulMaterialFactors[i] = initMul;
+            mulMaterialFactors[i] = MaterialFactor.InitMul();
             mulMaterialFactors[i].Diffuse = initMaterials[i].Diffuse;
             mulMaterialFactors[i].Alpha = initMaterials[i].Alpha;
             mulMaterialFactors[i].Specular = initMaterials[i].Specular;
             mulMaterialFactors[i].SpecularPower = initMaterials[i].SpecularPower;
             mulMaterialFactors[i].Ambient = initMaterials[i].Ambient;
 
-            addMaterialFactors[i] = initAdd;
+            addMaterialFactors[i] = MaterialFactor.InitAdd();
         }
     }
 
@@ -1353,7 +1349,7 @@ public unsafe class PmxModel : MMDModel
                         mulMaterialFactors[mi].Mul(new MaterialFactor(matMorph), weight);
                         break;
                     case PmxOpType.Add:
-                        mulMaterialFactors[mi].Add(new MaterialFactor(matMorph), weight);
+                        addMaterialFactors[mi].Add(new MaterialFactor(matMorph), weight);
                         break;
                     default: break;
                 }
@@ -1368,7 +1364,7 @@ public unsafe class PmxModel : MMDModel
                             mulMaterialFactors[i].Mul(new MaterialFactor(matMorph), weight);
                             break;
                         case PmxOpType.Add:
-                            mulMaterialFactors[i].Add(new MaterialFactor(matMorph), weight);
+                            addMaterialFactors[i].Add(new MaterialFactor(matMorph), weight);
                             break;
                         default: break;
                     }
