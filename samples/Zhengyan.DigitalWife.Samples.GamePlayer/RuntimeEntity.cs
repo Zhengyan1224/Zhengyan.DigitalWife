@@ -346,6 +346,159 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool EnableWaterInteraction
+    {
+        get => string.Equals(_definition.Type, "particle_system", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Particle.EnableWaterInteraction
+            : false;
+        set
+        {
+            if (string.Equals(_definition.Type, "particle_system", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Particle.EnableWaterInteraction = value;
+            }
+        }
+    }
+
+    public bool KillOnWaterContact
+    {
+        get => string.Equals(_definition.Type, "particle_system", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Particle.KillOnWaterContact
+            : false;
+        set
+        {
+            if (string.Equals(_definition.Type, "particle_system", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Particle.KillOnWaterContact = value;
+            }
+        }
+    }
+
+    public bool WaterInteractionEnabled
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            && _definition.Water.EnableInteraction;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.EnableInteraction = value;
+            }
+        }
+    }
+
+    public float WaterInteractionRadius
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.InteractionRadius
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.InteractionRadius = Math.Max(0.001f, value);
+            }
+        }
+    }
+
+    public float WaterInteractionStrength
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.InteractionStrength
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.InteractionStrength = Math.Clamp(value, 0.0f, 4.0f);
+            }
+        }
+    }
+
+    public float ParticleRippleMinIntervalSeconds
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.ParticleRippleMinIntervalSeconds
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.ParticleRippleMinIntervalSeconds = Math.Max(0.0f, value);
+            }
+        }
+    }
+
+    public float ParticleRippleMergeDistance
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.ParticleRippleMergeDistance
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.ParticleRippleMergeDistance = Math.Max(0.0f, value);
+            }
+        }
+    }
+
+    public float RippleLifetimeSeconds
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.RippleLifetimeSeconds
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.RippleLifetimeSeconds = Math.Max(0.05f, value);
+            }
+        }
+    }
+
+    public float RippleWaveSpeed
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.RippleWaveSpeed
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.RippleWaveSpeed = value;
+            }
+        }
+    }
+
+    public float RippleFrequency
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.RippleFrequency
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.RippleFrequency = Math.Max(0.0f, value);
+            }
+        }
+    }
+
+    public float RippleNormalStrength
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.RippleNormalStrength
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.RippleNormalStrength = Math.Max(0.0f, value);
+            }
+        }
+    }
+
     public bool DrawShadowInMainPass
     {
         get => _model?.DrawShadowInMainPass ?? _definition.DrawShadowInMainPass;

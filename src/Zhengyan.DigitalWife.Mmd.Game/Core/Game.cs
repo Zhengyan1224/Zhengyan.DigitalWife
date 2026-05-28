@@ -129,6 +129,8 @@ public abstract class Game : IDisposable
 
     protected virtual void Update(GameTime gameTime) { }
 
+    protected virtual void LateUpdate(GameTime gameTime) { }
+
     protected virtual void Draw(GameTime gameTime) { }
 
     public virtual bool ShouldDrawComponent(DrawableGameComponent component) => true;
@@ -221,6 +223,8 @@ public abstract class Game : IDisposable
                 component.Update(gameTime);
             }
         }
+
+        LateUpdate(gameTime);
 
         _frameCount++;
     }

@@ -87,7 +87,7 @@ DemoGame/
 - `empty_object`：空对象，不渲染，但支持 Transform、脚本和多个碰撞体。
 - `textured_plane`：3D 矩形面实体，使用图片作为纹理，可作为广告牌、提示牌、特效面片或远景装饰。开启 `Billboard` 后会始终面向相机。
 - `particle_system`：粒子系统实体。
-- `water_surface`：水面实体，可开启 `Enable water interaction`，当其它实体的碰撞体接触水面范围时会产生轻量级波纹。
+- `water_surface`：水面实体，可开启 `Enable water interaction`，当其它实体的碰撞体或开启了粒子水体交互的粒子接触水面范围时会产生轻量级波纹。
 
 ## 多碰撞体
 
@@ -140,7 +140,30 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 
 `textured_plane` 是场景中的 3D 对象，不是屏幕空间 GUI。它支持 Transform、脚本和多个碰撞体，纹理路径支持工程相对路径、绝对路径、`project:` 和 `app:`。如果勾选 `Billboard`，矩形面会在渲染时自动朝向当前相机。
 
-水面交互依赖实体的 `Colliders[]`。开启水面实体的 `Enable water interaction` 后，`GameEditor` 和 `GamePlayer` 每帧会用碰撞体的近似包围范围检测是否接触水面区域；命中时按约 0.35 秒节流产生波纹。这个效果是视觉交互，不是完整流体模拟，也不会产生浮力或真实物理反馈。
+水面交互分两类：
+
+- 普通实体：依赖 `Colliders[]`，按碰撞体近似包围范围检测是否接触水面区域。
+- 粒子系统：开启 `Enable water interaction` 后，按每个活跃粒子的当前位置和当前显示尺寸做近似球检测；如果 `Kill particle on water contact` 开启，入水粒子会立即消失，否则会继续穿过水面。
+
+水面实体自己的 `Particle ripple min interval` 和 `Particle ripple merge distance` 用来控制粒子触水时的波纹密度，避免雨、瀑布这类高密度粒子把水面刷满。这个效果是视觉交互，不是完整流体模拟，也不会产生浮力或真实物理反馈。
+
+推荐参数模板：
+
+- 雨天
+  - 粒子：`Enable water interaction = true`，`Kill particle on water contact = true`
+  - 水面：`Particle ripple min interval = 0.05 - 0.12`，`Particle ripple merge distance = 0.3 - 0.6`
+- 瀑布
+  - 粒子：`Enable water interaction = true`，`Kill particle on water contact = false` 或 `true`
+  - 水面：`Particle ripple min interval = 0.02 - 0.08`，`Particle ripple merge distance = 0.6 - 1.2`
+- 喷泉 / 点缀水花
+  - 粒子：`Enable water interaction = true`，`Kill particle on water contact = false`
+  - 水面：`Particle ripple min interval = 0.08 - 0.2`，`Particle ripple merge distance = 0.2 - 0.5`
+
+经验上，`Particle ripple min interval` 越小，单位时间波纹越密；`Particle ripple merge distance` 越大，相邻粒子越容易被合并成同一个波纹区域。
+
+`GameEditor` 的水面 Inspector 里提供了 `Rain Preset`、`Waterfall Preset`、`Fountain Preset` 三个快捷按钮，会直接填入一组适中的粒子波纹参数，便于快速起步再微调。
+
+粒子 Inspector 里也提供了 `Rain Contact`、`Waterfall Contact`、`Fountain Contact` 三个快捷按钮，用来一键设置粒子系统自己的 `Enable water interaction` 和 `Kill particle on water contact`，适合和水面的预设按钮配套使用。
 
 天空盒使用等距柱状全景图（equirectangular panorama）作为 2D 纹理。场景 Inspector 的 `Skybox` 可设置是否启用、纹理路径、曝光和颜色 Tint。内置示例图来自 Poly Haven 的 CC0 资源 `autumn_field_puresky`，已放在 `assets/mmd/engine/Resources/Skybox/autumn_field_puresky.jpg`，构建时复制到 `Resources/Skybox/`。
 

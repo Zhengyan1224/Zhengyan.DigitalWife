@@ -89,6 +89,8 @@ Resources/Fonts/NotoSansCJKsc-Regular.otf
 
 - `Snow.dds`
 - `Sakura.dds`
+- `Snow.png`
+- `Sakura.png`
 - `Waterfall.png`
 - `Stream.png`
 - `Fire.png`
@@ -99,6 +101,16 @@ Resources/Fonts/NotoSansCJKsc-Regular.otf
 - `ParticleSystemPresets`
 
 如果这些贴图缺失，部分粒子预设仍然可以回退到程序化纹理，但视觉效果会变差。
+
+其中：
+
+- `Snow.png`
+- `Sakura.png`
+- `Fire.png`
+- `Stream.png`
+- `Waterfall.png`
+
+当前版本基于 Kenney `Particle Pack` 的 CC0 透明粒子素材重新整理和适配，保留了现有文件名和尺寸，以便直接兼容 `ParticleSystemPresets.Fire/Stream/Waterfall`。
 
 ### `SpeechLipSyncDictionaries/`
 

@@ -6,6 +6,7 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Components;
 
 public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 {
+    private const int MaxRipples = 24;
     private static readonly string[] DefaultNormalMapFileNames =
     [
         "Ocean0_N.dds",
@@ -44,14 +45,15 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private int _uniformNormalTex2 = -1;
     private int _uniformSkyTex = -1;
     private int _uniformSkyReflectionStrength = -1;
-    private int _uniformRippleCenter = -1;
-    private int _uniformRippleTime = -1;
-    private int _uniformRippleRadius = -1;
-    private int _uniformRippleStrength = -1;
-    private Vector3 _rippleCenter;
-    private float _rippleAge = 999.0f;
-    private float _rippleRadius = 0.8f;
-    private float _rippleStrength = 0.0f;
+    private int _uniformRippleCenters = -1;
+    private int _uniformRippleTimes = -1;
+    private int _uniformRippleRadii = -1;
+    private int _uniformRippleStrengths = -1;
+    private int _uniformRippleLifetime = -1;
+    private int _uniformRippleWaveSpeed = -1;
+    private int _uniformRippleFrequency = -1;
+    private int _uniformRippleNormalStrength = -1;
+    private readonly RippleState[] _ripples = new RippleState[MaxRipples];
 
     public WaterSurfaceComponent(
         OrbitCamera camera,
@@ -115,12 +117,70 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         set => _skyReflectionStrength = Math.Clamp(value, 0.0f, 1.0f);
     }
 
+    public float RippleLifetimeSeconds { get; set; } = 1.8f;
+
+    public float RippleWaveSpeed { get; set; } = 18.0f;
+
+    public float RippleFrequency { get; set; } = 24.0f;
+
+    public float RippleNormalStrength { get; set; } = 0.30f;
+
     public void AddRipple(Vector3 worldPosition, float radius = 0.8f, float strength = 0.8f)
     {
-        _rippleCenter = worldPosition;
-        _rippleAge = 0.0f;
-        _rippleRadius = MathF.Max(0.001f, radius);
-        _rippleStrength = Math.Clamp(strength, 0.0f, 4.0f);
+        float mergeDistance = MathF.Max(radius * 1.25f, 0.45f);
+        int nearestIndex = -1;
+        float nearestDistanceSquared = float.MaxValue;
+        for (int i = 0; i < _ripples.Length; i++)
+        {
+            if (!_ripples[i].Active)
+            {
+                continue;
+            }
+
+            float distanceSquared = Vector3.DistanceSquared(_ripples[i].Center, worldPosition);
+            if (distanceSquared <= mergeDistance * mergeDistance && distanceSquared < nearestDistanceSquared)
+            {
+                nearestDistanceSquared = distanceSquared;
+                nearestIndex = i;
+            }
+        }
+
+        if (nearestIndex >= 0)
+        {
+            ref RippleState ripple = ref _ripples[nearestIndex];
+            ripple.Center = Vector3.Lerp(ripple.Center, worldPosition, 0.5f);
+            ripple.Age = 0.0f;
+            ripple.Radius = MathF.Max(ripple.Radius, MathF.Max(0.001f, radius));
+            ripple.Strength = Math.Clamp(MathF.Max(ripple.Strength * 0.8f, strength), 0.0f, 4.0f);
+            return;
+        }
+
+        int targetIndex = 0;
+        float oldestAge = float.MinValue;
+        for (int i = 0; i < _ripples.Length; i++)
+        {
+            if (!_ripples[i].Active)
+            {
+                targetIndex = i;
+                oldestAge = float.MaxValue;
+                break;
+            }
+
+            if (_ripples[i].Age > oldestAge)
+            {
+                oldestAge = _ripples[i].Age;
+                targetIndex = i;
+            }
+        }
+
+        _ripples[targetIndex] = new RippleState
+        {
+            Active = true,
+            Center = worldPosition,
+            Age = 0.0f,
+            Radius = MathF.Max(0.001f, radius),
+            Strength = Math.Clamp(strength, 0.0f, 4.0f)
+        };
     }
 
     protected override void Initialize()
@@ -167,10 +227,14 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _uniformNormalTex2 = gl.GetUniformLocation(_program, "u_NormalTex2");
         _uniformSkyTex = gl.GetUniformLocation(_program, "u_SkyTex");
         _uniformSkyReflectionStrength = gl.GetUniformLocation(_program, "u_SkyReflectionStrength");
-        _uniformRippleCenter = gl.GetUniformLocation(_program, "u_RippleCenter");
-        _uniformRippleTime = gl.GetUniformLocation(_program, "u_RippleTime");
-        _uniformRippleRadius = gl.GetUniformLocation(_program, "u_RippleRadius");
-        _uniformRippleStrength = gl.GetUniformLocation(_program, "u_RippleStrength");
+        _uniformRippleCenters = gl.GetUniformLocation(_program, "u_RippleCenters");
+        _uniformRippleTimes = gl.GetUniformLocation(_program, "u_RippleTimes");
+        _uniformRippleRadii = gl.GetUniformLocation(_program, "u_RippleRadii");
+        _uniformRippleStrengths = gl.GetUniformLocation(_program, "u_RippleStrengths");
+        _uniformRippleLifetime = gl.GetUniformLocation(_program, "u_RippleLifetime");
+        _uniformRippleWaveSpeed = gl.GetUniformLocation(_program, "u_RippleWaveSpeed");
+        _uniformRippleFrequency = gl.GetUniformLocation(_program, "u_RippleFrequency");
+        _uniformRippleNormalStrength = gl.GetUniformLocation(_program, "u_RippleNormalStrength");
 
         _normalMaps = LoadNormalMaps(gl, _normalMapPaths);
         _skyTexture = new Texture2D(gl, GLEnum.Repeat);
@@ -180,7 +244,20 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     public override void Update(GameTime gameTime)
     {
         _elapsedSeconds += (float)gameTime.ElapsedSeconds;
-        _rippleAge += (float)gameTime.ElapsedSeconds;
+        float deltaSeconds = (float)gameTime.ElapsedSeconds;
+        for (int i = 0; i < _ripples.Length; i++)
+        {
+            if (!_ripples[i].Active)
+            {
+                continue;
+            }
+
+            _ripples[i].Age += deltaSeconds;
+            if (_ripples[i].Age > Math.Max(0.05f, RippleLifetimeSeconds) || _ripples[i].Strength <= 0.001f)
+            {
+                _ripples[i].Active = false;
+            }
+        }
     }
 
     public override void Draw(GameTime gameTime)
@@ -221,10 +298,11 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.SetUniform(_uniformNormalTex2, 1);
         gl.SetUniform(_uniformSkyTex, 2);
         gl.SetUniform(_uniformSkyReflectionStrength, _skyReflectionStrength);
-        gl.SetUniform(_uniformRippleCenter, _rippleCenter);
-        gl.SetUniform(_uniformRippleTime, _rippleAge);
-        gl.SetUniform(_uniformRippleRadius, _rippleRadius);
-        gl.SetUniform(_uniformRippleStrength, _rippleStrength);
+        gl.SetUniform(_uniformRippleLifetime, Math.Max(0.05f, RippleLifetimeSeconds));
+        gl.SetUniform(_uniformRippleWaveSpeed, RippleWaveSpeed);
+        gl.SetUniform(_uniformRippleFrequency, RippleFrequency);
+        gl.SetUniform(_uniformRippleNormalStrength, RippleNormalStrength);
+        UploadRipples(gl);
 
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(GLEnum.Texture2D, _normalMaps[nextFrameIndex].Id);
@@ -372,6 +450,45 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         return bundledPath;
     }
 
+    private void UploadRipples(GL gl)
+    {
+        Span<float> centers = stackalloc float[MaxRipples * 3];
+        Span<float> times = stackalloc float[MaxRipples];
+        Span<float> radii = stackalloc float[MaxRipples];
+        Span<float> strengths = stackalloc float[MaxRipples];
+
+        for (int i = 0; i < MaxRipples; i++)
+        {
+            RippleState ripple = _ripples[i];
+            centers[i * 3 + 0] = ripple.Center.X;
+            centers[i * 3 + 1] = ripple.Center.Y;
+            centers[i * 3 + 2] = ripple.Center.Z;
+            times[i] = ripple.Active ? ripple.Age : 999.0f;
+            radii[i] = ripple.Radius;
+            strengths[i] = ripple.Active ? ripple.Strength : 0.0f;
+        }
+
+        fixed (float* centersPtr = centers)
+        fixed (float* timesPtr = times)
+        fixed (float* radiiPtr = radii)
+        fixed (float* strengthsPtr = strengths)
+        {
+            gl.Uniform3(_uniformRippleCenters, MaxRipples, centersPtr);
+            gl.Uniform1(_uniformRippleTimes, MaxRipples, timesPtr);
+            gl.Uniform1(_uniformRippleRadii, MaxRipples, radiiPtr);
+            gl.Uniform1(_uniformRippleStrengths, MaxRipples, strengthsPtr);
+        }
+    }
+
+    private struct RippleState
+    {
+        public bool Active;
+        public Vector3 Center;
+        public float Age;
+        public float Radius;
+        public float Strength;
+    }
+
     private static string? TryResolveBundledResourcePath(params string[] segments)
     {
         return BundledAssetPathResolver.TryResolveFile(segments);
@@ -411,6 +528,8 @@ void main()
 
 precision highp float;
 
+#define MAX_RIPPLES 8
+
 in vec2 vs_Uv;
 in vec3 vs_WorldPos;
 
@@ -424,10 +543,14 @@ uniform float u_Alpha;
 uniform vec3 u_DeepColor;
 uniform vec3 u_ReflectionTint;
 uniform float u_SkyReflectionStrength;
-uniform vec3 u_RippleCenter;
-uniform float u_RippleTime;
-uniform float u_RippleRadius;
-uniform float u_RippleStrength;
+uniform vec3 u_RippleCenters[MAX_RIPPLES];
+uniform float u_RippleTimes[MAX_RIPPLES];
+uniform float u_RippleRadii[MAX_RIPPLES];
+uniform float u_RippleStrengths[MAX_RIPPLES];
+uniform float u_RippleLifetime;
+uniform float u_RippleWaveSpeed;
+uniform float u_RippleFrequency;
+uniform float u_RippleNormalStrength;
 
 out vec4 out_Color;
 
@@ -454,14 +577,20 @@ void main()
     vec3 normal = normalize((((0.5 * normalTexture) + (0.5 * normalTextureDetail)) * 2.0) - 1.0);
     normal = normal.xzy;
 
-    float rippleDistance = distance(vs_WorldPos.xz, u_RippleCenter.xz);
-    float rippleWave = sin((rippleDistance * 24.0) - (u_RippleTime * 18.0));
-    float rippleEnvelope = exp(-u_RippleTime * 1.8) * exp(-pow(rippleDistance / max(u_RippleRadius, 0.001), 2.0));
-    float ripple = rippleWave * rippleEnvelope * u_RippleStrength;
+    float ripple = 0.0;
+    float rippleHighlight = 0.0;
+    for (int i = 0; i < MAX_RIPPLES; i++)
+    {
+        float rippleDistance = distance(vs_WorldPos.xz, u_RippleCenters[i].xz);
+        float rippleWave = sin((rippleDistance * u_RippleFrequency) - (u_RippleTimes[i] * u_RippleWaveSpeed));
+        float rippleEnvelope = exp(-(u_RippleTimes[i] / max(u_RippleLifetime, 0.001)) * 2.4) * exp(-pow(rippleDistance / max(u_RippleRadii[i], 0.001), 2.0));
+        ripple += rippleWave * rippleEnvelope * u_RippleStrengths[i];
+        rippleHighlight += max(rippleWave, 0.0) * rippleEnvelope * u_RippleStrengths[i];
+    }
     normal = normalize(normal + vec3(
-        cos(vs_WorldPos.x * 8.0 + u_RippleTime) * ripple * 0.08,
-        abs(ripple) * 0.10,
-        sin(vs_WorldPos.z * 8.0 + u_RippleTime) * ripple * 0.08));
+        cos(vs_WorldPos.x * 8.0 + u_Time) * ripple * u_RippleNormalStrength,
+        abs(ripple) * (u_RippleNormalStrength * 1.15),
+        sin(vs_WorldPos.z * 8.0 + u_Time) * ripple * u_RippleNormalStrength));
 
     vec3 incident = normalize(vs_WorldPos - u_EyePos);
     vec3 reflected = normalize(reflect(incident, normal));
@@ -472,6 +601,8 @@ void main()
     vec3 skyColor = texture(u_SkyTex, DirectionToEquirectUv(reflected)).rgb;
     vec3 reflection = mix(gradientReflection, skyColor, clamp(u_SkyReflectionStrength, 0.0, 1.0));
     vec3 color = mix(u_DeepColor, reflection, clamp(0.35 + fresnel * 0.65, 0.0, 1.0));
+    color += vec3(0.22, 0.25, 0.28) * clamp(rippleHighlight, 0.0, 1.0);
+    color = clamp(color, 0.0, 1.0);
 
     out_Color = vec4(color, u_Alpha);
 }

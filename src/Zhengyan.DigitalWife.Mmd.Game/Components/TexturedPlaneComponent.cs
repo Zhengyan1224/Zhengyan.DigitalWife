@@ -18,6 +18,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformProjection = -1;
     private int _uniformTexture = -1;
     private int _uniformTint = -1;
+    private int _uniformFlipV = -1;
 
     public TexturedPlaneComponent(OrbitCamera camera, string texturePath)
     {
@@ -130,6 +131,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _uniformProjection = gl.GetUniformLocation(_program, "u_Projection");
         _uniformTexture = gl.GetUniformLocation(_program, "u_Texture");
         _uniformTint = gl.GetUniformLocation(_program, "u_Tint");
+        _uniformFlipV = gl.GetUniformLocation(_program, "u_FlipV");
         ReloadTexture(gl);
     }
 
@@ -154,6 +156,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.SetUniform(_uniformProjection, _camera.Projection);
         gl.SetUniform(_uniformTexture, 0);
         gl.SetUniform(_uniformTint, Tint);
+        gl.SetUniform(_uniformFlipV, IsRuntimeTextureReference(_texturePath) ? 1 : 0);
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(GLEnum.Texture2D, ResolveTextureId());
         gl.DrawArrays(GLEnum.Triangles, 0, 6);
@@ -248,12 +251,19 @@ in vec2 vs_Uv;
 
 uniform sampler2D u_Texture;
 uniform vec4 u_Tint;
+uniform int u_FlipV;
 
 out vec4 out_Color;
 
 void main()
 {
-    vec4 color = texture(u_Texture, vs_Uv) * u_Tint;
+    vec2 uv = vs_Uv;
+    if (u_FlipV != 0)
+    {
+        uv.y = 1.0 - uv.y;
+    }
+
+    vec4 color = texture(u_Texture, uv) * u_Tint;
     if (color.a <= 0.001)
     {
         discard;

@@ -24,6 +24,8 @@ public enum ParticleTexturePreset
     Flame = 2
 }
 
+public readonly record struct ParticleCollisionSample(int Index, Vector3 Position, float Radius);
+
 public sealed class ParticleSystemSettings
 {
     public string Name { get; set; } = "Particles";
@@ -154,53 +156,63 @@ public static class ParticleSystemPresets
         };
     }
 
-    public static ParticleSystemSettings Snow(string? texturePath = null)
+    public static ParticleSystemSettings Snow(string? texturePath = "Snow.png")
     {
         return new ParticleSystemSettings
         {
             Name = "Snow",
-            ParticleCount = 520,
-            SpawnBoxHalfExtents = new Vector3(20.0f, 4.0f, 20.0f),
-            BaseVelocity = new Vector3(-0.2f, -1.6f, -0.1f),
-            VelocityJitter = new Vector3(0.8f, 0.5f, 0.8f),
-            Acceleration = new Vector3(0.0f, -0.08f, 0.0f),
-            MinLifetime = 5.0f,
-            MaxLifetime = 9.0f,
-            MinSize = 0.18f,
-            MaxSize = 0.38f,
-            MinRotationSpeedRadians = -0.6f,
-            MaxRotationSpeedRadians = 0.6f,
-            StartColor = new Vector4(0.95f, 0.97f, 1.0f, 0.85f),
-            EndColor = new Vector4(0.95f, 0.97f, 1.0f, 0.3f),
+            ParticleCount = 460,
+            SpawnBoxHalfExtents = new Vector3(18.0f, 5.0f, 18.0f),
+            BaseVelocity = new Vector3(-0.12f, -1.05f, -0.06f),
+            VelocityJitter = new Vector3(0.55f, 0.30f, 0.55f),
+            Acceleration = new Vector3(0.0f, -0.03f, 0.0f),
+            MinLifetime = 7.5f,
+            MaxLifetime = 12.0f,
+            MinSize = 0.10f,
+            MaxSize = 0.22f,
+            StartSizeScale = 0.85f,
+            EndSizeScale = 1.15f,
+            MinRotationSpeedRadians = -0.35f,
+            MaxRotationSpeedRadians = 0.35f,
+            StartColor = new Vector4(0.96f, 0.98f, 1.0f, 0.78f),
+            EndColor = new Vector4(0.92f, 0.96f, 1.0f, 0.18f),
             OrientationMode = ParticleOrientationMode.Billboard,
             BlendMode = ParticleBlendMode.Alpha,
             TexturePreset = ParticleTexturePreset.SoftCircle,
-            TexturePath = texturePath
+            TexturePath = texturePath,
+            UseTextureColor = false,
+            PreventDarkening = true
         };
     }
 
-    public static ParticleSystemSettings Sakura(string? texturePath = "Sakura.dds")
+    public static ParticleSystemSettings Sakura(string? texturePath = "Sakura.png")
     {
         return new ParticleSystemSettings
         {
             Name = "Sakura",
-            ParticleCount = 420,
-            SpawnBoxHalfExtents = new Vector3(20.0f, 4.0f, 20.0f),
-            BaseVelocity = new Vector3(-0.25f, -1.15f, 0.1f),
-            VelocityJitter = new Vector3(0.75f, 0.4f, 0.75f),
-            Acceleration = new Vector3(0.0f, -0.1f, 0.0f),
-            MinLifetime = 6.0f,
-            MaxLifetime = 10.0f,
-            MinSize = 0.16f,
-            MaxSize = 0.34f,
-            MinRotationSpeedRadians = -2.5f,
-            MaxRotationSpeedRadians = 2.5f,
-            StartColor = new Vector4(1.0f, 0.88f, 0.94f, 0.88f),
-            EndColor = new Vector4(1.0f, 0.72f, 0.84f, 0.22f),
+            ParticleCount = 360,
+            SpawnBoxHalfExtents = new Vector3(18.0f, 4.5f, 18.0f),
+            BaseVelocity = new Vector3(-0.18f, -0.92f, 0.08f),
+            VelocityJitter = new Vector3(0.62f, 0.34f, 0.62f),
+            Acceleration = new Vector3(0.0f, -0.06f, 0.0f),
+            MinLifetime = 7.0f,
+            MaxLifetime = 11.5f,
+            MinSize = 0.14f,
+            MaxSize = 0.26f,
+            StartSizeScale = 0.90f,
+            EndSizeScale = 1.18f,
+            WidthScale = 1.25f,
+            HeightScale = 0.72f,
+            MinRotationSpeedRadians = -3.1f,
+            MaxRotationSpeedRadians = 3.1f,
+            StartColor = new Vector4(1.0f, 0.90f, 0.95f, 0.82f),
+            EndColor = new Vector4(1.0f, 0.76f, 0.86f, 0.16f),
             OrientationMode = ParticleOrientationMode.Billboard,
             BlendMode = ParticleBlendMode.Alpha,
             TexturePreset = ParticleTexturePreset.SoftCircle,
-            TexturePath = texturePath
+            TexturePath = texturePath,
+            UseTextureColor = false,
+            PreventDarkening = true
         };
     }
 
@@ -384,6 +396,44 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     {
         get => _runtimeTextureProvider;
         set => _runtimeTextureProvider = value;
+    }
+
+    public IEnumerable<ParticleCollisionSample> GetCollisionSamples()
+    {
+        for (int i = 0; i < _particles.Length; i++)
+        {
+            ref readonly ParticleState particle = ref _particles[i];
+            if (particle.Age >= particle.Lifetime || particle.Lifetime <= 0.0f)
+            {
+                continue;
+            }
+
+            float lifeT = Math.Clamp(particle.Age / particle.Lifetime, 0.0f, 1.0f);
+            float sizeScale = Lerp(_settings.StartSizeScale, _settings.EndSizeScale, lifeT);
+            float width = particle.Size * sizeScale * _settings.WidthScale;
+            float height = particle.Size * sizeScale * _settings.HeightScale;
+            float radius = MathF.Max(MathF.Abs(width), MathF.Abs(height)) * 0.5f;
+            if (radius <= 0.0001f)
+            {
+                continue;
+            }
+
+            yield return new ParticleCollisionSample(i, particle.Position, radius);
+        }
+    }
+
+    public void KillParticle(int index)
+    {
+        if ((uint)index >= (uint)_particles.Length)
+        {
+            return;
+        }
+
+        ref ParticleState particle = ref _particles[index];
+        particle.Age = particle.Lifetime;
+        particle.Position = new Vector3(999999.0f, 999999.0f, 999999.0f);
+        particle.Velocity = Vector3.Zero;
+        particle.Size = 0.0f;
     }
 
     public ParticleSystemSettings GetSettingsSnapshot()

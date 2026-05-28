@@ -514,6 +514,18 @@ public sealed class WaterSurfaceSettings
     public float InteractionRadius { get; set; } = 0.8f;
 
     public float InteractionStrength { get; set; } = 0.8f;
+
+    public float ParticleRippleMinIntervalSeconds { get; set; } = 0.12f;
+
+    public float ParticleRippleMergeDistance { get; set; } = 0.6f;
+
+    public float RippleLifetimeSeconds { get; set; } = 2.8f;
+
+    public float RippleWaveSpeed { get; set; } = 12.0f;
+
+    public float RippleFrequency { get; set; } = 16.0f;
+
+    public float RippleNormalStrength { get; set; } = 0.65f;
 }
 
 public sealed class TexturedPlaneSettings
@@ -534,6 +546,10 @@ public sealed class TexturedPlaneSettings
 public sealed class ParticleEntitySettings
 {
     public string Preset { get; set; } = "sakura";
+
+    public bool EnableWaterInteraction { get; set; }
+
+    public bool KillOnWaterContact { get; set; }
 
     public int ParticleCount { get; set; } = 420;
 

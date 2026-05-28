@@ -197,6 +197,59 @@ if (IsUpdate)
 }
 ```
 
+### C# 自定义函数和类型
+
+C# `.csx` 脚本可以像普通 C# 脚本一样，自行声明函数、局部函数、`static class`、`record`、辅助方法，并在脚本内部自己调用。
+
+简单函数示例：
+
+```csharp
+float Clamp01(float value)
+{
+    return Math.Clamp(value, 0.0f, 1.0f);
+}
+
+void SpeakIfNeeded(string text)
+{
+    if (!string.IsNullOrWhiteSpace(text))
+    {
+        Entity.Speak(text);
+    }
+}
+
+if (IsStart)
+{
+    SpeakIfNeeded("你好，我是小雨");
+}
+```
+
+带辅助类型的示例：
+
+```csharp
+static class Helpers
+{
+    public static float Lerp(float a, float b, float t) => a + ((b - a) * t);
+}
+
+static class State
+{
+    public static float Accumulator;
+}
+
+if (IsUpdate)
+{
+    State.Accumulator += (float)DeltaSeconds;
+    float volume = Helpers.Lerp(0.2f, 1.0f, MathF.Abs(MathF.Sin(State.Accumulator)));
+    Audio.SetVolume("BGM", volume);
+}
+```
+
+注意：
+
+- 这些函数和类型只在当前 `.csx` 文件内可见，除非你在脚本里自己 `#load` 其它脚本文件。
+- C# 脚本是按事件重新执行同一个 `.csx` 文件，不会自动保留普通局部变量的值；跨帧状态仍然建议放进 `static` 类型或外部存档。
+- 如果函数内部直接使用 `Entity`、`Scene`、`Input`、`Audio`、`DeltaSeconds` 等全局对象，它们就是当前这次事件执行时的上下文。
+
 ### Python 生命周期
 
 Python 通过函数名派发事件：
@@ -276,6 +329,17 @@ def update(entity, scene, input, audio, delta_seconds):
 | `ResetPhysicsOnMotionLoop` | 无直接快照字段 | PMX 动作循环时是否重置物理。Python 用 `set_reset_physics_on_motion_loop` 修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
 | `EnableShadow` | 无直接快照字段 | PMX 是否参与阴影绘制。Python 用 `set_shadow_enabled` 修改。 |
+| `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_water_interaction_enabled` 修改。 |
+| `KillOnWaterContact` | `kill_on_water_contact` | 粒子系统粒子接触水面后是否立即消失。Python 用 `set_kill_on_water_contact` 修改。 |
+| `WaterInteractionEnabled` | `water_interaction_enabled` | 水面对象是否启用水体交互检测。Python 用 `set_water_interaction_enabled` 修改。 |
+| `WaterInteractionRadius` | `water_interaction_radius` | 水面波纹半径。Python 用 `set_water_interaction_radius` 修改。 |
+| `WaterInteractionStrength` | `water_interaction_strength` | 水面波纹强度。Python 用 `set_water_interaction_strength` 修改。 |
+| `ParticleRippleMinIntervalSeconds` | `particle_ripple_min_interval_seconds` | 同一区域粒子触水的最小波纹间隔。Python 用 `set_particle_ripple_min_interval_seconds` 修改。 |
+| `ParticleRippleMergeDistance` | `particle_ripple_merge_distance` | 粒子触水波纹的空间合并距离。Python 用 `set_particle_ripple_merge_distance` 修改。 |
+| `RippleLifetimeSeconds` | 无 | 水面单个波纹的持续时间。 |
+| `RippleWaveSpeed` | 无 | 水面波纹传播速度。 |
+| `RippleFrequency` | 无 | 水面波纹频率。 |
+| `RippleNormalStrength` | 无 | 水面波纹法线扰动强度。 |
 | `DrawShadowInMainPass` | 无直接快照字段 | PMX 是否在主渲染通道直接绘制地面影子。Python 用 `set_draw_shadow_in_main_pass` 修改。 |
 | `MaterialNames` | `material_names` | PMX 材质名称列表。 |
 | `Colliders` | `colliders` | 碰撞体快照。 |
@@ -296,6 +360,17 @@ Entity.LoopMotion = true;
 Entity.ResetPhysicsOnMotionLoop = true;
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
+Entity.EnableWaterInteraction = true;
+Entity.KillOnWaterContact = true;
+Entity.WaterInteractionEnabled = true;
+Entity.WaterInteractionRadius = 1.0f;
+Entity.WaterInteractionStrength = 0.9f;
+Entity.ParticleRippleMinIntervalSeconds = 0.08f;
+Entity.ParticleRippleMergeDistance = 0.5f;
+Entity.RippleLifetimeSeconds = 2.8f;
+Entity.RippleWaveSpeed = 12.0f;
+Entity.RippleFrequency = 16.0f;
+Entity.RippleNormalStrength = 0.65f;
 Entity.DrawShadowInMainPass = false;
 ```
 
@@ -313,6 +388,13 @@ entity.set_loop_motion(True)
 entity.set_reset_physics_on_motion_loop(True)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
+entity.set_water_interaction_enabled(True)
+entity.set_kill_on_water_contact(True)
+entity.set_water_interaction_enabled(True)
+entity.set_water_interaction_radius(1.0)
+entity.set_water_interaction_strength(0.9)
+entity.set_particle_ripple_min_interval_seconds(0.08)
+entity.set_particle_ripple_merge_distance(0.5)
 entity.set_draw_shadow_in_main_pass(False)
 ```
 
@@ -325,6 +407,17 @@ C# 额外可读/可写属性：
 | `ResetPhysicsOnMotionLoop` | PMX 动作循环时是否重置物理。 |
 | `EnableEdge` | PMX 是否绘制描边。 |
 | `EnableShadow` | PMX 是否参与阴影绘制。 |
+| `EnableWaterInteraction` | 粒子系统是否参与水体交互。 |
+| `KillOnWaterContact` | 粒子系统粒子接触水面后是否立即消失。 |
+| `WaterInteractionEnabled` | 水面对象是否启用水体交互检测。 |
+| `WaterInteractionRadius` | 水面波纹半径。 |
+| `WaterInteractionStrength` | 水面波纹强度。 |
+| `ParticleRippleMinIntervalSeconds` | 同一区域粒子触水的最小波纹间隔。 |
+| `ParticleRippleMergeDistance` | 粒子触水波纹的空间合并距离。 |
+| `RippleLifetimeSeconds` | 水面单个波纹的持续时间。 |
+| `RippleWaveSpeed` | 水面波纹传播速度。 |
+| `RippleFrequency` | 水面波纹频率。 |
+| `RippleNormalStrength` | 水面波纹法线扰动强度。 |
 | `DrawShadowInMainPass` | PMX 是否在主渲染通道直接绘制地面影子。 |
 | `RelationEnabled` | 是否启用 PMX 绑定关系。 |
 | `RelationEntity` | 绑定目标实体名称或 Id。 |
@@ -442,6 +535,9 @@ entity.set_draw_shadow_in_main_pass(False)
 - `IsPlaying` 只对当前实体的可播放能力生效。对 PMX 表示动作播放，对粒子/水面表示系统启停。
 - `PlaybackSpeed` 对 PMX 表示动作倍速，对粒子系统表示模拟速度。
 - `LoopMotion` 和 `ResetPhysicsOnMotionLoop` 仅对 PMX 有意义。
+- `EnableWaterInteraction` 仅对粒子系统有意义。只有粒子实体和水面实体都开启水体交互时，系统才会按每个活跃粒子的位置和当前尺寸做近似球检测，并在接触水面时触发波纹。
+- `KillOnWaterContact` 仅对粒子系统有意义。开启后，接触水面的粒子会在当前帧结束；关闭时粒子会穿过水面继续运动。
+- `WaterInteractionEnabled`、`WaterInteractionRadius`、`WaterInteractionStrength`、`ParticleRippleMinIntervalSeconds`、`ParticleRippleMergeDistance`、`RippleLifetimeSeconds`、`RippleWaveSpeed`、`RippleFrequency`、`RippleNormalStrength` 仅对 `water_surface` 有意义。
 - `EnableEdge`、`EnableShadow`、`DrawShadowInMainPass` 仅对 PMX 有意义。
 - `DrawShadowInMainPass = false` 时，地面影子会交给独立的地面阴影 pass 处理；`true` 时在 PMX 主绘制阶段直接绘制。
 - `PlayMotion` / `PauseMotion` 只改变播放状态，不会清掉已加载动作层。
@@ -449,6 +545,76 @@ entity.set_draw_shadow_in_main_pass(False)
 - `ResetMotion` 会重置动作与姿态；`ResetMotionPhysics` 只重置物理。
 - `SeekMotionFrame` / `SeekMotionTime` 会把当前 PMX 动作层一起跳到指定帧或秒。
 - `PlayMotionLayer` / `PauseMotionLayer` / `SetMotionLayerFrame` / `SetMotionLayerTime` 只作用于指定动作层。
+
+## 水面与粒子触水
+
+水体交互涉及两类实体：
+
+- `particle_system`
+  - `EnableWaterInteraction`
+  - `KillOnWaterContact`
+- `water_surface`
+  - `WaterInteractionEnabled`
+  - `WaterInteractionRadius`
+  - `WaterInteractionStrength`
+  - `ParticleRippleMinIntervalSeconds`
+  - `ParticleRippleMergeDistance`
+  - `RippleLifetimeSeconds`
+  - `RippleWaveSpeed`
+  - `RippleFrequency`
+  - `RippleNormalStrength`
+
+只有粒子系统和水面双方都开启交互时，粒子触水才会出波纹。
+
+C#：
+
+```csharp
+RuntimeEntity? rain = Scene.GetEntity("Rain FX");
+RuntimeEntity? pond = Scene.GetEntity("Pond");
+
+if (rain is not null && pond is not null)
+{
+    rain.EnableWaterInteraction = true;
+    rain.KillOnWaterContact = true;
+
+    pond.WaterInteractionEnabled = true;
+    pond.WaterInteractionRadius = 0.9f;
+    pond.WaterInteractionStrength = 0.75f;
+    pond.ParticleRippleMinIntervalSeconds = 0.08f;
+    pond.ParticleRippleMergeDistance = 0.45f;
+    pond.RippleLifetimeSeconds = 2.8f;
+    pond.RippleWaveSpeed = 12.0f;
+    pond.RippleFrequency = 16.0f;
+    pond.RippleNormalStrength = 0.65f;
+}
+```
+
+Python：
+
+```python
+rain = scene.get_entity("Rain FX")
+pond = scene.get_entity("Pond")
+
+if rain is not None and pond is not None:
+    rain.set_enable_water_interaction(True)
+    rain.set_kill_on_water_contact(True)
+
+    pond.set_water_interaction_enabled(True)
+    pond.set_water_interaction_radius(0.9)
+    pond.set_water_interaction_strength(0.75)
+    pond.set_particle_ripple_min_interval_seconds(0.08)
+    pond.set_particle_ripple_merge_distance(0.45)
+    pond.set_ripple_lifetime_seconds(2.8)
+    pond.set_ripple_wave_speed(12.0)
+    pond.set_ripple_frequency(16.0)
+    pond.set_ripple_normal_strength(0.65)
+```
+
+调参建议：
+
+- 雨：`ParticleRippleMinIntervalSeconds` 取 `0.05 - 0.12`，`ParticleRippleMergeDistance` 取 `0.3 - 0.6`。
+- 瀑布：`ParticleRippleMinIntervalSeconds` 取 `0.02 - 0.08`，`ParticleRippleMergeDistance` 取 `0.6 - 1.2`。
+- 平静水面的小粒子点缀：`KillOnWaterContact = false`，让粒子穿过水面但仍留下波纹。
 
 C# 额外动作查询：
 
@@ -1609,6 +1775,8 @@ API 列表：
 水面交互：
 
 - 在水面对象上开启 `Enable water interaction` 后，GamePlayer 会检测其它实体 Collider 与水面的接触。
+- 对粒子系统，如果 `EnableWaterInteraction` 开启，则会按每个活跃粒子的当前位置和当前显示尺寸做近似球检测，不再依赖实体级 Collider。
+- 水面对象的 `ParticleRippleMinIntervalSeconds` 和 `ParticleRippleMergeDistance` 控制粒子触水波纹的密度与合并粒度。
 - 接触时生成视觉波纹。
 - 该功能不提供浮力、刚体推挤或动力学响应。
 

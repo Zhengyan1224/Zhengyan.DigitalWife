@@ -272,6 +272,8 @@ entity.clear_relation()
 - `SetMotionLayerFrame` / `set_motion_layer_frame`
 - `SetMotionLayerTime` / `set_motion_layer_time`
 - `RemoveMotionLayer` / `remove_motion_layer`
+- `EnableWaterInteraction` / `set_water_interaction_enabled`
+- `KillOnWaterContact` / `set_kill_on_water_contact`
 - `Speak` / `speak`
 - `StopSpeaking` / `stop_speaking`
 - `BindRelation` / `bind_relation`
@@ -285,3 +287,71 @@ GUI 控件支持：
 - Python：`set_text`、`set_visible`、`set_position`、`set_size`、`set_word_wrap`、`set_checked`、`set_items`、`set_selected_index`、`show`、`hide`
 
 `audio` 支持 `Play`、`Pause`、`Stop`、`SetVolume`、`SetLoop`。Python 对应 `play`、`pause`、`stop`、`set_volume`、`set_loop`。
+
+## 粒子触水示例
+
+粒子系统和水面都支持脚本调参。只有双方都开启交互时，粒子触水才会出波纹。
+
+粒子系统侧：
+
+- `EnableWaterInteraction` / `set_water_interaction_enabled`
+- `KillOnWaterContact` / `set_kill_on_water_contact`
+
+水面侧：
+
+- `WaterInteractionEnabled` / `set_water_interaction_enabled`
+- `WaterInteractionRadius` / `set_water_interaction_radius`
+- `WaterInteractionStrength` / `set_water_interaction_strength`
+- `ParticleRippleMinIntervalSeconds` / `set_particle_ripple_min_interval_seconds`
+- `ParticleRippleMergeDistance` / `set_particle_ripple_merge_distance`
+
+C#：
+
+```csharp
+RuntimeEntity? rain = Scene.GetEntity("Rain FX");
+RuntimeEntity? pond = Scene.GetEntity("Pond");
+
+if (rain is not null && pond is not null)
+{
+    rain.EnableWaterInteraction = true;
+    rain.KillOnWaterContact = true;
+
+    pond.WaterInteractionEnabled = true;
+    pond.WaterInteractionRadius = 0.9f;
+    pond.WaterInteractionStrength = 0.75f;
+    pond.ParticleRippleMinIntervalSeconds = 0.08f;
+    pond.ParticleRippleMergeDistance = 0.45f;
+}
+```
+
+Python：
+
+```python
+rain = scene.get_entity("Rain FX")
+pond = scene.get_entity("Pond")
+
+if rain is not None and pond is not None:
+    rain.set_enable_water_interaction(True)
+    rain.set_kill_on_water_contact(True)
+
+    pond.set_water_interaction_enabled(True)
+    pond.set_water_interaction_radius(0.9)
+    pond.set_water_interaction_strength(0.75)
+    pond.set_particle_ripple_min_interval_seconds(0.08)
+    pond.set_particle_ripple_merge_distance(0.45)
+```
+
+配置模板：
+
+- 雨天
+  - `KillOnWaterContact = true`
+  - `ParticleRippleMinIntervalSeconds = 0.05 - 0.12`
+  - `ParticleRippleMergeDistance = 0.3 - 0.6`
+- 瀑布
+  - `KillOnWaterContact = false` 或 `true` 都可，取决于你是否希望粒子穿水
+  - `ParticleRippleMinIntervalSeconds = 0.02 - 0.08`
+  - `ParticleRippleMergeDistance = 0.6 - 1.2`
+- 喷泉 / 点缀水花
+  - `KillOnWaterContact = false`
+  - `ParticleRippleMinIntervalSeconds = 0.08 - 0.2`
+  - `ParticleRippleMergeDistance = 0.2 - 0.5`

@@ -189,8 +189,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            Texture2D? texture = GetSpriteTexture(sprite.Path);
-            if (texture is null)
+            uint textureId = GetSpriteTextureId(sprite.Path);
+            if (textureId == 0)
             {
                 continue;
             }
@@ -198,17 +198,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 min = viewportMin + new Vector2(sprite.X, sprite.Y);
             Vector2 max = min + new Vector2(Math.Max(sprite.Width, 1.0f), Math.Max(sprite.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, texture.Id, min, max, sprite.RotationDegrees, tint);
+            AddSpriteImage(drawList, textureId, min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
 
         drawList.PopClipRect();
     }
 
-    private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint)
+    private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
     {
+        Vector2 uv0 = flipV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
+        Vector2 uv1 = flipV ? new Vector2(1.0f, 0.0f) : Vector2.One;
+        Vector2 uvTopRight = flipV ? Vector2.One : new Vector2(1.0f, 0.0f);
+        Vector2 uvBottomLeft = flipV ? Vector2.Zero : new Vector2(0.0f, 1.0f);
+
         if (MathF.Abs(rotationDegrees) <= 0.001f)
         {
-            drawList.AddImage((nint)textureId, min, max, Vector2.Zero, Vector2.One, tint);
+            drawList.AddImage((nint)textureId, min, max, uv0, uv1, tint);
             return;
         }
 
@@ -227,7 +232,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector2 p2 = Rotate(new Vector2(half.X, -half.Y));
         Vector2 p3 = Rotate(new Vector2(half.X, half.Y));
         Vector2 p4 = Rotate(new Vector2(-half.X, half.Y));
-        drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, Vector2.Zero, new Vector2(1.0f, 0.0f), Vector2.One, new Vector2(0.0f, 1.0f), tint);
+        drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, uv0, uvTopRight, uv1, uvBottomLeft, tint);
     }
 
     private Texture2D? GetSpriteTexture(string path)
@@ -256,6 +261,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         texture.LoadFromFile(fullPath);
         _spriteTextures[fullPath] = texture;
         return texture;
+    }
+
+    private uint GetSpriteTextureId(string path)
+    {
+        if (_editorGame.RenderTextureManager is not null
+            && _editorGame.RenderTextureManager.TryGetTexture(path, out uint textureId))
+        {
+            return textureId;
+        }
+
+        return GetSpriteTexture(path)?.Id ?? 0;
     }
 
     private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)
@@ -2276,11 +2292,50 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         float maxLifetime = particle.MaxLifetime;
         float minSize = particle.MinSize;
         float maxSize = particle.MaxSize;
+        float startSizeScale = particle.StartSizeScale;
+        float endSizeScale = particle.EndSizeScale;
+        float widthScale = particle.WidthScale;
+        float heightScale = particle.HeightScale;
+        float minRotationSpeedRadians = particle.MinRotationSpeedRadians;
+        float maxRotationSpeedRadians = particle.MaxRotationSpeedRadians;
         float simulationSpeed = particle.SimulationSpeed;
         float opacity = particle.Opacity;
+        bool enableWaterInteraction = particle.EnableWaterInteraction;
+        bool killOnWaterContact = particle.KillOnWaterContact;
+        bool randomizeInitialAge = particle.RandomizeInitialAge;
+        bool useTextureColor = particle.UseTextureColor;
+        bool preventDarkening = particle.PreventDarkening;
+        string[] blendModes = ["alpha", "additive"];
+        string[] orientationModes = ["billboard", "velocityAligned"];
+        string[] texturePresets = ["softCircle", "streak", "flame"];
+        int blendModeIndex = Math.Max(0, Array.FindIndex(blendModes, item => string.Equals(item, particle.BlendMode, StringComparison.OrdinalIgnoreCase)));
+        int orientationModeIndex = Math.Max(0, Array.FindIndex(orientationModes, item => string.Equals(item, particle.OrientationMode, StringComparison.OrdinalIgnoreCase)));
+        int texturePresetIndex = Math.Max(0, Array.FindIndex(texturePresets, item => string.Equals(item, particle.TexturePreset, StringComparison.OrdinalIgnoreCase)));
         Vector4 startColor = particle.StartColor.ToVector4();
         Vector4 endColor = particle.EndColor.ToVector4();
         string texturePath = particle.TexturePath ?? string.Empty;
+
+        ImGui.TextUnformatted("Water Contact Presets");
+        if (ImGui.SmallButton("Rain Contact"))
+        {
+            enableWaterInteraction = true;
+            killOnWaterContact = true;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Waterfall Contact"))
+        {
+            enableWaterInteraction = true;
+            killOnWaterContact = true;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Fountain Contact"))
+        {
+            enableWaterInteraction = true;
+            killOnWaterContact = false;
+            changed = true;
+        }
 
         changed |= ImGui.DragInt("Particle count", ref particleCount, 8.0f, 1, 10000);
         changed |= ImGui.DragFloat3("Spawn half extents", ref spawnBox, 0.05f);
@@ -2291,8 +2346,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.DragFloat("Max lifetime", ref maxLifetime, 0.05f, 0.05f, 120.0f);
         changed |= ImGui.DragFloat("Min size", ref minSize, 0.01f, 0.001f, 100.0f);
         changed |= ImGui.DragFloat("Max size", ref maxSize, 0.01f, 0.001f, 100.0f);
+        changed |= ImGui.DragFloat("Start size scale", ref startSizeScale, 0.01f, 0.0f, 10.0f);
+        changed |= ImGui.DragFloat("End size scale", ref endSizeScale, 0.01f, 0.0f, 10.0f);
+        changed |= ImGui.DragFloat("Width scale", ref widthScale, 0.01f, 0.01f, 10.0f);
+        changed |= ImGui.DragFloat("Height scale", ref heightScale, 0.01f, 0.01f, 10.0f);
+        changed |= ImGui.DragFloat("Min rotation speed", ref minRotationSpeedRadians, 0.01f, -20.0f, 20.0f, "%.3f");
+        changed |= ImGui.DragFloat("Max rotation speed", ref maxRotationSpeedRadians, 0.01f, -20.0f, 20.0f, "%.3f");
         changed |= ImGui.SliderFloat("Simulation speed", ref simulationSpeed, 0.0f, 5.0f);
         changed |= ImGui.SliderFloat("Opacity", ref opacity, 0.0f, 1.0f);
+        changed |= ImGui.Checkbox("Enable water interaction", ref enableWaterInteraction);
+        changed |= ImGui.Checkbox("Kill particle on water contact", ref killOnWaterContact);
+        changed |= ImGui.Checkbox("Randomize initial age", ref randomizeInitialAge);
+        changed |= ImGui.Combo("Blend mode", ref blendModeIndex, blendModes, blendModes.Length);
+        changed |= ImGui.Combo("Orientation", ref orientationModeIndex, orientationModes, orientationModes.Length);
+        changed |= ImGui.Combo("Texture preset", ref texturePresetIndex, texturePresets, texturePresets.Length);
+        changed |= ImGui.Checkbox("Use texture color", ref useTextureColor);
+        changed |= ImGui.Checkbox("Prevent darkening", ref preventDarkening);
         changed |= ImGui.ColorEdit4("Start color", ref startColor);
         changed |= ImGui.ColorEdit4("End color", ref endColor);
         changed |= ImGui.InputText("Texture path", ref texturePath, 1024);
@@ -2319,8 +2388,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             particle.MaxLifetime = Math.Max(particle.MinLifetime, maxLifetime);
             particle.MinSize = Math.Max(0.001f, minSize);
             particle.MaxSize = Math.Max(particle.MinSize, maxSize);
+            particle.StartSizeScale = Math.Max(0.0f, startSizeScale);
+            particle.EndSizeScale = Math.Max(0.0f, endSizeScale);
+            particle.WidthScale = Math.Max(0.01f, widthScale);
+            particle.HeightScale = Math.Max(0.01f, heightScale);
+            particle.MinRotationSpeedRadians = minRotationSpeedRadians;
+            particle.MaxRotationSpeedRadians = maxRotationSpeedRadians;
             particle.SimulationSpeed = simulationSpeed;
             particle.Opacity = opacity;
+            particle.EnableWaterInteraction = enableWaterInteraction;
+            particle.KillOnWaterContact = killOnWaterContact;
+            particle.RandomizeInitialAge = randomizeInitialAge;
+            particle.BlendMode = blendModes[Math.Clamp(blendModeIndex, 0, blendModes.Length - 1)];
+            particle.OrientationMode = orientationModes[Math.Clamp(orientationModeIndex, 0, orientationModes.Length - 1)];
+            particle.TexturePreset = texturePresets[Math.Clamp(texturePresetIndex, 0, texturePresets.Length - 1)];
+            particle.UseTextureColor = useTextureColor;
+            particle.PreventDarkening = preventDarkening;
             particle.StartColor = Vector4Dto.FromVector4(startColor);
             particle.EndColor = Vector4Dto.FromVector4(endColor);
             particle.TexturePath = string.IsNullOrWhiteSpace(texturePath) ? null : texturePath.Trim();
@@ -2608,9 +2691,57 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool enableInteraction = water.EnableInteraction;
         float interactionRadius = water.InteractionRadius;
         float interactionStrength = water.InteractionStrength;
+        float particleRippleMinIntervalSeconds = water.ParticleRippleMinIntervalSeconds;
+        float particleRippleMergeDistance = water.ParticleRippleMergeDistance;
+        float rippleLifetimeSeconds = water.RippleLifetimeSeconds;
+        float rippleWaveSpeed = water.RippleWaveSpeed;
+        float rippleFrequency = water.RippleFrequency;
+        float rippleNormalStrength = water.RippleNormalStrength;
+        ImGui.TextUnformatted("Particle Ripple Presets");
+        if (ImGui.SmallButton("Rain Preset"))
+        {
+            enableInteraction = true;
+            particleRippleMinIntervalSeconds = 0.08f;
+            particleRippleMergeDistance = 0.45f;
+            rippleLifetimeSeconds = 2.8f;
+            rippleWaveSpeed = 12.0f;
+            rippleFrequency = 16.0f;
+            rippleNormalStrength = 0.65f;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Waterfall Preset"))
+        {
+            enableInteraction = true;
+            particleRippleMinIntervalSeconds = 0.04f;
+            particleRippleMergeDistance = 0.9f;
+            rippleLifetimeSeconds = 2.1f;
+            rippleWaveSpeed = 14.0f;
+            rippleFrequency = 18.0f;
+            rippleNormalStrength = 0.55f;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Fountain Preset"))
+        {
+            enableInteraction = true;
+            particleRippleMinIntervalSeconds = 0.12f;
+            particleRippleMergeDistance = 0.35f;
+            rippleLifetimeSeconds = 3.2f;
+            rippleWaveSpeed = 10.0f;
+            rippleFrequency = 14.0f;
+            rippleNormalStrength = 0.78f;
+            changed = true;
+        }
         changed |= ImGui.Checkbox("Enable water interaction", ref enableInteraction);
         changed |= ImGui.DragFloat("Interaction radius", ref interactionRadius, 0.01f, 0.001f, 100.0f);
         changed |= ImGui.SliderFloat("Interaction strength", ref interactionStrength, 0.0f, 4.0f);
+        changed |= ImGui.DragFloat("Particle ripple min interval", ref particleRippleMinIntervalSeconds, 0.005f, 0.0f, 10.0f, "%.3f s");
+        changed |= ImGui.DragFloat("Particle ripple merge distance", ref particleRippleMergeDistance, 0.01f, 0.0f, 100.0f);
+        changed |= ImGui.DragFloat("Ripple lifetime", ref rippleLifetimeSeconds, 0.01f, 0.05f, 20.0f, "%.2f s");
+        changed |= ImGui.DragFloat("Ripple wave speed", ref rippleWaveSpeed, 0.1f, 0.0f, 100.0f, "%.2f");
+        changed |= ImGui.DragFloat("Ripple frequency", ref rippleFrequency, 0.1f, 0.0f, 100.0f, "%.2f");
+        changed |= ImGui.DragFloat("Ripple normal strength", ref rippleNormalStrength, 0.01f, 0.0f, 2.0f, "%.2f");
 
         if (changed)
         {
@@ -2624,6 +2755,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.EnableInteraction = enableInteraction;
             water.InteractionRadius = Math.Max(0.001f, interactionRadius);
             water.InteractionStrength = Math.Clamp(interactionStrength, 0.0f, 4.0f);
+            water.ParticleRippleMinIntervalSeconds = Math.Max(0.0f, particleRippleMinIntervalSeconds);
+            water.ParticleRippleMergeDistance = Math.Max(0.0f, particleRippleMergeDistance);
+            water.RippleLifetimeSeconds = Math.Max(0.05f, rippleLifetimeSeconds);
+            water.RippleWaveSpeed = rippleWaveSpeed;
+            water.RippleFrequency = Math.Max(0.0f, rippleFrequency);
+            water.RippleNormalStrength = Math.Max(0.0f, rippleNormalStrength);
             _editorGame.ApplySelectedWaterToRuntime();
         }
     }

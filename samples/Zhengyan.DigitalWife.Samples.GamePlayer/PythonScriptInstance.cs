@@ -299,6 +299,17 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.nodes = data.get("nodes", {})
                        self.colliders = data.get("colliders", [])
                        self.collider = data.get("collider", {})
+                       self.enable_water_interaction = bool(data.get("enableWaterInteraction", False))
+                       self.kill_on_water_contact = bool(data.get("killOnWaterContact", False))
+                       self.water_interaction_enabled = bool(data.get("waterInteractionEnabled", False))
+                       self.water_interaction_radius = float(data.get("waterInteractionRadius", 0.0))
+                       self.water_interaction_strength = float(data.get("waterInteractionStrength", 0.0))
+                       self.particle_ripple_min_interval_seconds = float(data.get("particleRippleMinIntervalSeconds", 0.0))
+                       self.particle_ripple_merge_distance = float(data.get("particleRippleMergeDistance", 0.0))
+                       self.ripple_lifetime_seconds = float(data.get("rippleLifetimeSeconds", 0.0))
+                       self.ripple_wave_speed = float(data.get("rippleWaveSpeed", 0.0))
+                       self.ripple_frequency = float(data.get("rippleFrequency", 0.0))
+                       self.ripple_normal_strength = float(data.get("rippleNormalStrength", 0.0))
                        self._commands = commands
 
                    def set_position(self, x, y, z):
@@ -339,6 +350,42 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_shadow_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_shadow_enabled", "flag": bool(enabled)})
+
+                   def set_water_interaction_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_interaction_enabled", "flag": bool(enabled)})
+
+                   def set_enable_water_interaction(self, enabled):
+                       self.set_water_interaction_enabled(enabled)
+
+                   def set_kill_on_water_contact(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_kill_on_water_contact", "flag": bool(enabled)})
+
+                   def set_water_interaction_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_surface_interaction_enabled", "flag": bool(enabled)})
+
+                   def set_water_interaction_radius(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_interaction_radius", "value": value})
+
+                   def set_water_interaction_strength(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_interaction_strength", "value": value})
+
+                   def set_particle_ripple_min_interval_seconds(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_particle_ripple_min_interval_seconds", "value": value})
+
+                   def set_particle_ripple_merge_distance(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_particle_ripple_merge_distance", "value": value})
+
+                   def set_ripple_lifetime_seconds(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_lifetime_seconds", "value": value})
+
+                   def set_ripple_wave_speed(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_wave_speed", "value": value})
+
+                   def set_ripple_frequency(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_frequency", "value": value})
+
+                   def set_ripple_normal_strength(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_normal_strength", "value": value})
 
                    def set_draw_shadow_in_main_pass(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_draw_shadow_in_main_pass", "flag": bool(enabled)})
@@ -2115,6 +2162,39 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_shadow_enabled" when command.Flag.HasValue:
                 entity.EnableShadow = command.Flag.Value;
                 break;
+            case "set_water_interaction_enabled" when command.Flag.HasValue:
+                entity.EnableWaterInteraction = command.Flag.Value;
+                break;
+            case "set_kill_on_water_contact" when command.Flag.HasValue:
+                entity.KillOnWaterContact = command.Flag.Value;
+                break;
+            case "set_water_surface_interaction_enabled" when command.Flag.HasValue:
+                entity.WaterInteractionEnabled = command.Flag.Value;
+                break;
+            case "set_water_interaction_radius" when command.Value.HasValue:
+                entity.WaterInteractionRadius = (float)command.Value.Value;
+                break;
+            case "set_water_interaction_strength" when command.Value.HasValue:
+                entity.WaterInteractionStrength = (float)command.Value.Value;
+                break;
+            case "set_particle_ripple_min_interval_seconds" when command.Value.HasValue:
+                entity.ParticleRippleMinIntervalSeconds = (float)command.Value.Value;
+                break;
+            case "set_particle_ripple_merge_distance" when command.Value.HasValue:
+                entity.ParticleRippleMergeDistance = (float)command.Value.Value;
+                break;
+            case "set_ripple_lifetime_seconds" when command.Value.HasValue:
+                entity.RippleLifetimeSeconds = (float)command.Value.Value;
+                break;
+            case "set_ripple_wave_speed" when command.Value.HasValue:
+                entity.RippleWaveSpeed = (float)command.Value.Value;
+                break;
+            case "set_ripple_frequency" when command.Value.HasValue:
+                entity.RippleFrequency = (float)command.Value.Value;
+                break;
+            case "set_ripple_normal_strength" when command.Value.HasValue:
+                entity.RippleNormalStrength = (float)command.Value.Value;
+                break;
             case "set_draw_shadow_in_main_pass" when command.Flag.HasValue:
                 entity.DrawShadowInMainPass = command.Flag.Value;
                 break;
@@ -2560,6 +2640,28 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonCollider[] Colliders { get; set; } = [];
 
+        public bool EnableWaterInteraction { get; set; }
+
+        public bool KillOnWaterContact { get; set; }
+
+        public bool WaterInteractionEnabled { get; set; }
+
+        public float WaterInteractionRadius { get; set; }
+
+        public float WaterInteractionStrength { get; set; }
+
+        public float ParticleRippleMinIntervalSeconds { get; set; }
+
+        public float ParticleRippleMergeDistance { get; set; }
+
+        public float RippleLifetimeSeconds { get; set; }
+
+        public float RippleWaveSpeed { get; set; }
+
+        public float RippleFrequency { get; set; }
+
+        public float RippleNormalStrength { get; set; }
+
         public static PythonEntity FromRuntime(RuntimeEntity entity)
         {
             PythonCollider[] colliders = entity.EffectiveColliders.Select(PythonCollider.FromSettings).ToArray();
@@ -2583,7 +2685,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     .Where(item => item.State is not null)
                     .ToDictionary(item => item.Name, item => item.State!, StringComparer.Ordinal),
                 Collider = colliders.FirstOrDefault() ?? new PythonCollider(),
-                Colliders = colliders
+                Colliders = colliders,
+                EnableWaterInteraction = entity.EnableWaterInteraction,
+                KillOnWaterContact = entity.KillOnWaterContact,
+                WaterInteractionEnabled = entity.WaterInteractionEnabled,
+                WaterInteractionRadius = entity.WaterInteractionRadius,
+                WaterInteractionStrength = entity.WaterInteractionStrength,
+                ParticleRippleMinIntervalSeconds = entity.ParticleRippleMinIntervalSeconds,
+                ParticleRippleMergeDistance = entity.ParticleRippleMergeDistance,
+                RippleLifetimeSeconds = entity.RippleLifetimeSeconds,
+                RippleWaveSpeed = entity.RippleWaveSpeed,
+                RippleFrequency = entity.RippleFrequency,
+                RippleNormalStrength = entity.RippleNormalStrength
             };
         }
     }

@@ -74,6 +74,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public SceneRenderTarget SceneRenderTarget => _sceneRenderTarget ?? throw new InvalidOperationException("Scene render target has not been created.");
 
+    public SceneRenderTextureManager? RenderTextureManager => _renderTextureManager;
+
     public string AudioSummary => Audio is null
         ? AudioStatusMessage ?? "Audio disabled."
         : $"{_audioSources.Count} source(s), {AudioStatusMessage ?? "audio enabled"}";
@@ -131,6 +133,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     protected override void Update(GameTime gameTime)
     {
         base.Update(gameTime);
+    }
+
+    protected override void LateUpdate(GameTime gameTime)
+    {
         UpdateWaterInteractions(gameTime);
     }
 
@@ -1793,6 +1799,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.DeepColor = entity.Water.DeepColor.ToVector3();
         component.ReflectionTint = entity.Water.ReflectionTint.ToVector3();
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
+        component.RippleLifetimeSeconds = Math.Max(0.05f, entity.Water.RippleLifetimeSeconds);
+        component.RippleWaveSpeed = entity.Water.RippleWaveSpeed;
+        component.RippleFrequency = Math.Max(0.0f, entity.Water.RippleFrequency);
+        component.RippleNormalStrength = Math.Max(0.0f, entity.Water.RippleNormalStrength);
     }
 
     private void ApplyEntityToPlane(GameEntity entity, TexturedPlaneComponent component)
@@ -1851,6 +1861,23 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                     continue;
                 }
 
+                if (string.Equals(entity.Type, "particle_system", StringComparison.OrdinalIgnoreCase)
+                    && !entity.Particle.EnableWaterInteraction)
+                {
+                    continue;
+                }
+
+                if (string.Equals(entity.Type, "particle_system", StringComparison.OrdinalIgnoreCase))
+                {
+                    EditorParticleObject? particleObject = _particleObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
+                    if (particleObject is not null)
+                    {
+                        ProcessParticleWaterInteractions(waterObject, particleObject, waterEntity, waterY, waterHalfSize, now);
+                    }
+
+                    continue;
+                }
+
                 foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(entity))
                 {
                     if (!collider.Enabled || !TryGetColliderApproximation(entity, collider, out Vector3 center, out float radius))
@@ -1876,6 +1903,55 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 }
             }
         }
+    }
+
+    private void ProcessParticleWaterInteractions(
+        EditorWaterObject waterObject,
+        EditorParticleObject particleObject,
+        GameEntity waterEntity,
+        float waterY,
+        float waterHalfSize,
+        double now)
+    {
+        foreach (ParticleCollisionSample sample in particleObject.Component.GetCollisionSamples())
+        {
+            float verticalDistance = sample.Position.Y - waterY;
+            if (verticalDistance > sample.Radius)
+            {
+                continue;
+            }
+
+            Vector3 delta = sample.Position - waterEntity.Transform.Position.ToVector3();
+            if (MathF.Abs(delta.X) > waterHalfSize || MathF.Abs(delta.Z) > waterHalfSize)
+            {
+                continue;
+            }
+
+            string rippleKey = BuildParticleRippleKey(waterEntity, particleObject.Entity, sample.Position, waterEntity.Water.ParticleRippleMergeDistance);
+            double minInterval = Math.Max(0.0, waterEntity.Water.ParticleRippleMinIntervalSeconds);
+            if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= minInterval)
+            {
+                _waterRippleTimes[rippleKey] = now;
+                waterObject.Component.AddRipple(new Vector3(sample.Position.X, waterY, sample.Position.Z), waterEntity.Water.InteractionRadius, waterEntity.Water.InteractionStrength);
+            }
+
+            if (particleObject.Entity.Particle.KillOnWaterContact)
+            {
+                particleObject.Component.KillParticle(sample.Index);
+            }
+        }
+    }
+
+    private static string BuildParticleRippleKey(GameEntity waterEntity, GameEntity particleEntity, Vector3 position, float mergeDistance)
+    {
+        if (mergeDistance <= 0.0001f)
+        {
+            return $"{waterEntity.Id}:{particleEntity.Id}:particle";
+        }
+
+        int cellX = (int)MathF.Floor(position.X / mergeDistance);
+        int cellZ = (int)MathF.Floor(position.Z / mergeDistance);
+        return $"{waterEntity.Id}:{particleEntity.Id}:particle:{cellX}:{cellZ}";
     }
 
     private static bool TryGetColliderApproximation(GameEntity entity, ColliderSettings collider, out Vector3 center, out float radius)

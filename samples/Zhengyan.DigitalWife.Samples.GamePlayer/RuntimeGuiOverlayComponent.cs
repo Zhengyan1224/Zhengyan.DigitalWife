@@ -118,17 +118,22 @@ internal sealed class RuntimeGuiOverlayComponent(
             Vector2 min = new(sprite.X, sprite.Y);
             Vector2 spriteMax = min + new Vector2(Math.Max(sprite.Width, 1.0f), Math.Max(sprite.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, textureId, min, spriteMax, sprite.RotationDegrees, tint);
+            AddSpriteImage(drawList, textureId, min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
 
         drawList.PopClipRect();
     }
 
-    private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint)
+    private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
     {
+        Vector2 uv0 = flipV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
+        Vector2 uv1 = flipV ? new Vector2(1.0f, 0.0f) : Vector2.One;
+        Vector2 uvTopRight = flipV ? Vector2.One : new Vector2(1.0f, 0.0f);
+        Vector2 uvBottomLeft = flipV ? Vector2.Zero : new Vector2(0.0f, 1.0f);
+
         if (MathF.Abs(rotationDegrees) <= 0.001f)
         {
-            drawList.AddImage((nint)textureId, min, max, Vector2.Zero, Vector2.One, tint);
+            drawList.AddImage((nint)textureId, min, max, uv0, uv1, tint);
             return;
         }
 
@@ -147,7 +152,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         Vector2 p2 = Rotate(new Vector2(half.X, -half.Y));
         Vector2 p3 = Rotate(new Vector2(half.X, half.Y));
         Vector2 p4 = Rotate(new Vector2(-half.X, half.Y));
-        drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, Vector2.Zero, new Vector2(1.0f, 0.0f), Vector2.One, new Vector2(0.0f, 1.0f), tint);
+        drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, uv0, uvTopRight, uv1, uvBottomLeft, tint);
     }
 
     private Texture2D? GetSpriteTexture(string path)
