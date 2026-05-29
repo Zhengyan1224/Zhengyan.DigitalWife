@@ -15,10 +15,40 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
+    private int _vertexCount;
+    private bool _geometryDirty = true;
+    private float _axisLength = 3.0f;
+    private float _negativeAxisLength = 1.0f;
 
-    public float AxisLength { get; set; } = 3.0f;
+    public float AxisLength
+    {
+        get => _axisLength;
+        set
+        {
+            if (Math.Abs(_axisLength - value) <= 0.0001f)
+            {
+                return;
+            }
 
-    public float NegativeAxisLength { get; set; } = 1.0f;
+            _axisLength = value;
+            _geometryDirty = true;
+        }
+    }
+
+    public float NegativeAxisLength
+    {
+        get => _negativeAxisLength;
+        set
+        {
+            if (Math.Abs(_negativeAxisLength - value) <= 0.0001f)
+            {
+                return;
+            }
+
+            _negativeAxisLength = value;
+            _geometryDirty = true;
+        }
+    }
 
     protected override void Initialize()
     {
@@ -57,10 +87,7 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
             return;
         }
 
-        Span<float> vertices = stackalloc float[MaxVertexCount * FloatStride];
-        int vertexCount = 0;
-        AddAxes(vertices, ref vertexCount);
-        AddOriginMarker(vertices, ref vertexCount);
+        UploadGeometryIfNeeded();
 
         GL gl = Game.GraphicsDevice.Gl;
         int uniformLocation = gl.GetUniformLocation(_program, "u_WVP");
@@ -69,17 +96,8 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
         gl.Disable(GLEnum.DepthTest);
         gl.UseProgram(_program);
         gl.BindVertexArray(_vao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
         gl.SetUniform(uniformLocation, _camera.View * _camera.Projection);
-
-        fixed (float* vertexPtr = vertices)
-        {
-            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexCount * FloatStride * sizeof(float)), vertexPtr);
-        }
-
-        gl.DrawArrays(GLEnum.Lines, 0, (uint)vertexCount);
-
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        gl.DrawArrays(GLEnum.Lines, 0, (uint)_vertexCount);
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Enable(GLEnum.DepthTest);
@@ -180,6 +198,30 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
         vertices[offset + 3] = color.X;
         vertices[offset + 4] = color.Y;
         vertices[offset + 5] = color.Z;
+    }
+
+    private void UploadGeometryIfNeeded()
+    {
+        if (Game is null || !_geometryDirty)
+        {
+            return;
+        }
+
+        Span<float> vertices = stackalloc float[MaxVertexCount * FloatStride];
+        int vertexCount = 0;
+        AddAxes(vertices, ref vertexCount);
+        AddOriginMarker(vertices, ref vertexCount);
+
+        GL gl = Game.GraphicsDevice.Gl;
+        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
+        fixed (float* vertexPtr = vertices)
+        {
+            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexCount * FloatStride * sizeof(float)), vertexPtr);
+        }
+
+        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        _vertexCount = vertexCount;
+        _geometryDirty = false;
     }
 
     private const string VertexShaderSource = """

@@ -1277,6 +1277,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.delta_seconds = self.performance.delta_seconds
                        self.frame_count = self.performance.frame_count
                        self.window = Window(data.get("window", {}), commands)
+                       self.runtime = Runtime(data.get("runtime", {}), commands)
                        self.camera = Camera(data.get("camera", {}), commands)
                        self.debug = Debug(commands)
                        self.save = SaveStore()
@@ -1496,6 +1497,17 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_timing_mode(self, mode):
                        self._commands.append({"target": "window", "action": "set_timing_mode", "name": mode})
+
+               class Runtime:
+                   def __init__(self, data, commands):
+                       self.use_opencl = bool(data.get("useOpenCl", True))
+                       self.is_using_opencl = bool(data.get("isUsingOpenCl", False))
+                       self.compute_backend = data.get("computeBackend", "CPU")
+                       self._commands = commands
+
+                   def set_use_opencl(self, enabled):
+                       self.use_opencl = bool(enabled)
+                       self._commands.append({"target": "runtime", "action": "set_use_opencl", "flag": self.use_opencl})
 
                class Sprite:
                    def __init__(self, data, commands):
@@ -1727,6 +1739,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             if (string.Equals(command.Target, "window", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyWindowCommand(command, scene);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "runtime", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyRuntimeCommand(command, scene);
                 continue;
             }
 
@@ -1985,6 +2003,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_timing_mode" when !string.IsNullOrWhiteSpace(command.Name):
                 scene.Window.SetTimingMode(command.Name);
+                break;
+        }
+    }
+
+    private static void ApplyRuntimeCommand(PythonCommand command, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "set_use_opencl" when command.Flag.HasValue:
+                scene.Runtime.SetUseOpenCL(command.Flag.Value);
                 break;
         }
     }
@@ -2569,6 +2597,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     Sprites = scene.Sprites.Select(PythonSprite.FromRuntime).ToArray(),
                     Camera = PythonCamera.FromRuntime(scene.Camera),
                     Window = PythonWindow.FromRuntime(scene.Window),
+                    Runtime = PythonRuntime.FromRuntime(scene.Runtime),
                     Llm = PythonLlmSettings.FromRuntime(scene.Llm),
                     Performance = PythonPerformance.FromRuntime(scene.Performance)
                 },
@@ -2798,9 +2827,30 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonWindow Window { get; set; } = new();
 
+        public PythonRuntime Runtime { get; set; } = new();
+
         public PythonLlmSettings Llm { get; set; } = new();
 
         public PythonPerformance Performance { get; set; } = new();
+    }
+
+    private sealed class PythonRuntime
+    {
+        public bool UseOpenCl { get; set; }
+
+        public bool IsUsingOpenCl { get; set; }
+
+        public string ComputeBackend { get; set; } = "CPU";
+
+        public static PythonRuntime FromRuntime(RuntimeProjectControl runtime)
+        {
+            return new PythonRuntime
+            {
+                UseOpenCl = runtime.UseOpenCL,
+                IsUsingOpenCl = runtime.IsUsingOpenCL,
+                ComputeBackend = runtime.ComputeBackend
+            };
+        }
     }
 
     private sealed class PythonPerformance

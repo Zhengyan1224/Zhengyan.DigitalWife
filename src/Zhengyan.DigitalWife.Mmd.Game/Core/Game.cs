@@ -11,6 +11,8 @@ namespace Zhengyan.DigitalWife.Mmd.Game;
 public abstract class Game : IDisposable
 {
     private readonly List<GameComponent> _components = [];
+    private GameComponent[] _sortedUpdateComponents = [];
+    private DrawableGameComponent[] _sortedDrawableComponents = [];
     private readonly IWindow _window;
     private bool _disposed;
     private bool _initialized;
@@ -119,6 +121,7 @@ public abstract class Game : IDisposable
             return false;
         }
 
+        SortComponents();
         component.Dispose();
         return true;
     }
@@ -216,7 +219,7 @@ public abstract class Game : IDisposable
         Update(gameTime);
         Audio?.Update();
 
-        foreach (GameComponent component in _components.OrderBy(component => component.UpdateOrder))
+        foreach (GameComponent component in _sortedUpdateComponents)
         {
             if (component.Enabled)
             {
@@ -241,7 +244,7 @@ public abstract class Game : IDisposable
 
         Draw(gameTime);
 
-        foreach (DrawableGameComponent component in _components.OfType<DrawableGameComponent>().OrderBy(component => component.DrawOrder))
+        foreach (DrawableGameComponent component in _sortedDrawableComponents)
         {
             if (component.Visible && ShouldDrawComponent(component))
             {
@@ -274,6 +277,11 @@ public abstract class Game : IDisposable
             int rightDrawOrder = right is DrawableGameComponent rightDrawable ? rightDrawable.DrawOrder : int.MinValue;
             return leftDrawOrder.CompareTo(rightDrawOrder);
         });
+
+        _sortedUpdateComponents = [.. _components.OrderBy(component => component.UpdateOrder)];
+        _sortedDrawableComponents = [.. _components
+            .OfType<DrawableGameComponent>()
+            .OrderBy(component => component.DrawOrder)];
     }
 }
 

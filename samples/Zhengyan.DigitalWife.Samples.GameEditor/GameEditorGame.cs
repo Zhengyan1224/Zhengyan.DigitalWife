@@ -34,6 +34,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private SkyboxComponent? _skybox;
     private string _statusMessage = "Ready.";
     private bool _renderedSceneThisFrame;
+    private int _selectedEntityIndex = -1;
+    private int _debugDrawVersion = 1;
 
     public GameEditorGame()
         : base(new GameOptions
@@ -70,11 +72,26 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public string ActiveScenePath => GameProjectStore.NormalizeScenePath(Project.EditorScene);
 
-    public int SelectedEntityIndex { get; set; } = -1;
+    public int SelectedEntityIndex
+    {
+        get => _selectedEntityIndex;
+        set
+        {
+            if (_selectedEntityIndex == value)
+            {
+                return;
+            }
+
+            _selectedEntityIndex = value;
+            InvalidateDebugDraw();
+        }
+    }
 
     public SceneRenderTarget SceneRenderTarget => _sceneRenderTarget ?? throw new InvalidOperationException("Scene render target has not been created.");
 
     public SceneRenderTextureManager? RenderTextureManager => _renderTextureManager;
+
+    public int DebugDrawVersion => _debugDrawVersion;
 
     public string AudioSummary => Audio is null
         ? AudioStatusMessage ?? "Audio disabled."
@@ -289,6 +306,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ClearSceneRuntime();
         ApplyCameraSettings();
         ApplySceneSettings();
+        ApplyRuntimeSettings();
         SaveProject();
         UpdateStatus($"Created project '{Project.Name}'.");
     }
@@ -297,6 +315,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         ClearSceneRuntime();
         Project = GameProjectStore.Load(ProjectDirectory);
+        ApplyRuntimeSettings();
         int relationFixes = ReloadActiveSceneRuntime(clearFirst: false);
         string relationMessage = relationFixes > 0 ? $"\nNormalized {relationFixes} PMX relation binding(s)." : string.Empty;
         UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}{relationMessage}");
@@ -434,6 +453,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         ApplyAllRelationsToRuntime();
         SelectedEntityIndex = Project.Scene.Entities.Count > 0 ? 0 : -1;
+        InvalidateDebugDraw();
         return relationFixes;
     }
 
@@ -871,6 +891,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         RemoveWaterRippleEntries(entity.Id);
         ApplyAllRelationsToRuntime();
         SelectedEntityIndex = Math.Min(SelectedEntityIndex, Project.Scene.Entities.Count - 1);
+        InvalidateDebugDraw();
         UpdateStatus($"Removed entity: {entity.Name}");
     }
 
@@ -899,6 +920,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             ApplySelectedPlaneToRuntime();
             return;
         }
+
+        InvalidateDebugDraw();
 
         if (IsEmptyEntity(entity))
         {
@@ -976,6 +999,25 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             ? Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.png")
             : GameProjectPath.ToAbsolute(ProjectDirectory, Project.Window.IconPath);
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
+    }
+
+    public void ApplyRuntimeSettings()
+    {
+        Options.UseOpenCL = Project.Runtime.UseOpenCL;
+        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = Project.Runtime.UseOpenCL;
+        Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
+        bool openClRequested = Project.Runtime.UseOpenCL;
+        bool openClActive = openClRequested && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely();
+        Console.WriteLine(openClRequested
+            ? openClActive
+                ? "[GameEditor] PMX compute backend: OpenCL"
+                : "[GameEditor] OpenCL requested but unavailable; falling back to CPU"
+            : "[GameEditor] OpenCL disabled by project/runtime setting; using CPU");
+
+        foreach (EditorPmxObject pmxObject in _pmxObjects.ToArray())
+        {
+            pmxObject.Model.ReloadForCurrentOpenClSetting();
+        }
     }
 
     private string ResolveWindowTitle()
@@ -1538,7 +1580,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             {
                 Camera = _camera,
                 RuntimeTextureProvider = _renderTextureManager,
-                DrawOrder = 100
+                DrawOrder = 100,
+                ShouldUpdatePoseEvaluator = ShouldUpdatePmxPose,
+                OffscreenPoseUpdateIntervalSeconds = 0.12f
             };
             _ = AddComponent(model);
             ApplyEntityToModel(entity, model);
@@ -1562,6 +1606,30 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             UpdateStatus($"Failed to load PMX: {ex.Message}");
             return false;
         }
+    }
+
+    private bool ShouldUpdatePmxPose(PmxModelComponent model)
+    {
+        float radius = MathF.Max(Vector3.Distance(model.BoundsMin, model.BoundsMax) * 0.5f, 0.5f);
+        Vector3 center = Vector3.Transform((model.BoundsMin + model.BoundsMax) * 0.5f, model.World);
+
+        if (VisibilityCulling.IsBoundingSphereVisible(_camera, center, radius))
+        {
+            return true;
+        }
+
+        if (_renderTextureManager is not null)
+        {
+            foreach (OrbitCamera camera in _renderTextureManager.Cameras.Values)
+            {
+                if (VisibilityCulling.IsBoundingSphereVisible(camera, center, radius))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void ApplyEntityToModel(GameEntity entity, PmxModelComponent model)
@@ -1631,6 +1699,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        InvalidateDebugDraw();
+
         EditorParticleObject? runtime = _particleObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
         if (runtime is null)
         {
@@ -1648,6 +1718,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             return;
         }
+
+        InvalidateDebugDraw();
 
         EditorWaterObject? runtime = _waterObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
         if (runtime is null || Math.Abs(runtime.Component.SurfaceSize - Math.Max(entity.Water.Size, 0.1f)) > 0.001f)
@@ -1672,6 +1744,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             return;
         }
+
+        InvalidateDebugDraw();
 
         EditorPlaneObject? runtime = _planeObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
         if (runtime is null)
@@ -2056,6 +2130,15 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _waterRippleTimes.Clear();
 
         DisposeAudioRuntime();
+        InvalidateDebugDraw();
+    }
+
+    private void InvalidateDebugDraw()
+    {
+        unchecked
+        {
+            _debugDrawVersion++;
+        }
     }
 
     private void RegisterAudioRuntime(string path, AudioClip clip, AudioSource source)
@@ -2766,6 +2849,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             Name = "Demo Game",
             Version = "0.1.0",
+            Runtime = new GameRuntimeSettings
+            {
+                UseOpenCL = true
+            },
             Scene = new GameProjectScene
             {
                 Name = "Main Scene"

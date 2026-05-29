@@ -23,8 +23,15 @@ public sealed class GameProject
 
     public GameWindowSettings Window { get; set; } = new();
 
+    public GameRuntimeSettings Runtime { get; set; } = new();
+
     [JsonIgnore]
     public GameProjectScene Scene { get; set; } = new();
+}
+
+public sealed class GameRuntimeSettings
+{
+    public bool UseOpenCL { get; set; } = true;
 }
 
 public sealed class GameProjectScriptRuntime
@@ -275,6 +282,10 @@ public sealed class RenderTextureSettings
     public int Height { get; set; } = 512;
 
     public Vector4Dto ClearColor { get; set; } = new(0.08f, 0.09f, 0.12f, 1.0f);
+
+    public string RefreshMode { get; set; } = "every_frame";
+
+    public float RefreshIntervalSeconds { get; set; } = 0.1f;
 }
 
 public sealed class LightingSettings

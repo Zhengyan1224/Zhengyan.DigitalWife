@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace Zhengyan.DigitalWife.Mmd;
 
@@ -14,6 +15,7 @@ public enum SkinningType
 #endregion
 
 #region Structs
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public unsafe struct SDEF
 {
     public fixed int BoneIndices[2];
@@ -28,6 +30,7 @@ public unsafe struct SDEF
 }
 #endregion
 
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public unsafe struct VertexBoneInfo
 {
     public SkinningType SkinningType;
@@ -38,4 +41,3 @@ public unsafe struct VertexBoneInfo
 
     public SDEF SDEF;
 }
-

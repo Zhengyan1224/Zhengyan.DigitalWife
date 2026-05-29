@@ -121,7 +121,7 @@ DemoGame/
 
 ## 窗口、相机和加载界面
 
-`Project -> Window / Runtime` 可设置运行器窗口标题、图标、分辨率、全屏、可拉伸和 Timing Mode。
+`Project -> Window / Runtime` 可设置运行器窗口标题、图标、分辨率、全屏、可拉伸、Timing Mode，以及 `Use OpenCL`。`Use OpenCL` 控制 GamePlayer 的 PMX 蒙皮是否优先使用 OpenCL；如果初始化失败，会自动回退 CPU 路径。
 
 场景 Inspector 可设置：
 

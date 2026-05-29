@@ -10,11 +10,18 @@ namespace Zhengyan.DigitalWife.Samples.GameEditor;
 
 internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisposable
 {
+    private sealed class RenderTextureRuntimeState
+    {
+        public required RenderTexture Texture { get; init; }
+
+        public double LastRenderTimeSeconds { get; set; } = double.NegativeInfinity;
+    }
+
     private readonly Zhengyan.DigitalWife.Mmd.Game.Game _game;
     private readonly Func<GameProjectScene> _getScene;
     private readonly Func<IReadOnlyList<DrawableGameComponent>> _getExcludedComponents;
     private readonly Dictionary<string, OrbitCamera> _cameras = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, RenderTexture> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RenderTextureRuntimeState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _isRendering;
 
     public SceneRenderTextureManager(
@@ -79,12 +86,12 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
             return false;
         }
 
-        if (!_renderTextures.TryGetValue(name, out RenderTexture? renderTexture))
+        if (!_renderTextures.TryGetValue(name, out RenderTextureRuntimeState? state))
         {
             return false;
         }
 
-        textureId = renderTexture.ColorTextureId;
+        textureId = state.Texture.ColorTextureId;
         return textureId != 0;
     }
 
@@ -115,11 +122,17 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
                 }
 
                 validRenderTextures.Add(settings.Name);
-                RenderTexture renderTexture = GetOrCreateRenderTexture(settings.Name);
+                RenderTextureRuntimeState state = GetOrCreateRenderTexture(settings.Name);
+                RenderTexture renderTexture = state.Texture;
                 renderTexture.EnsureSize(settings.Width, settings.Height);
                 OrbitCamera camera = ResolveCamera(settings.Camera, mainCamera);
                 camera.Width = renderTexture.Width;
                 camera.Height = renderTexture.Height;
+
+                if (!ShouldRender(settings, state, gameTime.TotalSeconds))
+                {
+                    continue;
+                }
 
                 renderTexture.Bind();
                 gl.Disable(GLEnum.ScissorTest);
@@ -132,11 +145,12 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 
                 applyCamera(camera);
                 DrawSceneComponents(gameTime);
+                state.LastRenderTimeSeconds = gameTime.TotalSeconds;
             }
 
             foreach (string staleName in _renderTextures.Keys.Where(name => !validRenderTextures.Contains(name)).ToArray())
             {
-                _renderTextures[staleName].Dispose();
+                _renderTextures[staleName].Texture.Dispose();
                 _renderTextures.Remove(staleName);
             }
         }
@@ -151,9 +165,9 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 
     public void Dispose()
     {
-        foreach (RenderTexture renderTexture in _renderTextures.Values)
+        foreach (RenderTextureRuntimeState state in _renderTextures.Values)
         {
-            renderTexture.Dispose();
+            state.Texture.Dispose();
         }
 
         _renderTextures.Clear();
@@ -170,27 +184,44 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
         return camera;
     }
 
-    private RenderTexture GetOrCreateRenderTexture(string name)
+    private RenderTextureRuntimeState GetOrCreateRenderTexture(string name)
     {
-        if (!_renderTextures.TryGetValue(name, out RenderTexture? renderTexture))
+        if (!_renderTextures.TryGetValue(name, out RenderTextureRuntimeState? state))
         {
-            renderTexture = new RenderTexture(_game.GraphicsDevice.Gl, name);
-            _renderTextures[name] = renderTexture;
+            state = new RenderTextureRuntimeState
+            {
+                Texture = new RenderTexture(_game.GraphicsDevice.Gl, name)
+            };
+            _renderTextures[name] = state;
         }
 
-        return renderTexture;
+        return state;
     }
 
     private void DrawSceneComponents(GameTime gameTime)
     {
         IReadOnlyList<DrawableGameComponent> excludedComponents = _getExcludedComponents();
-        foreach (DrawableGameComponent component in _game.Components
-            .OfType<DrawableGameComponent>()
-            .Where(component => component.Visible && !excludedComponents.Contains(component))
-            .OrderBy(component => component.DrawOrder))
+        HashSet<DrawableGameComponent> excluded = [.. excludedComponents];
+        foreach (GameComponent component in _game.Components)
         {
-            component.Draw(gameTime);
+            if (component is DrawableGameComponent drawable
+                && drawable.Visible
+                && !excluded.Contains(drawable))
+            {
+                drawable.Draw(gameTime);
+            }
         }
+    }
+
+    private static bool ShouldRender(RenderTextureSettings settings, RenderTextureRuntimeState state, double nowSeconds)
+    {
+        string mode = NormalizeRefreshMode(settings.RefreshMode);
+        return mode switch
+        {
+            "fixed_rate" => nowSeconds - state.LastRenderTimeSeconds >= Math.Max(0.01, settings.RefreshIntervalSeconds),
+            "on_demand" => double.IsNegativeInfinity(state.LastRenderTimeSeconds),
+            _ => true
+        };
     }
 
     private static void EnsureLegacyCamera(GameProjectScene scene)
@@ -258,5 +289,16 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
         return trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase)
             ? trimmed["rt:".Length..].Trim()
             : string.Empty;
+    }
+
+    private static string NormalizeRefreshMode(string refreshMode)
+    {
+        string normalized = (refreshMode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized switch
+        {
+            "fixed_rate" or "fixed" => "fixed_rate",
+            "on_demand" or "ondemand" => "on_demand",
+            _ => "every_frame"
+        };
     }
 }

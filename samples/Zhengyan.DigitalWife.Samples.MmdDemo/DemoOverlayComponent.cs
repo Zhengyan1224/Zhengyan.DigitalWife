@@ -577,7 +577,7 @@ internal sealed class DemoOverlayComponent(DemoGame demoGame) : DrawableGameComp
         }
 
         float ambientStrength = _demoGame.AmbientLightStrength;
-        if (ImGui.SliderFloat("Ambient Strength", ref ambientStrength, 0.0f, 1.0f, "%.2f"))
+        if (ImGui.SliderFloat("Ambient Strength", ref ambientStrength, 0.0f, 2.0f, "%.2f"))
         {
             _demoGame.AmbientLightStrength = ambientStrength;
             _demoGame.ApplySceneLighting();

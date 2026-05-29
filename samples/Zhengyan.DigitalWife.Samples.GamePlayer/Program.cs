@@ -4,6 +4,11 @@ internal static class Program
 {
     public static int Main(string[] args)
     {
+        if (args.Any(arg => string.Equals(arg, "--dw-opencl-probe", StringComparison.OrdinalIgnoreCase)))
+        {
+            return Zhengyan.DigitalWife.Mmd.Kernel.ProbeCurrentProcessUnsafe() ? 0 : 2;
+        }
+
         string projectDirectory = args.Length > 0 && !string.IsNullOrWhiteSpace(args[0])
             ? Path.GetFullPath(args[0].Trim().Trim('"'))
             : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "GameEditorProjects", "DemoGame"));

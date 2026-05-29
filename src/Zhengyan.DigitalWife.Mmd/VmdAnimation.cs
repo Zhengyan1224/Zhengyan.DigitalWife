@@ -182,6 +182,20 @@ public class VmdAnimation : IDisposable
 
     public int MaxKeyTime { get; private set; }
 
+    public bool HasNodeAnimation => _nodeControllers.Count != 0;
+
+    public bool HasMorphAnimation => _morphControllers.Count != 0;
+
+    public bool HasIkAnimation => _ikControllers.Count != 0;
+
+    public bool HasUvMorphAnimation => _morphControllers.Any(static controller => controller.Object.Kind == MMDMorphKind.UV);
+
+    public bool HasVertexMorphAnimation => _morphControllers.Any(static controller =>
+        controller.Object.Kind is MMDMorphKind.Position or MMDMorphKind.Bone or MMDMorphKind.Group);
+
+    public bool HasMaterialMorphAnimation => _morphControllers.Any(static controller =>
+        controller.Object.Kind is MMDMorphKind.Material or MMDMorphKind.Group);
+
     public VmdAnimation()
     {
         _nodeControllers = [];

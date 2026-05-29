@@ -1083,6 +1083,7 @@ scene.load_scene("scenes/next.scene.json")
 | `Scene.GuiControls` | `scene.get_gui_control(...)` | C# 可枚举 GUI；Python 用查找函数。 |
 | `Scene.Sprites` | `scene.get_sprite(...)` | C# 可枚举 2D 精灵；Python 用查找函数。 |
 | `Scene.Window` | `scene.window` | 窗口控制。 |
+| `Scene.Runtime` | `scene.runtime` | 运行时项目设置控制。 |
 | `Scene.Camera` | `scene.camera` | 相机控制。 |
 | `Scene.Debug` | `scene.debug` | 调试绘制。 |
 | `Scene.Save` | `scene.save` | 存档读写。 |
@@ -1427,6 +1428,7 @@ Scene.Window.SetSize(1600, 900);
 Scene.Window.SetFullscreen(false);
 Scene.Window.SetResizable(true);
 Scene.Window.SetTimingMode("time_synchronized");
+Scene.Runtime.SetUseOpenCL(true);
 ```
 
 Python：
@@ -1437,6 +1439,7 @@ scene.window.set_size(1600, 900)
 scene.window.set_fullscreen(False)
 scene.window.set_resizable(True)
 scene.window.set_timing_mode("time_synchronized")
+scene.runtime.set_use_opencl(True)
 ```
 
 `TimingMode` 可用值：

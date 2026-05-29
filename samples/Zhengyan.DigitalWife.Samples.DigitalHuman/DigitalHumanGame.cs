@@ -1443,7 +1443,9 @@ internal sealed class DigitalHumanGame : Game
                 EnablePhysical = sceneModel.EnablePhysical,
                 EnableEdge = sceneModel.EnableEdge,
                 EnableShadow = sceneModel.EnableShadow,
-                DrawShadowInMainPass = sceneModel.DrawShadowInMainPass
+                DrawShadowInMainPass = sceneModel.DrawShadowInMainPass,
+                ShouldUpdatePoseEvaluator = ShouldUpdatePmxPose,
+                OffscreenPoseUpdateIntervalSeconds = 0.12f
             });
 
             ApplyLighting(model);
@@ -1461,7 +1463,16 @@ internal sealed class DigitalHumanGame : Game
         model.EnableEdge = options.EnableEdge;
         model.EnableShadow = options.EnableShadow;
         model.DrawShadowInMainPass = false;
+        model.ShouldUpdatePoseEvaluator = ShouldUpdatePmxPose;
+        model.OffscreenPoseUpdateIntervalSeconds = 0.12f;
         ApplyLighting(model);
+    }
+
+    private bool ShouldUpdatePmxPose(PmxModelComponent model)
+    {
+        float radius = MathF.Max(Vector3.Distance(model.BoundsMin, model.BoundsMax) * 0.5f, 0.5f);
+        Vector3 center = Vector3.Transform((model.BoundsMin + model.BoundsMax) * 0.5f, model.World);
+        return VisibilityCulling.IsBoundingSphereVisible(_camera, center, radius);
     }
 
     private void TryStartBackgroundMusic()

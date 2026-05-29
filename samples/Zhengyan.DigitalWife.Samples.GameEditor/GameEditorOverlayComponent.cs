@@ -844,12 +844,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool fullscreen = window.Fullscreen;
         bool resizable = window.Resizable;
         string timingMode = window.TimingMode;
+        bool useOpenCl = _editorGame.Project.Runtime.UseOpenCL;
         bool changed = false;
         changed |= ImGui.DragInt("Width", ref width, 1.0f, 320, 7680);
         changed |= ImGui.DragInt("Height", ref height, 1.0f, 240, 4320);
         changed |= ImGui.Checkbox("Fullscreen", ref fullscreen);
         changed |= ImGui.Checkbox("Resizable", ref resizable);
         changed |= DrawStringCombo("Timing Mode", ref timingMode, ["time_synchronized", "frame_rate_dependent"]);
+        changed |= ImGui.Checkbox("Use OpenCL", ref useOpenCl);
 
         if (changed)
         {
@@ -858,6 +860,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             window.Fullscreen = fullscreen;
             window.Resizable = resizable;
             window.TimingMode = NormalizeChoice(timingMode, "time_synchronized", ["time_synchronized", "frame_rate_dependent"]);
+            _editorGame.Project.Runtime.UseOpenCL = useOpenCl;
+            _editorGame.ApplyRuntimeSettings();
         }
 
         if (ImGui.Button("Apply To Editor Window"))
@@ -865,7 +869,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplyWindowSettings();
         }
 
-        ImGui.TextWrapped("GamePlayer applies these settings on project load. The button above only previews them in the editor.");
+        ImGui.TextWrapped("GamePlayer applies these settings on project load. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews window settings in the editor.");
     }
 
     private void DrawVoiceSettings(GameProjectVoiceSettings voice)
@@ -1436,6 +1440,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             int width = renderTexture.Width;
             int height = renderTexture.Height;
             Vector4 clearColor = renderTexture.ClearColor.ToVector4();
+            string[] refreshModes = ["every_frame", "fixed_rate", "on_demand"];
+            int refreshModeIndex = Math.Max(0, Array.FindIndex(refreshModes, mode => string.Equals(mode, renderTexture.RefreshMode, StringComparison.OrdinalIgnoreCase)));
+            float refreshIntervalSeconds = renderTexture.RefreshIntervalSeconds;
             bool changed = false;
 
             changed |= ImGui.InputText("Name", ref name, 256);
@@ -1448,6 +1455,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             changed |= ImGui.DragInt("Width", ref width, 1.0f, 1, 8192);
             changed |= ImGui.DragInt("Height", ref height, 1.0f, 1, 8192);
             changed |= ImGui.ColorEdit4("Clear color", ref clearColor);
+            if (ImGui.Combo("Refresh mode", ref refreshModeIndex, refreshModes, refreshModes.Length))
+            {
+                changed = true;
+            }
+            if (refreshModes[Math.Clamp(refreshModeIndex, 0, refreshModes.Length - 1)] == "fixed_rate")
+            {
+                changed |= ImGui.DragFloat("Refresh interval", ref refreshIntervalSeconds, 0.01f, 0.01f, 60.0f, "%.2f s");
+            }
             if (changed)
             {
                 renderTexture.Name = string.IsNullOrWhiteSpace(name) ? renderTexture.Name : name.Trim();
@@ -1456,6 +1471,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 renderTexture.Width = Math.Max(1, width);
                 renderTexture.Height = Math.Max(1, height);
                 renderTexture.ClearColor = Vector4Dto.FromVector4(clearColor);
+                renderTexture.RefreshMode = refreshModes[Math.Clamp(refreshModeIndex, 0, refreshModes.Length - 1)];
+                renderTexture.RefreshIntervalSeconds = Math.Max(0.01f, refreshIntervalSeconds);
             }
 
             ImGui.TextUnformatted($"Reference: rt:{renderTexture.Name}");

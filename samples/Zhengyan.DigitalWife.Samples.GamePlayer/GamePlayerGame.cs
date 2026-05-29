@@ -57,7 +57,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             WindowSize = new Silk.NET.Maths.Vector2D<int>(1280, 720),
             VSync = true,
             Samples = 4,
-            UseOpenCL = true,
+            UseOpenCL = false,
             EnableAudio = true,
             ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
             AnimationTimingMode = AnimationTimingMode.TimeSynchronized
@@ -289,6 +289,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         EnqueueLoadingStep("Loading project...", () =>
         {
             Project = GameProjectStore.Load(_projectDirectory);
+            ApplyRuntimeSettings();
             ApplyWindowSettings();
             _runtimeVoice?.Dispose();
             _runtimeVoice = new RuntimeVoice(this, _dispatcher, _projectDirectory, Project.Voice);
@@ -434,11 +435,12 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 ?? throw new InvalidOperationException("Runtime debug draw is not initialized.");
             RuntimeLlm runtimeLlm = _runtimeLlm
                 ?? throw new InvalidOperationException("Runtime LLM is not initialized.");
-            _runtimeScene = new RuntimeScene(
+                _runtimeScene = new RuntimeScene(
                 Project.Scene,
                 _entitiesById,
                 _entitiesByName,
                 new RuntimeWindowControl(this, Project.Window),
+                new RuntimeProjectControl(this),
                 new RuntimeCamera(_camera, cameraController, () => _entitiesById.Values, Project.Scene, _renderTextureManager),
                 new RuntimeDebug(debugDraw),
                 new RuntimeSaveStore(_projectDirectory),
@@ -554,6 +556,33 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             : ResolveProjectPath(Project.Window.IconPath);
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
     }
+
+    internal void ApplyRuntimeSettings()
+    {
+        Options.UseOpenCL = Project.Runtime.UseOpenCL;
+        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = Project.Runtime.UseOpenCL;
+        Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
+        bool openClRequested = Project.Runtime.UseOpenCL;
+        bool openClActive = openClRequested && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely();
+        Console.WriteLine(openClRequested
+            ? openClActive
+                ? "[GamePlayer] PMX compute backend: OpenCL"
+                : "[GamePlayer] OpenCL requested but unavailable; falling back to CPU"
+            : "[GamePlayer] OpenCL disabled by project/runtime setting; using CPU");
+
+        foreach (PlayerPmxObject pmxObject in _pmxObjects.ToArray())
+        {
+            pmxObject.Model.ReloadForCurrentOpenClSetting();
+        }
+    }
+
+    internal bool IsUsingOpenClRuntime => string.Equals(CurrentComputeBackend, "OpenCL", StringComparison.Ordinal);
+
+    internal string CurrentComputeBackend => _pmxObjects.Count != 0
+        ? _pmxObjects[0].Model.ComputeBackend
+        : Project.Runtime.UseOpenCL && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely()
+            ? "OpenCL"
+            : "CPU";
 
     internal void SetConfiguredTitle(string title)
     {
@@ -675,7 +704,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             {
                 Camera = _camera,
                 RuntimeTextureProvider = _renderTextureManager,
-                DrawOrder = 100
+                DrawOrder = 100,
+                ShouldUpdatePoseEvaluator = ShouldUpdatePmxPose,
+                OffscreenPoseUpdateIntervalSeconds = 0.12f
             });
             ApplyEntityToModel(entity, model);
             ApplyLightingToModel(model);
@@ -695,11 +726,36 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
             _pmxObjects.Add(runtimeObject);
             RegisterRuntimeEntity(runtimeEntity);
+            Console.WriteLine($"[GamePlayer] Loaded PMX '{entity.Name}' with {model.ComputeBackend} backend");
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Failed to load PMX entity '{entity.Name}': {ex.Message}");
         }
+    }
+
+    private bool ShouldUpdatePmxPose(PmxModelComponent model)
+    {
+        float radius = MathF.Max(Vector3.Distance(model.BoundsMin, model.BoundsMax) * 0.5f, 0.5f);
+        Vector3 center = Vector3.Transform((model.BoundsMin + model.BoundsMax) * 0.5f, model.World);
+
+        if (VisibilityCulling.IsBoundingSphereVisible(_camera, center, radius))
+        {
+            return true;
+        }
+
+        if (_renderTextureManager is not null)
+        {
+            foreach (OrbitCamera camera in _renderTextureManager.Cameras.Values)
+            {
+                if (VisibilityCulling.IsBoundingSphereVisible(camera, center, radius))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void LoadParticleEntity(GameEntity entity)

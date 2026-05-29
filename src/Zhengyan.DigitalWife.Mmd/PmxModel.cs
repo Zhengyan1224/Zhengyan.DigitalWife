@@ -262,6 +262,10 @@ public unsafe class PmxModel : MMDModel
 
     public override bool HasUvMorphs => _uvMorphDatas.Count != 0;
 
+    public bool IsUsingOpenCL => kernel is not null;
+
+    public string ComputeBackend => IsUsingOpenCL ? "OpenCL" : "CPU";
+
     public override bool Load(string path, string mmdDataDir)
     {
         Destroy();
@@ -276,12 +280,23 @@ public unsafe class PmxModel : MMDModel
 
         // Create Kernel
         uint alignment = 4096;
-        // if (Kernel.Create(File.ReadAllText("skinned_animation.cl"), "Run", ["-cl-mad-enable"]) is Kernel temp)
-        // {
-        //    kernel = temp;
-
-        //    alignment = kernel.Alignment;
-        //}
+        try
+        {
+            ValidateOpenClInteropLayout();
+            string kernelPath = Path.Combine(AppContext.BaseDirectory, "skinned_animation.cl");
+            if (File.Exists(kernelPath)
+                && Kernel.Create(File.ReadAllText(kernelPath), "Run", ["-cl-mad-enable"]) is Kernel temp)
+            {
+                kernel = temp;
+                alignment = kernel.Alignment;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"OpenCL disabled, falling back to CPU skinning: {ex.Message}");
+            kernel?.Dispose();
+            kernel = null;
+        }
 
         positions = TryCreateSvmArray<Vector3>(pmx.Vertices.Length, alignment, MemFlags.ReadOnly);
         normals = TryCreateSvmArray<Vector3>(pmx.Vertices.Length, alignment, MemFlags.ReadOnly);
@@ -603,12 +618,14 @@ public unsafe class PmxModel : MMDModel
             {
                 Name = pmxMorph.Name,
                 Weight = 0.0f,
-                MorphType = MorphType.None
+                MorphType = MorphType.None,
+                Kind = MMDMorphKind.Unknown
             };
 
             if (pmxMorph.MorphType == PmxMorphType.Position)
             {
                 morph.MorphType = MorphType.Position;
+                morph.Kind = MMDMorphKind.Position;
                 morph.DataIndex = _positionMorphDatas.Count;
 
                 PositionMorphData morphData = new();
@@ -627,6 +644,7 @@ public unsafe class PmxModel : MMDModel
             else if (pmxMorph.MorphType == PmxMorphType.UV)
             {
                 morph.MorphType = MorphType.UV;
+                morph.Kind = MMDMorphKind.UV;
                 morph.DataIndex = _uvMorphDatas.Count;
 
                 UVMorphData morphData = new();
@@ -645,6 +663,7 @@ public unsafe class PmxModel : MMDModel
             else if (pmxMorph.MorphType == PmxMorphType.Material)
             {
                 morph.MorphType = MorphType.Material;
+                morph.Kind = MMDMorphKind.Material;
                 morph.DataIndex = _materialMorphDatas.Count;
 
                 MaterialMorphData morphData = new();
@@ -654,6 +673,7 @@ public unsafe class PmxModel : MMDModel
             else if (pmxMorph.MorphType == PmxMorphType.Bone)
             {
                 morph.MorphType = MorphType.Bone;
+                morph.Kind = MMDMorphKind.Bone;
                 morph.DataIndex = _boneMorphDatas.Count;
 
                 BoneMorphData boneMorphData = new();
@@ -677,6 +697,7 @@ public unsafe class PmxModel : MMDModel
             else if (pmxMorph.MorphType == PmxMorphType.Group)
             {
                 morph.MorphType = MorphType.Group;
+                morph.Kind = MMDMorphKind.Group;
                 morph.DataIndex = _groupMorphDatas.Count;
 
                 GroupMorphData groupMorphData = new();
@@ -1221,6 +1242,20 @@ public unsafe class PmxModel : MMDModel
         physicsManager?.Dispose();
 
         kernel?.Dispose();
+    }
+
+    private static void ValidateOpenClInteropLayout()
+    {
+        if (sizeof(Vector2) != 8
+            || sizeof(Vector3) != 12
+            || sizeof(Quaternion) != 16
+            || sizeof(Matrix4x4) != 64
+            || sizeof(SDEF) != 48
+            || sizeof(VertexBoneInfo) != 84)
+        {
+            throw new InvalidOperationException(
+                $"OpenCL interop layout mismatch: sizeof(Vector2)={sizeof(Vector2)}, sizeof(Vector3)={sizeof(Vector3)}, sizeof(Quaternion)={sizeof(Quaternion)}, sizeof(Matrix4x4)={sizeof(Matrix4x4)}, sizeof(SDEF)={sizeof(SDEF)}, sizeof(VertexBoneInfo)={sizeof(VertexBoneInfo)}");
+        }
     }
 
     public override void Dispose()

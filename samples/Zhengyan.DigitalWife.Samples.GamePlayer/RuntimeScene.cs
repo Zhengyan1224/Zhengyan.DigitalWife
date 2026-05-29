@@ -8,6 +8,7 @@ public sealed class RuntimeScene
     private readonly IReadOnlyDictionary<string, RuntimeEntity> _entitiesById;
     private readonly IReadOnlyDictionary<string, RuntimeEntity> _entitiesByName;
     private readonly RuntimeWindowControl _window;
+    private readonly RuntimeProjectControl _runtime;
     private readonly RuntimeCamera _camera;
     private readonly RuntimeDebug _debug;
     private readonly RuntimeSaveStore _save;
@@ -21,6 +22,7 @@ public sealed class RuntimeScene
         IReadOnlyDictionary<string, RuntimeEntity> entitiesById,
         IReadOnlyDictionary<string, RuntimeEntity> entitiesByName,
         RuntimeWindowControl window,
+        RuntimeProjectControl runtime,
         RuntimeCamera camera,
         RuntimeDebug debug,
         RuntimeSaveStore save,
@@ -33,6 +35,7 @@ public sealed class RuntimeScene
         _entitiesById = entitiesById;
         _entitiesByName = entitiesByName;
         _window = window;
+        _runtime = runtime;
         _camera = camera;
         _debug = debug;
         _save = save;
@@ -51,6 +54,8 @@ public sealed class RuntimeScene
     public IEnumerable<RuntimeSpriteControl> Sprites => _scene.Sprites.Select(sprite => new RuntimeSpriteControl(sprite));
 
     public RuntimeWindowControl Window => _window;
+
+    public RuntimeProjectControl Runtime => _runtime;
 
     public RuntimeCamera Camera => _camera;
 

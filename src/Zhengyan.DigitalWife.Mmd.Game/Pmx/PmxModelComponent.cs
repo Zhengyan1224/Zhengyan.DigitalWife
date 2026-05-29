@@ -101,6 +101,15 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private const float MotionWeightEpsilon = 0.0001f;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
+    [Flags]
+    private enum DirtyFlags
+    {
+        None = 0,
+        Pose = 1 << 0,
+        Uv = 1 << 1,
+        Material = 1 << 2
+    }
+
     private readonly record struct MotionLayerConfig(string MotionPath, float Weight, bool ResetPhysicsOnLoop);
 
     private sealed class MotionLayerState : IDisposable
@@ -156,7 +165,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private readonly List<MotionLayerState> _motionLayers = [];
     private Zhengyan.DigitalWife.Mmd.MMDMesh[] _meshes = [];
     private bool _hasUvMorphs;
-    private bool _vertexBuffersDirty = true;
+    private DirtyFlags _dirtyFlags = DirtyFlags.Pose | DirtyFlags.Uv | DirtyFlags.Material;
     private bool _loaded;
     private int _lastOpaqueMeshDrawCount;
     private int _lastEdgeMeshDrawCount;
@@ -175,6 +184,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private bool _isPlaying = true;
     private bool _skipPhysicsOnNextPlayFrame;
     private bool _defaultResetPhysicsOnMotionLoop = true;
+    private double _lastPoseSolveTimeSeconds = double.NegativeInfinity;
     private Vector3[]? _resetPositions;
     private Vector3[]? _resetNormals;
     private Vector2[]? _resetUVs;
@@ -210,6 +220,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public Zhengyan.DigitalWife.Mmd.MMDModel? Model => _model;
 
+    public bool IsUsingOpenCL => _model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel && pmxModel.IsUsingOpenCL;
+
+    public string ComputeBackend => _model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel ? pmxModel.ComputeBackend : "CPU";
+
     public Zhengyan.DigitalWife.Mmd.VmdAnimation? Animation => _motionLayers.Count == 0 ? null : _motionLayers[0].Animation;
 
     public int MotionLayerCount => _motionLayers.Count;
@@ -236,6 +250,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public IRuntimeTextureProvider? RuntimeTextureProvider { get; set; }
 
+    public Func<PmxModelComponent, bool>? ShouldUpdatePoseEvaluator { get; set; }
+
+    public float OffscreenPoseUpdateIntervalSeconds { get; set; } = 0.12f;
+
     public int VertexCount => _model?.GetVertexCount() ?? 0;
 
     public Vector3 BoundsMin => _boundsMin;
@@ -259,7 +277,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 layer.TimeSeconds = _animationTime;
             }
 
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
         }
     }
 
@@ -331,6 +349,87 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public bool DrawShadowInMainPass { get; set; } = true;
 
     public Matrix4x4 World => Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateFromQuaternion(Rotation) * Matrix4x4.CreateTranslation(Position);
+
+    private bool IsPoseDirty => (_dirtyFlags & DirtyFlags.Pose) != 0;
+
+    private bool IsUvDirty => (_dirtyFlags & DirtyFlags.Uv) != 0;
+
+    private bool IsMaterialDirty => (_dirtyFlags & DirtyFlags.Material) != 0;
+
+    public bool ReloadForCurrentOpenClSetting()
+    {
+        if (Game is null || !_loaded || _model is null || string.IsNullOrWhiteSpace(ModelPath))
+        {
+            return false;
+        }
+
+        Dictionary<string, float> manualMorphWeights = new(_manualMorphWeights, StringComparer.Ordinal);
+        Dictionary<string, Vector3> manualNodeTranslateOverrides = new(_manualNodeTranslateOverrides, StringComparer.Ordinal);
+        Dictionary<string, Quaternion> manualNodeRotateOverrides = new(_manualNodeRotateOverrides, StringComparer.Ordinal);
+        Dictionary<string, Vector3> manualNodeScaleOverrides = new(_manualNodeScaleOverrides, StringComparer.Ordinal);
+        Dictionary<string, Vector3> manualNodeAnimTranslateOverrides = new(_manualNodeAnimTranslateOverrides, StringComparer.Ordinal);
+        Dictionary<string, Quaternion> manualNodeAnimRotateOverrides = new(_manualNodeAnimRotateOverrides, StringComparer.Ordinal);
+        Dictionary<string, (float TimeSeconds, bool IsPlaying)> motionState = _motionLayers.ToDictionary(
+            layer => layer.MotionPath,
+            layer => (layer.TimeSeconds, layer.IsPlaying),
+            PathComparer);
+        bool isPlaying = IsPlaying;
+        float animationTime = _animationTime;
+
+        List<MotionLayerConfig> currentMotionLayers = CloneCurrentMotionLayerConfigs();
+        LoadResources(Game.GraphicsDevice.Gl, ModelPath, currentMotionLayers);
+        _manualMorphWeights.Clear();
+        foreach ((string key, float value) in manualMorphWeights)
+        {
+            _manualMorphWeights[key] = value;
+        }
+
+        _manualNodeTranslateOverrides.Clear();
+        foreach ((string key, Vector3 value) in manualNodeTranslateOverrides)
+        {
+            _manualNodeTranslateOverrides[key] = value;
+        }
+
+        _manualNodeRotateOverrides.Clear();
+        foreach ((string key, Quaternion value) in manualNodeRotateOverrides)
+        {
+            _manualNodeRotateOverrides[key] = value;
+        }
+
+        _manualNodeScaleOverrides.Clear();
+        foreach ((string key, Vector3 value) in manualNodeScaleOverrides)
+        {
+            _manualNodeScaleOverrides[key] = value;
+        }
+
+        _manualNodeAnimTranslateOverrides.Clear();
+        foreach ((string key, Vector3 value) in manualNodeAnimTranslateOverrides)
+        {
+            _manualNodeAnimTranslateOverrides[key] = value;
+        }
+
+        _manualNodeAnimRotateOverrides.Clear();
+        foreach ((string key, Quaternion value) in manualNodeAnimRotateOverrides)
+        {
+            _manualNodeAnimRotateOverrides[key] = value;
+        }
+
+        for (int i = 0; i < _motionLayers.Count; i++)
+        {
+            MotionLayerState layer = _motionLayers[i];
+            if (motionState.TryGetValue(layer.MotionPath, out (float TimeSeconds, bool IsPlaying) state))
+            {
+                layer.TimeSeconds = state.TimeSeconds;
+                layer.IsPlaying = state.IsPlaying;
+                layer.Animation.ResetPlaybackCursor();
+            }
+        }
+
+        _animationTime = animationTime;
+        IsPlaying = isPlaying;
+        MarkPoseDirty();
+        return true;
+    }
 
     protected override void Initialize()
     {
@@ -436,7 +535,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             }
 
             UpdateMotionMetadataFromInitialConfig();
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
             return;
         }
 
@@ -450,7 +549,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             }
 
             SyncInitialMotionLayersFromRuntime();
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
             return;
         }
 
@@ -474,7 +573,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
             UpdateMotionMetadataFromRuntimeLayers();
             SyncInitialMotionLayersFromRuntime();
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
         }
         catch
         {
@@ -497,7 +596,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
             _initialMotionLayers.RemoveAt(existingInitialIndex);
             UpdateMotionMetadataFromInitialConfig();
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
             return true;
         }
 
@@ -528,7 +627,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         {
             _skipPhysicsOnNextPlayFrame = true;
         }
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -551,7 +650,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 clampedWeight,
                 existingLayer.ResetPhysicsOnLoop);
             UpdateMotionMetadataFromInitialConfig();
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
             return true;
         }
 
@@ -563,7 +662,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _motionLayers[existingRuntimeIndex].Weight = clampedWeight;
         SyncInitialMotionLayersFromRuntime();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -583,7 +682,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         _motionLayers[existingRuntimeIndex].IsPlaying = isPlaying;
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -609,7 +708,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
             MotionLayerConfig existingLayer = _initialMotionLayers[existingInitialIndex];
             _initialMotionLayers[existingInitialIndex] = new MotionLayerConfig(existingLayer.MotionPath, existingLayer.Weight, resetPhysicsOnLoop);
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
             return true;
         }
 
@@ -621,7 +720,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _motionLayers[existingRuntimeIndex].ResetPhysicsOnLoop = resetPhysicsOnLoop;
         SyncInitialMotionLayersFromRuntime();
-        _vertexBuffersDirty = true;
         return true;
     }
 
@@ -661,7 +759,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         float durationSeconds = GetMotionDurationSeconds(layer);
         layer.TimeSeconds = durationSeconds > 0.0f ? MathF.Min(clamped, durationSeconds) : clamped;
         layer.Animation.ResetPlaybackCursor();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         UpdateMotionMetadataFromRuntimeLayers();
         return true;
     }
@@ -725,7 +823,19 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _manualMorphWeights[morph.Name] = normalizedWeight;
         }
 
-        _vertexBuffersDirty = true;
+        switch (morph.Kind)
+        {
+            case Zhengyan.DigitalWife.Mmd.MMDMorphKind.UV:
+                MarkUvDirty();
+                break;
+            case Zhengyan.DigitalWife.Mmd.MMDMorphKind.Material:
+                MarkMaterialDirty();
+                break;
+            default:
+                MarkPoseDirty();
+                break;
+        }
+
         return true;
     }
 
@@ -769,7 +879,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         morph.SaveAnimWeight = NormalizeMorphWeight(weight);
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
         return true;
     }
 
@@ -790,7 +900,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         morph.SaveBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
         return true;
     }
 
@@ -808,7 +918,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         morph.LoadBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
         return true;
     }
 
@@ -821,7 +931,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         morph.ClearBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
         return true;
     }
 
@@ -833,7 +943,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             : _manualMorphWeights.Remove(morphName);
         if (removed)
         {
-            _vertexBuffersDirty = true;
+            MarkPoseDirty();
         }
 
         return removed;
@@ -847,25 +957,25 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         _manualMorphWeights.Clear();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
     }
 
     public void SaveBaseAnimation()
     {
         _model?.SaveBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
     }
 
     public void LoadBaseAnimation()
     {
         _model?.LoadBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
     }
 
     public void ClearBaseAnimation()
     {
         _model?.ClearBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
     }
 
     public bool TryGetNodeState(string nodeName, out PmxNodeState state)
@@ -907,7 +1017,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _manualNodeTranslateOverrides[node.Name] = value;
         }
 
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -935,7 +1045,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _manualNodeRotateOverrides[node.Name] = value;
         }
 
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -963,7 +1073,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _manualNodeScaleOverrides[node.Name] = value;
         }
 
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -990,7 +1100,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _manualNodeAnimTranslateOverrides[node.Name] = value;
         }
 
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -1017,7 +1127,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _manualNodeAnimRotateOverrides[node.Name] = value;
         }
 
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -1038,7 +1148,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         node.SaveBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -1051,7 +1161,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         node.LoadBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -1064,7 +1174,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         node.ClearBaseAnimation();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
         return true;
     }
 
@@ -1079,7 +1189,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         removed |= _manualNodeAnimRotateOverrides.Remove(key);
         if (removed)
         {
-            _vertexBuffersDirty = true;
+            MarkPoseDirty(includeMaterial: false);
         }
 
         return removed;
@@ -1097,7 +1207,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         ClearAllNodeOverrideDictionaries();
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
     }
 
     public void ClearMotion()
@@ -1156,7 +1266,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             ModelPath = normalizedModelPath;
             IsPlaying = normalizedMotionLayers.Count != 0;
             _animationTime = 0.0f;
-            _vertexBuffersDirty = true;
+            MarkPoseDirty();
             return;
         }
 
@@ -1173,7 +1283,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         {
             IsPlaying = normalizedMotionLayers.Count != 0;
             _animationTime = 0.0f;
-            _vertexBuffersDirty = true;
+            MarkPoseDirty();
             return;
         }
 
@@ -1259,11 +1369,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         if (Game is not null && _model is not null)
         {
             UploadVertexBuffers(Game.GraphicsDevice.Gl, true);
-            _vertexBuffersDirty = false;
+            ClearDirty(DirtyFlags.Pose | DirtyFlags.Uv | DirtyFlags.Material);
             return;
         }
 
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
     }
 
     public void ResetPhysics()
@@ -1275,7 +1385,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _model.ResetPhysics();
         _skipPhysicsOnNextPlayFrame = true;
-        _vertexBuffersDirty = true;
+        MarkPoseDirty(includeMaterial: false);
     }
 
     public override void Update(GameTime gameTime)
@@ -1303,9 +1413,26 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             UpdateMotionMetadataFromRuntimeLayers();
         }
 
+        bool animatedPose = (IsPlaying && MotionLayersAffectPose()) || _transformUpdaters.HasEnabledUpdaters;
+        bool animatedUv = IsPlaying && MotionLayersAffectUv();
+        bool animatedMaterial = IsPlaying && MotionLayersAffectMaterial();
+        bool manualPose = ManualMorphsAffectPose();
+        bool manualUv = ManualMorphsAffectUv();
+        bool manualMaterial = ManualMorphsAffectMaterial();
+        bool poseDirty = IsPoseDirty || animatedPose || manualPose;
+        bool uvDirty = IsUvDirty || animatedUv || manualUv || poseDirty;
+        bool materialDirty = IsMaterialDirty || animatedMaterial || manualMaterial || poseDirty;
         bool shouldSimulatePhysics = IsPlaying && EnablePhysical && !_skipPhysicsOnNextPlayFrame && _motionLayers.Count != 0;
-        bool shouldUpdatePose = _vertexBuffersDirty || IsPlaying || shouldSimulatePhysics || _transformUpdaters.HasEnabledUpdaters;
-        if (!shouldUpdatePose)
+        bool requiresFullRatePose = poseDirty || shouldSimulatePhysics;
+        bool isVisibleForPose = ShouldUpdatePoseEvaluator?.Invoke(this) ?? true;
+        bool shouldUpdatePose = requiresFullRatePose;
+        if (!isVisibleForPose && !poseDirty)
+        {
+            double nowSeconds = gameTime.TotalSeconds;
+            shouldUpdatePose = nowSeconds - _lastPoseSolveTimeSeconds >= Math.Max(0.01f, OffscreenPoseUpdateIntervalSeconds);
+        }
+
+        if (!shouldUpdatePose && !uvDirty && !materialDirty)
         {
             return;
         }
@@ -1331,9 +1458,19 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _transformUpdaters.UpdateStage(TransformUpdaterStage.PostAnimation, this, updaterElapsed);
         _model.EndAnimation();
 
-        _model.Update();
-        UploadVertexBuffers(Game!.GraphicsDevice.Gl, _vertexBuffersDirty || _hasUvMorphs);
-        _vertexBuffersDirty = false;
+        if (poseDirty || shouldUpdatePose)
+        {
+            _model.Update();
+            UploadVertexBuffers(Game!.GraphicsDevice.Gl, uploadUv: uvDirty);
+            _lastPoseSolveTimeSeconds = gameTime.TotalSeconds;
+        }
+        else if (uvDirty)
+        {
+            UpdateUvsOnly(_model);
+            UploadUvBuffer(Game!.GraphicsDevice.Gl);
+        }
+
+        ClearDirty(DirtyFlags.Pose | DirtyFlags.Uv | DirtyFlags.Material);
         _skipPhysicsOnNextPlayFrame = false;
     }
 
@@ -1742,7 +1879,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         float previousAnimationTime = _animationTime;
         bool previousIsPlaying = IsPlaying;
         bool previousSkipPhysicsOnNextPlayFrame = _skipPhysicsOnNextPlayFrame;
-        bool previousVertexBuffersDirty = _vertexBuffersDirty;
+        DirtyFlags previousDirtyFlags = _dirtyFlags;
 
         try
         {
@@ -1750,7 +1887,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             bool hasMotion = nextMotionLayers.Count != 0;
             SetIkSolversEnabled(_model, hasMotion);
 
-            bool vertexBuffersDirty;
+            DirtyFlags nextDirtyFlags;
             if (RestoreResetSnapshot(gl))
             {
                 if (!hasMotion)
@@ -1759,14 +1896,14 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                     RebuildPose(_model, nextMotionLayers);
                 }
 
-                vertexBuffersDirty = false;
+                nextDirtyFlags = DirtyFlags.None;
             }
             else
             {
                 _model.LoadBaseAnimation();
                 RebuildPose(_model, nextMotionLayers);
                 _model.Update();
-                vertexBuffersDirty = true;
+                nextDirtyFlags = DirtyFlags.Pose | DirtyFlags.Uv | DirtyFlags.Material;
             }
 
             _motionLayers.Clear();
@@ -1777,7 +1914,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             IsPlaying = hasMotion;
             _animationTime = 0.0f;
             _skipPhysicsOnNextPlayFrame = true;
-            _vertexBuffersDirty = vertexBuffersDirty;
+            _dirtyFlags = nextDirtyFlags;
             UpdateMotionMetadataFromRuntimeLayers();
         }
         catch
@@ -1788,7 +1925,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             SetIkSolversEnabled(_model, previousMotionLayers.Count != 0);
             _animationTime = previousAnimationTime;
             _skipPhysicsOnNextPlayFrame = previousSkipPhysicsOnNextPlayFrame;
-            _vertexBuffersDirty = previousVertexBuffersDirty;
+            _dirtyFlags = previousDirtyFlags;
             throw;
         }
     }
@@ -1852,7 +1989,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _loaded = false;
         _hasUvMorphs = false;
-        _vertexBuffersDirty = true;
+        MarkPoseDirty();
         _animationTime = 0.0f;
         _lastOpaqueMeshDrawCount = 0;
         _lastEdgeMeshDrawCount = 0;
@@ -1883,7 +2020,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _motionLayers.AddRange(layers);
             layers.Clear();
             _hasUvMorphs = model.HasUvMorphs;
-            _vertexBuffersDirty = true;
+            MarkPoseDirty();
             ComputeBounds(model);
         }
         catch
@@ -2113,6 +2250,169 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private static bool IsFinite(float value)
     {
         return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    private void MarkDirty(DirtyFlags flags)
+    {
+        _dirtyFlags |= flags;
+    }
+
+    private void ClearDirty(DirtyFlags flags)
+    {
+        _dirtyFlags &= ~flags;
+    }
+
+    private void MarkPoseDirty(bool includeMaterial = true)
+    {
+        MarkDirty(DirtyFlags.Pose | DirtyFlags.Uv | (includeMaterial ? DirtyFlags.Material : DirtyFlags.None));
+    }
+
+    private void MarkUvDirty()
+    {
+        MarkDirty(DirtyFlags.Uv);
+    }
+
+    private void MarkMaterialDirty()
+    {
+        MarkDirty(DirtyFlags.Material);
+    }
+
+    private bool MotionLayersAffectPose()
+    {
+        for (int i = 0; i < _motionLayers.Count; i++)
+        {
+            MotionLayerState layer = _motionLayers[i];
+            if (!layer.IsPlaying || ClampMotionWeight(layer.Weight) <= MotionWeightEpsilon)
+            {
+                continue;
+            }
+
+            if (layer.Animation.HasNodeAnimation || layer.Animation.HasIkAnimation || layer.Animation.HasVertexMorphAnimation)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool MotionLayersAffectUv()
+    {
+        if (!_hasUvMorphs)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < _motionLayers.Count; i++)
+        {
+            MotionLayerState layer = _motionLayers[i];
+            if (!layer.IsPlaying || ClampMotionWeight(layer.Weight) <= MotionWeightEpsilon)
+            {
+                continue;
+            }
+
+            if (layer.Animation.HasUvMorphAnimation || layer.Animation.HasVertexMorphAnimation)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool MotionLayersAffectMaterial()
+    {
+        for (int i = 0; i < _motionLayers.Count; i++)
+        {
+            MotionLayerState layer = _motionLayers[i];
+            if (!layer.IsPlaying || ClampMotionWeight(layer.Weight) <= MotionWeightEpsilon)
+            {
+                continue;
+            }
+
+            if (layer.Animation.HasMaterialMorphAnimation)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ManualMorphsAffectPose()
+    {
+        if (_manualMorphWeights.Count == 0 || _model is null)
+        {
+            return false;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMorph morph in _model.GetMorphs())
+        {
+            if (!_manualMorphWeights.ContainsKey(morph.Name))
+            {
+                continue;
+            }
+
+            if (morph.Kind is Zhengyan.DigitalWife.Mmd.MMDMorphKind.Position
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Bone
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Group
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Unknown)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ManualMorphsAffectUv()
+    {
+        if (!_hasUvMorphs || _manualMorphWeights.Count == 0 || _model is null)
+        {
+            return false;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMorph morph in _model.GetMorphs())
+        {
+            if (!_manualMorphWeights.ContainsKey(morph.Name))
+            {
+                continue;
+            }
+
+            if (morph.Kind is Zhengyan.DigitalWife.Mmd.MMDMorphKind.UV
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Group
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Unknown)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ManualMorphsAffectMaterial()
+    {
+        if (_manualMorphWeights.Count == 0 || _model is null)
+        {
+            return false;
+        }
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMorph morph in _model.GetMorphs())
+        {
+            if (!_manualMorphWeights.ContainsKey(morph.Name))
+            {
+                continue;
+            }
+
+            if (morph.Kind is Zhengyan.DigitalWife.Mmd.MMDMorphKind.Material
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Group
+                or Zhengyan.DigitalWife.Mmd.MMDMorphKind.Unknown)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void RebuildPose(Zhengyan.DigitalWife.Mmd.MMDModel model, IReadOnlyList<MotionLayerState> motionLayers)
@@ -2366,7 +2666,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         UploadVertexBuffers(gl, true);
         CaptureResetSnapshot();
-        _vertexBuffersDirty = false;
+        _dirtyFlags = DirtyFlags.None;
     }
 
     private Texture2D GetTexture(GL gl, string texturePath, GLEnum wrapMode)
@@ -2408,6 +2708,60 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+    }
+
+    private void UploadUvBuffer(GL gl)
+    {
+        if (_model is null)
+        {
+            return;
+        }
+
+        int vertexCount = _model.GetVertexCount();
+        gl.BindBuffer(GLEnum.ArrayBuffer, _uvBuffer);
+        gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(sizeof(Vector2) * vertexCount), _model.GetUpdateUVs());
+        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+    }
+
+    private static void UpdateUvsOnly(Zhengyan.DigitalWife.Mmd.MMDModel model)
+    {
+        int vertexCount = model.GetVertexCount();
+        if (vertexCount <= 0)
+        {
+            return;
+        }
+
+        Vector2* sourceUvs = model.GetUVs();
+        Vector2* updateUvs = model.GetUpdateUVs();
+        Vector2* currentUvs = sourceUvs;
+        Vector2* nextUvs = updateUvs;
+
+        for (int i = 0; i < vertexCount; i++)
+        {
+            *nextUvs = *currentUvs;
+            currentUvs++;
+            nextUvs++;
+        }
+    }
+
+    private bool ShouldUploadUvThisFrame()
+    {
+        if (!_hasUvMorphs)
+        {
+            return false;
+        }
+
+        if (_motionLayers.Count != 0)
+        {
+            return true;
+        }
+
+        if (_manualMorphWeights.Count != 0)
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private void CaptureResetSnapshot()

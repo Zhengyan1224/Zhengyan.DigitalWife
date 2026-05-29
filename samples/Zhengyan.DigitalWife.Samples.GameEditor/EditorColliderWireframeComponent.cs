@@ -17,6 +17,8 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
     private uint _vao;
     private uint _vertexBuffer;
     private int _bufferVertexCapacity;
+    private int _vertexCount;
+    private int _lastDebugDrawVersion = -1;
 
     protected override void Initialize()
     {
@@ -53,40 +55,11 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
             return;
         }
 
-        List<float> vertices = [];
-        foreach (GameEntity entity in _editorGame.Project.Scene.Entities)
-        {
-            Vector3 position = entity.Transform.Position.ToVector3();
-            Quaternion rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
-            Vector3 scale = entity.Transform.Scale.ToVector3();
-            foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(entity))
-            {
-                if (!collider.Enabled)
-                {
-                    continue;
-                }
-
-                if (string.Equals(collider.Shape, "box", StringComparison.OrdinalIgnoreCase))
-                {
-                    BoxGeometry box = CollisionGeometry.CreateBox(collider, position, rotation, scale);
-                    AddBox(vertices, box, new Vector3(0.26f, 0.72f, 1.0f));
-                }
-                else
-                {
-                    CapsuleGeometry capsule = CollisionGeometry.CreateCapsule(collider, position, rotation, scale);
-                    AddCapsule(vertices, capsule, new Vector3(1.0f, 0.84f, 0.16f));
-                }
-            }
-        }
-
-        int vertexCount = vertices.Count / FloatStride;
-        if (vertexCount == 0)
+        RebuildGeometryIfNeeded();
+        if (_vertexCount == 0)
         {
             return;
         }
-
-        EnsureBufferCapacity(vertexCount);
-        float[] vertexArray = [.. vertices];
 
         GL gl = Game.GraphicsDevice.Gl;
         int uniformLocation = gl.GetUniformLocation(_program, "u_WVP");
@@ -94,17 +67,8 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         gl.Disable(GLEnum.DepthTest);
         gl.UseProgram(_program);
         gl.BindVertexArray(_vao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
         gl.SetUniform(uniformLocation, _camera.View * _camera.Projection);
-
-        fixed (float* vertexPtr = vertexArray)
-        {
-            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexArray.Length * sizeof(float)), vertexPtr);
-        }
-
-        gl.DrawArrays(GLEnum.Lines, 0, (uint)vertexCount);
-
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        gl.DrawArrays(GLEnum.Lines, 0, (uint)_vertexCount);
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Enable(GLEnum.DepthTest);
@@ -134,6 +98,57 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         GL gl = Game.GraphicsDevice.Gl;
         gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
         gl.BufferData(GLEnum.ArrayBuffer, (uint)(_bufferVertexCapacity * FloatStride * sizeof(float)), null, GLEnum.DynamicDraw);
+    }
+
+    private void RebuildGeometryIfNeeded()
+    {
+        if (Game is null || _lastDebugDrawVersion == _editorGame.DebugDrawVersion)
+        {
+            return;
+        }
+
+        List<float> vertices = [];
+        foreach (GameEntity entity in _editorGame.Project.Scene.Entities)
+        {
+            Vector3 position = entity.Transform.Position.ToVector3();
+            Quaternion rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
+            Vector3 scale = entity.Transform.Scale.ToVector3();
+            foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(entity))
+            {
+                if (!collider.Enabled)
+                {
+                    continue;
+                }
+
+                if (string.Equals(collider.Shape, "box", StringComparison.OrdinalIgnoreCase))
+                {
+                    BoxGeometry box = CollisionGeometry.CreateBox(collider, position, rotation, scale);
+                    AddBox(vertices, box, new Vector3(0.26f, 0.72f, 1.0f));
+                }
+                else
+                {
+                    CapsuleGeometry capsule = CollisionGeometry.CreateCapsule(collider, position, rotation, scale);
+                    AddCapsule(vertices, capsule, new Vector3(1.0f, 0.84f, 0.16f));
+                }
+            }
+        }
+
+        _vertexCount = vertices.Count / FloatStride;
+        EnsureBufferCapacity(_vertexCount);
+
+        GL gl = Game.GraphicsDevice.Gl;
+        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
+        if (vertices.Count > 0)
+        {
+            float[] vertexArray = [.. vertices];
+            fixed (float* vertexPtr = vertexArray)
+            {
+                gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexArray.Length * sizeof(float)), vertexPtr);
+            }
+        }
+
+        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        _lastDebugDrawVersion = _editorGame.DebugDrawVersion;
     }
 
     private static void AddCapsule(List<float> vertices, CapsuleGeometry capsule, Vector3 color)
