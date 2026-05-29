@@ -261,14 +261,14 @@ public static class ParticleSystemPresets
             MinLifetime = 0.9f,
             MaxLifetime = 1.55f,
             MinSize = 0.22f,
-            MaxSize = 0.35f,
+            MaxSize = 1.5f,
             WidthScale = 0.28f,
             HeightScale = 1.85f,
-            StartColor = new Vector4(0.62f, 0.85f, 1.0f, 0.72f),
+            StartColor = new Vector4(0.9f, 0.97f, 1.0f, 0.35f),
             EndColor = new Vector4(0.58f, 0.74f, 0.95f, 0.0f),
             OrientationMode = ParticleOrientationMode.VelocityAligned,
             BlendMode = ParticleBlendMode.Alpha,
-            TexturePreset = ParticleTexturePreset.Streak,
+            TexturePreset = ParticleTexturePreset.SoftCircle,
             TexturePath = texturePath
         };
     }
@@ -287,13 +287,13 @@ public static class ParticleSystemPresets
             MaxLifetime = 2.1f,
             MinSize = 0.1f,
             MaxSize = 0.24f,
-            WidthScale = 0.32f,
-            HeightScale = 1.45f,
-            StartColor = new Vector4(0.48f, 0.76f, 1.0f, 0.52f),
-            EndColor = new Vector4(0.44f, 0.68f, 0.95f, 0.0f),
+            WidthScale = 0.98f,
+            HeightScale = 5.0f,
+            StartColor = new Vector4(0.9f, 0.97f, 1.0f, 0.35f),
+            EndColor = new Vector4(0.58f, 0.74f, 0.95f, 0.0f),
             OrientationMode = ParticleOrientationMode.VelocityAligned,
             BlendMode = ParticleBlendMode.Alpha,
-            TexturePreset = ParticleTexturePreset.Streak,
+            TexturePreset = ParticleTexturePreset.SoftCircle,
             TexturePath = texturePath
         };
     }
@@ -311,14 +311,14 @@ public static class ParticleSystemPresets
             MinLifetime = 0.6f,
             MaxLifetime = 1.35f,
             MinSize = 0.22f,
-            MaxSize = 0.46f,
+            MaxSize = 0.95f,
             StartSizeScale = 0.6f,
             EndSizeScale = 1.45f,
             StartColor = new Vector4(1.0f, 0.72f, 0.24f, 0.95f),
             EndColor = new Vector4(0.9f, 0.2f, 0.05f, 0.0f),
             OrientationMode = ParticleOrientationMode.Billboard,
             BlendMode = ParticleBlendMode.Additive,
-            TexturePreset = ParticleTexturePreset.Flame,
+            TexturePreset = ParticleTexturePreset.SoftCircle,
             TexturePath = texturePath
         };
     }

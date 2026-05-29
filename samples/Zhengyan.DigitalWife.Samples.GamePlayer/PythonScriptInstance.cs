@@ -351,11 +351,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_shadow_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_shadow_enabled", "flag": bool(enabled)})
 
-                   def set_water_interaction_enabled(self, enabled):
-                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_interaction_enabled", "flag": bool(enabled)})
-
                    def set_enable_water_interaction(self, enabled):
-                       self.set_water_interaction_enabled(enabled)
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_interaction_enabled", "flag": bool(enabled)})
 
                    def set_kill_on_water_contact(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_kill_on_water_contact", "flag": bool(enabled)})

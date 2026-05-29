@@ -153,6 +153,11 @@ if (IsSpeechEvent)
 {
     Console.WriteLine($"speech callback: {SpeechCallbackName}");
 }
+
+if (IsLlmEvent)
+{
+    Console.WriteLine($"{LlmCallbackName}: {LlmText}");
+}
 ```
 
 C# 全局变量：
@@ -176,6 +181,15 @@ C# 全局变量：
 | `LoadingMessage` | `string` | 当前加载步骤文本。 |
 | `IsSpeechEvent` | `bool` | TTS 播放完成回调事件。 |
 | `SpeechCallbackName` | `string` | `SpeakWithCallback` 传入的回调名。 |
+| `IsLlmEvent` | `bool` | LLM 后台流式请求回调事件。 |
+| `LlmEvent` | `RuntimeLlmScriptEvent?` | LLM 回调事件完整对象。 |
+| `LlmRequestId` | `string` | LLM 请求 Id。 |
+| `LlmEventName` | `string` | LLM 事件名，通常为 delta、completed 或 error 对应事件。 |
+| `LlmDelta` | `string` | 本次流式增量文本。 |
+| `LlmText` | `string` | 当前累计文本。 |
+| `LlmIsFinal` | `bool` | 当前回调是否为最终事件。 |
+| `LlmError` | `string` | 错误文本；仅错误回调通常有值。 |
+| `LlmCallbackName` | `string` | `StartChat(...)` 传入的回调名。 |
 
 跨帧状态建议放在 `static` 类型里：
 
@@ -275,6 +289,9 @@ def loading_completed(entity, scene, input, audio, progress, message):
 
 def speech_completed(entity, scene, input, audio, callback_name):
     print("speech completed", callback_name)
+
+def llm_event(entity, scene, input, audio, event):
+    print(event.get("callbackName"), event.get("accumulatedText"))
 ```
 
 `entity.speak(..., on_completed="after_speak")` 会优先调用同名函数：
@@ -286,6 +303,8 @@ def start(entity, scene, input, audio):
 def after_speak(entity, scene, input, audio):
     entity.rotate_y(180)
 ```
+
+`scene.llm.start_chat(...)` 的回调会优先调用 `on_delta`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `llm_event(entity, scene, input, audio, event)`，则会调用通用 `llm_event`。
 
 Python 模块级变量会保留，可用于跨帧状态：
 
@@ -329,7 +348,7 @@ def update(entity, scene, input, audio, delta_seconds):
 | `ResetPhysicsOnMotionLoop` | 无直接快照字段 | PMX 动作循环时是否重置物理。Python 用 `set_reset_physics_on_motion_loop` 修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
 | `EnableShadow` | 无直接快照字段 | PMX 是否参与阴影绘制。Python 用 `set_shadow_enabled` 修改。 |
-| `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_water_interaction_enabled` 修改。 |
+| `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
 | `KillOnWaterContact` | `kill_on_water_contact` | 粒子系统粒子接触水面后是否立即消失。Python 用 `set_kill_on_water_contact` 修改。 |
 | `WaterInteractionEnabled` | `water_interaction_enabled` | 水面对象是否启用水体交互检测。Python 用 `set_water_interaction_enabled` 修改。 |
 | `WaterInteractionRadius` | `water_interaction_radius` | 水面波纹半径。Python 用 `set_water_interaction_radius` 修改。 |
@@ -388,7 +407,7 @@ entity.set_loop_motion(True)
 entity.set_reset_physics_on_motion_loop(True)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
-entity.set_water_interaction_enabled(True)
+entity.set_enable_water_interaction(True)
 entity.set_kill_on_water_contact(True)
 entity.set_water_interaction_enabled(True)
 entity.set_water_interaction_radius(1.0)
@@ -1072,6 +1091,7 @@ button = scene.get_gui_control("StartButton")
 icon = scene.get_sprite("Icon")
 
 scene.load_scene("scenes/next.scene.json")
+scene.flush()
 ```
 
 属性和方法：
@@ -1087,11 +1107,13 @@ scene.load_scene("scenes/next.scene.json")
 | `Scene.Camera` | `scene.camera` | 相机控制。 |
 | `Scene.Debug` | `scene.debug` | 调试绘制。 |
 | `Scene.Save` | `scene.save` | 存档读写。 |
+| `Scene.Llm` | `scene.llm` | LLM / OpenAI-compatible 文本对话。 |
 | `Scene.Performance` | `scene.performance` | 性能指标快照，例如 FPS。 |
 | `Scene.Fps` | `scene.fps` | 平滑后的当前 FPS 快捷属性。 |
 | `Scene.RawFps` | `scene.raw_fps` | 当前帧瞬时 FPS。 |
 | `Scene.RenderTexture(name)` | `scene.render_texture(name)` | 返回 `rt:name` 引用。 |
 | `Scene.LoadScene(path)` | `scene.load_scene(path)` | 切换场景。 |
+| 无 | `scene.flush()` | Python 专用，立即提交当前函数内已累计的引擎命令。 |
 
 `path` 是工程相对的场景文件路径，通常来自 GameEditor 的 `Scenes` 面板，例如 `scenes/main.scene.json` 或 `scenes/battle.scene.json`。场景切换会显示同一套加载遮罩，并触发目标场景的加载入口脚本。
 
@@ -1428,6 +1450,9 @@ Scene.Window.SetSize(1600, 900);
 Scene.Window.SetFullscreen(false);
 Scene.Window.SetResizable(true);
 Scene.Window.SetTimingMode("time_synchronized");
+
+Console.WriteLine(Scene.Runtime.ComputeBackend);
+Console.WriteLine(Scene.Runtime.IsUsingOpenCL);
 Scene.Runtime.SetUseOpenCL(true);
 ```
 
@@ -1439,8 +1464,31 @@ scene.window.set_size(1600, 900)
 scene.window.set_fullscreen(False)
 scene.window.set_resizable(True)
 scene.window.set_timing_mode("time_synchronized")
+
+print(scene.runtime.compute_backend)
+print(scene.runtime.is_using_opencl)
 scene.runtime.set_use_opencl(True)
 ```
+
+Runtime 设置：
+
+| C# | Python | 说明 |
+| --- | --- | --- |
+| `Scene.Runtime.UseOpenCL` | `scene.runtime.use_opencl` | 项目/运行时是否请求使用 OpenCL。它表示“希望启用”，不代表当前一定已经使用。 |
+| `Scene.Runtime.IsUsingOpenCL` | `scene.runtime.is_using_opencl` | 当前已加载 PMX 是否实际使用 OpenCL 后端。OpenCL 不可用或初始化失败时为 `false`。 |
+| `Scene.Runtime.ComputeBackend` | `scene.runtime.compute_backend` | 当前实际计算后端，通常为 `OpenCL` 或 `CPU`。 |
+| `Scene.Runtime.SetUseOpenCL(value)` | `scene.runtime.set_use_opencl(value)` | 切换是否请求 OpenCL；GamePlayer 会重新应用运行时设置，失败时自动回退 CPU。 |
+
+窗口设置：
+
+| C# | Python | 说明 |
+| --- | --- | --- |
+| `Scene.Window.Title` | `scene.window.title` | 当前窗口标题快照。C# 可直接赋值，Python 用 `set_title` 修改。 |
+| `Scene.Window.Width` / `Height` | `scene.window.width` / `height` | 当前配置窗口尺寸。Python 是事件快照。 |
+| `Scene.Window.Fullscreen` | `scene.window.fullscreen` | 是否全屏。C# 可直接赋值，Python 用 `set_fullscreen` 修改。 |
+| `Scene.Window.Resizable` | `scene.window.resizable` | 是否允许调整窗口大小。C# 可直接赋值，Python 用 `set_resizable` 修改。 |
+| `Scene.Window.TimingMode` | `scene.window.timing_mode` | 动画计时模式。C# 可直接赋值，Python 用 `set_timing_mode` 修改。 |
+| `Scene.Window.SetSize(width, height)` | `scene.window.set_size(width, height)` | 设置窗口尺寸。 |
 
 `TimingMode` 可用值：
 
@@ -1448,6 +1496,12 @@ scene.runtime.set_use_opencl(True)
 - `frame_rate_dependent`：按帧推进，帧率下降时动画会变慢。
 
 窗口尺寸最小会被限制到 `320 x 240`。
+
+OpenCL 说明：
+
+- `UseOpenCL` 是偏好设置；实际后端以 `IsUsingOpenCL` / `ComputeBackend` 为准。
+- 如果机器没有可用 OpenCL GPU、驱动枚举失败、`skinned_animation.cl` 编译失败或初始化失败，GamePlayer 会回退到 CPU。
+- 切换 OpenCL 会让已加载 PMX 重新加载当前模型以应用后端变化，运行中切换可能有短暂停顿。
 
 ## Camera API
 
@@ -1896,6 +1950,8 @@ API：
 | `Delete(fileName)` | `delete(file_name)` | 删除存档。 |
 | `GetFullPath(fileName)` | 无 | 获取完整路径。 |
 
+Python 的 `scene.save.directory` 是只读路径字符串；直接使用 Python `open()` 不会自动限制到 `saves/`，需要脚本自行保证路径安全。推荐优先使用 `scene.save.*` 方法。
+
 ## LLM / OpenAI-compatible API
 
 GamePlayer 支持从脚本调用 OpenAI-compatible `/v1/chat/completions` 接口，并支持流式输出。配置在 GameEditor 的 `Project` 标签页 `LLM / OpenAI-compatible` 中，也会保存到 `game.project.json` 的 `llm` 节点。
@@ -1920,6 +1976,21 @@ GamePlayer 支持从脚本调用 OpenAI-compatible `/v1/chat/completions` 接口
 - `await Scene.Llm.ChatAsync(...)`：等待完整结果，适合加载脚本、短请求或不介意等待的逻辑。
 - `await foreach (var update in Scene.Llm.StreamChatAsync(...))`：当前脚本事件内同步流式读取。注意如果在 GUI 事件里直接等待，会阻塞这次脚本事件，画面要等事件结束后才继续刷新。
 - `Scene.Llm.StartChat(...)`：后台请求，流式 delta 会通过 `IsLlmEvent` 回到同一个实体脚本，适合运行时 UI 和对话。
+
+C# LLM API：
+
+| API | 说明 |
+| --- | --- |
+| `Scene.Llm.Enabled` | 当前项目是否启用 LLM。 |
+| `Scene.Llm.Provider` | Provider 名称。 |
+| `Scene.Llm.BaseUrl` | API 根地址。 |
+| `Scene.Llm.Model` | 默认模型名。 |
+| `Scene.Llm.ChatCompletionsPath` | Chat Completions 路径。 |
+| `Scene.Llm.DefaultTemperature` | 默认温度，可能为 `null`。 |
+| `ChatAsync(text, systemPrompt, model, temperature)` | 非流式返回完整文本。 |
+| `StreamChatAsync(text, systemPrompt, model, temperature)` | 按文本 prompt 发起流式请求。 |
+| `StreamChatAsync(messages, model, temperature)` | 按消息列表发起流式请求。 |
+| `StartChat(entity, text, systemPrompt, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback)` | 后台流式请求，通过脚本事件回调。 |
 
 C# 阻塞式完整结果：
 
@@ -2009,6 +2080,17 @@ if (IsGuiEvent && GuiEventName == "clicked")
 - `scene.llm.chat(...)`：等待完整结果。
 - `scene.llm.stream_chat(...)` / `stream_messages(...)`：在当前函数里同步流式迭代。适合加载脚本或测试；运行中 UI 建议用 `start_chat`，否则当前脚本事件会占用主循环。
 - `scene.llm.start_chat(...)`：后台请求，delta / completed / error 会回调到指定 Python 函数，不阻塞当前事件。
+
+Python LLM API：
+
+| API | 说明 |
+| --- | --- |
+| `scene.llm.enabled` | 当前项目是否启用 LLM。 |
+| `scene.llm.model` | 默认模型名。 |
+| `scene.llm.chat(text, system_prompt=None, model=None, temperature=None)` | 非流式返回完整文本。 |
+| `scene.llm.stream_chat(text, system_prompt=None, model=None, temperature=None)` | 按文本 prompt 发起流式请求。 |
+| `scene.llm.stream_messages(messages, model=None, temperature=None)` | 按消息列表发起流式请求。 |
+| `scene.llm.start_chat(text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error")` | 后台流式请求，通过 Python 函数回调。 |
 
 Python 完整结果：
 

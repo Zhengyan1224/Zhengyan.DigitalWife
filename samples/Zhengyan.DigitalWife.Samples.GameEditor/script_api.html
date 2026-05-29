@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GameEditor / GamePlayer 脚本 API</title>
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --panel: #fffaf2;
+      --panel-strong: #efe3d2;
+      --ink: #23211d;
+      --muted: #70695f;
+      --line: #d9c9b4;
+      --accent: #0f766e;
+      --accent-ink: #063f3b;
+      --code-bg: #1f2522;
+      --code-ink: #e8f2ed;
+      --shadow: rgba(45, 34, 22, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.10), transparent 34rem),
+        linear-gradient(315deg, rgba(184, 110, 42, 0.10), transparent 30rem),
+        var(--bg);
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--accent-ink);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 24px 18px;
+      border-right: 1px solid var(--line);
+      background: rgba(255, 250, 242, 0.88);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      margin-bottom: 18px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand h1 {
+      margin: 0 0 6px;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .search {
+      width: 100%;
+      margin: 0 0 18px;
+      padding: 10px 12px;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fffdf8;
+      font: inherit;
+      outline: none;
+    }
+
+    .search:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    .toc {
+      display: grid;
+      gap: 5px;
+    }
+
+    .toc a {
+      display: block;
+      padding: 7px 10px;
+      border-radius: 6px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .toc a:hover {
+      background: var(--panel-strong);
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1120px, 100%);
+      padding: 42px 48px 72px;
+    }
+
+    .hero {
+      margin-bottom: 26px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 250, 242, 0.78);
+      box-shadow: 0 16px 38px var(--shadow);
+    }
+
+    .hero h2 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.12;
+    }
+
+    .hero p {
+      max-width: 860px;
+      margin: 0;
+      color: var(--muted);
+    }
+
+    section {
+      margin: 28px 0;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 250, 242, 0.9);
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 25px;
+      line-height: 1.25;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 18px;
+    }
+
+    p {
+      margin: 8px 0 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf8;
+    }
+
+    .card h3 {
+      margin-top: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf8;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--panel-strong);
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: rgba(15, 118, 110, 0.10);
+      color: var(--accent-ink);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      margin: 0 6px 6px 0;
+      padding: 3px 8px;
+      border: 1px solid rgba(15, 118, 110, 0.28);
+      border-radius: 999px;
+      color: var(--accent-ink);
+      background: rgba(15, 118, 110, 0.08);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .note {
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      background: rgba(15, 118, 110, 0.08);
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 860px) {
+      .layout {
+        display: block;
+      }
+
+      .sidebar {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .toc {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      }
+
+      main {
+        padding: 24px 16px 48px;
+      }
+
+      section,
+      .hero {
+        padding: 18px;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>脚本 API 查询</h1>
+        <p>GameEditor / GamePlayer C# 与 Python 运行时接口速查。</p>
+      </div>
+      <input id="apiSearch" class="search" type="search" placeholder="搜索 API、对象、说明">
+      <nav class="toc" aria-label="目录">
+        <a href="#overview">总览</a>
+        <a href="#lifecycle">生命周期</a>
+        <a href="#scene">Scene</a>
+        <a href="#entity">Entity</a>
+        <a href="#pmx">PMX</a>
+        <a href="#water-particles">水面 / 粒子</a>
+        <a href="#tts">TTS</a>
+        <a href="#input">Input</a>
+        <a href="#audio">Audio</a>
+        <a href="#gui">GUI</a>
+        <a href="#sprite">2D Sprite</a>
+        <a href="#window-runtime">Window / Runtime</a>
+        <a href="#camera">Camera</a>
+        <a href="#debug">Debug / Ray</a>
+        <a href="#save">Save</a>
+        <a href="#llm">LLM</a>
+        <a href="#notes">边界</a>
+      </nav>
+    </aside>
+
+    <main>
+      <div class="hero" id="overview" data-search>
+        <h2>GameEditor / GamePlayer 脚本 API</h2>
+        <p>本页是 `script_api.md` 的查询版，按运行时对象组织。C# 使用 `.csx` 全局变量，Python 使用事件函数参数。详细解释、长示例和边界说明仍以同目录的 `script_api.md` 为准。</p>
+      </div>
+
+      <section id="lifecycle" data-search>
+        <h2>生命周期</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>C# 全局变量</h3>
+            <p><span class="tag">C#</span><span class="tag">csx</span></p>
+            <table>
+              <tr><th>变量</th><th>说明</th></tr>
+              <tr><td><code>Entity</code></td><td>当前脚本绑定实体。</td></tr>
+              <tr><td><code>Scene</code></td><td>当前运行时场景。</td></tr>
+              <tr><td><code>Input</code></td><td>当前帧输入快照。</td></tr>
+              <tr><td><code>Audio</code></td><td>音频控制入口。</td></tr>
+              <tr><td><code>DeltaSeconds</code></td><td>当前帧间隔秒数。</td></tr>
+              <tr><td><code>IsStart</code> / <code>IsUpdate</code></td><td>启动和每帧更新事件。</td></tr>
+              <tr><td><code>IsGuiEvent</code></td><td>GUI 事件，配合 <code>GuiControlId</code>、<code>GuiControlName</code>、<code>GuiEventName</code>。</td></tr>
+              <tr><td><code>IsLoadingEvent</code></td><td>场景加载脚本事件，配合 <code>LoadingEventName</code>、<code>LoadingProgress</code>、<code>LoadingMessage</code>。</td></tr>
+              <tr><td><code>IsSpeechEvent</code></td><td>TTS 完成回调，配合 <code>SpeechCallbackName</code>。</td></tr>
+              <tr><td><code>IsLlmEvent</code></td><td>LLM 后台回调，配合 <code>LlmCallbackName</code>、<code>LlmText</code>、<code>LlmDelta</code>、<code>LlmError</code>。</td></tr>
+            </table>
+          </div>
+          <div class="card">
+            <h3>Python 事件函数</h3>
+            <p><span class="tag">Python</span><span class="tag">py</span></p>
+            <table>
+              <tr><th>函数</th><th>说明</th></tr>
+              <tr><td><code>start(entity, scene, input, audio)</code></td><td>实体脚本启动。</td></tr>
+              <tr><td><code>update(entity, scene, input, audio, delta_seconds)</code></td><td>每帧更新。</td></tr>
+              <tr><td><code>gui_event(entity, scene, input, audio, control_id, control_name, event_name)</code></td><td>GUI 控件事件。</td></tr>
+              <tr><td><code>loading_started/progress/completed(...)</code></td><td>场景加载入口脚本事件。</td></tr>
+              <tr><td><code>speech_completed(entity, scene, input, audio, callback_name)</code></td><td>TTS 完成回调。</td></tr>
+              <tr><td><code>llm_event(entity, scene, input, audio, event)</code></td><td>LLM 通用回调；具名回调函数优先。</td></tr>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene" data-search>
+        <h2>Scene</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Name</code></td><td><code>scene.name</code></td><td>当前场景名。</td></tr>
+          <tr><td><code>Scene.Entities</code></td><td><code>scene.get_entity(id_or_name)</code></td><td>实体枚举或按 Id / Name 获取实体。</td></tr>
+          <tr><td><code>Scene.GuiControls</code></td><td><code>scene.get_gui_control(id_or_name)</code></td><td>GUI 控件枚举或查找。</td></tr>
+          <tr><td><code>Scene.Sprites</code></td><td><code>scene.get_sprite(id_or_name)</code></td><td>2D Sprite 枚举或查找。</td></tr>
+          <tr><td><code>Scene.Window</code></td><td><code>scene.window</code></td><td>窗口控制。</td></tr>
+          <tr><td><code>Scene.Runtime</code></td><td><code>scene.runtime</code></td><td>运行时项目设置和计算后端查询。</td></tr>
+          <tr><td><code>Scene.Camera</code></td><td><code>scene.camera</code></td><td>相机控制、射线和 Render Texture。</td></tr>
+          <tr><td><code>Scene.Debug</code></td><td><code>scene.debug</code></td><td>调试线和射线绘制。</td></tr>
+          <tr><td><code>Scene.Save</code></td><td><code>scene.save</code></td><td>受限到 `saves/` 的存档读写。</td></tr>
+          <tr><td><code>Scene.Llm</code></td><td><code>scene.llm</code></td><td>OpenAI-compatible 文本对话。</td></tr>
+          <tr><td><code>Scene.Performance</code></td><td><code>scene.performance</code></td><td>FPS、帧号、运行时间。</td></tr>
+          <tr><td><code>Scene.LoadScene(path)</code></td><td><code>scene.load_scene(path)</code></td><td>切换工程内场景文件。</td></tr>
+          <tr><td><code>Scene.RenderTexture(name)</code></td><td><code>scene.render_texture(name)</code></td><td>返回 <code>rt:name</code> 引用。</td></tr>
+          <tr><td>无</td><td><code>scene.flush()</code></td><td>Python 立即提交当前已累计命令。</td></tr>
+        </table>
+      </section>
+
+      <section id="entity" data-search>
+        <h2>Entity</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Id</code> / <code>Name</code> / <code>Type</code></td><td><code>id</code> / <code>name</code> / <code>type</code></td><td>实体标识、名称、类型。</td></tr>
+          <tr><td><code>Position</code> / <code>SetPosition</code></td><td><code>position</code> / <code>set_position</code></td><td>世界位置。</td></tr>
+          <tr><td><code>Translate</code></td><td><code>translate</code></td><td>相对位移。</td></tr>
+          <tr><td><code>Scale</code> / <code>SetScale</code></td><td><code>scale</code> / <code>set_scale</code></td><td>缩放。</td></tr>
+          <tr><td><code>RotateX/Y/Z</code></td><td><code>rotate_x/y/z</code></td><td>按角度旋转。</td></tr>
+          <tr><td><code>Visible</code></td><td><code>set_visible</code></td><td>显示或隐藏实体。</td></tr>
+          <tr><td><code>IsPlaying</code></td><td><code>set_playing</code></td><td>PMX 动作、粒子或水面启停。</td></tr>
+          <tr><td><code>PlaybackSpeed</code></td><td><code>set_playback_speed</code></td><td>动作或模拟速度。</td></tr>
+          <tr><td><code>EnableEdge</code> / <code>EnableShadow</code></td><td><code>set_edge_enabled</code> / <code>set_shadow_enabled</code></td><td>PMX 描边和阴影。</td></tr>
+          <tr><td><code>DrawShadowInMainPass</code></td><td><code>set_draw_shadow_in_main_pass</code></td><td>PMX 主 pass 地面影子。</td></tr>
+          <tr><td><code>BindRelation</code> / <code>ClearRelationBinding</code></td><td><code>bind_relation</code> / <code>clear_relation</code></td><td>PMX 与 PMX 绑定关系。</td></tr>
+          <tr><td><code>AddCapsuleCollider</code> / <code>AddBoxCollider</code></td><td><code>add_capsule_collider</code> / <code>add_box_collider</code></td><td>添加碰撞体。</td></tr>
+          <tr><td><code>CheckCollision</code> / <code>DistanceToCollider</code></td><td><code>check_collision</code> / <code>distance_to_collider</code></td><td>轻量碰撞检测。</td></tr>
+          <tr><td><code>Raycast</code></td><td><code>raycast</code></td><td>射线检测当前实体 Collider。</td></tr>
+        </table>
+      </section>
+
+      <section id="pmx" data-search>
+        <h2>PMX</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>ApplyMotion(path)</code></td><td><code>apply_motion(path)</code></td><td>加载 VMD 动作。</td></tr>
+          <tr><td><code>AddMotionLayer(path, weight)</code></td><td><code>add_motion_layer(path, weight)</code></td><td>叠加动作层。</td></tr>
+          <tr><td><code>SetMotionLayerWeight</code></td><td><code>set_motion_layer_weight</code></td><td>设置动作层权重。</td></tr>
+          <tr><td><code>PlayMotion</code> / <code>PauseMotion</code> / <code>StopMotion</code></td><td><code>play_motion</code> / <code>pause_motion</code> / <code>stop_motion</code></td><td>动作播放控制。</td></tr>
+          <tr><td><code>SeekMotionTime</code> / <code>SeekMotionFrame</code></td><td><code>seek_motion_time</code> / <code>seek_motion_frame</code></td><td>跳转动作时间或帧。</td></tr>
+          <tr><td><code>MorphNames</code> / <code>MorphWeights</code></td><td><code>morph_names</code> / <code>morph_weights</code></td><td>Morph 查询。</td></tr>
+          <tr><td><code>SetMorphWeight</code></td><td><code>set_morph_weight</code></td><td>设置 Morph 权重。</td></tr>
+          <tr><td><code>SaveBaseAnimation</code> / <code>LoadBaseAnimation</code></td><td><code>save_base_animation</code> / <code>load_base_animation</code></td><td>保存或恢复 PMX 基准动画。</td></tr>
+          <tr><td><code>NodeNames</code> / <code>GetNodeState</code></td><td><code>node_names</code> / <code>get_node_state</code></td><td>骨骼节点查询。</td></tr>
+          <tr><td><code>SetNodeTranslate/Rotate/Scale</code></td><td><code>set_node_translate/rotate/scale</code></td><td>基础骨骼 TRS。</td></tr>
+          <tr><td><code>SetNodeAnimTranslate/Rotate</code></td><td><code>set_node_anim_translate/rotate</code></td><td>动画偏移。</td></tr>
+          <tr><td><code>SetMaterialTexture</code></td><td><code>set_material_texture</code></td><td>材质贴图覆盖。</td></tr>
+          <tr><td><code>SetMaterialRenderTexture</code></td><td><code>set_material_render_texture</code></td><td>绑定 Render Texture 到材质。</td></tr>
+        </table>
+      </section>
+
+      <section id="water-particles" data-search>
+        <h2>水面 / 粒子</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>EnableWaterInteraction</code></td><td><code>enable_water_interaction</code> / <code>set_enable_water_interaction</code></td><td>粒子系统是否参与水体交互。</td></tr>
+          <tr><td><code>KillOnWaterContact</code></td><td><code>kill_on_water_contact</code> / <code>set_kill_on_water_contact</code></td><td>粒子接触水面后是否消失。</td></tr>
+          <tr><td><code>WaterInteractionEnabled</code></td><td><code>water_interaction_enabled</code> / <code>set_water_interaction_enabled</code></td><td>水面是否启用交互检测。</td></tr>
+          <tr><td><code>WaterInteractionRadius</code></td><td><code>water_interaction_radius</code> / <code>set_water_interaction_radius</code></td><td>水面波纹半径。</td></tr>
+          <tr><td><code>WaterInteractionStrength</code></td><td><code>water_interaction_strength</code> / <code>set_water_interaction_strength</code></td><td>水面波纹强度。</td></tr>
+          <tr><td><code>ParticleRippleMinIntervalSeconds</code></td><td><code>particle_ripple_min_interval_seconds</code> / <code>set_particle_ripple_min_interval_seconds</code></td><td>同一区域粒子触水的最小波纹间隔。</td></tr>
+          <tr><td><code>ParticleRippleMergeDistance</code></td><td><code>particle_ripple_merge_distance</code> / <code>set_particle_ripple_merge_distance</code></td><td>粒子触水波纹空间合并距离。</td></tr>
+          <tr><td><code>RippleLifetimeSeconds</code></td><td><code>ripple_lifetime_seconds</code> / <code>set_ripple_lifetime_seconds</code></td><td>波纹持续时间。</td></tr>
+          <tr><td><code>RippleWaveSpeed</code></td><td><code>ripple_wave_speed</code> / <code>set_ripple_wave_speed</code></td><td>波纹传播速度。</td></tr>
+          <tr><td><code>RippleFrequency</code></td><td><code>ripple_frequency</code> / <code>set_ripple_frequency</code></td><td>波纹频率。</td></tr>
+          <tr><td><code>RippleNormalStrength</code></td><td><code>ripple_normal_strength</code> / <code>set_ripple_normal_strength</code></td><td>水面法线扰动强度。</td></tr>
+        </table>
+        <p class="note">粒子实体使用 <code>set_enable_water_interaction(...)</code>；水面实体使用 <code>set_water_interaction_enabled(...)</code>。</p>
+      </section>
+
+      <section id="tts" data-search>
+        <h2>TTS / 说话</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Entity.Speak(text)</code></td><td><code>entity.speak(text)</code></td><td>非阻塞说话。</td></tr>
+          <tr><td><code>Speak(text, speakerId, speed, volume)</code></td><td><code>speak(text, speaker_id, speed, volume)</code></td><td>指定 speaker、语速和音量。</td></tr>
+          <tr><td><code>SpeakWithCallback(text, callbackName)</code></td><td><code>speak(..., on_completed="name")</code></td><td>播放完成后回调脚本事件。</td></tr>
+          <tr><td><code>StopSpeaking()</code></td><td><code>stop_speaking()</code></td><td>停止当前实体 TTS。</td></tr>
+        </table>
+      </section>
+
+      <section id="input" data-search>
+        <h2>Input</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>MouseX</code> / <code>MouseY</code></td><td><code>mouse_x</code> / <code>mouse_y</code></td><td>鼠标位置。</td></tr>
+          <tr><td><code>MouseDeltaX</code> / <code>MouseDeltaY</code></td><td><code>mouse_delta_x</code> / <code>mouse_delta_y</code></td><td>鼠标位移。</td></tr>
+          <tr><td><code>ScrollX</code> / <code>ScrollY</code></td><td><code>scroll_x</code> / <code>scroll_y</code></td><td>滚轮。</td></tr>
+          <tr><td><code>IsAltDown</code> / <code>IsControlDown</code> / <code>IsShiftDown</code></td><td><code>alt_down</code> / <code>control_down</code> / <code>shift_down</code></td><td>修饰键。</td></tr>
+          <tr><td><code>IsKeyDown("W")</code></td><td><code>is_key_down("w")</code></td><td>按键是否按住。</td></tr>
+          <tr><td><code>IsMouseButtonDown("left")</code></td><td><code>is_mouse_button_down("left")</code></td><td>鼠标按钮是否按住。</td></tr>
+        </table>
+      </section>
+
+      <section id="audio" data-search>
+        <h2>Audio</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Audio.Play(name)</code></td><td><code>audio.play(name)</code></td><td>播放已注册音频。</td></tr>
+          <tr><td><code>Audio.Pause(name)</code></td><td><code>audio.pause(name)</code></td><td>暂停。</td></tr>
+          <tr><td><code>Audio.Stop(name)</code></td><td><code>audio.stop(name)</code></td><td>停止。</td></tr>
+          <tr><td><code>Audio.SetVolume(name, volume)</code></td><td><code>audio.set_volume(name, volume)</code></td><td>设置音量。</td></tr>
+          <tr><td><code>Audio.SetLoop(name, loop)</code></td><td><code>audio.set_loop(name, loop)</code></td><td>设置循环。</td></tr>
+          <tr><td><code>Audio.GetLoop(name)</code></td><td>无</td><td>读取 C# 当前循环状态。</td></tr>
+        </table>
+      </section>
+
+      <section id="gui" data-search>
+        <h2>GUI</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.GetGuiControl(id)</code></td><td><code>scene.get_gui_control(id)</code></td><td>按 Id 或 Name 查找控件。</td></tr>
+          <tr><td><code>Text</code> / <code>Value</code></td><td><code>text</code> / <code>value</code></td><td>显示文本或文本框输入。</td></tr>
+          <tr><td><code>SetPosition</code> / <code>SetSize</code></td><td><code>set_position</code> / <code>set_size</code></td><td>位置和尺寸。</td></tr>
+          <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
+          <tr><td><code>SetChecked</code></td><td><code>set_checked</code></td><td>复选框。</td></tr>
+          <tr><td><code>SetProgress</code></td><td><code>set_progress</code></td><td>进度条。</td></tr>
+          <tr><td><code>SetItems</code> / <code>SetSelectedIndex</code></td><td><code>set_items</code> / <code>set_selected_index</code></td><td>下拉框。</td></tr>
+          <tr><td><code>SetLayoutMode</code> / <code>SetFontSize</code></td><td><code>set_layout_mode</code> / <code>set_font_size</code></td><td>布局和字体。</td></tr>
+          <tr><td><code>SetWordWrap</code> / <code>SetMultiline</code></td><td><code>set_word_wrap</code> / <code>set_multiline</code></td><td>换行和多行文本框。</td></tr>
+        </table>
+      </section>
+
+      <section id="sprite" data-search>
+        <h2>2D Sprite</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.GetSprite(id)</code></td><td><code>scene.get_sprite(id)</code></td><td>按 Id 或 Name 查找 Sprite。</td></tr>
+          <tr><td><code>SetPosition</code> / <code>SetSize</code></td><td><code>set_position</code> / <code>set_size</code></td><td>屏幕坐标和尺寸。</td></tr>
+          <tr><td><code>Texture</code> / <code>Path</code></td><td><code>set_texture</code></td><td>图片路径或 `rt:` 引用。</td></tr>
+          <tr><td><code>SetRenderTexture</code></td><td><code>set_render_texture</code></td><td>绑定 Render Texture。</td></tr>
+          <tr><td><code>Opacity</code></td><td><code>set_opacity</code></td><td>透明度。</td></tr>
+          <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
+        </table>
+      </section>
+
+      <section id="window-runtime" data-search>
+        <h2>Window / Runtime</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Window.SetTitle</code></td><td><code>scene.window.set_title</code></td><td>设置窗口标题。</td></tr>
+          <tr><td><code>Scene.Window.SetSize</code></td><td><code>scene.window.set_size</code></td><td>设置窗口尺寸，最小 `320 x 240`。</td></tr>
+          <tr><td><code>SetFullscreen</code> / <code>SetResizable</code></td><td><code>set_fullscreen</code> / <code>set_resizable</code></td><td>全屏和可调整大小。</td></tr>
+          <tr><td><code>SetTimingMode</code></td><td><code>set_timing_mode</code></td><td>`time_synchronized` 或 `frame_rate_dependent`。</td></tr>
+          <tr><td><code>Scene.Runtime.UseOpenCL</code></td><td><code>scene.runtime.use_opencl</code></td><td>是否请求 OpenCL。</td></tr>
+          <tr><td><code>Scene.Runtime.IsUsingOpenCL</code></td><td><code>scene.runtime.is_using_opencl</code></td><td>当前是否实际使用 OpenCL。</td></tr>
+          <tr><td><code>Scene.Runtime.ComputeBackend</code></td><td><code>scene.runtime.compute_backend</code></td><td>当前后端：`OpenCL` 或 `CPU`。</td></tr>
+          <tr><td><code>SetUseOpenCL</code></td><td><code>set_use_opencl</code></td><td>切换 OpenCL 偏好，失败回退 CPU。</td></tr>
+        </table>
+        <p class="note">`UseOpenCL` 是偏好设置，实际后端以 `IsUsingOpenCL` 和 `ComputeBackend` 为准。</p>
+      </section>
+
+      <section id="camera" data-search>
+        <h2>Camera</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Position</code> / <code>Target</code></td><td><code>position</code> / <code>target</code></td><td>相机位置和目标点。</td></tr>
+          <tr><td><code>Forward</code> / <code>Up</code> / <code>Right</code></td><td><code>forward</code> / <code>up</code> / <code>right</code></td><td>相机方向向量。</td></tr>
+          <tr><td><code>ProjectionMode</code></td><td><code>projection_mode</code></td><td>`perspective` 或 `orthographic`。</td></tr>
+          <tr><td><code>Fov</code> / <code>OrthographicSize</code></td><td><code>fov</code> / <code>orthographic_size</code></td><td>投影参数。</td></tr>
+          <tr><td><code>SetLookAt</code></td><td><code>set_look_at</code></td><td>设置当前相机位置和目标。</td></tr>
+          <tr><td><code>SetMainCamera</code></td><td><code>set_main_camera</code></td><td>切换主相机。</td></tr>
+          <tr><td><code>SetCameraViewport</code></td><td><code>set_camera_viewport</code></td><td>窗口内相机 Viewport。</td></tr>
+          <tr><td><code>BindRenderTextureCamera</code></td><td><code>bind_render_texture_camera</code></td><td>绑定相机到 Render Texture。</td></tr>
+          <tr><td><code>UseThirdPersonMode</code> / <code>UseFpsMode</code></td><td><code>use_third_person_mode</code> / <code>use_fps_mode</code></td><td>跟随相机模式。</td></tr>
+          <tr><td><code>UseFreeFlyMode</code> / <code>UseEditorOrbitMode</code></td><td><code>use_free_fly_mode</code> / <code>use_editor_orbit_mode</code></td><td>自由飞行和编辑器轨道。</td></tr>
+          <tr><td><code>ScreenPointToRay</code> / <code>MousePointToRay</code></td><td><code>screen_point_to_ray</code> / <code>mouse_point_to_ray</code></td><td>屏幕坐标生成射线。</td></tr>
+          <tr><td><code>PickEntity</code> / <code>RaycastEntity</code></td><td>无场景级桥接</td><td>C# 场景级实体拾取。</td></tr>
+        </table>
+      </section>
+
+      <section id="debug" data-search>
+        <h2>Debug / Ray</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Debug.DrawRay</code></td><td><code>scene.debug.draw_ray</code></td><td>绘制调试射线。</td></tr>
+          <tr><td><code>Scene.Debug.DrawLine</code></td><td><code>scene.debug.draw_line</code></td><td>绘制调试线段。</td></tr>
+          <tr><td><code>RuntimeRay.GetPoint</code></td><td><code>ray.get_point</code></td><td>射线上取点。</td></tr>
+          <tr><td><code>TryIntersectPlaneY</code></td><td><code>intersect_plane_y</code></td><td>与水平面求交。</td></tr>
+          <tr><td><code>TryIntersectSphere</code></td><td><code>intersect_sphere</code></td><td>与球体求交。</td></tr>
+          <tr><td>无</td><td><code>intersect_capsule</code> / <code>intersect_box</code></td><td>Python 本地几何求交辅助。</td></tr>
+        </table>
+      </section>
+
+      <section id="save" data-search>
+        <h2>Save</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Save.SaveDirectory</code></td><td><code>scene.save.directory</code></td><td>存档目录。</td></tr>
+          <tr><td><code>WriteText</code> / <code>ReadText</code></td><td><code>write_text</code> / <code>read_text</code></td><td>文本存档。</td></tr>
+          <tr><td><code>WriteJson</code> / <code>ReadJson</code></td><td><code>write_json</code> / <code>read_json</code></td><td>JSON 存档。</td></tr>
+          <tr><td><code>Exists</code> / <code>Delete</code></td><td><code>exists</code> / <code>delete</code></td><td>检查和删除存档。</td></tr>
+          <tr><td><code>GetFullPath</code></td><td>无</td><td>C# 获取存档完整路径。</td></tr>
+        </table>
+      </section>
+
+      <section id="llm" data-search>
+        <h2>LLM</h2>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Llm.Enabled</code></td><td><code>scene.llm.enabled</code></td><td>项目是否启用 LLM。</td></tr>
+          <tr><td><code>Scene.Llm.Model</code></td><td><code>scene.llm.model</code></td><td>默认模型。</td></tr>
+          <tr><td><code>ChatAsync(text, ...)</code></td><td><code>chat(text, ...)</code></td><td>非流式完整回复。</td></tr>
+          <tr><td><code>StreamChatAsync(text, ...)</code></td><td><code>stream_chat(text, ...)</code></td><td>文本 prompt 流式回复。</td></tr>
+          <tr><td><code>StreamChatAsync(messages, ...)</code></td><td><code>stream_messages(messages, ...)</code></td><td>消息列表流式回复。</td></tr>
+          <tr><td><code>StartChat(...)</code></td><td><code>start_chat(...)</code></td><td>后台请求，通过脚本事件回调。</td></tr>
+          <tr><td><code>LlmText</code> / <code>LlmDelta</code> / <code>LlmError</code></td><td><code>event["accumulatedText"]</code> / <code>event["delta"]</code> / <code>event["error"]</code></td><td>后台回调数据。</td></tr>
+        </table>
+        <pre><code class="language-python">def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if event_name == "clicked":
+        scene.llm.start_chat(
+            "写一句欢迎语",
+            on_delta="reply_delta",
+            on_completed="reply_done",
+            on_error="reply_error")
+
+def reply_delta(entity, scene, input, audio, event):
+    label = scene.get_gui_control("LLM Output")
+    if label:
+        label.set_value(event["accumulatedText"])</code></pre>
+      </section>
+
+      <section id="notes" data-search>
+        <h2>边界</h2>
+        <ul>
+          <li>Python 对象多数是事件开始时的快照，修改命令通常在函数返回后由 GamePlayer 执行；需要中途提交可用 <code>scene.flush()</code>。</li>
+          <li>C# 脚本每次事件都会重新执行同一个 `.csx` 文件，跨帧状态建议放在 <code>static</code> 类型中。</li>
+          <li>GUI 和 Sprite 坐标以窗口左上角为原点；`relative` 布局会按项目窗口基准分辨率缩放。</li>
+          <li>PMX 动作、Morph、骨骼、材质覆盖、TTS 口型和绑定关系只对 <code>pmx_model</code> 有意义。</li>
+          <li>OpenCL 会在不可用时回退 CPU；脚本应读取 <code>ComputeBackend</code> 判断实际后端。</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const input = document.getElementById("apiSearch");
+    const sections = [...document.querySelectorAll("[data-search]")];
+    input.addEventListener("input", () => {
+      const query = input.value.trim().toLowerCase();
+      for (const section of sections) {
+        section.classList.toggle("hidden", query !== "" && !section.textContent.toLowerCase().includes(query));
+      }
+    });
+  </script>
+</body>
+</html>
