@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json.Serialization;
+using Zhengyan.DigitalWife.Audio;
 
 namespace Zhengyan.DigitalWife.GameProjects;
 
@@ -44,6 +45,10 @@ public sealed class GameProjectScriptRuntime
 public sealed class GameProjectVoiceSettings
 {
     public bool Enabled { get; set; }
+
+    public AudioPlaybackBackend PlaybackBackend { get; set; } = AudioPlaybackBackend.OpenAL;
+
+    public int? OutputDeviceIndex { get; set; }
 
     public string TtsProvider { get; set; } = "sherpa-onnx";
 

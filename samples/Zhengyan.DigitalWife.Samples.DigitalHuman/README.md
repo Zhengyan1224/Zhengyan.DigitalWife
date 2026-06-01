@@ -67,8 +67,9 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.DigitalHuman/Zhengyan.
 
 | 字段 | 作用 |
 | --- | --- |
+| `Audio.PlaybackBackend` | 说话输出后端：`PortAudio` 或 `OpenAL`。麦克风录音始终使用 `PortAudio`。 |
 | `Audio.InputDeviceIndex` | 本地输入设备索引。 |
-| `Audio.OutputDeviceIndex` | 本地输出设备索引。 |
+| `Audio.OutputDeviceIndex` | 本地输出设备索引。仅 `PortAudio` 播放时使用。 |
 | `CapturedAudioDirectory` | 本地录音调试目录。 |
 | `DeleteCapturedAudioAfterRecognition` | 转写完成后是否自动删除录音文件。 |
 

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Zhengyan.DigitalWife.Assistant;
 using Zhengyan.DigitalWife.Audio;
+using Zhengyan.DigitalWife.Audio.OpenAL;
 using Zhengyan.DigitalWife.Audio.PortAudio;
 using Zhengyan.DigitalWife.Assistant.Conversation;
 using Zhengyan.DigitalWife.Samples.AssistantConsole;
@@ -44,7 +45,20 @@ var runtimeAudioOptions = new PortAudioRuntimeOptions
 };
 
 builder.Services.AddDigitalWifeAssistantCore();
-builder.Services.AddPortAudio(runtimeAudioOptions);
+builder.Services.AddPortAudioInput(runtimeAudioOptions);
+switch (demoOptions.Audio.PlaybackBackend)
+{
+    case AudioPlaybackBackend.PortAudio:
+        builder.Services.AddPortAudioOutput(runtimeAudioOptions);
+        break;
+
+    case AudioPlaybackBackend.OpenAL:
+        builder.Services.AddOpenAlAudioPlayer();
+        break;
+
+    default:
+        throw new InvalidOperationException($"Unsupported audio playback backend: {demoOptions.Audio.PlaybackBackend}");
+}
 builder.Services.AddOpenAiCompatibleLlmClient(demoOptions.Llm);
 builder.Services.AddSherpaOnnxTextToSpeech(demoOptions.Tts);
 
@@ -109,7 +123,10 @@ internal sealed class DemoHostedService : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Zhengyan.DigitalWife.Assistant demo starting. Recognition provider: {Provider}", _options.RecognitionProvider);
+        _logger.LogInformation(
+            "Zhengyan.DigitalWife.Assistant demo starting. Recognition provider: {Provider}. Playback backend: {Backend}",
+            _options.RecognitionProvider,
+            _options.Audio.PlaybackBackend);
 
         if (_cliOptions.ListDevices)
         {

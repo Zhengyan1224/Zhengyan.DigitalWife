@@ -11,6 +11,7 @@
   <Folder Name="/src/">
     <Project Path="src/Zhengyan.DigitalWife.Abstractions/Zhengyan.DigitalWife.Abstractions.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Assistant/Zhengyan.DigitalWife.Assistant.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.Audio.OpenAL/Zhengyan.DigitalWife.Audio.OpenAL.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Audio.PortAudio/Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.GameProjects/Zhengyan.DigitalWife.GameProjects.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Llm.OpenAI/Zhengyan.DigitalWife.Llm.OpenAI.csproj" />

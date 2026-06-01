@@ -23,6 +23,7 @@ internal sealed class DigitalHumanGame : Game
     private readonly IAudioSource _audioSource;
     private readonly OpenAiRealtimeClient _realtimeClient;
     private readonly IAudioPlayer _audioPlayer;
+    private readonly IDisposable? _ownedAudioPlayer;
     private readonly OrbitCamera _camera = new();
     private readonly MmdCharacterGroup _characters;
     private readonly Random _random = new();
@@ -74,7 +75,21 @@ internal sealed class DigitalHumanGame : Game
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _audioSource = services.GetRequiredService<IAudioSource>();
         _realtimeClient = services.GetRequiredService<OpenAiRealtimeClient>();
-        _audioPlayer = services.GetRequiredService<IAudioPlayer>();
+        if (_options.Audio.PlaybackBackend == AudioPlaybackBackend.OpenAL)
+        {
+            GameAudioPlayer gameAudioPlayer = new(
+                () => Audio,
+                RunOnMainThreadAsync,
+                () => AudioStatusMessage);
+            _audioPlayer = gameAudioPlayer;
+            _ownedAudioPlayer = gameAudioPlayer;
+        }
+        else
+        {
+            _audioPlayer = services.GetRequiredService<IAudioPlayer>();
+        }
+
+        _logger.LogInformation("Digital human speech playback backend: {Backend}", _options.Audio.PlaybackBackend);
         _characters = new MmdCharacterGroup(this, _camera);
     }
 
@@ -178,6 +193,7 @@ internal sealed class DigitalHumanGame : Game
 
         _bgmSource?.Dispose();
         _bgmClip?.Dispose();
+        _ownedAudioPlayer?.Dispose();
         _bgmSource = null;
         _bgmClip = null;
     }

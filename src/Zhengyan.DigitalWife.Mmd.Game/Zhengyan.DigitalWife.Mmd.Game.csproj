@@ -15,6 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Abstractions\Zhengyan.DigitalWife.Abstractions.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" />
     </ItemGroup>
 

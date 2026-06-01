@@ -34,6 +34,7 @@ Copy-Item appsettings.Local.example.json appsettings.Local.json
 
 编辑 `appsettings.Local.json`：
 
+- `Demo:Audio:PlaybackBackend`
 - `Demo:Llm:BaseUrl`
 - `Demo:Llm:ApiKey`
 
@@ -54,6 +55,11 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zheng
 ```powershell
 dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj -- --run-once --input-device 1 --output-device 3
 ```
+
+`Demo:Audio:PlaybackBackend` 支持：
+
+- `PortAudio`：录音和播放都走 `PortAudio`，`--output-device` 有效。
+- `OpenAL`：录音继续走 `PortAudio`，TTS 播放改走 `OpenAL`，`--output-device` 会被忽略。
 
 ### 6. 转写文件
 

@@ -14,7 +14,7 @@ public sealed class DigitalHumanAppOptions
 
     public bool DeleteCapturedAudioAfterRecognition { get; init; }
 
-    public PortAudioRuntimeOptions Audio { get; init; } = new();
+    public DigitalHumanAudioOptions Audio { get; init; } = new();
 
     public DigitalHumanRealtimeOptions Realtime { get; init; } = new();
 
@@ -25,6 +25,15 @@ public sealed class DigitalHumanAppOptions
     public DigitalHumanSceneOptions Scene { get; init; } = new();
 
     public DigitalHumanCharacterOptions Character { get; init; } = new();
+}
+
+public sealed class DigitalHumanAudioOptions
+{
+    public AudioPlaybackBackend PlaybackBackend { get; init; } = AudioPlaybackBackend.PortAudio;
+
+    public int? InputDeviceIndex { get; init; }
+
+    public int? OutputDeviceIndex { get; init; }
 }
 
 public sealed class DigitalHumanSpeechOutputOptions
@@ -321,7 +330,7 @@ internal sealed class ResolvedDigitalHumanOptions
 
     public required bool DeleteCapturedAudioAfterRecognition { get; init; }
 
-    public required PortAudioRuntimeOptions Audio { get; init; }
+    public required ResolvedDigitalHumanAudioOptions Audio { get; init; }
 
     public required OpenAiRealtimeClientOptions RealtimeClient { get; init; }
 
@@ -334,6 +343,13 @@ internal sealed class ResolvedDigitalHumanOptions
     public required ResolvedSceneOptions Scene { get; init; }
 
     public required ResolvedCharacterOptions Character { get; init; }
+}
+
+internal sealed class ResolvedDigitalHumanAudioOptions
+{
+    public required AudioPlaybackBackend PlaybackBackend { get; init; }
+
+    public required PortAudioRuntimeOptions PortAudio { get; init; }
 }
 
 internal sealed class ResolvedConversationOptions
@@ -576,10 +592,14 @@ internal static class DigitalHumanOptionsResolver
         {
             CapturedAudioDirectory = string.IsNullOrWhiteSpace(options.CapturedAudioDirectory) ? null : paths.ResolveOptionalDirectory(options.CapturedAudioDirectory),
             WindowIconPath = paths.ResolveOptionalFile(options.WindowIconPath),
-            Audio = new PortAudioRuntimeOptions
+            Audio = new ResolvedDigitalHumanAudioOptions
             {
-                InputDeviceIndex = options.Audio.InputDeviceIndex,
-                OutputDeviceIndex = options.Audio.OutputDeviceIndex
+                PlaybackBackend = options.Audio.PlaybackBackend,
+                PortAudio = new PortAudioRuntimeOptions
+                {
+                    InputDeviceIndex = options.Audio.InputDeviceIndex,
+                    OutputDeviceIndex = options.Audio.OutputDeviceIndex
+                }
             },
             RealtimeClient = realtimeClient,
             RealtimeSession = realtimeSession,

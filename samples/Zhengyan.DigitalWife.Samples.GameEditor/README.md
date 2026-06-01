@@ -225,6 +225,11 @@ if entity.type == "pmx_model":
 
 `Project -> Voice / TTS` 配置 `GamePlayer` 的人物说话能力。启用后脚本可调用 `Entity.Speak(...)` 或 `entity.speak(...)`，运行器会合成语音、播放音频并驱动 PMX 口型。
 
+`Speech playback backend` 支持：
+
+- `OpenAL`：默认模式，复用 `GamePlayer` 引擎音频。
+- `PortAudio`：人物说话改走 `PortAudio` 播放。
+
 模型路径支持：
 
 - 绝对路径。

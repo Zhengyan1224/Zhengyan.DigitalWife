@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Assistant\Zhengyan.DigitalWife.Assistant.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Audio.OpenAL\Zhengyan.DigitalWife.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Audio.PortAudio\Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Speech.SherpaOnnx\Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />

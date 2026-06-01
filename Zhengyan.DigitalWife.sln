@@ -49,6 +49,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zhengyan.DigitalWife.GamePr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zhengyan.DigitalWife.Samples.GamePlayer", "samples\Zhengyan.DigitalWife.Samples.GamePlayer\Zhengyan.DigitalWife.Samples.GamePlayer.csproj", "{291DFDD3-ACC9-4C41-9863-4841FB66966D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zhengyan.DigitalWife.Audio.OpenAL", "src\Zhengyan.DigitalWife.Audio.OpenAL\Zhengyan.DigitalWife.Audio.OpenAL.csproj", "{DBC3988D-8C08-4410-9403-97D9BBCF83E2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -299,6 +301,18 @@ Global
 		{291DFDD3-ACC9-4C41-9863-4841FB66966D}.Release|x64.Build.0 = Release|Any CPU
 		{291DFDD3-ACC9-4C41-9863-4841FB66966D}.Release|x86.ActiveCfg = Release|Any CPU
 		{291DFDD3-ACC9-4C41-9863-4841FB66966D}.Release|x86.Build.0 = Release|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Debug|x64.Build.0 = Debug|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Debug|x86.Build.0 = Debug|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Release|x64.ActiveCfg = Release|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Release|x64.Build.0 = Release|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Release|x86.ActiveCfg = Release|Any CPU
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -324,5 +338,6 @@ Global
 		{000EA522-9A10-4DA3-B025-78D7C5A89F2D} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
 		{58242690-D44A-4F06-B1AD-ADB6DF1C03A7} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{291DFDD3-ACC9-4C41-9863-4841FB66966D} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
+		{DBC3988D-8C08-4410-9403-97D9BBCF83E2} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

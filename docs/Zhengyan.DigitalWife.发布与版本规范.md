@@ -9,9 +9,10 @@
 1. `Zhengyan.DigitalWife.Abstractions`
 2. `Zhengyan.DigitalWife.Assistant`
 3. `Zhengyan.DigitalWife.Audio.PortAudio`
-4. `Zhengyan.DigitalWife.Llm.OpenAI`
-5. `Zhengyan.DigitalWife.Speech.SherpaOnnx`
-6. `Zhengyan.DigitalWife.Speech.WhisperNet`
+4. `Zhengyan.DigitalWife.Audio.OpenAL`
+5. `Zhengyan.DigitalWife.Llm.OpenAI`
+6. `Zhengyan.DigitalWife.Speech.SherpaOnnx`
+7. `Zhengyan.DigitalWife.Speech.WhisperNet`
 
 ## 不建议发布为 NuGet 的项目
 
@@ -71,6 +72,7 @@ MAJOR.MINOR.PATCH
 - `Zhengyan.DigitalWife.Abstractions`
 - `Zhengyan.DigitalWife.Assistant`
 - `Zhengyan.DigitalWife.Audio.PortAudio`
+- `Zhengyan.DigitalWife.Audio.OpenAL`
 - `Zhengyan.DigitalWife.Llm.OpenAI`
 - `Zhengyan.DigitalWife.Speech.SherpaOnnx`
 - `Zhengyan.DigitalWife.Speech.WhisperNet`
@@ -94,6 +96,7 @@ dotnet pack src/Zhengyan.DigitalWife.Abstractions/Zhengyan.DigitalWife.Abstracti
 dotnet pack src/Zhengyan.DigitalWife.Abstractions/Zhengyan.DigitalWife.Abstractions.csproj -c Release -o artifacts/packages
 dotnet pack src/Zhengyan.DigitalWife.Assistant/Zhengyan.DigitalWife.Assistant.csproj -c Release -o artifacts/packages
 dotnet pack src/Zhengyan.DigitalWife.Audio.PortAudio/Zhengyan.DigitalWife.Audio.PortAudio.csproj -c Release -o artifacts/packages
+dotnet pack src/Zhengyan.DigitalWife.Audio.OpenAL/Zhengyan.DigitalWife.Audio.OpenAL.csproj -c Release -o artifacts/packages
 dotnet pack src/Zhengyan.DigitalWife.Llm.OpenAI/Zhengyan.DigitalWife.Llm.OpenAI.csproj -c Release -o artifacts/packages
 dotnet pack src/Zhengyan.DigitalWife.Speech.SherpaOnnx/Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj -c Release -o artifacts/packages
 dotnet pack src/Zhengyan.DigitalWife.Speech.WhisperNet/Zhengyan.DigitalWife.Speech.WhisperNet.csproj -c Release -o artifacts/packages

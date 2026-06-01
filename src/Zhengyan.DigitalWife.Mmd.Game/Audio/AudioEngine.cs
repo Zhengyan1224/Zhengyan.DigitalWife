@@ -80,14 +80,7 @@ public sealed unsafe class AudioEngine : IDisposable
             throw new ArgumentOutOfRangeException(nameof(channels));
         }
 
-        short[] pcm16Samples = new short[samples.Length];
-        for (int i = 0; i < samples.Length; i++)
-        {
-            pcm16Samples[i] = (short)MathF.Round(Math.Clamp(samples[i], -1.0f, 1.0f) * short.MaxValue);
-        }
-
-        byte[] pcm16 = new byte[pcm16Samples.Length * sizeof(short)];
-        Buffer.BlockCopy(pcm16Samples, 0, pcm16, 0, pcm16.Length);
+        byte[] pcm16 = ConvertFloatSamplesToPcm16(samples);
         return CreateClip(name, pcm16, sampleRate, channels);
     }
 
@@ -107,16 +100,7 @@ public sealed unsafe class AudioEngine : IDisposable
             throw new ArgumentOutOfRangeException(nameof(channels));
         }
 
-        uint bufferId = _al.GenBuffer();
-        fixed (byte* pcmPtr = pcm16)
-        {
-            _al.BufferData(
-                bufferId,
-                GetBufferFormat(channels),
-                pcmPtr,
-                pcm16.Length,
-                sampleRate);
-        }
+        uint bufferId = CreateBuffer(pcm16, sampleRate, channels);
 
         int bytesPerFrame = sizeof(short) * channels;
         double seconds = pcm16.Length / (double)(sampleRate * bytesPerFrame);
@@ -174,6 +158,48 @@ public sealed unsafe class AudioEngine : IDisposable
         _al.Dispose();
         _context.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    internal uint CreateBuffer(
+        ReadOnlySpan<float> samples,
+        int sampleRate,
+        int channels)
+    {
+        return CreateBuffer(ConvertFloatSamplesToPcm16(samples), sampleRate, channels);
+    }
+
+    internal unsafe uint CreateBuffer(
+        ReadOnlySpan<byte> pcm16,
+        int sampleRate,
+        int channels)
+    {
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        if (channels <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(channels));
+        }
+
+        uint bufferId = _al.GenBuffer();
+        fixed (byte* pcmPtr = pcm16)
+        {
+            _al.BufferData(
+                bufferId,
+                GetBufferFormat(channels),
+                pcmPtr,
+                pcm16.Length,
+                sampleRate);
+        }
+
+        return bufferId;
+    }
+
+    internal void DeleteBuffer(uint bufferId)
+    {
+        _al.DeleteBuffer(bufferId);
     }
 
     private static AudioData LoadAudioData(string path)
@@ -299,7 +325,7 @@ public sealed unsafe class AudioEngine : IDisposable
         return pcm16;
     }
 
-    private static BufferFormat GetBufferFormat(int channels)
+    internal static BufferFormat GetBufferFormat(int channels)
     {
         return channels switch
         {
@@ -307,6 +333,19 @@ public sealed unsafe class AudioEngine : IDisposable
             2 => BufferFormat.Stereo16,
             _ => throw new NotSupportedException($"Unsupported channel count: {channels}.")
         };
+    }
+
+    private static byte[] ConvertFloatSamplesToPcm16(ReadOnlySpan<float> samples)
+    {
+        short[] pcm16Samples = new short[samples.Length];
+        for (int i = 0; i < samples.Length; i++)
+        {
+            pcm16Samples[i] = (short)MathF.Round(Math.Clamp(samples[i], -1.0f, 1.0f) * short.MaxValue);
+        }
+
+        byte[] pcm16 = new byte[pcm16Samples.Length * sizeof(short)];
+        Buffer.BlockCopy(pcm16Samples, 0, pcm16, 0, pcm16.Length);
+        return pcm16;
     }
 
     private static bool IsOpenAlAvailable()

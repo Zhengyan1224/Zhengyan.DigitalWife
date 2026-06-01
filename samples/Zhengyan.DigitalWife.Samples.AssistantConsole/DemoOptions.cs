@@ -9,7 +9,7 @@ public sealed class DemoOptions
 {
     public string RecognitionProvider { get; init; } = "sherpa";
 
-    public PortAudioDemoOptions Audio { get; init; } = new();
+    public DemoAudioOptions Audio { get; init; } = new();
 
     public required OpenAiCompatibleLlmOptions Llm { get; init; }
 
@@ -30,8 +30,10 @@ public sealed class DemoOptions
     public string? CapturedAudioDirectory { get; init; }
 }
 
-public sealed class PortAudioDemoOptions
+public sealed class DemoAudioOptions
 {
+    public AudioPlaybackBackend PlaybackBackend { get; init; } = AudioPlaybackBackend.PortAudio;
+
     public int? InputDeviceIndex { get; init; }
 
     public int? OutputDeviceIndex { get; init; }

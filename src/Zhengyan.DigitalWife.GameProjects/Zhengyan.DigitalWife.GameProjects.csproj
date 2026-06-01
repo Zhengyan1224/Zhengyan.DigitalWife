@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <ItemGroup>
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Abstractions\Zhengyan.DigitalWife.Abstractions.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
     </ItemGroup>
 

@@ -2,6 +2,7 @@ using System.Numerics;
 using ImGuiNET;
 using Silk.NET.OpenGLES;
 using Silk.NET.OpenGLES.Extensions.ImGui;
+using Zhengyan.DigitalWife.Audio;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
@@ -884,6 +885,23 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             voice.Enabled = enabled;
         }
+
+        string[] playbackBackends = ["OpenAL", "PortAudio"];
+        int playbackBackendIndex = voice.PlaybackBackend == AudioPlaybackBackend.PortAudio ? 1 : 0;
+        if (ImGui.Combo("Speech playback backend", ref playbackBackendIndex, playbackBackends, playbackBackends.Length))
+        {
+            voice.PlaybackBackend = playbackBackendIndex == 1
+                ? AudioPlaybackBackend.PortAudio
+                : AudioPlaybackBackend.OpenAL;
+        }
+
+        int outputDeviceIndexValue = voice.OutputDeviceIndex ?? -1;
+        if (ImGui.DragInt("Speech output device index", ref outputDeviceIndexValue, 1.0f, -1, 9999))
+        {
+            voice.OutputDeviceIndex = outputDeviceIndexValue < 0 ? null : outputDeviceIndexValue;
+        }
+
+        ImGui.TextDisabled("Set to -1 to use the default output device. This is only used when speech playback backend is PortAudio.");
 
         string provider = voice.TtsProvider;
         if (ImGui.InputText("TTS provider", ref provider, 128))

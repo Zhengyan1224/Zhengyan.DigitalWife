@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Zhengyan.DigitalWife.Audio;
 using Zhengyan.DigitalWife.Audio.PortAudio;
 using Zhengyan.DigitalWife.Realtime.OpenAI;
 using Zhengyan.DigitalWife.Samples.DigitalHuman;
@@ -30,7 +31,19 @@ services.AddLogging(builder =>
     });
 });
 
-services.AddPortAudio(resolvedOptions.Audio);
+services.AddPortAudioInput(resolvedOptions.Audio.PortAudio);
+switch (resolvedOptions.Audio.PlaybackBackend)
+{
+    case AudioPlaybackBackend.PortAudio:
+        services.AddPortAudioOutput(resolvedOptions.Audio.PortAudio);
+        break;
+
+    case AudioPlaybackBackend.OpenAL:
+        break;
+
+    default:
+        throw new InvalidOperationException($"Unsupported audio playback backend: {resolvedOptions.Audio.PlaybackBackend}");
+}
 services.AddOpenAiRealtimeClient(resolvedOptions.RealtimeClient);
 
 using ServiceProvider provider = services.BuildServiceProvider();

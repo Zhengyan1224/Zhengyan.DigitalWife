@@ -50,6 +50,7 @@ bin/Debug/net10.0/GameEditorProjects/DemoGame
 {
   "voice": {
     "enabled": true,
+    "playbackBackend": "OpenAL",
     "ttsProvider": "sherpa-onnx",
     "modelKind": "vits",
     "modelPath": "project:assets/tts/model.onnx",
@@ -69,6 +70,11 @@ bin/Debug/net10.0/GameEditorProjects/DemoGame
 ```
 
 `preloadOnSceneLoad` 默认为 `true`。启用后，场景加载阶段会同步加载 TTS 模型并用 `warmUpText` 做一次短文本合成，避免首次 `Speak` 时才加载模型导致明显延迟。
+
+`playbackBackend` 支持：
+
+- `OpenAL`：默认模式，复用 `GamePlayer` 自身的引擎音频后端。
+- `PortAudio`：TTS 改用 `PortAudio` 播放；场景音频和背景音乐仍然走引擎 `OpenAL`。
 
 ## 人物说话
 

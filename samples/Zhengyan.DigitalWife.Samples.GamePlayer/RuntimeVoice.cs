@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Silk.NET.OpenAL;
 using Zhengyan.DigitalWife.Audio;
+using Zhengyan.DigitalWife.Audio.PortAudio;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Audio;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
@@ -16,6 +16,8 @@ public sealed class RuntimeVoice : IDisposable
     private readonly MainThreadDispatcher _dispatcher;
     private readonly string _projectDirectory;
     private readonly GameProjectVoiceSettings _settings;
+    private readonly IAudioPlayer _audioPlayer;
+    private readonly IDisposable _ownedAudioPlayer;
     private readonly Dictionary<string, SpeechTransformUpdater> _speechUpdaters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ActiveSpeech> _activeSpeeches = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sync = new();
@@ -35,6 +37,24 @@ public sealed class RuntimeVoice : IDisposable
         _dispatcher = dispatcher;
         _projectDirectory = projectDirectory;
         _settings = settings;
+        _ownedAudioPlayer = settings.PlaybackBackend == AudioPlaybackBackend.PortAudio
+            ? new PortAudioSpeakerPlayer(
+                NullLogger<PortAudioSpeakerPlayer>.Instance,
+                new PortAudioRuntimeOptions
+                {
+                    OutputDeviceIndex = settings.OutputDeviceIndex
+                })
+            : new GameAudioPlayer(
+                () => game.Audio,
+                dispatcher.InvokeAsync,
+                () => game.AudioStatusMessage);
+        _audioPlayer = (IAudioPlayer)_ownedAudioPlayer;
+        Console.WriteLine($"[GamePlayer] Voice playback backend: {_settings.PlaybackBackend}");
+        if (_settings.PlaybackBackend == AudioPlaybackBackend.PortAudio)
+        {
+            string deviceText = settings.OutputDeviceIndex?.ToString() ?? "default";
+            Console.WriteLine($"[GamePlayer] Voice PortAudio output device: {deviceText}");
+        }
     }
 
     public bool IsEnabled => _settings.Enabled;
@@ -212,6 +232,7 @@ public sealed class RuntimeVoice : IDisposable
         }
 
         synthesizer?.Dispose();
+        _ownedAudioPlayer.Dispose();
     }
 
     private async Task SpeakAsync(RuntimeEntity entity, string text, RuntimeVoiceOptions options, int sceneVersion)
@@ -234,6 +255,7 @@ public sealed class RuntimeVoice : IDisposable
                 SpeakerId = speakerId,
                 Speed = speed
             }).ConfigureAwait(false);
+        AudioData adjustedAudio = ApplyVolume(audio, volume);
 
         if (sceneVersion != Volatile.Read(ref _sceneVersion))
         {
@@ -244,14 +266,14 @@ public sealed class RuntimeVoice : IDisposable
         {
             if (sceneVersion == Volatile.Read(ref _sceneVersion))
             {
-                PlaySpeechOnMainThread(entity, text, audio, volume, options.OnCompleted);
+                PlaySpeechOnMainThread(entity, text, adjustedAudio, options.OnCompleted);
             }
         });
     }
 
-    private void PlaySpeechOnMainThread(RuntimeEntity entity, string text, AudioData audio, float volume, Action? onCompleted)
+    private void PlaySpeechOnMainThread(RuntimeEntity entity, string text, AudioData audio, Action? onCompleted)
     {
-        if (_game.Audio is null)
+        if (_settings.PlaybackBackend == AudioPlaybackBackend.OpenAL && _game.Audio is null)
         {
             Console.Error.WriteLine(_game.AudioStatusMessage ?? "Audio is unavailable.");
             InvokeCompletion(onCompleted);
@@ -259,15 +281,9 @@ public sealed class RuntimeVoice : IDisposable
         }
 
         AttachEntity(entity);
-        AudioClip clip = _game.Audio.CreateClip(
-            $"tts:{entity.Id}:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
-            audio.Samples,
-            audio.Format.SampleRate,
-            audio.Format.Channels);
-
-        AudioSource source = _game.Audio.CreateSource(clip);
-        source.Volume = volume;
-        source.Play();
+        CancellationTokenSource cancellation = new();
+        Task playbackTask = _audioPlayer.PlayAsync(audio, cancellation.Token);
+        ActiveSpeech activeSpeech = new(cancellation, playbackTask);
 
         lock (_sync)
         {
@@ -276,7 +292,7 @@ public sealed class RuntimeVoice : IDisposable
                 previous.Dispose();
             }
 
-            _activeSpeeches[entity.Id] = new ActiveSpeech(source, clip);
+            _activeSpeeches[entity.Id] = activeSpeech;
         }
 
         if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? updater))
@@ -284,58 +300,34 @@ public sealed class RuntimeVoice : IDisposable
             updater.Start(text, CalculateFramePeriod(text, audio.Duration), isLoop: false);
         }
 
-        WaitForSpeechCompletion(entity, source, audio.Duration, onCompleted);
+        WaitForSpeechCompletion(entity, activeSpeech, onCompleted);
     }
 
-    private void WaitForSpeechCompletion(RuntimeEntity entity, AudioSource source, TimeSpan expectedDuration, Action? onCompleted)
+    private void WaitForSpeechCompletion(RuntimeEntity entity, ActiveSpeech speech, Action? onCompleted)
     {
         _ = Task.Run(async () =>
         {
-            DateTimeOffset deadline = DateTimeOffset.UtcNow + expectedDuration + TimeSpan.FromSeconds(5);
-            while (DateTimeOffset.UtcNow < deadline)
+            bool completedNaturally = false;
+            try
             {
-                await Task.Delay(50).ConfigureAwait(false);
-                TaskCompletionSource<bool> completionProbe = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                _dispatcher.Post(() =>
-                {
-                    try
-                    {
-                        completionProbe.TrySetResult(source.State != SourceState.Playing);
-                    }
-                    catch (Exception ex)
-                    {
-                        completionProbe.TrySetException(ex);
-                    }
-                });
-
-                bool completed;
-                try
-                {
-                    completed = await completionProbe.Task.ConfigureAwait(false);
-                }
-                catch
-                {
-                    completed = true;
-                }
-
-                if (completed)
-                {
-                    break;
-                }
+                await speech.PlaybackTask.ConfigureAwait(false);
+                completedNaturally = !speech.IsCanceled;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Entity speech playback failed for '{entity.Name}': {ex.Message}");
             }
 
             _dispatcher.Post(() =>
             {
-                if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? finishedUpdater))
-                {
-                    finishedUpdater.Stop(resetFace: true);
-                }
-
                 bool isCurrentSpeech = false;
                 lock (_sync)
                 {
                     if (_activeSpeeches.TryGetValue(entity.Id, out ActiveSpeech? active)
-                        && ReferenceEquals(active.Source, source))
+                        && ReferenceEquals(active, speech))
                     {
                         _activeSpeeches.Remove(entity.Id);
                         active.Dispose();
@@ -345,7 +337,15 @@ public sealed class RuntimeVoice : IDisposable
 
                 if (isCurrentSpeech)
                 {
-                    InvokeCompletion(onCompleted);
+                    if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? finishedUpdater))
+                    {
+                        finishedUpdater.Stop(resetFace: true);
+                    }
+
+                    if (completedNaturally)
+                    {
+                        InvokeCompletion(onCompleted);
+                    }
                 }
             });
         });
@@ -583,16 +583,39 @@ public sealed class RuntimeVoice : IDisposable
             : SpeechSynthesisModelKind.Vits;
     }
 
-    private sealed class ActiveSpeech(AudioSource source, AudioClip clip) : IDisposable
+    private static AudioData ApplyVolume(AudioData audio, float volume)
     {
-        public AudioSource Source { get; } = source;
+        if (Math.Abs(volume - 1.0f) < 0.0001f)
+        {
+            return audio;
+        }
 
-        public AudioClip Clip { get; } = clip;
+        float[] scaled = new float[audio.Samples.Length];
+        for (int i = 0; i < audio.Samples.Length; i++)
+        {
+            scaled[i] = Math.Clamp(audio.Samples[i] * volume, -1.0f, 1.0f);
+        }
+
+        return new AudioData(scaled, audio.Format);
+    }
+
+    private sealed class ActiveSpeech(CancellationTokenSource cancellation, Task playbackTask) : IDisposable
+    {
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+
+        public Task PlaybackTask { get; } = playbackTask;
+
+        public bool IsCanceled { get; private set; }
 
         public void Dispose()
         {
-            Source.Dispose();
-            Clip.Dispose();
+            if (!IsCanceled)
+            {
+                IsCanceled = true;
+                Cancellation.Cancel();
+            }
+
+            Cancellation.Dispose();
         }
     }
 }

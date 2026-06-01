@@ -90,6 +90,51 @@ public sealed class AudioSource : IDisposable
 
     public void Rewind() => _al.SourceRewind(SourceId);
 
+    internal int QueuedBufferCount
+    {
+        get
+        {
+            _al.GetSourceProperty(SourceId, GetSourceInteger.BuffersQueued, out int value);
+            return value;
+        }
+    }
+
+    internal int ProcessedBufferCount
+    {
+        get
+        {
+            _al.GetSourceProperty(SourceId, GetSourceInteger.BuffersProcessed, out int value);
+            return value;
+        }
+    }
+
+    internal void QueueBuffers(uint[] bufferIds)
+    {
+        if (bufferIds.Length == 0)
+        {
+            return;
+        }
+
+        _al.SourceQueueBuffers(SourceId, bufferIds);
+    }
+
+    internal uint[] UnqueueBuffers(int count)
+    {
+        if (count <= 0)
+        {
+            return [];
+        }
+
+        uint[] bufferIds = new uint[count];
+        _al.SourceUnqueueBuffers(SourceId, bufferIds);
+        return bufferIds;
+    }
+
+    internal void ClearBufferBinding()
+    {
+        _al.SetSourceProperty(SourceId, SourceInteger.Buffer, 0);
+    }
+
     public void Dispose()
     {
         if (_disposed)
