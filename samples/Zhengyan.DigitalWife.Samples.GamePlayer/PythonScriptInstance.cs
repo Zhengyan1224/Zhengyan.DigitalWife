@@ -194,6 +194,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                import os
                import random
                import re
+               import socket
                import statistics
                import sys
                import time
@@ -1278,6 +1279,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.camera = Camera(data.get("camera", {}), commands)
                        self.debug = Debug(commands)
                        self.save = SaveStore()
+                       self.network = Network()
                        self._commands = commands
 
                    def get_entity(self, id_or_name):
@@ -1314,6 +1316,115 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        pending = list(self._commands)
                        self._commands.clear()
                        emit_commands(pending)
+
+               class Network:
+                   def http_get(self, url, timeout=15, headers=None):
+                       return self.http_send("GET", url, timeout=timeout, headers=headers)
+
+                   def http_post_text(self, url, text, content_type="text/plain; charset=utf-8", timeout=15, headers=None):
+                       return self.http_send("POST", url, body="" if text is None else str(text), content_type=content_type, timeout=timeout, headers=headers)
+
+                   def http_post_json(self, url, value, timeout=15, headers=None):
+                       return self.http_send("POST", url, body=json.dumps(value, ensure_ascii=False), content_type="application/json; charset=utf-8", timeout=timeout, headers=headers)
+
+                   def http_send(self, method, url, body=None, content_type=None, timeout=15, headers=None):
+                       method = str(method or "GET").upper()
+                       parsed_url = str(url or "")
+                       if not parsed_url.startswith(("http://", "https://")):
+                           raise ValueError("URL must start with http:// or https://")
+                       data = None
+                       request_headers = dict(headers or {})
+                       if body is not None:
+                           data = str(body).encode("utf-8")
+                           if content_type:
+                               request_headers["Content-Type"] = str(content_type)
+                       request = urllib.request.Request(parsed_url, data=data, headers=request_headers, method=method)
+                       try:
+                           with urllib.request.urlopen(request, timeout=max(1, int(timeout or 15))) as response:
+                               raw = response.read()
+                               return {
+                                   "status_code": int(response.status),
+                                   "is_success_status_code": 200 <= int(response.status) <= 299,
+                                   "reason_phrase": getattr(response, "reason", "") or "",
+                                   "body": raw.decode("utf-8", errors="replace"),
+                                   "headers": dict(response.headers)
+                               }
+                       except urllib.error.HTTPError as ex:
+                           raw = ex.read()
+                           return {
+                               "status_code": int(ex.code),
+                               "is_success_status_code": False,
+                               "reason_phrase": getattr(ex, "reason", "") or "",
+                               "body": raw.decode("utf-8", errors="replace"),
+                               "headers": dict(ex.headers)
+                           }
+
+                   def tcp_send_text(self, host, port, text, timeout=5, encoding="utf-8", receive_bytes=65536):
+                       data = self.tcp_send(host, port, ("" if text is None else str(text)).encode(encoding), timeout=timeout, receive_bytes=receive_bytes)
+                       return data.decode(encoding, errors="replace")
+
+                   def tcp_send(self, host, port, data, timeout=5, receive_bytes=65536):
+                       payload = bytes(data or b"")
+                       with socket.create_connection((str(host), int(port)), timeout=max(1, float(timeout or 5))) as sock:
+                           sock.settimeout(max(1, float(timeout or 5)))
+                           if payload:
+                               sock.sendall(payload)
+                           if receive_bytes is None or int(receive_bytes) <= 0:
+                               return b""
+                           return sock.recv(max(1, int(receive_bytes)))
+
+                   def tcp_receive_text_once(self, port, timeout=10, encoding="utf-8", receive_bytes=65536, listen_address="0.0.0.0"):
+                       message = self.tcp_receive_once(port, timeout=timeout, receive_bytes=receive_bytes, listen_address=listen_address)
+                       message["text"] = message["data"].decode(encoding, errors="replace")
+                       return message
+
+                   def tcp_receive_once(self, port, timeout=10, receive_bytes=65536, listen_address="0.0.0.0"):
+                       with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+                           server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                           server.settimeout(max(1, float(timeout or 10)))
+                           server.bind((str(listen_address or "0.0.0.0"), int(port)))
+                           server.listen(1)
+                           conn, address = server.accept()
+                           with conn:
+                               conn.settimeout(max(1, float(timeout or 10)))
+                               data = conn.recv(max(1, int(receive_bytes or 65536)))
+                               return {
+                                   "text": data.decode("utf-8", errors="replace"),
+                                   "data": data,
+                                   "remote_host": str(address[0]),
+                                   "remote_port": int(address[1])
+                               }
+
+                   def udp_send_text(self, host, port, text, timeout=5, encoding="utf-8", receive_bytes=65536, wait_for_response=True):
+                       data = self.udp_send(host, port, ("" if text is None else str(text)).encode(encoding), timeout=timeout, receive_bytes=receive_bytes, wait_for_response=wait_for_response)
+                       return data.decode(encoding, errors="replace")
+
+                   def udp_send(self, host, port, data, timeout=5, receive_bytes=65536, wait_for_response=True):
+                       payload = bytes(data or b"")
+                       with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                           sock.settimeout(max(1, float(timeout or 5)))
+                           sock.sendto(payload, (str(host), int(port)))
+                           if not wait_for_response or receive_bytes is None or int(receive_bytes) <= 0:
+                               return b""
+                           data, _ = sock.recvfrom(max(1, int(receive_bytes)))
+                           return data
+
+                   def udp_receive_text(self, port, timeout=10, encoding="utf-8", receive_bytes=65536, listen_address="0.0.0.0"):
+                       message = self.udp_receive(port, timeout=timeout, receive_bytes=receive_bytes, listen_address=listen_address)
+                       message["text"] = message["data"].decode(encoding, errors="replace")
+                       return message
+
+                   def udp_receive(self, port, timeout=10, receive_bytes=65536, listen_address="0.0.0.0"):
+                       with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                           sock.settimeout(max(1, float(timeout or 10)))
+                           sock.bind((str(listen_address or "0.0.0.0"), int(port)))
+                           data, address = sock.recvfrom(max(1, int(receive_bytes or 65536)))
+                           return {
+                               "text": data.decode("utf-8", errors="replace"),
+                               "data": data,
+                               "remote_host": str(address[0]),
+                               "remote_port": int(address[1])
+                           }
 
                class Performance:
                    def __init__(self, data):
@@ -2596,6 +2707,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     Window = PythonWindow.FromRuntime(scene.Window),
                     Runtime = PythonRuntime.FromRuntime(scene.Runtime),
                     Llm = PythonLlmSettings.FromRuntime(scene.Llm),
+                    Network = new PythonNetwork(),
                     Performance = PythonPerformance.FromRuntime(scene.Performance)
                 },
                 Input = PythonInput.FromRuntime(input)
@@ -2828,8 +2940,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonLlmSettings Llm { get; set; } = new();
 
+        public PythonNetwork Network { get; set; } = new();
+
         public PythonPerformance Performance { get; set; } = new();
     }
+
+    private sealed class PythonNetwork;
 
     private sealed class PythonRuntime
     {

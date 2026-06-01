@@ -445,6 +445,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 new RuntimeDebug(debugDraw),
                 new RuntimeSaveStore(_projectDirectory),
                 runtimeLlm,
+                new RuntimeNetwork(),
                 _runtimePerformance,
                 DispatchSpeechEvent,
                 RequestSceneChange);

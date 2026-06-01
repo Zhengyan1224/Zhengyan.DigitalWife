@@ -313,6 +313,7 @@
         <a href="#camera">Camera</a>
         <a href="#debug">Debug / Ray</a>
         <a href="#save">Save</a>
+        <a href="#network">Network</a>
         <a href="#llm">LLM</a>
         <a href="#notes">边界</a>
       </nav>
@@ -374,6 +375,7 @@
           <tr><td><code>Scene.Debug</code></td><td><code>scene.debug</code></td><td>调试线和射线绘制。</td></tr>
           <tr><td><code>Scene.Save</code></td><td><code>scene.save</code></td><td>受限到 `saves/` 的存档读写。</td></tr>
           <tr><td><code>Scene.Llm</code></td><td><code>scene.llm</code></td><td>OpenAI-compatible 文本对话。</td></tr>
+          <tr><td><code>Scene.Network</code></td><td><code>scene.network</code></td><td>HTTP/HTTPS、TCP 和 UDP 网络通信。</td></tr>
           <tr><td><code>Scene.Performance</code></td><td><code>scene.performance</code></td><td>FPS、帧号、运行时间。</td></tr>
           <tr><td><code>Scene.LoadScene(path)</code></td><td><code>scene.load_scene(path)</code></td><td>切换工程内场景文件。</td></tr>
           <tr><td><code>Scene.RenderTexture(name)</code></td><td><code>scene.render_texture(name)</code></td><td>返回 <code>rt:name</code> 引用。</td></tr>
@@ -565,6 +567,54 @@
           <tr><td><code>Exists</code> / <code>Delete</code></td><td><code>exists</code> / <code>delete</code></td><td>检查和删除存档。</td></tr>
           <tr><td><code>GetFullPath</code></td><td>无</td><td>C# 获取存档完整路径。</td></tr>
         </table>
+      </section>
+
+      <section id="network" data-search>
+        <h2>Network</h2>
+        <p><code>Scene.Network</code> / <code>scene.network</code> 支持 HTTP/HTTPS、TCP 和 UDP，基于 .NET / Python 标准库，可在 Windows、Linux 和 macOS 使用。</p>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>HttpGetAsync(url, timeoutSeconds, headers)</code></td><td><code>http_get(url, timeout, headers)</code></td><td>发送 HTTP GET；URL 必须是绝对 <code>http://</code> 或 <code>https://</code>。</td></tr>
+          <tr><td><code>HttpPostTextAsync(url, text, contentType, ...)</code></td><td><code>http_post_text(url, text, content_type, ...)</code></td><td>发送文本 POST。</td></tr>
+          <tr><td><code>HttpPostJsonAsync(url, value, ...)</code></td><td><code>http_post_json(url, value, ...)</code></td><td>发送 JSON POST。</td></tr>
+          <tr><td><code>HttpSendAsync(method, url, body, ...)</code></td><td><code>http_send(method, url, body, ...)</code></td><td>自定义 HTTP 方法、请求体和 Content-Type。</td></tr>
+          <tr><td><code>TcpSendTextAsync(host, port, text, ...)</code></td><td><code>tcp_send_text(host, port, text, ...)</code></td><td>TCP 发送文本并读取一次响应。</td></tr>
+          <tr><td><code>TcpSendAsync(host, port, data, ...)</code></td><td><code>tcp_send(host, port, data, ...)</code></td><td>TCP 发送字节并读取一次响应；接收长度小于等于 0 时不等待响应。</td></tr>
+          <tr><td><code>TcpReceiveTextOnceAsync(port, ...)</code></td><td><code>tcp_receive_text_once(port, ...)</code></td><td>一次性 TCP 监听，接收一个连接后返回文本。</td></tr>
+          <tr><td><code>TcpReceiveOnceAsync(port, ...)</code></td><td><code>tcp_receive_once(port, ...)</code></td><td>一次性 TCP 监听，接收一个连接后返回字节。</td></tr>
+          <tr><td><code>UdpSendTextAsync(host, port, text, ...)</code></td><td><code>udp_send_text(host, port, text, ...)</code></td><td>UDP 发送文本；可选择等待一个回复包。</td></tr>
+          <tr><td><code>UdpSendAsync(host, port, data, ...)</code></td><td><code>udp_send(host, port, data, ...)</code></td><td>UDP 发送字节；<code>waitForResponse</code> / <code>wait_for_response</code> 控制是否等待回复。</td></tr>
+          <tr><td><code>UdpReceiveTextAsync(port, ...)</code></td><td><code>udp_receive_text(port, ...)</code></td><td>监听一个 UDP 数据包并返回文本。</td></tr>
+          <tr><td><code>UdpReceiveAsync(port, ...)</code></td><td><code>udp_receive(port, ...)</code></td><td>监听一个 UDP 数据包并返回字节。</td></tr>
+        </table>
+        <div class="grid">
+          <div class="card">
+            <h3>HTTP 返回</h3>
+            <p>C#：<code>RuntimeHttpResponse.StatusCode</code>、<code>IsSuccessStatusCode</code>、<code>ReasonPhrase</code>、<code>Body</code>、<code>Headers</code>、<code>GetHeader(name)</code>。</p>
+            <p>Python：字典字段 <code>status_code</code>、<code>is_success_status_code</code>、<code>reason_phrase</code>、<code>body</code>、<code>headers</code>。</p>
+          </div>
+          <div class="card">
+            <h3>TCP / UDP 返回</h3>
+            <p>C# 接收返回 <code>RuntimeTcpMessage</code> / <code>RuntimeUdpMessage</code>，包含 <code>Text</code>、<code>Data</code>、<code>RemoteHost</code>、<code>RemotePort</code>。</p>
+            <p>Python 接收返回字典字段 <code>text</code>、<code>data</code>、<code>remote_host</code>、<code>remote_port</code>。</p>
+          </div>
+        </div>
+        <pre><code class="language-csharp">RuntimeHttpResponse response = await Scene.Network.HttpGetAsync("https://example.com", timeoutSeconds: 10);
+Console.WriteLine(response.Body);
+
+string tcpReply = await Scene.Network.TcpSendTextAsync("127.0.0.1", 9000, "ping\n", timeoutSeconds: 3);
+await Scene.Network.UdpSendAsync("127.0.0.1", 9004, Encoding.UTF8.GetBytes("fire-and-forget"), waitForResponse: false);</code></pre>
+        <pre><code class="language-python">response = scene.network.http_get("https://example.com", timeout=10)
+print(response["body"])
+
+tcp_reply = scene.network.tcp_send_text("127.0.0.1", 9000, "ping\n", timeout=3)
+scene.network.udp_send("127.0.0.1", 9004, b"fire-and-forget", wait_for_response=False)</code></pre>
+        <ul>
+          <li>网络调用可能阻塞到超时，不建议在每帧 <code>update</code> 中执行长请求。</li>
+          <li>TCP 接收是一次性监听；UDP 可能丢包、乱序或没有响应。</li>
+          <li>监听端口可能被系统防火墙、杀毒软件或已有进程占用。</li>
+          <li>当前没有 WebSocket 封装。</li>
+        </ul>
       </section>
 
       <section id="llm" data-search>
