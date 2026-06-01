@@ -108,6 +108,108 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.DigitalHuman/Zhengyan.
 | `Conversation.WakeWordCapture` | 唤醒词阶段本地录音参数。 |
 | `Conversation.UserCapture` | 正常对话阶段本地录音参数。 |
 
+## Linux 麦克风输入排查
+
+`DigitalHuman` 的麦克风输入当前始终走 `PortAudio`。`Audio.PlaybackBackend` 只影响说话输出，不影响录音设备打开逻辑。
+
+Linux 下最常见的问题不是代码崩溃，而是：
+
+- 默认输入设备不是你想要的设备
+- `PortAudio` 设备索引和系统声卡号对不上
+- `Conversation.WakeWordCapture.SampleRate` / `Conversation.UserCapture.SampleRate` 不被硬件支持
+- 设备被别的进程占用
+
+建议按下面顺序排查。
+
+### 1. 确认系统级录音设备
+
+先看 ALSA 识别到了哪些录音设备：
+
+```bash
+arecord -l
+arecord -L
+```
+
+如果你怀疑某个设备是否真的能录，直接做最小录音测试：
+
+```bash
+arecord -D hw:1,0 -f S16_LE -c 1 -r 48000 -d 3 /tmp/dw-mic-test.wav
+aplay /tmp/dw-mic-test.wav
+```
+
+如果 `48000` 不行，再试 `44100`。很多只有 ALSA 的 Linux 机器只稳定支持 `44100` 或 `48000`。
+
+### 2. 看 PortAudio 视角下的设备索引
+
+`DigitalHuman` 没有内建 `--list-devices` 参数，但 `AssistantConsole` 使用的是同一套 `PortAudio` 设备枚举。可以用它来查看设备索引：
+
+```bash
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj -- --list-devices
+```
+
+重点看：
+
+- 哪个设备有 `in > 0`
+- 该设备在 `PortAudio` 里的索引是多少
+- 默认采样率是多少
+
+然后把这个索引写到：
+
+- `DigitalHuman.Audio.InputDeviceIndex`
+
+### 3. 只先改录音采样率，不要先怀疑 Realtime 采样率
+
+真正决定麦克风能不能被打开的，是：
+
+- `Conversation.WakeWordCapture.SampleRate`
+- `Conversation.UserCapture.SampleRate`
+
+`Realtime.InputAudioSampleRate` 是发送给远端 Realtime 协议时的目标采样率。它属于协议层，和 `PortAudio` 打开本地设备不是一回事。
+
+也就是说：
+
+- 录音设备能否打开，先看 `WakeWordCapture` / `UserCapture`
+- 发给远端前是否需要重采样，才看 `Realtime.InputAudioSampleRate`
+
+### 4. Linux 上推荐先试的本地覆盖配置
+
+如果你这台机器是 ALSA-only，或者 `PortAudio` 报 `paInvalidSampleRate`，优先试下面这组：
+
+```json
+{
+  "DigitalHuman": {
+    "Audio": {
+      "PlaybackBackend": "OpenAL",
+      "InputDeviceIndex": 3
+    },
+    "Conversation": {
+      "WakeWordCapture": {
+        "SampleRate": 48000,
+        "Channels": 1,
+        "FramesPerBuffer": 512
+      },
+      "UserCapture": {
+        "SampleRate": 48000,
+        "Channels": 1,
+        "FramesPerBuffer": 512
+      }
+    }
+  }
+}
+```
+
+如果 `48000` 仍然失败，再试 `44100`。
+
+### 5. 典型问题和处理方式
+
+| 现象 | 常见原因 | 处理方式 |
+| --- | --- | --- |
+| `paInvalidSampleRate` | 本地录音采样率不被设备支持 | 把 `WakeWordCapture.SampleRate` 和 `UserCapture.SampleRate` 改成 `48000` 或 `44100`。 |
+| 程序能启动，但完全收不到唤醒词 | 选错输入设备，或者系统默认源不是目标麦克风 | 用 `arecord -l` 和 `AssistantConsole --list-devices` 找到正确设备索引，写入 `Audio.InputDeviceIndex`。 |
+| `Device or resource busy` | 麦克风被别的程序占用 | 关闭浏览器、录音软件、会议软件，或切换到没有被占用的设备。 |
+| Windows 正常，Linux 不正常 | Linux 默认设备/默认采样率和 Windows 完全不同 | 不要依赖默认值，显式配置 `InputDeviceIndex` 和录音采样率。 |
+| 说话输出正常，但录音不正常 | `PlaybackBackend` 和录音链路无关 | 继续排查 `PortAudio` 输入设备和 `Conversation.*Capture` 配置，不要先改输出后端。 |
+
 ### 角色与场景
 
 以下部分仍然由前端本地控制：

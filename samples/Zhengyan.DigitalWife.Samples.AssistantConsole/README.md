@@ -67,6 +67,39 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zheng
 dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj -- --transcribe-file test.wav
 ```
 
+## Linux 麦克风输入排查
+
+`AssistantConsole` 的录音也走 `PortAudio`，所以 Linux 下会遇到和 `DigitalHuman` 类似的问题：默认输入设备不对、采样率不被硬件支持、设备被占用。
+
+建议顺序：
+
+1. 先看系统设备：
+
+```bash
+arecord -l
+arecord -L
+```
+
+2. 再看 `PortAudio` 设备索引：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj -- --list-devices
+```
+
+3. 如果录音打开失败，优先调整这些配置：
+
+- `Demo:Audio:InputDeviceIndex`
+- `Demo:Capture:SampleRate`
+- `Demo:WakeWord:CaptureOptions:SampleRate`
+
+4. Linux 上优先试 `48000`，不行再试 `44100`。
+
+常见现象：
+
+- `paInvalidSampleRate`：采样率不被设备支持
+- 没有录音但程序能跑：输入设备索引不对
+- `Device or resource busy`：麦克风被别的进程占用
+
 ## 代码入口
 
 入口文件：
