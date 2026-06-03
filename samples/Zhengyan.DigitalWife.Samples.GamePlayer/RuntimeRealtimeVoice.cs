@@ -204,7 +204,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         string resolvedRequestId = ResolveRequestId(requestId);
         TrackRequest(async cts =>
         {
-            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync(timeoutSeconds, cts.Token).ConfigureAwait(false);
+            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeUntilTextAsync(timeoutSeconds, cts.Token).ConfigureAwait(false);
             if (capture.TimedOut)
             {
                 DispatchEvent(
@@ -657,6 +657,35 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
         OpenAiRealtimeTranscriptionResult result = await GetClient(cancellationToken).TranscribeAsync(audio, deleteConversationItem: true, cancellationToken).ConfigureAwait(false);
         return new RealtimeVoiceCaptureResult(result, TimedOut: false);
+    }
+
+    private async Task<RealtimeVoiceCaptureResult> CaptureAndTranscribeUntilTextAsync(float? timeoutSeconds, CancellationToken cancellationToken)
+    {
+        if (timeoutSeconds is not > 0.0f)
+        {
+            return await CaptureAndTranscribeAsync(timeoutSeconds, cancellationToken).ConfigureAwait(false);
+        }
+
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds.Value);
+        while (true)
+        {
+            double remainingSeconds = (deadline - DateTimeOffset.UtcNow).TotalSeconds;
+            if (remainingSeconds <= 0.0)
+            {
+                return new RealtimeVoiceCaptureResult(null, TimedOut: true);
+            }
+
+            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync((float)remainingSeconds, cancellationToken).ConfigureAwait(false);
+            if (capture.TimedOut)
+            {
+                return capture;
+            }
+
+            if (!string.IsNullOrWhiteSpace(capture.Result?.Text))
+            {
+                return capture;
+            }
+        }
     }
 
     private async Task<OpenAiRealtimeTranscriptionResult?> CaptureAndRecognizeWakeWordAsync(CancellationToken cancellationToken)

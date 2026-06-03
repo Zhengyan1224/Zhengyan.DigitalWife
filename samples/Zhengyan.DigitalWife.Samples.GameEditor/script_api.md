@@ -2476,14 +2476,16 @@ if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_error")
 - 现在脚本层已经支持 `timeout` 和 `cancel`，可以完整实现接近 `DigitalHuman` 的状态机。
 - 下面的写法是：先靠唤醒词进入会话；用户说完后，数字人回复；回复完成后继续等待 30 秒下一句；如果 30 秒内没有新的语音输入，则清空会话并回到“等待唤醒”。
 - 假设项目里已经有两个动作文件：`assets/motions/basic_stand.vmd` 和 `assets/motions/basic_wait.vmd`。
-- 这里用 `basic_stand.vmd` 作为基础动作，`basic_wait.vmd` 作为动作层，通过层权重平滑过渡。脚本层当前没有直接设置“基础动作权重”的 API，所以这是最接近 `DigitalHuman` 项目平滑混合效果的写法。
+- 这里用 `basic_stand.vmd` 和 `basic_wait.vmd` 同时放进动作层列表，通过层权重平滑过渡，效果更接近 `DigitalHuman` 项目的动作混合方式。
 
 ```csharp
 static class VoiceState
 {
     public static bool InConversation;
     public static bool WakeWordMonitorStarted;
+    public static bool WaitingForUserSpeech;
     public static string PendingTurnRequestId = string.Empty;
+    public static DateTimeOffset WaitTurnExpiresAtUtc = DateTimeOffset.MinValue;
     public static bool MotionBlendReady;
     public static float WaitLayerWeight;
     public static float TargetWaitLayerWeight;
@@ -2492,6 +2494,7 @@ static class VoiceState
 const string StandMotion = "assets/motions/basic_stand.vmd";
 const string WaitMotion = "assets/motions/basic_wait.vmd";
 const float MotionBlendDurationSeconds = 0.35f;
+const double WaitForUserSpeechTimeoutSeconds = 30.0;
 
 void EnsureMotionBlendSetup()
 {
@@ -2502,8 +2505,8 @@ void EnsureMotionBlendSetup()
 
     Entity.SetMotionLayers(new[]
     {
-        new MotionLayerDefinition(StandMotion, 1.0f),
-        new MotionLayerDefinition(WaitMotion, 0.0f, true)
+        new MotionLayerDefinition(StandMotion, 1.0f, false),
+        new MotionLayerDefinition(WaitMotion, 0.0f, false)
     });
     Entity.LoopMotion = true;
     Entity.PlayMotion();
@@ -2548,6 +2551,40 @@ void UpdateMotionBlend()
     Entity.SetMotionLayerWeight(WaitMotion, next);
 }
 
+void BeginWaitingForUserSpeech()
+{
+    SetWaitState();
+    VoiceState.WaitingForUserSpeech = true;
+    VoiceState.WaitTurnExpiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(WaitForUserSpeechTimeoutSeconds);
+    Scene.GetGuiControl("Status")?.SetValue($"等待下一句（{WaitForUserSpeechTimeoutSeconds:0}s）");
+    VoiceState.PendingTurnRequestId = Scene.RealtimeVoice.StartVoiceTurn(
+        Entity,
+        timeoutSeconds: (float)WaitForUserSpeechTimeoutSeconds,
+        onTranscriptionCompletedCallback: "voice_transcribed",
+        onDeltaCallback: "voice_delta",
+        onCompletedCallback: "voice_done",
+        onTimeoutCallback: "voice_timeout",
+        onErrorCallback: "voice_error");
+}
+
+void EndConversationAndReturnToStand(string statusText)
+{
+    SetStandState();
+    VoiceState.WaitingForUserSpeech = false;
+    VoiceState.WaitTurnExpiresAtUtc = DateTimeOffset.MinValue;
+
+    if (!string.IsNullOrWhiteSpace(VoiceState.PendingTurnRequestId))
+    {
+        Scene.RealtimeVoice.CancelRequest(VoiceState.PendingTurnRequestId);
+        VoiceState.PendingTurnRequestId = string.Empty;
+    }
+
+    VoiceState.InConversation = false;
+    _ = Scene.RealtimeVoice.ResetConversationAsync();
+    Scene.GetGuiControl("Status")?.SetValue(statusText);
+    EnsureWakeWordMonitor();
+}
+
 void EnsureWakeWordMonitor()
 {
     EnsureMotionBlendSetup();
@@ -2573,6 +2610,13 @@ if (IsStart)
 if (IsUpdate)
 {
     UpdateMotionBlend();
+
+    if (VoiceState.WaitingForUserSpeech
+        && VoiceState.WaitTurnExpiresAtUtc != DateTimeOffset.MinValue
+        && DateTimeOffset.UtcNow >= VoiceState.WaitTurnExpiresAtUtc)
+    {
+        EndConversationAndReturnToStand("超时，重新等待唤醒");
+    }
 }
 
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "wake_word_hit")
@@ -2612,20 +2656,14 @@ if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "wake_word_hit")
 
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "prompt_done")
 {
-    SetWaitState();
     Scene.GetGuiControl("Status")?.SetValue("正在听");
-    VoiceState.PendingTurnRequestId = Scene.RealtimeVoice.StartVoiceTurn(
-        Entity,
-        timeoutSeconds: 30.0f,
-        onTranscriptionCompletedCallback: "voice_transcribed",
-        onDeltaCallback: "voice_delta",
-        onCompletedCallback: "voice_done",
-        onTimeoutCallback: "voice_timeout",
-        onErrorCallback: "voice_error");
+    BeginWaitingForUserSpeech();
 }
 
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_transcribed")
 {
+    VoiceState.WaitingForUserSpeech = false;
+    VoiceState.WaitTurnExpiresAtUtc = DateTimeOffset.MinValue;
     SetWaitState();
     Scene.GetGuiControl("Heard")?.SetValue(RealtimeVoiceText);
     Scene.GetGuiControl("Status")?.SetValue("思考中");
@@ -2641,42 +2679,20 @@ if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_delta")
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_done")
 {
     SetWaitState();
+    VoiceState.PendingTurnRequestId = string.Empty;
     Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceText);
-    Scene.GetGuiControl("Status")?.SetValue("等待下一句（30s）");
-    VoiceState.PendingTurnRequestId = Scene.RealtimeVoice.StartVoiceTurn(
-        Entity,
-        timeoutSeconds: 30.0f,
-        onTranscriptionCompletedCallback: "voice_transcribed",
-        onDeltaCallback: "voice_delta",
-        onCompletedCallback: "voice_done",
-        onTimeoutCallback: "voice_timeout",
-        onErrorCallback: "voice_error");
+    BeginWaitingForUserSpeech();
 }
 
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_timeout")
 {
-    SetStandState();
-    Scene.GetGuiControl("Status")?.SetValue("超时，重新等待唤醒");
-    VoiceState.PendingTurnRequestId = string.Empty;
-    VoiceState.InConversation = false;
-    _ = Scene.RealtimeVoice.ResetConversationAsync();
-    EnsureWakeWordMonitor();
+    EndConversationAndReturnToStand("超时，重新等待唤醒");
 }
 
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_error")
 {
     Console.Error.WriteLine(RealtimeVoiceError);
-    SetStandState();
-    Scene.GetGuiControl("Status")?.SetValue("语音出错，重新等待唤醒");
-    if (!string.IsNullOrWhiteSpace(VoiceState.PendingTurnRequestId))
-    {
-        Scene.RealtimeVoice.CancelRequest(VoiceState.PendingTurnRequestId);
-        VoiceState.PendingTurnRequestId = string.Empty;
-    }
-
-    VoiceState.InConversation = false;
-    _ = Scene.RealtimeVoice.ResetConversationAsync();
-    EnsureWakeWordMonitor();
+    EndConversationAndReturnToStand("语音出错，重新等待唤醒");
 }
 ```
 
@@ -2739,8 +2755,10 @@ Python 典型流程：
 ```python
 state = {
     "in_conversation": False,
+    "waiting_for_user_speech": False,
     "pending_turn_request_id": "",
     "wake_word_monitor_started": False,
+    "wait_turn_expires_at": None,
     "motion_blend_ready": False,
     "wait_weight": 0.0,
     "target_wait_weight": 0.0
@@ -2749,14 +2767,15 @@ state = {
 STAND_MOTION = "assets/motions/basic_stand.vmd"
 WAIT_MOTION = "assets/motions/basic_wait.vmd"
 BLEND_DURATION_SECONDS = 0.35
+WAIT_FOR_USER_SPEECH_TIMEOUT_SECONDS = 30.0
 
 def ensure_motion_blend_setup(entity):
     if state["motion_blend_ready"]:
         return
 
     entity.set_motion_layers([
-        {"path": STAND_MOTION, "weight": 1.0},
-        {"path": WAIT_MOTION, "weight": 0.0, "resetPhysicsOnLoop": True},
+        {"path": STAND_MOTION, "weight": 1.0, "resetPhysicsOnLoop": False},
+        {"path": WAIT_MOTION, "weight": 0.0, "resetPhysicsOnLoop": False},
     ])
     entity.set_loop_motion(True)
     entity.play_motion()
@@ -2791,6 +2810,38 @@ def update_motion_blend(entity, delta_seconds):
     entity.set_motion_layer_weight(STAND_MOTION, 1.0 - current)
     entity.set_motion_layer_weight(WAIT_MOTION, current)
 
+def begin_waiting_for_user_speech(entity, scene):
+    set_wait_state(entity)
+    state["waiting_for_user_speech"] = True
+    state["wait_turn_expires_at"] = time.time() + WAIT_FOR_USER_SPEECH_TIMEOUT_SECONDS
+    status = scene.get_gui_control("Status")
+    if status:
+        status.set_value(f"等待下一句（{WAIT_FOR_USER_SPEECH_TIMEOUT_SECONDS:.0f}s）")
+    state["pending_turn_request_id"] = scene.realtime_voice.start_voice_turn(
+        timeout_seconds=WAIT_FOR_USER_SPEECH_TIMEOUT_SECONDS,
+        on_transcription_completed="voice_transcribed",
+        on_delta="voice_delta",
+        on_completed="voice_done",
+        on_timeout="voice_timeout",
+        on_error="voice_error")
+
+def end_conversation_and_return_to_stand(entity, scene, status_text):
+    set_stand_state(entity)
+    state["waiting_for_user_speech"] = False
+    state["wait_turn_expires_at"] = None
+
+    if state["pending_turn_request_id"]:
+        scene.realtime_voice.cancel_request(state["pending_turn_request_id"])
+        state["pending_turn_request_id"] = ""
+
+    state["in_conversation"] = False
+    scene.realtime_voice.reset_conversation()
+    status = scene.get_gui_control("Status")
+    if status:
+        status.set_value(status_text)
+    state["wake_word_monitor_started"] = False
+    start(entity, scene, input=None, audio=None)
+
 def start(entity, scene, input, audio):
     if scene.realtime_voice.enabled and not state["wake_word_monitor_started"]:
         set_stand_state(entity)
@@ -2801,6 +2852,8 @@ def start(entity, scene, input, audio):
 
 def update(entity, scene, input, audio, delta_seconds):
     update_motion_blend(entity, delta_seconds)
+    if state["waiting_for_user_speech"] and state["wait_turn_expires_at"] is not None and time.time() >= state["wait_turn_expires_at"]:
+        end_conversation_and_return_to_stand(entity, scene, "超时，重新等待唤醒")
 
 def wake_word_hit(entity, scene, input, audio, event):
     if state["in_conversation"]:
@@ -2828,20 +2881,14 @@ def wake_word_hit(entity, scene, input, audio, event):
             on_error="voice_error")
 
 def prompt_done(entity, scene, input, audio, event):
-    set_wait_state(entity)
     status = scene.get_gui_control("Status")
     if status:
         status.set_value("正在听")
-
-    state["pending_turn_request_id"] = scene.realtime_voice.start_voice_turn(
-        timeout_seconds=30,
-        on_transcription_completed="voice_transcribed",
-        on_delta="voice_delta",
-        on_completed="voice_done",
-        on_timeout="voice_timeout",
-        on_error="voice_error")
+    begin_waiting_for_user_speech(entity, scene)
 
 def voice_transcribed(entity, scene, input, audio, event):
+    state["waiting_for_user_speech"] = False
+    state["wait_turn_expires_at"] = None
     set_wait_state(entity)
     heard = scene.get_gui_control("Heard")
     if heard:
@@ -2855,44 +2902,17 @@ def voice_delta(entity, scene, input, audio, event):
 
 def voice_done(entity, scene, input, audio, event):
     set_wait_state(entity)
+    state["pending_turn_request_id"] = ""
     reply = scene.get_gui_control("Reply")
     if reply:
         reply.set_value(event["text"])
-
-    status = scene.get_gui_control("Status")
-    if status:
-        status.set_value("等待下一句（30s）")
-
-    state["pending_turn_request_id"] = scene.realtime_voice.start_voice_turn(
-        timeout_seconds=30,
-        on_transcription_completed="voice_transcribed",
-        on_delta="voice_delta",
-        on_completed="voice_done",
-        on_timeout="voice_timeout",
-        on_error="voice_error")
+    begin_waiting_for_user_speech(entity, scene)
 
 def voice_timeout(entity, scene, input, audio, event):
-    set_stand_state(entity)
-    state["pending_turn_request_id"] = ""
-    state["in_conversation"] = False
-    scene.realtime_voice.reset_conversation()
-    state["wake_word_monitor_started"] = False
-    start(entity, scene, input, audio)
-
-    status = scene.get_gui_control("Status")
-    if status:
-        status.set_value("超时，重新等待唤醒")
+    end_conversation_and_return_to_stand(entity, scene, "超时，重新等待唤醒")
 
 def voice_error(entity, scene, input, audio, event):
-    set_stand_state(entity)
-    if state["pending_turn_request_id"]:
-        scene.realtime_voice.cancel_request(state["pending_turn_request_id"])
-        state["pending_turn_request_id"] = ""
-
-    state["in_conversation"] = False
-    scene.realtime_voice.reset_conversation()
-    state["wake_word_monitor_started"] = False
-    start(entity, scene, input, audio)
+    end_conversation_and_return_to_stand(entity, scene, "语音出错，重新等待唤醒")
     print("Realtime Voice error:", event["error"])
 ```
 
@@ -2912,6 +2932,7 @@ Python 通用回调事件字典字段包括：
 注意事项：
 
 - `RealtimeVoice` 的后台方法是非阻塞的，但如果你在 `Update` 每帧都调用 `start_*`，会不断创建新任务。通常要用脚本状态位控制，或只在 GUI 点击、唤醒词命中、上一轮完成回调后再触发下一轮。
+- 对“30s 内等待下一句，超时后回到站立”这类逻辑，推荐像上面的示例一样，由脚本自己维护 `WaitTurnExpiresAtUtc` / `wait_turn_expires_at` 并主动 `cancel_request(...)`，这样比单纯依赖后台请求回调更稳定。
 - 麦克风输入当前走本地 `PortAudio`。Linux 下如果打不开录音设备，优先检查 `Realtime Voice -> Input device index`、`User Capture` 和 `Wake Word Capture` 的采样率。
 - `start_response` / `start_voice_turn` 会自动播放远端返回音频；脚本无需再手动把音频流接到 `Audio.Play(...)`。
 - `ResetConversationAsync()` / `reset_conversation()` 会清空远端会话历史，适合切场景或开始新的对话主题时调用。
