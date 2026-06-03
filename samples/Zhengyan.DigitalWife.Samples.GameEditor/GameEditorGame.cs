@@ -546,7 +546,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void AddPmxEntityFromPath(string sourcePath, bool copyIntoProject)
     {
-        string normalizedSourcePath = NormalizeInputPath(sourcePath);
+        string normalizedSourcePath = ResolveAssetSourcePath(sourcePath);
         string assetPath = copyIntoProject
             ? CopyPmxAssetDirectoryIntoProject(normalizedSourcePath)
             : GameProjectPath.ToProjectRelative(ProjectDirectory, normalizedSourcePath);
@@ -591,7 +591,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void AddAudioFromPath(string sourcePath, bool copyIntoProject)
     {
-        string normalizedSourcePath = NormalizeInputPath(sourcePath);
+        string normalizedSourcePath = ResolveAssetSourcePath(sourcePath);
         string assetPath = copyIntoProject
             ? GameProjectPath.CopyAssetIntoProject(ProjectDirectory, normalizedSourcePath, "audio")
             : GameProjectPath.ToProjectRelative(ProjectDirectory, normalizedSourcePath);
@@ -612,7 +612,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void AddMotionFromPath(string sourcePath, bool copyIntoProject)
     {
-        string normalizedSourcePath = NormalizeInputPath(sourcePath);
+        string normalizedSourcePath = ResolveAssetSourcePath(sourcePath);
         string assetPath = copyIntoProject
             ? GameProjectPath.CopyAssetIntoProject(ProjectDirectory, normalizedSourcePath, "motions")
             : GameProjectPath.ToProjectRelative(ProjectDirectory, normalizedSourcePath);
@@ -629,7 +629,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void AddSpriteFromPath(string sourcePath, bool copyIntoProject)
     {
-        string normalizedSourcePath = NormalizeInputPath(sourcePath);
+        string normalizedSourcePath = ResolveAssetSourcePath(sourcePath);
         string assetPath = copyIntoProject
             ? GameProjectPath.CopyAssetIntoProject(ProjectDirectory, normalizedSourcePath, "sprites")
             : GameProjectPath.ToProjectRelative(ProjectDirectory, normalizedSourcePath);
@@ -648,7 +648,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void AddTexturedPlaneFromPath(string sourcePath, bool copyIntoProject)
     {
-        string normalizedSourcePath = NormalizeInputPath(sourcePath);
+        string normalizedSourcePath = ResolveAssetSourcePath(sourcePath);
         string assetPath = copyIntoProject
             ? GameProjectPath.CopyAssetIntoProject(ProjectDirectory, normalizedSourcePath, "textures")
             : GameProjectPath.ToProjectRelative(ProjectDirectory, normalizedSourcePath);
@@ -2879,18 +2879,37 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     private string CopyPmxAssetDirectoryIntoProject(string sourcePath)
     {
-        string sourceFullPath = NormalizeInputPath(sourcePath);
+        string sourceFullPath = ResolveAssetSourcePath(sourcePath);
         if (!File.Exists(sourceFullPath))
         {
             throw new FileNotFoundException($"PMX file not found: {sourceFullPath}", sourceFullPath);
         }
 
+        if (IsPathInsideDirectory(sourceFullPath, ProjectDirectory))
+        {
+            return GameProjectPath.ToProjectRelative(ProjectDirectory, sourceFullPath);
+        }
+
         string sourceDirectory = Path.GetDirectoryName(sourceFullPath) ?? throw new InvalidOperationException($"Cannot resolve PMX directory: {sourceFullPath}");
+        string sourceFileName = Path.GetFileName(sourceFullPath);
         string modelDirectoryName = SafeFileStem(Path.GetFileNameWithoutExtension(sourceFullPath));
-        string targetDirectory = MakeUniqueDirectory(Path.Combine(ProjectDirectory, "assets", "models", modelDirectoryName));
+        string modelsRoot = Path.Combine(ProjectDirectory, "assets", "models");
+        Directory.CreateDirectory(modelsRoot);
+
+        foreach (string candidateDirectory in Directory.EnumerateDirectories(modelsRoot))
+        {
+            string candidatePmxPath = Path.Combine(candidateDirectory, sourceFileName);
+            if (File.Exists(candidatePmxPath) && AreDirectoriesEquivalent(sourceDirectory, candidateDirectory))
+            {
+                return GameProjectPath.ToProjectRelative(ProjectDirectory, candidatePmxPath);
+            }
+        }
+
+        string preferredTargetDirectory = Path.Combine(modelsRoot, modelDirectoryName);
+        string targetDirectory = MakeUniqueDirectory(preferredTargetDirectory);
         CopyDirectoryContents(sourceDirectory, targetDirectory);
 
-        string targetPmxPath = Path.Combine(targetDirectory, Path.GetFileName(sourceFullPath));
+        string targetPmxPath = Path.Combine(targetDirectory, sourceFileName);
         if (!File.Exists(targetPmxPath))
         {
             File.Copy(sourceFullPath, targetPmxPath);
@@ -2948,6 +2967,104 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         return Path.GetFullPath(normalized.Trim().Trim('"'));
+    }
+
+    private string ResolveAssetSourcePath(string sourcePath)
+    {
+        string normalized = GameProjectPath.NormalizePathText(sourcePath);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new ArgumentException("Asset path cannot be empty.", nameof(sourcePath));
+        }
+
+        if (IsProjectAssetsRelativePath(normalized)
+            || normalized.StartsWith("project:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase)
+            || Path.IsPathRooted(normalized))
+        {
+            return GameProjectPath.ToAbsolute(ProjectDirectory, normalized);
+        }
+
+        string projectCandidate = GameProjectPath.ToAbsolute(ProjectDirectory, normalized);
+        if (File.Exists(projectCandidate) || Directory.Exists(projectCandidate))
+        {
+            return projectCandidate;
+        }
+
+        return NormalizeInputPath(normalized);
+    }
+
+    private static bool IsProjectAssetsRelativePath(string path)
+    {
+        return path.Replace('\\', '/').StartsWith("assets/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool AreDirectoriesEquivalent(string firstDirectory, string secondDirectory)
+    {
+        string[] firstFiles = Directory.EnumerateFiles(firstDirectory, "*", SearchOption.AllDirectories)
+            .Select(file => Path.GetRelativePath(firstDirectory, file).Replace('\\', '/'))
+            .OrderBy(file => file, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] secondFiles = Directory.EnumerateFiles(secondDirectory, "*", SearchOption.AllDirectories)
+            .Select(file => Path.GetRelativePath(secondDirectory, file).Replace('\\', '/'))
+            .OrderBy(file => file, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (!firstFiles.SequenceEqual(secondFiles, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        foreach (string relativePath in firstFiles)
+        {
+            string firstPath = Path.Combine(firstDirectory, relativePath);
+            string secondPath = Path.Combine(secondDirectory, relativePath);
+            if (!AreFilesEquivalent(firstPath, secondPath))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AreFilesEquivalent(string firstPath, string secondPath)
+    {
+        FileInfo first = new(firstPath);
+        FileInfo second = new(secondPath);
+        if (first.Length != second.Length)
+        {
+            return false;
+        }
+
+        const int bufferSize = 81920;
+        using FileStream firstStream = File.OpenRead(first.FullName);
+        using FileStream secondStream = File.OpenRead(second.FullName);
+        byte[] firstBuffer = new byte[bufferSize];
+        byte[] secondBuffer = new byte[bufferSize];
+
+        while (true)
+        {
+            int firstRead = firstStream.Read(firstBuffer, 0, firstBuffer.Length);
+            int secondRead = secondStream.Read(secondBuffer, 0, secondBuffer.Length);
+            if (firstRead != secondRead)
+            {
+                return false;
+            }
+
+            if (firstRead == 0)
+            {
+                return true;
+            }
+
+            for (int i = 0; i < firstRead; i++)
+            {
+                if (firstBuffer[i] != secondBuffer[i])
+                {
+                    return false;
+                }
+            }
+        }
     }
 
     private static int FindWindowsRootedPathStart(string path)

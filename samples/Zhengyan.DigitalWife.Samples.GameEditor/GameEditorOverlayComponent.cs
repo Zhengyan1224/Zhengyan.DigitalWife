@@ -622,6 +622,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         DrawLlmSettings(project.Llm);
         DrawVoiceSettings(project.Voice);
+        DrawRealtimeVoiceSettings(project.RealtimeVoice);
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
     }
@@ -1014,6 +1015,267 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("Scripts call Entity.Speak(...) / entity.speak(...). The runtime uses this project-level TTS configuration.");
+    }
+
+    private static void DrawRealtimeVoiceSettings(GameProjectRealtimeVoiceSettings realtimeVoice)
+    {
+        if (!ImGui.CollapsingHeader("Realtime Voice", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        bool enabled = realtimeVoice.Enabled;
+        if (ImGui.Checkbox("Enable Realtime Voice", ref enabled))
+        {
+            realtimeVoice.Enabled = enabled;
+        }
+
+        string baseUrl = realtimeVoice.BaseUrl;
+        if (ImGui.InputText("Base URL", ref baseUrl, 512))
+        {
+            realtimeVoice.BaseUrl = baseUrl;
+        }
+
+        string realtimePath = realtimeVoice.RealtimePath;
+        if (ImGui.InputText("Realtime path", ref realtimePath, 256))
+        {
+            realtimeVoice.RealtimePath = realtimePath;
+        }
+
+        string audioSpeechPath = realtimeVoice.AudioSpeechPath;
+        if (ImGui.InputText("Audio speech path", ref audioSpeechPath, 256))
+        {
+            realtimeVoice.AudioSpeechPath = audioSpeechPath;
+        }
+
+        string apiKeyEnvironmentVariable = realtimeVoice.ApiKeyEnvironmentVariable;
+        if (ImGui.InputText("API key env var", ref apiKeyEnvironmentVariable, 128))
+        {
+            realtimeVoice.ApiKeyEnvironmentVariable = apiKeyEnvironmentVariable;
+        }
+
+        string apiKey = realtimeVoice.ApiKey;
+        if (ImGui.InputText("API key override", ref apiKey, 256))
+        {
+            realtimeVoice.ApiKey = apiKey;
+        }
+
+        string model = realtimeVoice.Model;
+        if (ImGui.InputText("Model", ref model, 128))
+        {
+            realtimeVoice.Model = model;
+        }
+
+        string voice = realtimeVoice.Voice;
+        if (ImGui.InputText("Voice", ref voice, 128))
+        {
+            realtimeVoice.Voice = voice;
+        }
+
+        string instructions = realtimeVoice.Instructions;
+        if (ImGui.InputTextMultiline("Instructions", ref instructions, 4096, new Vector2(-1.0f, ImGui.GetTextLineHeight() * 5.0f)))
+        {
+            realtimeVoice.Instructions = instructions;
+        }
+
+        int connectTimeoutSeconds = realtimeVoice.ConnectTimeoutSeconds;
+        if (ImGui.DragInt("Connect timeout seconds", ref connectTimeoutSeconds, 1.0f, 1, 3600))
+        {
+            realtimeVoice.ConnectTimeoutSeconds = Math.Clamp(connectTimeoutSeconds, 1, 3600);
+        }
+
+        int outboundAudioChunkSamples = realtimeVoice.OutboundAudioChunkSamples;
+        if (ImGui.DragInt("Outbound audio chunk samples", ref outboundAudioChunkSamples, 128.0f, 512, 65536))
+        {
+            realtimeVoice.OutboundAudioChunkSamples = Math.Clamp(outboundAudioChunkSamples, 512, 65536);
+        }
+
+        int inputAudioSampleRate = realtimeVoice.InputAudioSampleRate;
+        if (ImGui.DragInt("Input audio sample rate", ref inputAudioSampleRate, 100.0f, 8000, 192000))
+        {
+            realtimeVoice.InputAudioSampleRate = Math.Clamp(inputAudioSampleRate, 8000, 192000);
+        }
+
+        int outputAudioSampleRate = realtimeVoice.OutputAudioSampleRate;
+        if (ImGui.DragInt("Output audio sample rate", ref outputAudioSampleRate, 100.0f, 8000, 192000))
+        {
+            realtimeVoice.OutputAudioSampleRate = Math.Clamp(outputAudioSampleRate, 8000, 192000);
+        }
+
+        string inputTranscriptionModel = realtimeVoice.InputTranscriptionModel;
+        if (ImGui.InputText("Input transcription model", ref inputTranscriptionModel, 128))
+        {
+            realtimeVoice.InputTranscriptionModel = inputTranscriptionModel;
+        }
+
+        string inputTranscriptionLanguage = realtimeVoice.InputTranscriptionLanguage;
+        if (ImGui.InputText("Input transcription language", ref inputTranscriptionLanguage, 64))
+        {
+            realtimeVoice.InputTranscriptionLanguage = inputTranscriptionLanguage;
+        }
+
+        string inputTranscriptionPrompt = realtimeVoice.InputTranscriptionPrompt;
+        if (ImGui.InputText("Input transcription prompt", ref inputTranscriptionPrompt, 512))
+        {
+            realtimeVoice.InputTranscriptionPrompt = inputTranscriptionPrompt;
+        }
+
+        bool useMaxOutputTokens = realtimeVoice.MaxOutputTokens.HasValue;
+        if (ImGui.Checkbox("Use max output tokens", ref useMaxOutputTokens))
+        {
+            realtimeVoice.MaxOutputTokens = useMaxOutputTokens ? Math.Max(1, realtimeVoice.MaxOutputTokens ?? 1024) : null;
+        }
+
+        if (realtimeVoice.MaxOutputTokens.HasValue)
+        {
+            int maxOutputTokens = realtimeVoice.MaxOutputTokens.Value;
+            if (ImGui.DragInt("Max output tokens", ref maxOutputTokens, 1.0f, 1, 32768))
+            {
+                realtimeVoice.MaxOutputTokens = Math.Clamp(maxOutputTokens, 1, 32768);
+            }
+        }
+
+        bool useTemperature = realtimeVoice.Temperature.HasValue;
+        if (ImGui.Checkbox("Use temperature", ref useTemperature))
+        {
+            realtimeVoice.Temperature = useTemperature ? realtimeVoice.Temperature ?? 0.7f : null;
+        }
+
+        if (realtimeVoice.Temperature.HasValue)
+        {
+            float temperature = realtimeVoice.Temperature.Value;
+            if (ImGui.DragFloat("Temperature", ref temperature, 0.01f, 0.0f, 2.0f, "%.2f"))
+            {
+                realtimeVoice.Temperature = Math.Clamp(temperature, 0.0f, 2.0f);
+            }
+        }
+
+        int inputDeviceIndex = realtimeVoice.InputDeviceIndex ?? -1;
+        if (ImGui.DragInt("Input device index", ref inputDeviceIndex, 1.0f, -1, 9999))
+        {
+            realtimeVoice.InputDeviceIndex = inputDeviceIndex < 0 ? null : inputDeviceIndex;
+        }
+
+        float outputVolume = realtimeVoice.OutputVolume;
+        if (ImGui.DragFloat("Output volume", ref outputVolume, 0.01f, 0.0f, 4.0f, "%.2f"))
+        {
+            realtimeVoice.OutputVolume = Math.Clamp(outputVolume, 0.0f, 4.0f);
+        }
+
+        float promptSpeed = realtimeVoice.PromptSpeed;
+        if (ImGui.DragFloat("Prompt speech speed", ref promptSpeed, 0.01f, 0.1f, 5.0f, "%.2f"))
+        {
+            realtimeVoice.PromptSpeed = Math.Clamp(promptSpeed, 0.1f, 5.0f);
+        }
+
+        if (ImGui.TreeNode("User Capture"))
+        {
+            DrawVoiceActivityCaptureSettings(realtimeVoice.UserCapture);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Wake Word"))
+        {
+            bool wakeWordEnabled = realtimeVoice.WakeWord.Enabled;
+            if (ImGui.Checkbox("Enable wake word monitoring", ref wakeWordEnabled))
+            {
+                realtimeVoice.WakeWord.Enabled = wakeWordEnabled;
+            }
+
+            string keywords = string.Join(", ", realtimeVoice.WakeWord.Keywords);
+            if (ImGui.InputText("Wake word keywords", ref keywords, 1024))
+            {
+                realtimeVoice.WakeWord.Keywords = keywords
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(static item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            float chunkDuration = realtimeVoice.WakeWord.ChunkDurationSeconds;
+            if (ImGui.DragFloat("Wake word chunk seconds", ref chunkDuration, 0.05f, 0.1f, 60.0f, "%.2f"))
+            {
+                realtimeVoice.WakeWord.ChunkDurationSeconds = Math.Clamp(chunkDuration, 0.1f, 60.0f);
+            }
+
+            float extensionDuration = realtimeVoice.WakeWord.ExtensionDurationSeconds;
+            if (ImGui.DragFloat("Wake word extension seconds", ref extensionDuration, 0.05f, 0.0f, 30.0f, "%.2f"))
+            {
+                realtimeVoice.WakeWord.ExtensionDurationSeconds = Math.Clamp(extensionDuration, 0.0f, 30.0f);
+            }
+
+            float trailingSilencePadding = realtimeVoice.WakeWord.TrailingSilencePaddingSeconds;
+            if (ImGui.DragFloat("Wake word tail silence seconds", ref trailingSilencePadding, 0.05f, 0.0f, 10.0f, "%.2f"))
+            {
+                realtimeVoice.WakeWord.TrailingSilencePaddingSeconds = Math.Clamp(trailingSilencePadding, 0.0f, 10.0f);
+            }
+
+            if (ImGui.TreeNode("Wake Word Capture"))
+            {
+                DrawAudioCaptureSettings(realtimeVoice.WakeWord.Capture);
+                ImGui.TreePop();
+            }
+
+            ImGui.TreePop();
+        }
+
+        ImGui.TextWrapped("Scripts call Scene.RealtimeVoice / scene.realtime_voice for remote speech transcription, wake-word monitoring, and streamed voice replies.");
+    }
+
+    private static void DrawAudioCaptureSettings(GameProjectAudioCaptureSettings capture)
+    {
+        int sampleRate = capture.SampleRate;
+        if (ImGui.DragInt("Sample rate", ref sampleRate, 100.0f, 8000, 192000))
+        {
+            capture.SampleRate = Math.Clamp(sampleRate, 8000, 192000);
+        }
+
+        int channels = capture.Channels;
+        if (ImGui.DragInt("Channels", ref channels, 1.0f, 1, 8))
+        {
+            capture.Channels = Math.Clamp(channels, 1, 8);
+        }
+
+        int framesPerBuffer = capture.FramesPerBuffer;
+        if (ImGui.DragInt("Frames per buffer", ref framesPerBuffer, 1.0f, 0, 8192))
+        {
+            capture.FramesPerBuffer = Math.Clamp(framesPerBuffer, 0, 8192);
+        }
+    }
+
+    private static void DrawVoiceActivityCaptureSettings(GameProjectVoiceActivityCaptureSettings capture)
+    {
+        DrawAudioCaptureSettings(capture);
+
+        float preRoll = capture.PreRollSeconds;
+        if (ImGui.DragFloat("Pre-roll seconds", ref preRoll, 0.01f, 0.0f, 10.0f, "%.2f"))
+        {
+            capture.PreRollSeconds = Math.Clamp(preRoll, 0.0f, 10.0f);
+        }
+
+        float minDuration = capture.MinDurationSeconds;
+        if (ImGui.DragFloat("Min duration seconds", ref minDuration, 0.05f, 0.0f, 120.0f, "%.2f"))
+        {
+            capture.MinDurationSeconds = Math.Clamp(minDuration, 0.0f, 120.0f);
+        }
+
+        float maxDuration = capture.MaxDurationSeconds;
+        if (ImGui.DragFloat("Max duration seconds", ref maxDuration, 0.05f, 0.1f, 300.0f, "%.2f"))
+        {
+            capture.MaxDurationSeconds = Math.Clamp(maxDuration, 0.1f, 300.0f);
+        }
+
+        float silenceTimeout = capture.SilenceTimeoutSeconds;
+        if (ImGui.DragFloat("Silence timeout seconds", ref silenceTimeout, 0.01f, 0.0f, 30.0f, "%.2f"))
+        {
+            capture.SilenceTimeoutSeconds = Math.Clamp(silenceTimeout, 0.0f, 30.0f);
+        }
+
+        float silenceThreshold = capture.SilenceThreshold;
+        if (ImGui.DragFloat("Silence threshold", ref silenceThreshold, 0.001f, 0.0f, 1.0f, "%.3f"))
+        {
+            capture.SilenceThreshold = Math.Clamp(silenceThreshold, 0.0f, 1.0f);
+        }
     }
 
     private void DrawHierarchyPanel()

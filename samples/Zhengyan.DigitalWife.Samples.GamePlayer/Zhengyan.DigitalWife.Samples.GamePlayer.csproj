@@ -13,6 +13,7 @@
         <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GameProjects\Zhengyan.DigitalWife.GameProjects.csproj" />
         <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
         <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
+        <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.RealtimeVoice.Client\Zhengyan.DigitalWife.RealtimeVoice.Client.csproj" />
         <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Speech.SherpaOnnx\Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
     </ItemGroup>
 

@@ -13,6 +13,7 @@ public sealed class RuntimeScene
     private readonly RuntimeDebug _debug;
     private readonly RuntimeSaveStore _save;
     private readonly RuntimeLlm _llm;
+    private readonly RuntimeRealtimeVoice _realtimeVoice;
     private readonly RuntimeNetwork _network;
     private readonly RuntimePerformance _performance;
     private readonly Action<string> _requestSceneChange;
@@ -28,6 +29,7 @@ public sealed class RuntimeScene
         RuntimeDebug debug,
         RuntimeSaveStore save,
         RuntimeLlm llm,
+        RuntimeRealtimeVoice realtimeVoice,
         RuntimeNetwork network,
         RuntimePerformance performance,
         Action<RuntimeEntity, string> dispatchSpeechEvent,
@@ -42,6 +44,7 @@ public sealed class RuntimeScene
         _debug = debug;
         _save = save;
         _llm = llm;
+        _realtimeVoice = realtimeVoice;
         _network = network;
         _performance = performance;
         _dispatchSpeechEvent = dispatchSpeechEvent;
@@ -67,6 +70,8 @@ public sealed class RuntimeScene
     public RuntimeSaveStore Save => _save;
 
     public RuntimeLlm Llm => _llm;
+
+    public RuntimeRealtimeVoice RealtimeVoice => _realtimeVoice;
 
     public RuntimeNetwork Network => _network;
 

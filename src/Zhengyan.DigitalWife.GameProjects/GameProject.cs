@@ -20,6 +20,8 @@ public sealed class GameProject
 
     public GameProjectVoiceSettings Voice { get; set; } = new();
 
+    public GameProjectRealtimeVoiceSettings RealtimeVoice { get; set; } = new();
+
     public GameProjectLlmSettings Llm { get; set; } = new();
 
     public GameWindowSettings Window { get; set; } = new();
@@ -85,6 +87,92 @@ public sealed class GameProjectVoiceSettings
     public string WarmUpText { get; set; } = "你好";
 
     public GameProjectLipSyncSettings LipSync { get; set; } = new();
+}
+
+public sealed class GameProjectRealtimeVoiceSettings
+{
+    public bool Enabled { get; set; }
+
+    public string BaseUrl { get; set; } = "http://127.0.0.1:5000";
+
+    public string RealtimePath { get; set; } = "/v1/realtime";
+
+    public string AudioSpeechPath { get; set; } = "/v1/audio/speech";
+
+    public string ApiKey { get; set; } = string.Empty;
+
+    public string ApiKeyEnvironmentVariable { get; set; } = "OPENAI_API_KEY";
+
+    public string Model { get; set; } = "zhengyan-realtime-voice";
+
+    public string Instructions { get; set; } = "你是晓雨，一个温柔、简洁、自然的中文语音助手。请直接回答用户问题，避免冗长。";
+
+    public string Voice { get; set; } = "0";
+
+    public int ConnectTimeoutSeconds { get; set; } = 30;
+
+    public int OutboundAudioChunkSamples { get; set; } = 4096;
+
+    public int InputAudioSampleRate { get; set; } = 24000;
+
+    public int OutputAudioSampleRate { get; set; } = 24000;
+
+    public string InputTranscriptionModel { get; set; } = "whisper-1";
+
+    public string InputTranscriptionLanguage { get; set; } = "zh";
+
+    public string InputTranscriptionPrompt { get; set; } = string.Empty;
+
+    public int? MaxOutputTokens { get; set; } = 1024;
+
+    public float? Temperature { get; set; } = 0.7f;
+
+    public int? InputDeviceIndex { get; set; }
+
+    public float OutputVolume { get; set; } = 1.0f;
+
+    public float PromptSpeed { get; set; } = 1.0f;
+
+    public GameProjectVoiceActivityCaptureSettings UserCapture { get; set; } = new();
+
+    public GameProjectRealtimeVoiceWakeWordSettings WakeWord { get; set; } = new();
+}
+
+public class GameProjectAudioCaptureSettings
+{
+    public int SampleRate { get; set; } = 16000;
+
+    public int Channels { get; set; } = 1;
+
+    public int FramesPerBuffer { get; set; } = 512;
+}
+
+public sealed class GameProjectVoiceActivityCaptureSettings : GameProjectAudioCaptureSettings
+{
+    public float PreRollSeconds { get; set; } = 0.25f;
+
+    public float MinDurationSeconds { get; set; } = 0.8f;
+
+    public float MaxDurationSeconds { get; set; } = 20.0f;
+
+    public float SilenceTimeoutSeconds { get; set; } = 0.9f;
+
+    public float SilenceThreshold { get; set; } = 0.015f;
+}
+
+public sealed class GameProjectRealtimeVoiceWakeWordSettings
+{
+    public bool Enabled { get; set; }
+
+    public List<string> Keywords { get; set; } = [];
+
+    public float ChunkDurationSeconds { get; set; } = 2.0f;
+
+    public float ExtensionDurationSeconds { get; set; } = 1.2f;
+
+    public float TrailingSilencePaddingSeconds { get; set; } = 0.4f;
+
+    public GameProjectAudioCaptureSettings Capture { get; set; } = new();
 }
 
 public sealed class GameProjectLlmSettings

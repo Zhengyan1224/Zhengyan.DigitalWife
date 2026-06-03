@@ -39,6 +39,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private RuntimeAudio? _runtimeAudio;
     private RuntimeVoice? _runtimeVoice;
     private RuntimeLlm? _runtimeLlm;
+    private RuntimeRealtimeVoice? _runtimeRealtimeVoice;
     private RuntimePerformance _runtimePerformance = new();
     private RuntimeEntity? _loadingEntity;
     private string? _pendingScenePath;
@@ -274,6 +275,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = null;
         _runtimeVoice?.Dispose();
         _runtimeVoice = null;
+        _runtimeRealtimeVoice?.Dispose();
+        _runtimeRealtimeVoice = null;
         _runtimeLlm?.Dispose();
         _runtimeLlm = null;
     }
@@ -295,6 +298,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _runtimeVoice = new RuntimeVoice(this, _dispatcher, _projectDirectory, Project.Voice);
             _runtimeLlm?.Dispose();
             _runtimeLlm = new RuntimeLlm(Project.Llm, _dispatcher, DispatchLlmEvent);
+            _runtimeRealtimeVoice?.Dispose();
+            _runtimeRealtimeVoice = new RuntimeRealtimeVoice(this, _projectDirectory, Project.RealtimeVoice, Project.Voice, _dispatcher, DispatchRealtimeVoiceEvent);
             _runtimePerformance = new RuntimePerformance();
             EnqueueSceneLoadSteps(Project.DefaultScene);
         });
@@ -435,6 +440,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 ?? throw new InvalidOperationException("Runtime debug draw is not initialized.");
             RuntimeLlm runtimeLlm = _runtimeLlm
                 ?? throw new InvalidOperationException("Runtime LLM is not initialized.");
+            RuntimeRealtimeVoice runtimeRealtimeVoice = _runtimeRealtimeVoice
+                ?? throw new InvalidOperationException("Runtime Realtime Voice is not initialized.");
                 _runtimeScene = new RuntimeScene(
                 Project.Scene,
                 _entitiesById,
@@ -445,6 +452,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 new RuntimeDebug(debugDraw),
                 new RuntimeSaveStore(_projectDirectory),
                 runtimeLlm,
+                runtimeRealtimeVoice,
                 new RuntimeNetwork(),
                 _runtimePerformance,
                 DispatchSpeechEvent,
@@ -617,6 +625,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _scriptTargets.Clear();
         _runtimeVoice?.ClearScene();
+        _runtimeRealtimeVoice?.ClearScene();
 
         foreach (PlayerPmxObject item in _pmxObjects.ToArray())
         {
@@ -1177,6 +1186,34 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"Script LLM event failed for entity '{entity.Name}': {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private void DispatchRealtimeVoiceEvent(RuntimeEntity target, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
+    {
+        if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
+        {
+            return;
+        }
+
+        foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, _) in _scriptTargets.ToArray())
+        {
+            if (!ReferenceEquals(entity, target))
+            {
+                continue;
+            }
+
+            foreach (IScriptInstance script in scripts)
+            {
+                try
+                {
+                    script.RealtimeVoiceEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, realtimeVoiceEvent);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Script Realtime Voice event failed for entity '{entity.Name}': {ex.Message}");
                 }
             }
         }

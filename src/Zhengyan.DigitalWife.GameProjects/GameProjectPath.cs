@@ -95,12 +95,42 @@ public static class GameProjectPath
             throw new FileNotFoundException($"Asset file not found: {sourceFullPath}", sourceFullPath);
         }
 
+        if (IsPathInsideDirectory(sourceFullPath, projectDirectory))
+        {
+            return ToProjectRelative(projectDirectory, sourceFullPath);
+        }
+
         string targetDirectory = Path.Combine(projectDirectory, "assets", assetSubdirectory);
         Directory.CreateDirectory(targetDirectory);
+
+        string? existingPath = FindIdenticalFile(targetDirectory, sourceFullPath);
+        if (!string.IsNullOrWhiteSpace(existingPath))
+        {
+            return ToProjectRelative(projectDirectory, existingPath);
+        }
 
         string targetPath = MakeUniqueTargetPath(targetDirectory, Path.GetFileName(sourceFullPath));
         File.Copy(sourceFullPath, targetPath);
         return ToProjectRelative(projectDirectory, targetPath);
+    }
+
+    private static string? FindIdenticalFile(string directory, string sourceFullPath)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        string fileName = Path.GetFileName(sourceFullPath);
+        foreach (string candidatePath in Directory.EnumerateFiles(directory, fileName, SearchOption.AllDirectories))
+        {
+            if (AreFilesEquivalent(sourceFullPath, candidatePath))
+            {
+                return candidatePath;
+            }
+        }
+
+        return null;
     }
 
     private static string MakeUniqueTargetPath(string directory, string fileName)
@@ -121,6 +151,54 @@ public static class GameProjectPath
                 return target;
             }
         }
+    }
+
+    private static bool AreFilesEquivalent(string firstPath, string secondPath)
+    {
+        FileInfo first = new(firstPath);
+        FileInfo second = new(secondPath);
+        if (first.Length != second.Length)
+        {
+            return false;
+        }
+
+        const int bufferSize = 81920;
+        using FileStream firstStream = File.OpenRead(first.FullName);
+        using FileStream secondStream = File.OpenRead(second.FullName);
+        byte[] firstBuffer = new byte[bufferSize];
+        byte[] secondBuffer = new byte[bufferSize];
+
+        while (true)
+        {
+            int firstRead = firstStream.Read(firstBuffer, 0, firstBuffer.Length);
+            int secondRead = secondStream.Read(secondBuffer, 0, secondBuffer.Length);
+            if (firstRead != secondRead)
+            {
+                return false;
+            }
+
+            if (firstRead == 0)
+            {
+                return true;
+            }
+
+            for (int i = 0; i < firstRead; i++)
+            {
+                if (firstBuffer[i] != secondBuffer[i])
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    private static bool IsPathInsideDirectory(string path, string directory)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string fullDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return fullPath.Equals(fullDirectory, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(fullDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(fullDirectory + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool StartsWithVirtualPrefix(string path)

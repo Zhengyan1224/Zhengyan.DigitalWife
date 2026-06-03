@@ -38,37 +38,43 @@ internal sealed class CSharpScriptInstance : IScriptInstance
                 "System.Text.RegularExpressions",
                 "System.Threading",
                 "System.Threading.Tasks",
+                "Zhengyan.DigitalWife.Mmd.Game.Pmx",
                 "Zhengyan.DigitalWife.Samples.GamePlayer");
     }
 
     public void Start(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null);
     }
 
     public void Update(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, double deltaSeconds)
     {
-        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null);
+        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null);
     }
 
     public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, controlId, controlName, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null, null);
     }
 
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, string.Empty, string.Empty, string.Empty, eventName, progress, message, string.Empty, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, eventName, progress, message, string.Empty, null, null);
     }
 
     public void SpeechEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null, null);
     }
 
     public void LlmEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null);
+    }
+
+    public void RealtimeVoiceEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
+    {
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: true, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, realtimeVoiceEvent);
     }
 
     public void Dispose()
@@ -87,6 +93,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         bool isLoadingEvent,
         bool isSpeechEvent,
         bool isLlmEvent,
+        bool isRealtimeVoiceEvent,
         string guiControlId,
         string guiControlName,
         string guiEventName,
@@ -94,7 +101,8 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         float loadingProgress,
         string loadingMessage,
         string speechCallbackName,
-        RuntimeLlmScriptEvent? llmEvent)
+        RuntimeLlmScriptEvent? llmEvent,
+        RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
     {
         _runner ??= CSharpScript
             .Create<object?>(File.ReadAllText(_scriptPath), _options, typeof(CSharpScriptGlobals))
@@ -113,7 +121,9 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             IsLoadingEvent = isLoadingEvent,
             IsSpeechEvent = isSpeechEvent,
             IsLlmEvent = isLlmEvent,
+            IsRealtimeVoiceEvent = isRealtimeVoiceEvent,
             LlmEvent = llmEvent,
+            RealtimeVoiceEvent = realtimeVoiceEvent,
             GuiControlId = guiControlId,
             GuiControlName = guiControlName,
             GuiEventName = guiEventName,

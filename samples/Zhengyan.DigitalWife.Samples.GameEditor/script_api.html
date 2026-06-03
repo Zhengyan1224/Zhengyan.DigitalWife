@@ -315,6 +315,7 @@
         <a href="#save">Save</a>
         <a href="#network">Network</a>
         <a href="#llm">LLM</a>
+        <a href="#realtime-voice">Realtime Voice</a>
         <a href="#notes">边界</a>
       </nav>
     </aside>
@@ -343,6 +344,7 @@
               <tr><td><code>IsLoadingEvent</code></td><td>场景加载脚本事件，配合 <code>LoadingEventName</code>、<code>LoadingProgress</code>、<code>LoadingMessage</code>。</td></tr>
               <tr><td><code>IsSpeechEvent</code></td><td>TTS 完成回调，配合 <code>SpeechCallbackName</code>。</td></tr>
               <tr><td><code>IsLlmEvent</code></td><td>LLM 后台回调，配合 <code>LlmCallbackName</code>、<code>LlmText</code>、<code>LlmDelta</code>、<code>LlmError</code>。</td></tr>
+              <tr><td><code>IsRealtimeVoiceEvent</code></td><td>Realtime Voice 回调，配合 <code>RealtimeVoiceEventName</code>、<code>RealtimeVoiceText</code>、<code>RealtimeVoiceWakeWord</code>、<code>RealtimeVoiceError</code>。</td></tr>
             </table>
           </div>
           <div class="card">
@@ -356,6 +358,7 @@
               <tr><td><code>loading_started/progress/completed(...)</code></td><td>场景加载入口脚本事件。</td></tr>
               <tr><td><code>speech_completed(entity, scene, input, audio, callback_name)</code></td><td>TTS 完成回调。</td></tr>
               <tr><td><code>llm_event(entity, scene, input, audio, event)</code></td><td>LLM 通用回调；具名回调函数优先。</td></tr>
+              <tr><td><code>realtime_voice_event(entity, scene, input, audio, event)</code></td><td>Realtime Voice 通用回调；具名回调函数优先。</td></tr>
             </table>
           </div>
         </div>
@@ -375,6 +378,7 @@
           <tr><td><code>Scene.Debug</code></td><td><code>scene.debug</code></td><td>调试线和射线绘制。</td></tr>
           <tr><td><code>Scene.Save</code></td><td><code>scene.save</code></td><td>受限到 `saves/` 的存档读写。</td></tr>
           <tr><td><code>Scene.Llm</code></td><td><code>scene.llm</code></td><td>OpenAI-compatible 文本对话。</td></tr>
+          <tr><td><code>Scene.RealtimeVoice</code></td><td><code>scene.realtime_voice</code></td><td>Realtime Voice 远端语音服务、唤醒词监听和流式语音回复。</td></tr>
           <tr><td><code>Scene.Network</code></td><td><code>scene.network</code></td><td>HTTP/HTTPS、TCP 和 UDP 网络通信。</td></tr>
           <tr><td><code>Scene.Performance</code></td><td><code>scene.performance</code></td><td>FPS、帧号、运行时间。</td></tr>
           <tr><td><code>Scene.LoadScene(path)</code></td><td><code>scene.load_scene(path)</code></td><td>切换工程内场景文件。</td></tr>
@@ -409,6 +413,7 @@
         <table>
           <tr><th>C#</th><th>Python</th><th>说明</th></tr>
           <tr><td><code>ApplyMotion(path)</code></td><td><code>apply_motion(path)</code></td><td>加载 VMD 动作。</td></tr>
+          <tr><td><code>SetMotionLayers(layers)</code></td><td><code>set_motion_layers(layers)</code></td><td>一次性设置整组动作层，适合做双动作平滑混合。</td></tr>
           <tr><td><code>AddMotionLayer(path, weight)</code></td><td><code>add_motion_layer(path, weight)</code></td><td>叠加动作层。</td></tr>
           <tr><td><code>SetMotionLayerWeight</code></td><td><code>set_motion_layer_weight</code></td><td>设置动作层权重。</td></tr>
           <tr><td><code>PlayMotion</code> / <code>PauseMotion</code> / <code>StopMotion</code></td><td><code>play_motion</code> / <code>pause_motion</code> / <code>stop_motion</code></td><td>动作播放控制。</td></tr>
@@ -643,6 +648,78 @@ def reply_delta(entity, scene, input, audio, event):
         label.set_value(event["accumulatedText"])</code></pre>
       </section>
 
+      <section id="realtime-voice" data-search>
+        <h2>Realtime Voice</h2>
+        <p><code>Scene.RealtimeVoice</code> / <code>scene.realtime_voice</code> 用于调用 <code>Zhengyan.DigitalWife.Samples.RealtimeVoice</code> 服务，支持唤醒词监听、录音转写、流式语音回复和固定提示语 TTS。</p>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.RealtimeVoice.Enabled</code></td><td><code>scene.realtime_voice.enabled</code></td><td>项目是否启用 Realtime Voice。</td></tr>
+          <tr><td><code>BaseUrl</code> / <code>Model</code> / <code>Voice</code></td><td><code>base_url</code> / <code>model</code> / <code>voice</code></td><td>当前服务地址、默认模型和默认 voice。</td></tr>
+          <tr><td><code>WakeWordEnabled</code> / <code>WakeWords</code></td><td><code>wake_word_enabled</code> / <code>wake_words</code></td><td>当前唤醒词监听配置。</td></tr>
+          <tr><td><code>StartWakeWordMonitoring(entity, ...)</code></td><td><code>start_wake_word_monitoring(...)</code></td><td>后台监听配置的唤醒词组。</td></tr>
+          <tr><td><code>StopWakeWordMonitoring()</code></td><td><code>stop_wake_word_monitoring()</code></td><td>停止唤醒词监听。</td></tr>
+          <tr><td><code>StartTranscription(entity, ...)</code></td><td><code>start_transcription(...)</code></td><td>录音直到静音并转写；可配置超时。</td></tr>
+          <tr><td><code>StartResponse(entity, userText, ...)</code></td><td><code>start_response(user_text, ...)</code></td><td>发送用户文本到 Realtime 会话，流式播放远端音频。</td></tr>
+          <tr><td><code>StartVoiceTurn(entity, ...)</code></td><td><code>start_voice_turn(...)</code></td><td>录音、转写、发起回复的一体化后台流程；可配置等待超时。</td></tr>
+          <tr><td><code>StartSpeakText(entity, text, ...)</code></td><td><code>start_speak_text(text, ...)</code></td><td>调用 <code>/v1/audio/speech</code> 播放固定提示语。</td></tr>
+          <tr><td><code>ResetConversationAsync()</code></td><td><code>reset_conversation()</code></td><td>重置远端会话历史。</td></tr>
+          <tr><td><code>CancelRequest(requestId)</code> / <code>CancelAllRequests()</code></td><td><code>cancel_request(request_id)</code> / <code>cancel_all_requests()</code></td><td>取消指定请求或取消全部后台语音请求。</td></tr>
+        </table>
+        <pre><code class="language-csharp">const string StandMotion = "assets/motions/basic_stand.vmd";
+const string WaitMotion = "assets/motions/basic_wait.vmd";
+const float MotionBlendDurationSeconds = 0.35f;
+
+if (IsStart && Scene.RealtimeVoice.Enabled)
+{
+    Entity.ApplyMotion(StandMotion);
+    Entity.AddMotionLayer(WaitMotion, weight: 0.0f);
+    Entity.SetMotionLayerResetPhysicsOnLoop(WaitMotion, true);
+    Entity.LoopMotion = true;
+    Entity.PlayMotion();
+    Scene.RealtimeVoice.StartWakeWordMonitoring(Entity, onDetectedCallback: "wake_word_hit");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "wake_word_hit")
+{
+    Scene.RealtimeVoice.StopWakeWordMonitoring();
+    // In Update: blend WaitMotion layer weight from 0 -> 1 over MotionBlendDurationSeconds.
+    Scene.RealtimeVoice.StartVoiceTurn(
+        Entity,
+        timeoutSeconds: 30.0f,
+        onTranscriptionCompletedCallback: "voice_transcribed",
+        onDeltaCallback: "voice_delta",
+        onCompletedCallback: "voice_done",
+        onTimeoutCallback: "voice_timeout",
+        onErrorCallback: "voice_error");
+}</code></pre>
+        <pre><code class="language-python">STAND_MOTION = "assets/motions/basic_stand.vmd"
+WAIT_MOTION = "assets/motions/basic_wait.vmd"
+BLEND_DURATION_SECONDS = 0.35
+
+def start(entity, scene, input, audio):
+    if scene.realtime_voice.enabled:
+        entity.apply_motion(STAND_MOTION)
+        entity.add_motion_layer(WAIT_MOTION, weight=0.0)
+        entity.set_motion_layer_reset_physics_on_loop(WAIT_MOTION, True)
+        entity.set_loop_motion(True)
+        entity.play_motion()
+        scene.realtime_voice.start_wake_word_monitoring(
+            on_detected="wake_word_hit",
+            on_error="voice_error")
+
+def wake_word_hit(entity, scene, input, audio, event):
+    scene.realtime_voice.stop_wake_word_monitoring()
+    # In update(...): blend WAIT_MOTION layer weight from 0 -> 1 over BLEND_DURATION_SECONDS.
+    scene.realtime_voice.start_voice_turn(
+        timeout_seconds=30,
+        on_transcription_completed="voice_transcribed",
+        on_delta="voice_delta",
+        on_completed="voice_done",
+        on_timeout="voice_timeout",
+        on_error="voice_error")</code></pre>
+        <p class="note">示例假设项目里已有 <code>assets/motions/basic_stand.vmd</code> 和 <code>assets/motions/basic_wait.vmd</code>，并采用“基础 Stand 动作 + Wait 动作层权重渐变”的方式做平滑过渡。完整的权重混合状态机请看同目录的 <code>script_api.md</code>。回调事件字段包括 <code>requestId</code>、<code>eventName</code>、<code>text</code>、<code>delta</code>、<code>accumulatedText</code>、<code>isFinal</code>、<code>error</code>、<code>callbackName</code>、<code>wakeWord</code>、<code>recognizedText</code>。事件名新增 <code>timeout</code>。</p>
+      </section>
+
       <section id="notes" data-search>
         <h2>边界</h2>
         <ul>
@@ -651,6 +728,8 @@ def reply_delta(entity, scene, input, audio, event):
           <li>GUI 和 Sprite 坐标以窗口左上角为原点；`relative` 布局会按项目窗口基准分辨率缩放。</li>
           <li>PMX 动作、Morph、骨骼、材质覆盖、TTS 口型和绑定关系只对 <code>pmx_model</code> 有意义。</li>
           <li>OpenCL 会在不可用时回退 CPU；脚本应读取 <code>ComputeBackend</code> 判断实际后端。</li>
+          <li>Realtime Voice 的 <code>start_*</code> 是后台任务；不要在每帧 <code>update</code> 里重复触发，否则会持续创建并发请求。</li>
+          <li><code>start_transcription</code> / <code>start_voice_turn</code> 支持超时回调，适合实现“30s 未继续说话则回到唤醒词模式”的对话状态机。</li>
         </ul>
       </section>
     </main>

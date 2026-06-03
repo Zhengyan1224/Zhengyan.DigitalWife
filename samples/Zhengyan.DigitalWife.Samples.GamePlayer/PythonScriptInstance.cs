@@ -60,6 +60,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
             llmEvent: llmEvent);
     }
 
+    public void RealtimeVoiceEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
+    {
+        SendEvent(
+            "realtime_voice_event",
+            entity,
+            scene,
+            input,
+            audio,
+            0.0,
+            realtimeVoiceEvent: realtimeVoiceEvent);
+    }
+
     private void SpeechCompleted(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
     {
         SendEvent(
@@ -109,14 +121,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
         float loadingProgress = 0.0f,
         string loadingMessage = "",
         string speechCallback = "",
-        RuntimeLlmScriptEvent? llmEvent = null)
+        RuntimeLlmScriptEvent? llmEvent = null,
+        RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent = null)
     {
         if (_process.HasExited)
         {
             throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
         }
 
-        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent);
+        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, realtimeVoiceEvent);
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -391,11 +404,28 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def apply_motion(self, path):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "apply_motion", "path": path})
 
-                   def add_motion_layer(self, path, weight=1.0):
-                       self._commands.append({"target": "entity", "entity": self.id, "action": "add_motion_layer", "path": path, "weight": weight})
+                    def add_motion_layer(self, path, weight=1.0):
+                        self._commands.append({"target": "entity", "entity": self.id, "action": "add_motion_layer", "path": path, "weight": weight})
 
-                   def set_motion_layer_weight(self, path, weight):
-                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_weight", "path": path, "weight": weight})
+                    def set_motion_layers(self, layers):
+                        normalized_layers = []
+                        for layer in layers or []:
+                            if isinstance(layer, dict):
+                                normalized_layers.append({
+                                    "path": layer.get("path", ""),
+                                    "weight": layer.get("weight", 1.0),
+                                    "resetPhysicsOnLoop": layer.get("resetPhysicsOnLoop", None)
+                                })
+                            elif isinstance(layer, (list, tuple)) and len(layer) >= 2:
+                                normalized_layers.append({
+                                    "path": layer[0],
+                                    "weight": layer[1],
+                                    "resetPhysicsOnLoop": layer[2] if len(layer) >= 3 else None
+                                })
+                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layers", "motionLayers": normalized_layers})
+
+                    def set_motion_layer_weight(self, path, weight):
+                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_weight", "path": path, "weight": weight})
 
                    def set_motion_layer_reset_physics_on_loop(self, path, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_reset_physics_on_loop", "path": path, "flag": bool(enabled)})
@@ -1269,6 +1299,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self._gui_controls = data.get("guiControls", [])
                        self._sprites = data.get("sprites", [])
                        self._llm = data.get("llm", {})
+                       self._realtime_voice = data.get("realtimeVoice", {})
                        self.performance = Performance(data.get("performance", {}))
                        self.fps = self.performance.fps
                        self.raw_fps = self.performance.raw_fps
@@ -1280,6 +1311,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.debug = Debug(commands)
                        self.save = SaveStore()
                        self.network = Network()
+                       self.realtime_voice = RealtimeVoiceClient(self, commands)
                        self._commands = commands
 
                    def get_entity(self, id_or_name):
@@ -1434,7 +1466,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.total_seconds = data.get("totalSeconds", 0.0)
                        self.frame_count = data.get("frameCount", 0)
 
-               class LlmClient:
+                class LlmClient:
                    def __init__(self, scene, commands):
                        self._scene = scene
                        self._commands = commands
@@ -1488,9 +1520,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                "is_final": bool(chunk.get("is_final", False))
                            }
 
-                   def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
-                       self._commands.append({
-                           "target": "llm",
+                    def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
+                        self._commands.append({
+                            "target": "llm",
                            "action": "start_chat",
                            "text": text,
                            "systemPrompt": system_prompt or "",
@@ -1498,8 +1530,121 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            "temperature": temperature,
                            "requestId": request_id or "",
                            "onDelta": on_delta or "",
+                            "onCompleted": on_completed or "",
+                            "onError": on_error or ""
+                        })
+
+               class RealtimeVoiceClient:
+                   def __init__(self, scene, commands):
+                       self._scene = scene
+                       self._commands = commands
+                       self._settings = scene._realtime_voice
+
+                   @property
+                   def enabled(self):
+                       return bool(self._settings.get("enabled", False))
+
+                   @property
+                   def base_url(self):
+                       return self._settings.get("baseUrl", "")
+
+                   @property
+                   def model(self):
+                       return self._settings.get("model", "")
+
+                   @property
+                   def voice(self):
+                       return self._settings.get("voice", "")
+
+                   @property
+                   def wake_word_enabled(self):
+                       return bool(self._settings.get("wakeWordEnabled", False))
+
+                   @property
+                   def wake_words(self):
+                       return list(self._settings.get("wakeWords", []))
+
+                   @property
+                   def input_device_index(self):
+                       return self._settings.get("inputDeviceIndex", None)
+
+                   def start_wake_word_monitoring(self, on_detected="wake_word_detected", on_error="wake_word_error"):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "start_wake_word_monitoring",
+                           "onCompleted": on_detected or "",
+                           "onError": on_error or ""
+                       })
+
+                   def stop_wake_word_monitoring(self):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "stop_wake_word_monitoring"
+                       })
+
+                   def start_transcription(self, request_id=None, timeout_seconds=None, on_completed="realtime_voice_transcription_completed", on_timeout="realtime_voice_timeout", on_error="realtime_voice_error"):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "start_transcription",
+                           "requestId": request_id or "",
+                           "timeoutSeconds": timeout_seconds,
+                           "onCompleted": on_completed or "",
+                           "onTimeout": on_timeout or "",
+                           "onError": on_error or ""
+                       })
+
+                   def start_response(self, user_text, request_id=None, on_delta="realtime_voice_delta", on_completed="realtime_voice_completed", on_error="realtime_voice_error"):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "start_response",
+                           "text": user_text or "",
+                           "requestId": request_id or "",
+                           "onDelta": on_delta or "",
                            "onCompleted": on_completed or "",
                            "onError": on_error or ""
+                       })
+
+                   def start_voice_turn(self, request_id=None, timeout_seconds=30, on_transcription_completed="realtime_voice_transcription_completed", on_delta="realtime_voice_delta", on_completed="realtime_voice_completed", on_timeout="realtime_voice_timeout", on_error="realtime_voice_error"):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "start_voice_turn",
+                           "requestId": request_id or "",
+                           "timeoutSeconds": timeout_seconds,
+                           "callback": on_transcription_completed or "",
+                           "onDelta": on_delta or "",
+                           "onCompleted": on_completed or "",
+                           "onTimeout": on_timeout or "",
+                           "onError": on_error or ""
+                       })
+
+                   def start_speak_text(self, text, speed=None, request_id=None, on_completed="realtime_voice_speech_completed", on_error="realtime_voice_error"):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "start_speak_text",
+                           "text": text or "",
+                           "speed": speed,
+                           "requestId": request_id or "",
+                           "onCompleted": on_completed or "",
+                           "onError": on_error or ""
+                       })
+
+                   def reset_conversation(self):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "reset_conversation"
+                       })
+
+                   def cancel_request(self, request_id):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "cancel_request",
+                           "requestId": request_id or ""
+                       })
+
+                   def cancel_all_requests(self):
+                       self._commands.append({
+                           "target": "realtime_voice",
+                           "action": "cancel_all_requests"
                        })
 
                class SaveStore:
@@ -1806,6 +1951,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                getattr(module, callback)(entity, scene, input, audio, llm_event)
                            elif hasattr(module, "llm_event"):
                                module.llm_event(entity, scene, input, audio, llm_event)
+                       elif event == "realtime_voice_event":
+                           realtime_voice_event = ctx.get("realtimeVoiceEvent", {})
+                           callback = realtime_voice_event.get("callbackName", "")
+                           if callback and hasattr(module, callback):
+                               getattr(module, callback)(entity, scene, input, audio, realtime_voice_event)
+                           elif hasattr(module, "realtime_voice_event"):
+                               module.realtime_voice_event(entity, scene, input, audio, realtime_voice_event)
                        print(COMMAND_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
                    except Exception as ex:
                        print(COMMAND_MARKER + "[]", flush=True)
@@ -1829,6 +1981,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             if (string.Equals(command.Target, "llm", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyLlmCommand(command, currentEntity, scene);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "realtime_voice", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyRealtimeVoiceCommand(command, currentEntity, scene);
                 continue;
             }
 
@@ -2068,6 +2226,66 @@ internal sealed class PythonScriptInstance : IScriptInstance
             onDeltaCallback: command.OnDelta,
             onCompletedCallback: command.OnCompleted,
             onErrorCallback: command.OnError);
+    }
+
+    private static void ApplyRealtimeVoiceCommand(PythonCommand command, RuntimeEntity callbackEntity, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "start_wake_word_monitoring":
+                scene.RealtimeVoice.StartWakeWordMonitoring(callbackEntity, command.OnCompleted, command.OnError);
+                break;
+            case "stop_wake_word_monitoring":
+                scene.RealtimeVoice.StopWakeWordMonitoring();
+                break;
+            case "start_transcription":
+                scene.RealtimeVoice.StartTranscription(
+                    callbackEntity,
+                    requestId: command.RequestId,
+                    timeoutSeconds: ToFloat(command.TimeoutSeconds),
+                    onCompletedCallback: command.OnCompleted,
+                    onTimeoutCallback: command.OnTimeout,
+                    onErrorCallback: command.OnError);
+                break;
+            case "start_response" when !string.IsNullOrWhiteSpace(command.Text):
+                scene.RealtimeVoice.StartResponse(
+                    callbackEntity,
+                    command.Text,
+                    requestId: command.RequestId,
+                    onDeltaCallback: command.OnDelta,
+                    onCompletedCallback: command.OnCompleted,
+                    onErrorCallback: command.OnError);
+                break;
+            case "start_voice_turn":
+                scene.RealtimeVoice.StartVoiceTurn(
+                    callbackEntity,
+                    requestId: command.RequestId,
+                    timeoutSeconds: ToFloat(command.TimeoutSeconds) ?? 30.0f,
+                    onTranscriptionCompletedCallback: command.Callback,
+                    onDeltaCallback: command.OnDelta,
+                    onCompletedCallback: command.OnCompleted,
+                    onTimeoutCallback: command.OnTimeout,
+                    onErrorCallback: command.OnError);
+                break;
+            case "start_speak_text" when !string.IsNullOrWhiteSpace(command.Text):
+                scene.RealtimeVoice.StartSpeakText(
+                    callbackEntity,
+                    command.Text,
+                    ToFloat(command.Speed),
+                    requestId: command.RequestId,
+                    onCompletedCallback: command.OnCompleted,
+                    onErrorCallback: command.OnError);
+                break;
+            case "reset_conversation":
+                _ = scene.RealtimeVoice.ResetConversationAsync();
+                break;
+            case "cancel_request" when !string.IsNullOrWhiteSpace(command.RequestId):
+                scene.RealtimeVoice.CancelRequest(command.RequestId);
+                break;
+            case "cancel_all_requests":
+                scene.RealtimeVoice.CancelAllRequests();
+                break;
+        }
     }
 
     private static void ApplyDebugCommand(PythonCommand command, RuntimeScene scene)
@@ -2339,6 +2557,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "add_motion_layer" when !string.IsNullOrWhiteSpace(command.Path):
                 entity.AddMotionLayer(command.Path, (float)(command.Weight ?? 1.0));
+                break;
+            case "set_motion_layers" when command.MotionLayers is not null:
+                entity.SetMotionLayers(command.MotionLayers.Select(layer => new MotionLayerDefinition(
+                    layer.Path ?? string.Empty,
+                    (float)(layer.Weight ?? 1.0),
+                    layer.ResetPhysicsOnLoop)));
                 break;
             case "set_motion_layer_weight" when !string.IsNullOrWhiteSpace(command.Path) && command.Weight.HasValue:
                 entity.SetMotionLayerWeight(command.Path, (float)command.Weight.Value);
@@ -2662,6 +2886,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonLlmEvent LlmEvent { get; set; } = new();
 
+        public PythonRealtimeVoiceEvent RealtimeVoiceEvent { get; set; } = new();
+
         public PythonEntity Entity { get; set; } = new();
 
         public PythonScene Scene { get; set; } = new();
@@ -2680,7 +2906,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
             float loadingProgress,
             string loadingMessage,
             string speechCallback,
-            RuntimeLlmScriptEvent? llmEvent)
+            RuntimeLlmScriptEvent? llmEvent,
+            RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
         {
             return new PythonEvent
             {
@@ -2693,6 +2920,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 LoadingMessage = loadingMessage,
                 SpeechCallback = speechCallback,
                 LlmEvent = PythonLlmEvent.FromRuntime(llmEvent),
+                RealtimeVoiceEvent = PythonRealtimeVoiceEvent.FromRuntime(realtimeVoiceEvent),
                 Entity = PythonEntity.FromRuntime(entity),
                 Scene = new PythonScene
                 {
@@ -2707,6 +2935,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     Window = PythonWindow.FromRuntime(scene.Window),
                     Runtime = PythonRuntime.FromRuntime(scene.Runtime),
                     Llm = PythonLlmSettings.FromRuntime(scene.Llm),
+                    RealtimeVoice = PythonRealtimeVoiceSettings.FromRuntime(scene.RealtimeVoice),
                     Network = new PythonNetwork(),
                     Performance = PythonPerformance.FromRuntime(scene.Performance)
                 },
@@ -2744,6 +2973,48 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     IsFinal = llmEvent.IsFinal,
                     Error = llmEvent.Error,
                     CallbackName = llmEvent.CallbackName
+                };
+        }
+    }
+
+    private sealed class PythonRealtimeVoiceEvent
+    {
+        public string RequestId { get; set; } = string.Empty;
+
+        public string EventName { get; set; } = string.Empty;
+
+        public string Text { get; set; } = string.Empty;
+
+        public string Delta { get; set; } = string.Empty;
+
+        public string AccumulatedText { get; set; } = string.Empty;
+
+        public bool IsFinal { get; set; }
+
+        public string Error { get; set; } = string.Empty;
+
+        public string CallbackName { get; set; } = string.Empty;
+
+        public string WakeWord { get; set; } = string.Empty;
+
+        public string RecognizedText { get; set; } = string.Empty;
+
+        public static PythonRealtimeVoiceEvent FromRuntime(RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
+        {
+            return realtimeVoiceEvent is null
+                ? new PythonRealtimeVoiceEvent()
+                : new PythonRealtimeVoiceEvent
+                {
+                    RequestId = realtimeVoiceEvent.RequestId,
+                    EventName = realtimeVoiceEvent.EventName,
+                    Text = realtimeVoiceEvent.Text,
+                    Delta = realtimeVoiceEvent.Delta,
+                    AccumulatedText = realtimeVoiceEvent.AccumulatedText,
+                    IsFinal = realtimeVoiceEvent.IsFinal,
+                    Error = realtimeVoiceEvent.Error,
+                    CallbackName = realtimeVoiceEvent.CallbackName,
+                    WakeWord = realtimeVoiceEvent.WakeWord,
+                    RecognizedText = realtimeVoiceEvent.RecognizedText
                 };
         }
     }
@@ -2940,12 +3211,45 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonLlmSettings Llm { get; set; } = new();
 
+        public PythonRealtimeVoiceSettings RealtimeVoice { get; set; } = new();
+
         public PythonNetwork Network { get; set; } = new();
 
         public PythonPerformance Performance { get; set; } = new();
     }
 
     private sealed class PythonNetwork;
+
+    private sealed class PythonRealtimeVoiceSettings
+    {
+        public bool Enabled { get; set; }
+
+        public string BaseUrl { get; set; } = string.Empty;
+
+        public string Model { get; set; } = string.Empty;
+
+        public string Voice { get; set; } = string.Empty;
+
+        public bool WakeWordEnabled { get; set; }
+
+        public string[] WakeWords { get; set; } = [];
+
+        public int? InputDeviceIndex { get; set; }
+
+        public static PythonRealtimeVoiceSettings FromRuntime(RuntimeRealtimeVoice realtimeVoice)
+        {
+            return new PythonRealtimeVoiceSettings
+            {
+                Enabled = realtimeVoice.Enabled,
+                BaseUrl = realtimeVoice.BaseUrl,
+                Model = realtimeVoice.Model,
+                Voice = realtimeVoice.Voice,
+                WakeWordEnabled = realtimeVoice.WakeWordEnabled,
+                WakeWords = realtimeVoice.WakeWords.ToArray(),
+                InputDeviceIndex = realtimeVoice.InputDeviceIndex
+            };
+        }
+    }
 
     private sealed class PythonRuntime
     {
@@ -3409,9 +3713,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string? RequestId { get; set; }
 
+        public double? TimeoutSeconds { get; set; }
+
         public string? OnDelta { get; set; }
 
         public string? OnCompleted { get; set; }
+
+        public string? OnTimeout { get; set; }
 
         public string? OnError { get; set; }
 
@@ -3428,5 +3736,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public bool? BindComponentTransform { get; set; }
 
         public bool? BindLighting { get; set; }
+
+        public PythonMotionLayerCommand[]? MotionLayers { get; set; }
+    }
+
+    private sealed class PythonMotionLayerCommand
+    {
+        public string? Path { get; set; }
+
+        public double? Weight { get; set; }
+
+        public bool? ResetPhysicsOnLoop { get; set; }
     }
 }

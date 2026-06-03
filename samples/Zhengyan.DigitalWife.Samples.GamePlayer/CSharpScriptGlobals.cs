@@ -24,7 +24,11 @@ public sealed class CSharpScriptGlobals
 
     public bool IsLlmEvent { get; init; }
 
+    public bool IsRealtimeVoiceEvent { get; init; }
+
     public RuntimeLlmScriptEvent? LlmEvent { get; init; }
+
+    public RuntimeRealtimeVoiceScriptEvent? RealtimeVoiceEvent { get; init; }
 
     public string LlmRequestId => LlmEvent?.RequestId ?? string.Empty;
 
@@ -39,6 +43,26 @@ public sealed class CSharpScriptGlobals
     public string LlmError => LlmEvent?.Error ?? string.Empty;
 
     public string LlmCallbackName => LlmEvent?.CallbackName ?? string.Empty;
+
+    public string RealtimeVoiceRequestId => RealtimeVoiceEvent?.RequestId ?? string.Empty;
+
+    public string RealtimeVoiceEventName => RealtimeVoiceEvent?.EventName ?? string.Empty;
+
+    public string RealtimeVoiceText => RealtimeVoiceEvent?.Text ?? string.Empty;
+
+    public string RealtimeVoiceDelta => RealtimeVoiceEvent?.Delta ?? string.Empty;
+
+    public string RealtimeVoiceAccumulatedText => RealtimeVoiceEvent?.AccumulatedText ?? string.Empty;
+
+    public bool RealtimeVoiceIsFinal => RealtimeVoiceEvent?.IsFinal ?? false;
+
+    public string RealtimeVoiceError => RealtimeVoiceEvent?.Error ?? string.Empty;
+
+    public string RealtimeVoiceCallbackName => RealtimeVoiceEvent?.CallbackName ?? string.Empty;
+
+    public string RealtimeVoiceWakeWord => RealtimeVoiceEvent?.WakeWord ?? string.Empty;
+
+    public string RealtimeVoiceRecognizedText => RealtimeVoiceEvent?.RecognizedText ?? string.Empty;
 
     public string SpeechCallbackName { get; init; } = string.Empty;
 

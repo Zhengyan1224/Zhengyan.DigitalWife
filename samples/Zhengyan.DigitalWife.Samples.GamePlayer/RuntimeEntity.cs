@@ -697,6 +697,22 @@ public sealed class RuntimeEntity
         _model?.AddMotionLayer(_resolvePath(motionPath), weight);
     }
 
+    public void SetMotionLayers(IEnumerable<MotionLayerDefinition> motionLayers)
+    {
+        if (_model is null)
+        {
+            return;
+        }
+
+        MotionLayerDefinition[] resolvedLayers = motionLayers
+            .Select(layer => new MotionLayerDefinition(
+                _resolvePath(layer.MotionPath),
+                layer.Weight,
+                layer.ResetPhysicsOnLoop))
+            .ToArray();
+        _model.SetMotionLayers(resolvedLayers);
+    }
+
     public void SetMotionLayerWeight(string motionPath, float weight)
     {
         _model?.SetMotionLayerWeight(_resolvePath(motionPath), weight);

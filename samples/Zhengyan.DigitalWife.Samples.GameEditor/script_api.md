@@ -8,6 +8,7 @@
 - 脚本不直接管理 OpenGL 资源、PMX 内部骨骼求解、音频设备、窗口消息循环或底层物理引擎。
 - 当前碰撞是轻量级运行时 Collider，不是完整刚体物理系统。它适合射线拾取、触发区域和简单碰撞判断。
 - 网络通信通过 `Scene.Network` / `scene.network` 提供，支持 HTTP/HTTPS、TCP 和 UDP。跨平台使用 .NET / Python 标准网络库，适用于 Windows、Linux 和 macOS。
+- 远端语音服务通过 `Scene.RealtimeVoice` / `scene.realtime_voice` 提供，可调用 `Zhengyan.DigitalWife.Samples.RealtimeVoice` 做转写、唤醒词监听、流式语音回复和文本直出 TTS。
 - 路径建议使用工程相对路径，例如 `assets/audio/bgm.ogg`、`assets/motions/idle.vmd`、`scripts/main.csx`。GamePlayer 会从游戏工程目录解析这些路径。
 - 贴图路径可以使用普通工程相对路径，也可以使用 `rt:<RenderTextureName>` 引用 Render Texture。
 
@@ -159,6 +160,11 @@ if (IsLlmEvent)
 {
     Console.WriteLine($"{LlmCallbackName}: {LlmText}");
 }
+
+if (IsRealtimeVoiceEvent)
+{
+    Console.WriteLine($"{RealtimeVoiceCallbackName}: {RealtimeVoiceEventName} -> {RealtimeVoiceText}");
+}
 ```
 
 C# 全局变量：
@@ -191,6 +197,18 @@ C# 全局变量：
 | `LlmIsFinal` | `bool` | 当前回调是否为最终事件。 |
 | `LlmError` | `string` | 错误文本；仅错误回调通常有值。 |
 | `LlmCallbackName` | `string` | `StartChat(...)` 传入的回调名。 |
+| `IsRealtimeVoiceEvent` | `bool` | Realtime Voice 后台回调事件。 |
+| `RealtimeVoiceEvent` | `RuntimeRealtimeVoiceScriptEvent?` | Realtime Voice 回调事件完整对象。 |
+| `RealtimeVoiceRequestId` | `string` | 语音请求 Id。 |
+| `RealtimeVoiceEventName` | `string` | 事件名，例如 `wake_word_detected`、`transcription_completed`、`delta`、`completed`、`speech_completed`、`error`。 |
+| `RealtimeVoiceText` | `string` | 当前事件的主文本。唤醒词事件通常是去掉唤醒词后的尾文本；转写事件是用户文本；完成事件是最终回复文本。 |
+| `RealtimeVoiceDelta` | `string` | 本次流式回复的 transcript 增量。 |
+| `RealtimeVoiceAccumulatedText` | `string` | 当前累计的回复文本。 |
+| `RealtimeVoiceIsFinal` | `bool` | 当前回调是否为最终事件。 |
+| `RealtimeVoiceError` | `string` | 错误文本。 |
+| `RealtimeVoiceCallbackName` | `string` | `Scene.RealtimeVoice.Start*` / `scene.realtime_voice.start_*` 传入的回调名。 |
+| `RealtimeVoiceWakeWord` | `string` | 命中的唤醒词，仅 `wake_word_detected` 通常有值。 |
+| `RealtimeVoiceRecognizedText` | `string` | 原始识别文本，例如完整唤醒词句子或用户转写文本。 |
 
 跨帧状态建议放在 `static` 类型里：
 
@@ -293,6 +311,9 @@ def speech_completed(entity, scene, input, audio, callback_name):
 
 def llm_event(entity, scene, input, audio, event):
     print(event.get("callbackName"), event.get("accumulatedText"))
+
+def realtime_voice_event(entity, scene, input, audio, event):
+    print(event.get("callbackName"), event.get("eventName"), event.get("text"))
 ```
 
 `entity.speak(..., on_completed="after_speak")` 会优先调用同名函数：
@@ -306,6 +327,8 @@ def after_speak(entity, scene, input, audio):
 ```
 
 `scene.llm.start_chat(...)` 的回调会优先调用 `on_delta`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `llm_event(entity, scene, input, audio, event)`，则会调用通用 `llm_event`。
+
+`scene.realtime_voice.start_*` 的回调同样会优先调用传入的同名函数；如果没有同名函数但脚本定义了 `realtime_voice_event(entity, scene, input, audio, event)`，则会调用通用 `realtime_voice_event`。
 
 Python 模块级变量会保留，可用于跨帧状态：
 
@@ -488,6 +511,11 @@ def update(entity, scene, input, audio, delta_seconds):
 
 ```csharp
 Entity.ApplyMotion("assets/motions/idle.vmd");
+Entity.SetMotionLayers(new[]
+{
+    new MotionLayerDefinition("assets/motions/idle.vmd", 1.0f),
+    new MotionLayerDefinition("assets/motions/wave.vmd", 0.0f)
+});
 Entity.AddMotionLayer("assets/motions/wave.vmd", weight: 0.5f);
 Entity.SetMotionLayerWeight("assets/motions/wave.vmd", 1.0f);
 Entity.SetMotionLayerResetPhysicsOnLoop("assets/motions/wave.vmd", true);
@@ -508,6 +536,10 @@ Entity.ClearMotion();
 
 ```python
 entity.apply_motion("assets/motions/idle.vmd")
+entity.set_motion_layers([
+    {"path": "assets/motions/idle.vmd", "weight": 1.0},
+    {"path": "assets/motions/wave.vmd", "weight": 0.0},
+])
 entity.add_motion_layer("assets/motions/wave.vmd", weight=0.5)
 entity.set_motion_layer_weight("assets/motions/wave.vmd", 1.0)
 entity.set_motion_layer_reset_physics_on_loop("assets/motions/wave.vmd", True)
@@ -1109,6 +1141,7 @@ scene.flush()
 | `Scene.Debug` | `scene.debug` | 调试绘制。 |
 | `Scene.Save` | `scene.save` | 存档读写。 |
 | `Scene.Llm` | `scene.llm` | LLM / OpenAI-compatible 文本对话。 |
+| `Scene.RealtimeVoice` | `scene.realtime_voice` | `RealtimeVoice` 远端语音服务调用。 |
 | `Scene.Network` | `scene.network` | HTTP/HTTPS、TCP 和 UDP 网络通信。 |
 | `Scene.Performance` | `scene.performance` | 性能指标快照，例如 FPS。 |
 | `Scene.Fps` | `scene.fps` | 平滑后的当前 FPS 快捷属性。 |
@@ -2335,6 +2368,554 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
 - Python 的 `scene.flush()` 只会提交当前已累计的引擎命令，例如 GUI 文本变化、实体移动等；不会重新读取新的输入快照，也不会让被阻塞的主循环提前渲染新帧。
 - `start_chat` 的回调事件字段包括 `requestId`、`eventName`、`delta`、`accumulatedText`、`isFinal`、`error`、`callbackName`。
 - 当前 LLM API 面向文本 Chat Completions；图片、多模态、工具调用等还没有封装到脚本层。
+
+## Realtime Voice API
+
+GamePlayer 支持从脚本调用 `Zhengyan.DigitalWife.Samples.RealtimeVoice` 服务。配置在 GameEditor 的 `Project` 标签页 `Realtime Voice` 中，也会保存到 `game.project.json` 的 `realtimeVoice` 节点。
+
+这组 API 面向远端语音服务，主要能力是：
+
+- 本地麦克风录音并上传给服务转写
+- 按配置的唤醒词组监听唤醒词，并通过脚本事件通知
+- 发送用户文本到 Realtime 会话，流式播放返回音频，并把 transcript delta / completed 回调给脚本
+- 调用 `/v1/audio/speech` 做固定文本提示语
+
+项目配置重点：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Enabled` | 是否启用脚本层 Realtime Voice。 |
+| `BaseUrl` | 服务根地址，例如 `http://127.0.0.1:5000`。 |
+| `RealtimePath` | Realtime WebSocket 路径，默认 `/v1/realtime`。 |
+| `AudioSpeechPath` | 文本直出 TTS 路径，默认 `/v1/audio/speech`。 |
+| `ApiKeyEnvironmentVariable` / `ApiKey` | API Key 优先读取直接配置，其次读环境变量。 |
+| `Model` | 会话默认模型名。 |
+| `Voice` | 远端 voice 字段。 |
+| `InputAudioSampleRate` | 发给 Realtime 协议层的输入采样率。 |
+| `OutputAudioSampleRate` | 期望远端返回的输出采样率。 |
+| `InputDeviceIndex` | 本地 `PortAudio` 输入设备索引；为空时使用默认输入设备。 |
+| `OutputVolume` | 回放远端语音时的输出音量倍数。 |
+| `PromptSpeed` | `/v1/audio/speech` 固定提示语请求的默认速度。 |
+| `UserCapture` | `start_transcription` / `StartVoiceTurn` 使用的本地录音参数。 |
+| `WakeWord.Enabled` / `WakeWord.Keywords` | 是否启用脚本唤醒词监听以及唤醒词组。 |
+| `WakeWord.Capture` | 唤醒词分片录音参数。 |
+
+### C# Realtime Voice
+
+`Scene.RealtimeVoice` 采用后台任务 + 脚本事件回调的模式。不要在 `Update` 里每帧调用 `Start*`；通常在 `IsStart`、GUI 点击、或收到上一轮回调后再触发下一步。
+
+C# API：
+
+| API | 说明 |
+| --- | --- |
+| `Scene.RealtimeVoice.Enabled` | 当前项目是否启用 Realtime Voice。 |
+| `Scene.RealtimeVoice.BaseUrl` | 服务根地址。 |
+| `Scene.RealtimeVoice.Model` | 默认模型名。 |
+| `Scene.RealtimeVoice.Voice` | 默认 voice。 |
+| `Scene.RealtimeVoice.WakeWordEnabled` | 是否启用了唤醒词监听配置。 |
+| `Scene.RealtimeVoice.WakeWords` | 当前配置的唤醒词列表。 |
+| `Scene.RealtimeVoice.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.RealtimeVoice.IsWakeWordMonitoring` | 当前是否在监听唤醒词。 |
+| `StartWakeWordMonitoring(entity, onDetectedCallback, onErrorCallback)` | 开始后台唤醒词监听。 |
+| `StopWakeWordMonitoring()` | 停止唤醒词监听。 |
+| `StartTranscription(entity, requestId, timeoutSeconds, onCompletedCallback, onTimeoutCallback, onErrorCallback)` | 录音直到静音并转写；可配置超时。 |
+| `StartResponse(entity, userText, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback)` | 发送用户文本到 Realtime 会话，流式播放远端音频。 |
+| `StartVoiceTurn(entity, requestId, timeoutSeconds, onTranscriptionCompletedCallback, onDeltaCallback, onCompletedCallback, onTimeoutCallback, onErrorCallback)` | 录音、转写、发起回复的一体化后台流程；可配置等待用户输入的超时。 |
+| `StartSpeakText(entity, text, speed, requestId, onCompletedCallback, onErrorCallback)` | 调用 `/v1/audio/speech` 播放固定提示语。 |
+| `ResetConversationAsync()` | 清空远端会话中的历史消息。 |
+| `CancelRequest(requestId)` | 取消指定后台语音请求。 |
+| `CancelAllRequests()` | 取消当前实体触发的全部后台语音请求。 |
+
+典型流程：开始唤醒词监听，命中后发起一轮语音对话。
+
+```csharp
+if (IsStart && Scene.RealtimeVoice.Enabled)
+{
+    Scene.RealtimeVoice.StartWakeWordMonitoring(
+        Entity,
+        onDetectedCallback: "wake_word_hit",
+        onErrorCallback: "wake_word_error");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "wake_word_hit")
+{
+    Scene.GetGuiControl("Status")?.SetValue($"已唤醒: {RealtimeVoiceWakeWord}");
+    Scene.RealtimeVoice.StartVoiceTurn(
+        Entity,
+        onTranscriptionCompletedCallback: "voice_transcribed",
+        onDeltaCallback: "voice_delta",
+        onCompletedCallback: "voice_done",
+        onErrorCallback: "voice_error");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_transcribed")
+{
+    Scene.GetGuiControl("Heard")?.SetValue(RealtimeVoiceText);
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_delta")
+{
+    Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceAccumulatedText);
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_done")
+{
+    Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceText);
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_error")
+{
+    Console.Error.WriteLine(RealtimeVoiceError);
+}
+```
+
+完整的“唤醒词 -> 远端转写/对话 -> TTS 播放 -> 30s 内继续对话，超时后回到待机”脚本示例：
+
+说明：
+
+- 现在脚本层已经支持 `timeout` 和 `cancel`，可以完整实现接近 `DigitalHuman` 的状态机。
+- 下面的写法是：先靠唤醒词进入会话；用户说完后，数字人回复；回复完成后继续等待 30 秒下一句；如果 30 秒内没有新的语音输入，则清空会话并回到“等待唤醒”。
+- 假设项目里已经有两个动作文件：`assets/motions/basic_stand.vmd` 和 `assets/motions/basic_wait.vmd`。
+- 这里用 `basic_stand.vmd` 作为基础动作，`basic_wait.vmd` 作为动作层，通过层权重平滑过渡。脚本层当前没有直接设置“基础动作权重”的 API，所以这是最接近 `DigitalHuman` 项目平滑混合效果的写法。
+
+```csharp
+static class VoiceState
+{
+    public static bool InConversation;
+    public static bool WakeWordMonitorStarted;
+    public static string PendingTurnRequestId = string.Empty;
+    public static bool MotionBlendReady;
+    public static float WaitLayerWeight;
+    public static float TargetWaitLayerWeight;
+}
+
+const string StandMotion = "assets/motions/basic_stand.vmd";
+const string WaitMotion = "assets/motions/basic_wait.vmd";
+const float MotionBlendDurationSeconds = 0.35f;
+
+void EnsureMotionBlendSetup()
+{
+    if (VoiceState.MotionBlendReady)
+    {
+        return;
+    }
+
+    Entity.SetMotionLayers(new[]
+    {
+        new MotionLayerDefinition(StandMotion, 1.0f),
+        new MotionLayerDefinition(WaitMotion, 0.0f, true)
+    });
+    Entity.LoopMotion = true;
+    Entity.PlayMotion();
+    VoiceState.MotionBlendReady = true;
+    VoiceState.WaitLayerWeight = 0.0f;
+    VoiceState.TargetWaitLayerWeight = 0.0f;
+}
+
+void SetStandState()
+{
+    EnsureMotionBlendSetup();
+    VoiceState.TargetWaitLayerWeight = 0.0f;
+}
+
+void SetWaitState()
+{
+    EnsureMotionBlendSetup();
+    VoiceState.TargetWaitLayerWeight = 1.0f;
+}
+
+void UpdateMotionBlend()
+{
+    if (!IsUpdate || !VoiceState.MotionBlendReady)
+    {
+        return;
+    }
+
+    float current = VoiceState.WaitLayerWeight;
+    float target = VoiceState.TargetWaitLayerWeight;
+    if (MathF.Abs(current - target) < 0.001f)
+    {
+        return;
+    }
+
+    float step = (float)(DeltaSeconds / MotionBlendDurationSeconds);
+    float next = target > current
+        ? MathF.Min(target, current + step)
+        : MathF.Max(target, current - step);
+
+    VoiceState.WaitLayerWeight = next;
+    Entity.SetMotionLayerWeight(StandMotion, 1.0f - next);
+    Entity.SetMotionLayerWeight(WaitMotion, next);
+}
+
+void EnsureWakeWordMonitor()
+{
+    EnsureMotionBlendSetup();
+    if (VoiceState.WakeWordMonitorStarted || !Scene.RealtimeVoice.Enabled)
+    {
+        return;
+    }
+
+    Scene.RealtimeVoice.StartWakeWordMonitoring(
+        Entity,
+        onDetectedCallback: "wake_word_hit",
+        onErrorCallback: "voice_error");
+    VoiceState.WakeWordMonitorStarted = true;
+    SetStandState();
+    Scene.GetGuiControl("Status")?.SetValue("等待唤醒");
+}
+
+if (IsStart)
+{
+    EnsureWakeWordMonitor();
+}
+
+if (IsUpdate)
+{
+    UpdateMotionBlend();
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "wake_word_hit")
+{
+    if (VoiceState.InConversation)
+    {
+        return;
+    }
+
+    VoiceState.InConversation = true;
+    Scene.RealtimeVoice.StopWakeWordMonitoring();
+    VoiceState.WakeWordMonitorStarted = false;
+    SetWaitState();
+    Scene.GetGuiControl("Status")?.SetValue($"已唤醒: {RealtimeVoiceWakeWord}");
+
+    if (!string.IsNullOrWhiteSpace(RealtimeVoiceText))
+    {
+        // 用户在同一句里已经说了“唤醒词 + 问题”，直接发给远端会话。
+        Scene.RealtimeVoice.StartResponse(
+            Entity,
+            RealtimeVoiceText,
+            onDeltaCallback: "voice_delta",
+            onCompletedCallback: "voice_done",
+            onErrorCallback: "voice_error");
+    }
+    else
+    {
+        // 用户只说了唤醒词，先播提示语，播完后再录下一句。
+        Scene.RealtimeVoice.StartSpeakText(
+            Entity,
+            "我在，请说。",
+            speed: 1.0f,
+            onCompletedCallback: "prompt_done",
+            onErrorCallback: "voice_error");
+    }
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "prompt_done")
+{
+    SetWaitState();
+    Scene.GetGuiControl("Status")?.SetValue("正在听");
+    VoiceState.PendingTurnRequestId = Scene.RealtimeVoice.StartVoiceTurn(
+        Entity,
+        timeoutSeconds: 30.0f,
+        onTranscriptionCompletedCallback: "voice_transcribed",
+        onDeltaCallback: "voice_delta",
+        onCompletedCallback: "voice_done",
+        onTimeoutCallback: "voice_timeout",
+        onErrorCallback: "voice_error");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_transcribed")
+{
+    SetWaitState();
+    Scene.GetGuiControl("Heard")?.SetValue(RealtimeVoiceText);
+    Scene.GetGuiControl("Status")?.SetValue("思考中");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_delta")
+{
+    SetWaitState();
+    Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceAccumulatedText);
+    Scene.GetGuiControl("Status")?.SetValue("正在说话");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_done")
+{
+    SetWaitState();
+    Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceText);
+    Scene.GetGuiControl("Status")?.SetValue("等待下一句（30s）");
+    VoiceState.PendingTurnRequestId = Scene.RealtimeVoice.StartVoiceTurn(
+        Entity,
+        timeoutSeconds: 30.0f,
+        onTranscriptionCompletedCallback: "voice_transcribed",
+        onDeltaCallback: "voice_delta",
+        onCompletedCallback: "voice_done",
+        onTimeoutCallback: "voice_timeout",
+        onErrorCallback: "voice_error");
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_timeout")
+{
+    SetStandState();
+    Scene.GetGuiControl("Status")?.SetValue("超时，重新等待唤醒");
+    VoiceState.PendingTurnRequestId = string.Empty;
+    VoiceState.InConversation = false;
+    _ = Scene.RealtimeVoice.ResetConversationAsync();
+    EnsureWakeWordMonitor();
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_error")
+{
+    Console.Error.WriteLine(RealtimeVoiceError);
+    SetStandState();
+    Scene.GetGuiControl("Status")?.SetValue("语音出错，重新等待唤醒");
+    if (!string.IsNullOrWhiteSpace(VoiceState.PendingTurnRequestId))
+    {
+        Scene.RealtimeVoice.CancelRequest(VoiceState.PendingTurnRequestId);
+        VoiceState.PendingTurnRequestId = string.Empty;
+    }
+
+    VoiceState.InConversation = false;
+    _ = Scene.RealtimeVoice.ResetConversationAsync();
+    EnsureWakeWordMonitor();
+}
+```
+
+固定提示语示例：
+
+```csharp
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    Scene.RealtimeVoice.StartSpeakText(
+        Entity,
+        "我在，请说。",
+        speed: 1.0f,
+        onCompletedCallback: "prompt_done",
+        onErrorCallback: "prompt_error");
+}
+```
+
+Realtime Voice 回调事件字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `RealtimeVoiceRequestId` | 请求 Id。 |
+| `RealtimeVoiceEventName` | 事件名：`wake_word_detected`、`transcription_completed`、`delta`、`completed`、`speech_completed`、`timeout`、`error`。 |
+| `RealtimeVoiceText` | 主文本：唤醒词事件通常是去掉唤醒词后的尾文本，转写事件是用户文本，完成事件是最终回复文本。 |
+| `RealtimeVoiceDelta` | 当前 transcript 增量。 |
+| `RealtimeVoiceAccumulatedText` | 当前累计回复文本。 |
+| `RealtimeVoiceIsFinal` | 是否最终事件。 |
+| `RealtimeVoiceError` | 错误文本。 |
+| `RealtimeVoiceCallbackName` | 当前命中的脚本回调名。 |
+| `RealtimeVoiceWakeWord` | 命中的唤醒词。 |
+| `RealtimeVoiceRecognizedText` | 原始识别文本。 |
+
+### Python Realtime Voice
+
+`scene.realtime_voice` 提供与 C# 同名的后台能力，但 Python 会自动把回调目标绑定到当前脚本实体。
+
+Python API：
+
+| API | 说明 |
+| --- | --- |
+| `scene.realtime_voice.enabled` | 当前项目是否启用 Realtime Voice。 |
+| `scene.realtime_voice.base_url` | 服务根地址。 |
+| `scene.realtime_voice.model` | 默认模型名。 |
+| `scene.realtime_voice.voice` | 默认 voice。 |
+| `scene.realtime_voice.wake_word_enabled` | 是否启用了唤醒词监听配置。 |
+| `scene.realtime_voice.wake_words` | 当前配置的唤醒词列表。 |
+| `scene.realtime_voice.input_device_index` | 当前输入设备索引。 |
+| `scene.realtime_voice.start_wake_word_monitoring(on_detected="wake_word_detected", on_error="wake_word_error")` | 开始后台唤醒词监听。 |
+| `scene.realtime_voice.stop_wake_word_monitoring()` | 停止唤醒词监听。 |
+| `scene.realtime_voice.start_transcription(request_id=None, timeout_seconds=None, on_completed="realtime_voice_transcription_completed", on_timeout="realtime_voice_timeout", on_error="realtime_voice_error")` | 录音直到静音并转写；可配置超时。 |
+| `scene.realtime_voice.start_response(user_text, request_id=None, on_delta="realtime_voice_delta", on_completed="realtime_voice_completed", on_error="realtime_voice_error")` | 发送用户文本到 Realtime 会话并流式播放回复。 |
+| `scene.realtime_voice.start_voice_turn(request_id=None, timeout_seconds=30, on_transcription_completed="realtime_voice_transcription_completed", on_delta="realtime_voice_delta", on_completed="realtime_voice_completed", on_timeout="realtime_voice_timeout", on_error="realtime_voice_error")` | 一体化后台语音对话流程；可配置等待用户输入的超时。 |
+| `scene.realtime_voice.start_speak_text(text, speed=None, request_id=None, on_completed="realtime_voice_speech_completed", on_error="realtime_voice_error")` | 文本直出 TTS。 |
+| `scene.realtime_voice.reset_conversation()` | 重置远端会话。 |
+| `scene.realtime_voice.cancel_request(request_id)` | 取消指定后台语音请求。 |
+| `scene.realtime_voice.cancel_all_requests()` | 取消当前脚本实体触发的全部后台语音请求。 |
+
+Python 典型流程：
+
+```python
+state = {
+    "in_conversation": False,
+    "pending_turn_request_id": "",
+    "wake_word_monitor_started": False,
+    "motion_blend_ready": False,
+    "wait_weight": 0.0,
+    "target_wait_weight": 0.0
+}
+
+STAND_MOTION = "assets/motions/basic_stand.vmd"
+WAIT_MOTION = "assets/motions/basic_wait.vmd"
+BLEND_DURATION_SECONDS = 0.35
+
+def ensure_motion_blend_setup(entity):
+    if state["motion_blend_ready"]:
+        return
+
+    entity.set_motion_layers([
+        {"path": STAND_MOTION, "weight": 1.0},
+        {"path": WAIT_MOTION, "weight": 0.0, "resetPhysicsOnLoop": True},
+    ])
+    entity.set_loop_motion(True)
+    entity.play_motion()
+    state["motion_blend_ready"] = True
+    state["wait_weight"] = 0.0
+    state["target_wait_weight"] = 0.0
+
+def set_stand_state(entity):
+    ensure_motion_blend_setup(entity)
+    state["target_wait_weight"] = 0.0
+
+def set_wait_state(entity):
+    ensure_motion_blend_setup(entity)
+    state["target_wait_weight"] = 1.0
+
+def update_motion_blend(entity, delta_seconds):
+    if not state["motion_blend_ready"]:
+        return
+
+    current = state["wait_weight"]
+    target = state["target_wait_weight"]
+    if abs(current - target) < 0.001:
+        return
+
+    step = delta_seconds / BLEND_DURATION_SECONDS
+    if target > current:
+        current = min(target, current + step)
+    else:
+        current = max(target, current - step)
+
+    state["wait_weight"] = current
+    entity.set_motion_layer_weight(STAND_MOTION, 1.0 - current)
+    entity.set_motion_layer_weight(WAIT_MOTION, current)
+
+def start(entity, scene, input, audio):
+    if scene.realtime_voice.enabled and not state["wake_word_monitor_started"]:
+        set_stand_state(entity)
+        scene.realtime_voice.start_wake_word_monitoring(
+            on_detected="wake_word_hit",
+            on_error="voice_error")
+        state["wake_word_monitor_started"] = True
+
+def update(entity, scene, input, audio, delta_seconds):
+    update_motion_blend(entity, delta_seconds)
+
+def wake_word_hit(entity, scene, input, audio, event):
+    if state["in_conversation"]:
+        return
+
+    state["in_conversation"] = True
+    scene.realtime_voice.stop_wake_word_monitoring()
+    state["wake_word_monitor_started"] = False
+    set_wait_state(entity)
+
+    status = scene.get_gui_control("Status")
+    if status:
+        status.set_value("已唤醒: " + event["wakeWord"])
+
+    if event["text"].strip():
+        scene.realtime_voice.start_response(
+            event["text"],
+            on_delta="voice_delta",
+            on_completed="voice_done",
+            on_error="voice_error")
+    else:
+        scene.realtime_voice.start_speak_text(
+            "我在，请说。",
+            on_completed="prompt_done",
+            on_error="voice_error")
+
+def prompt_done(entity, scene, input, audio, event):
+    set_wait_state(entity)
+    status = scene.get_gui_control("Status")
+    if status:
+        status.set_value("正在听")
+
+    state["pending_turn_request_id"] = scene.realtime_voice.start_voice_turn(
+        timeout_seconds=30,
+        on_transcription_completed="voice_transcribed",
+        on_delta="voice_delta",
+        on_completed="voice_done",
+        on_timeout="voice_timeout",
+        on_error="voice_error")
+
+def voice_transcribed(entity, scene, input, audio, event):
+    set_wait_state(entity)
+    heard = scene.get_gui_control("Heard")
+    if heard:
+        heard.set_value(event["text"])
+
+def voice_delta(entity, scene, input, audio, event):
+    set_wait_state(entity)
+    reply = scene.get_gui_control("Reply")
+    if reply:
+        reply.set_value(event["accumulatedText"])
+
+def voice_done(entity, scene, input, audio, event):
+    set_wait_state(entity)
+    reply = scene.get_gui_control("Reply")
+    if reply:
+        reply.set_value(event["text"])
+
+    status = scene.get_gui_control("Status")
+    if status:
+        status.set_value("等待下一句（30s）")
+
+    state["pending_turn_request_id"] = scene.realtime_voice.start_voice_turn(
+        timeout_seconds=30,
+        on_transcription_completed="voice_transcribed",
+        on_delta="voice_delta",
+        on_completed="voice_done",
+        on_timeout="voice_timeout",
+        on_error="voice_error")
+
+def voice_timeout(entity, scene, input, audio, event):
+    set_stand_state(entity)
+    state["pending_turn_request_id"] = ""
+    state["in_conversation"] = False
+    scene.realtime_voice.reset_conversation()
+    state["wake_word_monitor_started"] = False
+    start(entity, scene, input, audio)
+
+    status = scene.get_gui_control("Status")
+    if status:
+        status.set_value("超时，重新等待唤醒")
+
+def voice_error(entity, scene, input, audio, event):
+    set_stand_state(entity)
+    if state["pending_turn_request_id"]:
+        scene.realtime_voice.cancel_request(state["pending_turn_request_id"])
+        state["pending_turn_request_id"] = ""
+
+    state["in_conversation"] = False
+    scene.realtime_voice.reset_conversation()
+    state["wake_word_monitor_started"] = False
+    start(entity, scene, input, audio)
+    print("Realtime Voice error:", event["error"])
+```
+
+Python 通用回调事件字典字段包括：
+
+- `requestId`
+- `eventName`
+- `text`
+- `delta`
+- `accumulatedText`
+- `isFinal`
+- `error`
+- `callbackName`
+- `wakeWord`
+- `recognizedText`
+
+注意事项：
+
+- `RealtimeVoice` 的后台方法是非阻塞的，但如果你在 `Update` 每帧都调用 `start_*`，会不断创建新任务。通常要用脚本状态位控制，或只在 GUI 点击、唤醒词命中、上一轮完成回调后再触发下一轮。
+- 麦克风输入当前走本地 `PortAudio`。Linux 下如果打不开录音设备，优先检查 `Realtime Voice -> Input device index`、`User Capture` 和 `Wake Word Capture` 的采样率。
+- `start_response` / `start_voice_turn` 会自动播放远端返回音频；脚本无需再手动把音频流接到 `Audio.Play(...)`。
+- `ResetConversationAsync()` / `reset_conversation()` 会清空远端会话历史，适合切场景或开始新的对话主题时调用。
+- `timeout` 事件只表示“在指定等待时间内没有等到一轮可提交的用户语音”。它不是错误，也不会自动清空远端会话，是否重置会话由脚本自行决定。
 
 ## 常见脚本组合示例
 

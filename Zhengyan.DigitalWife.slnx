@@ -18,6 +18,7 @@
     <Project Path="src/Zhengyan.DigitalWife.Mmd.Game/Zhengyan.DigitalWife.Mmd.Game.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Mmd/Zhengyan.DigitalWife.Mmd.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Realtime.OpenAI/Zhengyan.DigitalWife.Realtime.OpenAI.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.RealtimeVoice.Client/Zhengyan.DigitalWife.RealtimeVoice.Client.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Speech.SherpaOnnx/Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Speech.WhisperNet/Zhengyan.DigitalWife.Speech.WhisperNet.csproj" />
   </Folder>

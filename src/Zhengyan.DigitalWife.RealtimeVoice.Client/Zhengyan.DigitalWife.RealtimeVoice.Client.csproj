@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Zhengyan.DigitalWife.RealtimeVoice.Client</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Client wrapper for Zhengyan.DigitalWife.Samples.RealtimeVoice service.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Abstractions\Zhengyan.DigitalWife.Abstractions.csproj" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Realtime.OpenAI\Zhengyan.DigitalWife.Realtime.OpenAI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
