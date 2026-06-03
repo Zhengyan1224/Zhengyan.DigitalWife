@@ -651,7 +651,8 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
         if (audio.Samples.Length == 0)
         {
-            return new RealtimeVoiceCaptureResult(null, TimedOut: false);
+            bool timedOut = timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested;
+            return new RealtimeVoiceCaptureResult(null, TimedOut: timedOut);
         }
 
         OpenAiRealtimeTranscriptionResult result = await GetClient(cancellationToken).TranscribeAsync(audio, deleteConversationItem: true, cancellationToken).ConfigureAwait(false);
