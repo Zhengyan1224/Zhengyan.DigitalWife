@@ -146,6 +146,8 @@ public sealed class GameProjectAsrSettings
 
     public string Provider { get; set; } = "sherpa";
 
+    public bool PreloadOnSceneLoad { get; set; } = true;
+
     public int? InputDeviceIndex { get; set; }
 
     public float PartialResultIntervalSeconds { get; set; } = 0.75f;

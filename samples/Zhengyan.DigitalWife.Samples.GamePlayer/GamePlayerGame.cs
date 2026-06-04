@@ -440,6 +440,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 EnqueueLoadingStep("Preloading TTS...", () => _runtimeVoice.Preload());
             }
 
+            if (_runtimeAsr?.Enabled == true && Project.Asr.PreloadOnSceneLoad)
+            {
+                EnqueueLoadingStep("Preloading ASR...", () => _runtimeAsr.Preload());
+            }
+
             _runtimeAudio = new RuntimeAudio(_audioSources);
             RuntimeCameraControllerComponent cameraController = _cameraController
                 ?? throw new InvalidOperationException("Runtime camera controller is not initialized.");

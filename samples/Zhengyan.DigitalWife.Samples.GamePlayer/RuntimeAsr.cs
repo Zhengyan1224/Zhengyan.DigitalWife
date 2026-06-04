@@ -57,6 +57,36 @@ public sealed class RuntimeAsr : IDisposable
         }
     }
 
+    public void Preload()
+    {
+        if (_disposed || !_settings.Enabled || !_settings.PreloadOnSceneLoad)
+        {
+            return;
+        }
+
+        try
+        {
+            ISpeechRecognizer recognizer = GetRecognizer();
+            int sampleRate = string.Equals(_settings.Provider, "whisper", StringComparison.OrdinalIgnoreCase)
+                ? Math.Max(8000, _settings.Whisper.SampleRate)
+                : Math.Max(8000, _settings.Sherpa.SampleRate);
+            int warmupSamples = Math.Max(sampleRate / 4, 1600);
+            AudioData silence = new(new float[warmupSamples], new AudioFormat(sampleRate, 1));
+
+            _ = recognizer.RecognizeAsync(
+                silence,
+                new SpeechRecognitionOptions
+                {
+                    Language = ResolveLanguage(),
+                    TranslateToEnglish = ResolveTranslateToEnglish()
+                }).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ASR preload failed: {ex.Message}");
+        }
+    }
+
     public string StartStreamingRecognition(
         RuntimeEntity callbackTarget,
         string? requestId = null,
@@ -289,6 +319,17 @@ public sealed class RuntimeAsr : IDisposable
             Channels = Math.Max(1, _settings.Capture.Channels),
             FramesPerBuffer = (uint)Math.Max(0, _settings.Capture.FramesPerBuffer)
         };
+    }
+
+    private AudioData CreateWarmupAudio()
+    {
+        int sampleRate = string.Equals(_settings.Provider, "whisper", StringComparison.OrdinalIgnoreCase)
+            ? Math.Max(8000, _settings.Whisper.SampleRate)
+            : Math.Max(8000, _settings.Sherpa.SampleRate);
+        int channels = Math.Max(1, _settings.Capture.Channels);
+        int frameCount = Math.Max(sampleRate / 4, 1024);
+        float[] samples = new float[frameCount * channels];
+        return new AudioData(samples, new AudioFormat(sampleRate, channels));
     }
 
     private string ResolveRequiredPath(string? path, string settingName)

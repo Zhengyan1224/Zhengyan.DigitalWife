@@ -1067,6 +1067,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             asr.PartialResultIntervalSeconds = Math.Clamp(partialResultIntervalSeconds, 0.05f, 10.0f);
         }
 
+        bool preloadOnSceneLoad = asr.PreloadOnSceneLoad;
+        if (ImGui.Checkbox("Preload ASR on scene load", ref preloadOnSceneLoad))
+        {
+            asr.PreloadOnSceneLoad = preloadOnSceneLoad;
+        }
+
         if (ImGui.TreeNode("Capture"))
         {
             ImGui.PushID("capture");
@@ -1209,7 +1215,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             ImGui.TreePop();
         }
 
-        ImGui.TextWrapped("Scripts call Scene.Asr / scene.asr. Buttons can use GUI events like 'pressed' and 'released' for push-to-talk recording flows.");
+        ImGui.TextWrapped("Scripts call Scene.Asr / scene.asr. Buttons can use GUI events like 'pressed' and 'released' for push-to-talk recording flows. Enable preload to warm up ASR during scene loading and avoid the first-record delay.");
         ImGui.PopID();
     }
 
