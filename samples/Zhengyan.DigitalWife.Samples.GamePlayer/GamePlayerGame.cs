@@ -30,7 +30,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly ScriptHost _scriptHost;
     private LoadingScreenComponent? _loadingScreen;
     private RuntimeGuiOverlayComponent? _guiOverlay;
-    private RuntimeDialogueBubbleOverlayComponent? _bubbleOverlay;
     private RuntimeCameraControllerComponent? _cameraController;
     private RuntimeDebugDrawComponent? _debugDraw;
     private SceneRenderTextureManager? _renderTextureManager;
@@ -119,6 +118,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
             () => Project.Scene.GuiControls,
             () => Project.Scene.Sprites,
+            () => _runtimeScene,
+            _camera,
             () => Project.Window,
             ResolveProjectPath,
             DispatchGuiEvent)
@@ -126,15 +127,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             RuntimeTextureProvider = _renderTextureManager,
             DrawOrder = int.MaxValue - 10,
             UpdateOrder = int.MaxValue
-        });
-
-        _bubbleOverlay = AddComponent(new RuntimeDialogueBubbleOverlayComponent(
-            () => _runtimeScene,
-            _camera,
-            () => Project.Window)
-        {
-            DrawOrder = int.MaxValue - 20,
-            UpdateOrder = int.MaxValue - 1
         });
 
         BeginProjectLoad();
@@ -1609,11 +1601,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         if (_guiOverlay is not null)
         {
             excluded.Add(_guiOverlay);
-        }
-
-        if (_bubbleOverlay is not null)
-        {
-            excluded.Add(_bubbleOverlay);
         }
 
         if (_loadingScreen is not null)

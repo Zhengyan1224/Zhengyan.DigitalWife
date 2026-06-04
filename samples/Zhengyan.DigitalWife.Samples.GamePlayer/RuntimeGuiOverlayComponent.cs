@@ -11,6 +11,8 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 internal sealed class RuntimeGuiOverlayComponent(
     Func<IReadOnlyList<GuiControlSettings>> getControls,
     Func<IReadOnlyList<SpriteSettings>> getSprites,
+    Func<RuntimeScene?> getScene,
+    OrbitCamera camera,
     Func<GameWindowSettings> getWindowSettings,
     Func<string, string> resolvePath,
     Action<GuiControlSettings, string> dispatchEvent) : DrawableGameComponent
@@ -19,6 +21,8 @@ internal sealed class RuntimeGuiOverlayComponent(
 
     private readonly Func<IReadOnlyList<GuiControlSettings>> _getControls = getControls;
     private readonly Func<IReadOnlyList<SpriteSettings>> _getSprites = getSprites;
+    private readonly Func<RuntimeScene?> _getScene = getScene;
+    private readonly OrbitCamera _camera = camera;
     private readonly Func<GameWindowSettings> _getWindowSettings = getWindowSettings;
     private readonly Func<string, string> _resolvePath = resolvePath;
     private readonly Action<GuiControlSettings, string> _dispatchEvent = dispatchEvent;
@@ -63,6 +67,7 @@ internal sealed class RuntimeGuiOverlayComponent(
 
         _controller.Update((float)gameTime.ElapsedSeconds);
         DrawSprites();
+        DrawBubbles();
 
         foreach (GuiControlSettings control in _getControls())
         {
@@ -122,6 +127,158 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
 
         drawList.PopClipRect();
+    }
+
+    private void DrawBubbles()
+    {
+        RuntimeScene? scene = _getScene();
+        if (scene is null)
+        {
+            return;
+        }
+
+        foreach (RuntimeDialogueBubble bubble in scene.Bubble.GetOrderedVisibleBubbles())
+        {
+            DrawBubble(scene, bubble);
+        }
+    }
+
+    private void DrawBubble(RuntimeScene scene, RuntimeDialogueBubble bubble)
+    {
+        Vector2 position = ResolveBubblePosition(scene, bubble);
+        Vector2 padding = new(
+            ResolveBubbleScalar(bubble.LayoutMode, bubble.PaddingX),
+            ResolveBubbleScalar(bubble.LayoutMode, bubble.PaddingY));
+        float width = ResolveBubbleDimension(bubble.LayoutMode, bubble.Width);
+        float rounding = ResolveBubbleScalar(bubble.LayoutMode, bubble.Rounding);
+        float borderSize = ResolveBubbleScalar(bubble.LayoutMode, bubble.BorderThickness);
+
+        ImGui.SetNextWindowPos(position, ImGuiCond.Always, bubble.Pivot);
+        ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration
+            | ImGuiWindowFlags.AlwaysAutoResize
+            | ImGuiWindowFlags.NoSavedSettings
+            | ImGuiWindowFlags.NoFocusOnAppearing
+            | ImGuiWindowFlags.NoNav
+            | ImGuiWindowFlags.NoMove
+            | ImGuiWindowFlags.NoInputs;
+
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, rounding);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, padding);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, borderSize);
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, bubble.BackgroundColor);
+        ImGui.PushStyleColor(ImGuiCol.Border, bubble.BorderColor);
+
+        if (ImGui.Begin($"DialogueBubble##{bubble.Name}", flags))
+        {
+            bool hasContent = false;
+
+            if (!string.IsNullOrWhiteSpace(bubble.HeaderText))
+            {
+                DrawBubbleTextBlock(
+                    bubble.HeaderText,
+                    width,
+                    ResolveBubbleFontScale(bubble.LayoutMode, bubble.HeaderFontSize),
+                    bubble.TextAlignment,
+                    bubble.HeaderTextColor,
+                    bubble.WordWrap);
+                hasContent = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(bubble.Text))
+            {
+                if (hasContent)
+                {
+                    ImGui.Separator();
+                }
+
+                DrawBubbleTextBlock(
+                    bubble.Text,
+                    width,
+                    ResolveBubbleFontScale(bubble.LayoutMode, bubble.FontSize),
+                    bubble.TextAlignment,
+                    bubble.TextColor,
+                    bubble.WordWrap);
+                hasContent = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(bubble.FooterText))
+            {
+                if (hasContent)
+                {
+                    ImGui.Separator();
+                }
+
+                DrawBubbleTextBlock(
+                    bubble.FooterText,
+                    width,
+                    ResolveBubbleFontScale(bubble.LayoutMode, bubble.FooterFontSize),
+                    bubble.TextAlignment,
+                    bubble.FooterTextColor,
+                    bubble.WordWrap);
+            }
+
+            ImGui.SetWindowFontScale(1.0f);
+        }
+
+        ImGui.End();
+        ImGui.PopStyleColor(2);
+        ImGui.PopStyleVar(3);
+    }
+
+    private Vector2 ResolveBubblePosition(RuntimeScene scene, RuntimeDialogueBubble bubble)
+    {
+        Vector2 offset = ResolveBubbleVector2(bubble.LayoutMode, bubble.ScreenOffset);
+
+        if (string.Equals(bubble.AnchorMode, "entity", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(bubble.AnchorEntity)
+            && scene.GetEntity(bubble.AnchorEntity) is RuntimeEntity entity
+            && entity.TryGetBubbleAnchorWorldPosition(bubble.UseEntityTopAnchor, out Vector3 anchor)
+            && TryProjectWorld(anchor + bubble.WorldOffset, out Vector2 projected))
+        {
+            return projected + offset;
+        }
+
+        if (string.Equals(bubble.AnchorMode, "world", StringComparison.OrdinalIgnoreCase)
+            && TryProjectWorld(bubble.WorldPosition + bubble.WorldOffset, out Vector2 worldProjected))
+        {
+            return worldProjected + offset;
+        }
+
+        return ResolveBubbleVector2(bubble.LayoutMode, bubble.ScreenPosition) + offset;
+    }
+
+    private bool TryProjectWorld(Vector3 worldPosition, out Vector2 screenPosition)
+    {
+        if (Game is null)
+        {
+            screenPosition = default;
+            return false;
+        }
+
+        Vector4 clip = Vector4.Transform(
+            Vector4.Transform(new Vector4(worldPosition, 1.0f), _camera.View),
+            _camera.Projection);
+
+        if (clip.W <= 0.0001f)
+        {
+            screenPosition = default;
+            return false;
+        }
+
+        Vector3 ndc = new(clip.X / clip.W, clip.Y / clip.W, clip.Z / clip.W);
+        if (ndc.Z < 0.0f || ndc.Z > 1.0f)
+        {
+            screenPosition = default;
+            return false;
+        }
+
+        int width = Math.Max(Game.GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(Game.GraphicsDevice.BackBufferSize.Y, 1);
+
+        screenPosition = new Vector2(
+            ((ndc.X * 0.5f) + 0.5f) * width,
+            (1.0f - ((ndc.Y * 0.5f) + 0.5f)) * height);
+        return true;
     }
 
     private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
@@ -240,16 +397,24 @@ internal sealed class RuntimeGuiOverlayComponent(
         LayoutRect rect = ResolveGuiRect(control);
         ImGui.SetNextWindowPos(new Vector2(rect.X, rect.Y), ImGuiCond.Always);
         ImGui.SetNextWindowSize(new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f)), ImGuiCond.Always);
+        string type = control.Type.ToLowerInvariant();
+        bool useWindowBackground = type is "label" or "checkbox";
         ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration
             | ImGuiWindowFlags.NoSavedSettings
             | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.NoResize;
+        if (!useWindowBackground)
+        {
+            flags |= ImGuiWindowFlags.NoBackground;
+        }
 
         GuiControlStyleSettings style = control.Style;
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, Math.Max(style.Rounding, 0.0f));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, useWindowBackground ? Math.Max(style.BorderThickness, 0.0f) : 0.0f);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Math.Max(style.Rounding, 0.0f));
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, Math.Max(style.BorderThickness, 0.0f));
         ImGui.PushStyleColor(ImGuiCol.Text, style.TextColor.ToVector4());
@@ -272,7 +437,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         if (!ImGui.Begin(windowId, flags))
         {
             ImGui.PopStyleColor(15);
-            ImGui.PopStyleVar(6);
+            ImGui.PopStyleVar(8);
             ImGui.End();
             return;
         }
@@ -280,7 +445,6 @@ internal sealed class RuntimeGuiOverlayComponent(
         ImGui.SetWindowFontScale(ResolveGuiFontScale(control));
         Vector2 controlSize = new(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
         ImGui.SetCursorPos(Vector2.Zero);
-        string type = control.Type.ToLowerInvariant();
         if (type == "label")
         {
             DrawAlignedTextBlock(control);
@@ -342,7 +506,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
 
         ImGui.PopStyleColor(15);
-        ImGui.PopStyleVar(6);
+        ImGui.PopStyleVar(8);
         ImGui.End();
     }
 
@@ -364,6 +528,134 @@ internal sealed class RuntimeGuiOverlayComponent(
             Game.Window.Size.Y,
             window.Width,
             window.Height);
+    }
+
+    private void DrawBubbleTextBlock(
+        string text,
+        float maxWidth,
+        float fontScale,
+        string alignment,
+        Vector4 color,
+        bool wordWrap)
+    {
+        ImGui.SetWindowFontScale(fontScale);
+
+        string[] lines = BuildTextLines(text, Math.Max(maxWidth, 1.0f), wordWrap);
+        float lineHeight = Math.Max(ImGui.CalcTextSize("Ag").Y, 1.0f);
+        Vector2 blockSize = new(maxWidth, lineHeight * lines.Length);
+        Vector2 cursor = ImGui.GetCursorScreenPos();
+        Vector2 clipMin = cursor;
+        Vector2 clipMax = cursor + blockSize;
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+        uint textColor = ImGui.GetColorU32(color);
+
+        drawList.PushClipRect(clipMin, clipMax, true);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            string line = lines[i];
+            Vector2 lineSize = ImGui.CalcTextSize(line);
+            float x = ResolveHorizontalOffset(alignment, maxWidth, lineSize.X);
+            drawList.AddText(cursor + new Vector2(x, lineHeight * i), textColor, line);
+        }
+
+        drawList.PopClipRect();
+        ImGui.Dummy(blockSize);
+        ImGui.SetWindowFontScale(1.0f);
+    }
+
+    private Vector2 ResolveBubbleVector2(string layoutMode, Vector2 value)
+    {
+        if (Game is null)
+        {
+            return value;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        LayoutRect rect = LayoutResolver.Resolve(
+            layoutMode,
+            value.X,
+            value.Y,
+            1.0f,
+            1.0f,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+        return new Vector2(rect.X, rect.Y);
+    }
+
+    private float ResolveBubbleDimension(string layoutMode, float value)
+    {
+        if (Game is null)
+        {
+            return value;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        LayoutRect rect = LayoutResolver.Resolve(
+            layoutMode,
+            0.0f,
+            0.0f,
+            value,
+            1.0f,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+        return rect.Width;
+    }
+
+    private float ResolveBubbleFontScale(string layoutMode, float fontSize)
+    {
+        if (Game is null)
+        {
+            return 1.0f;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        float resolved = LayoutResolver.ResolveFontSize(
+            layoutMode,
+            fontSize,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+        return resolved / BaseFontSize;
+    }
+
+    private float ResolveBubbleScalar(string layoutMode, float value)
+    {
+        if (Game is null || !LayoutResolver.IsRelative(layoutMode))
+        {
+            return value;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        float safeReferenceWidth = Math.Max(window.Width, 1.0f);
+        float safeReferenceHeight = Math.Max(window.Height, 1.0f);
+        float scaleX = Math.Max(Game.Window.Size.X, 1.0f) / safeReferenceWidth;
+        float scaleY = Math.Max(Game.Window.Size.Y, 1.0f) / safeReferenceHeight;
+        return value * MathF.Min(scaleX, scaleY);
+    }
+
+    private float ResolveGuiFontScale(GuiControlSettings control)
+    {
+        if (Game is null)
+        {
+            return 1.0f;
+        }
+
+        GuiControlStyleSettings style = control.Style;
+        GameWindowSettings window = _getWindowSettings();
+        float fontSize = Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
+        fontSize = LayoutResolver.ResolveFontSize(
+            control.LayoutMode,
+            fontSize,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+        return fontSize / BaseFontSize;
     }
 
     private static void DrawAlignedTextBlock(GuiControlSettings control)
@@ -391,26 +683,6 @@ internal sealed class RuntimeGuiOverlayComponent(
 
         drawList.PopClipRect();
         ImGui.Dummy(available);
-    }
-
-    private float ResolveGuiFontScale(GuiControlSettings control)
-    {
-        if (Game is null)
-        {
-            return 1.0f;
-        }
-
-        GuiControlStyleSettings style = control.Style;
-        GameWindowSettings window = _getWindowSettings();
-        float fontSize = Math.Clamp(style.FontSize <= 0.0f ? 18.0f : style.FontSize, 8.0f, 96.0f);
-        fontSize = LayoutResolver.ResolveFontSize(
-            control.LayoutMode,
-            fontSize,
-            Game.Window.Size.X,
-            Game.Window.Size.Y,
-            window.Width,
-            window.Height);
-        return fontSize / BaseFontSize;
     }
 
     private static string[] BuildTextLines(string text, float maxWidth, bool wordWrap)
