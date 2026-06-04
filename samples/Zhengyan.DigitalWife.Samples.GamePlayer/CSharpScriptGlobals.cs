@@ -24,9 +24,13 @@ public sealed class CSharpScriptGlobals
 
     public bool IsLlmEvent { get; init; }
 
+    public bool IsAsrEvent { get; init; }
+
     public bool IsRealtimeVoiceEvent { get; init; }
 
     public RuntimeLlmScriptEvent? LlmEvent { get; init; }
+
+    public RuntimeAsrScriptEvent? AsrEvent { get; init; }
 
     public RuntimeRealtimeVoiceScriptEvent? RealtimeVoiceEvent { get; init; }
 
@@ -43,6 +47,20 @@ public sealed class CSharpScriptGlobals
     public string LlmError => LlmEvent?.Error ?? string.Empty;
 
     public string LlmCallbackName => LlmEvent?.CallbackName ?? string.Empty;
+
+    public string AsrRequestId => AsrEvent?.RequestId ?? string.Empty;
+
+    public string AsrEventName => AsrEvent?.EventName ?? string.Empty;
+
+    public string AsrText => AsrEvent?.Text ?? string.Empty;
+
+    public bool AsrIsFinal => AsrEvent?.IsFinal ?? false;
+
+    public string AsrError => AsrEvent?.Error ?? string.Empty;
+
+    public string AsrCallbackName => AsrEvent?.CallbackName ?? string.Empty;
+
+    public double AsrOffsetSeconds => AsrEvent?.OffsetSeconds ?? 0.0;
 
     public string RealtimeVoiceRequestId => RealtimeVoiceEvent?.RequestId ?? string.Empty;
 

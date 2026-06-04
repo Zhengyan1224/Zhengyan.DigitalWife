@@ -44,37 +44,42 @@ internal sealed class CSharpScriptInstance : IScriptInstance
 
     public void Start(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void Update(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, double deltaSeconds)
     {
-        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null);
+        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, eventName, progress, message, string.Empty, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, eventName, progress, message, string.Empty, null, null, null);
     }
 
     public void SpeechEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null, null, null);
     }
 
     public void LlmEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null, null);
+    }
+
+    public void AsrEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeAsrScriptEvent asrEvent)
+    {
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: true, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, asrEvent, null);
     }
 
     public void RealtimeVoiceEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isRealtimeVoiceEvent: true, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, realtimeVoiceEvent);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: true, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, realtimeVoiceEvent);
     }
 
     public void Dispose()
@@ -93,6 +98,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         bool isLoadingEvent,
         bool isSpeechEvent,
         bool isLlmEvent,
+        bool isAsrEvent,
         bool isRealtimeVoiceEvent,
         string guiControlId,
         string guiControlName,
@@ -102,6 +108,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         string loadingMessage,
         string speechCallbackName,
         RuntimeLlmScriptEvent? llmEvent,
+        RuntimeAsrScriptEvent? asrEvent,
         RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
     {
         _runner ??= CSharpScript
@@ -121,8 +128,10 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             IsLoadingEvent = isLoadingEvent,
             IsSpeechEvent = isSpeechEvent,
             IsLlmEvent = isLlmEvent,
+            IsAsrEvent = isAsrEvent,
             IsRealtimeVoiceEvent = isRealtimeVoiceEvent,
             LlmEvent = llmEvent,
+            AsrEvent = asrEvent,
             RealtimeVoiceEvent = realtimeVoiceEvent,
             GuiControlId = guiControlId,
             GuiControlName = guiControlName,

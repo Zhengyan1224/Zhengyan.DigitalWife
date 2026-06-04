@@ -1065,6 +1065,14 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         NormalizeMatchaVoiceDataDirectory(voice);
         voice.LipSync.DictionaryDirectory = ImportOptionalResource(voice.LipSync.DictionaryDirectory, "tts/lip-sync", ref imported, warnings, copyDirectory: true);
 
+        GameProjectAsrSettings asr = Project.Asr;
+        asr.Sherpa.TokensPath = ImportOptionalResource(asr.Sherpa.TokensPath, "asr/sherpa", ref imported, warnings);
+        asr.Sherpa.EncoderPath = ImportOptionalNullableResource(asr.Sherpa.EncoderPath, "asr/sherpa", ref imported, warnings);
+        asr.Sherpa.DecoderPath = ImportOptionalNullableResource(asr.Sherpa.DecoderPath, "asr/sherpa", ref imported, warnings);
+        asr.Sherpa.JoinerPath = ImportOptionalNullableResource(asr.Sherpa.JoinerPath, "asr/sherpa", ref imported, warnings);
+        asr.Sherpa.ModelPath = ImportOptionalNullableResource(asr.Sherpa.ModelPath, "asr/sherpa", ref imported, warnings);
+        asr.Whisper.ModelPath = ImportOptionalResource(asr.Whisper.ModelPath, "asr/whisper", ref imported, warnings);
+
         GameProjectScene scene = Project.Scene;
         scene.LoadingScreen.BackgroundImagePath = ImportOptionalResource(scene.LoadingScreen.BackgroundImagePath, "loading", ref imported, warnings);
         scene.Skybox.TexturePath = ImportOptionalResource(scene.Skybox.TexturePath, "skybox", ref imported, warnings);

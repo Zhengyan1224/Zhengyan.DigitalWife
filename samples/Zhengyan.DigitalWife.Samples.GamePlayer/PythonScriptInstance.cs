@@ -60,6 +60,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
             llmEvent: llmEvent);
     }
 
+    public void AsrEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeAsrScriptEvent asrEvent)
+    {
+        SendEvent(
+            "asr_event",
+            entity,
+            scene,
+            input,
+            audio,
+            0.0,
+            asrEvent: asrEvent);
+    }
+
     public void RealtimeVoiceEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
     {
         SendEvent(
@@ -122,6 +134,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         string loadingMessage = "",
         string speechCallback = "",
         RuntimeLlmScriptEvent? llmEvent = null,
+        RuntimeAsrScriptEvent? asrEvent = null,
         RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent = null)
     {
         if (_process.HasExited)
@@ -129,7 +142,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
         }
 
-        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, realtimeVoiceEvent);
+        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, asrEvent, realtimeVoiceEvent);
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -1299,7 +1312,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self._gui_controls = data.get("guiControls", [])
                        self._sprites = data.get("sprites", [])
                        self._llm = data.get("llm", {})
+                       self._asr = data.get("asr", {})
                        self._realtime_voice = data.get("realtimeVoice", {})
+                       self._bubble = data.get("bubble", {})
                        self.performance = Performance(data.get("performance", {}))
                        self.fps = self.performance.fps
                        self.raw_fps = self.performance.raw_fps
@@ -1311,7 +1326,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.debug = Debug(commands)
                        self.save = SaveStore()
                        self.network = Network()
+                       self.asr = AsrClient(self, commands)
                        self.realtime_voice = RealtimeVoiceClient(self, commands)
+                       self.bubble = BubbleManager(self, self._bubble, commands)
                        self._commands = commands
 
                    def get_entity(self, id_or_name):
@@ -1348,6 +1365,403 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        pending = list(self._commands)
                        self._commands.clear()
                        emit_commands(pending)
+
+               class BubbleManager:
+                   def __init__(self, scene, data, commands):
+                       self._scene = scene
+                       self._data = dict(data or {})
+                       self._commands = commands
+
+                   @property
+                   def count(self):
+                       return int(self._data.get("count", len(self.names)))
+
+                   @property
+                   def names(self):
+                       return list(self._data.get("names", []))
+
+                   @property
+                   def visible_names(self):
+                       return list(self._data.get("visibleNames", []))
+
+                   def contains(self, name):
+                       bubble_name = str(name or "").strip()
+                       return bubble_name in self.names
+
+                   def get(self, name):
+                       bubble_name = str(name or "").strip()
+                       if not bubble_name:
+                           raise ValueError("Bubble name is required")
+                       self._track_name(bubble_name)
+                       return Bubble(self, bubble_name)
+
+                   def get_or_create(self, name):
+                       return self.get(name)
+
+                   def create(self, name):
+                       return self.get(name)
+
+                   def show(self, name, text="", header_text="", footer_text=""):
+                       bubble = self.get(name)
+                       bubble.show(text=text, header_text=header_text, footer_text=footer_text)
+                       return bubble
+
+                   def hide(self, name):
+                       self.get(name).hide()
+
+                   def remove(self, name):
+                       bubble_name = str(name or "").strip()
+                       if not bubble_name:
+                           return
+                       self._commands.append({"target": "bubble", "action": "remove", "name": bubble_name})
+                       self._data["names"] = [item for item in self.names if item != bubble_name]
+                       self._data["visibleNames"] = [item for item in self.visible_names if item != bubble_name]
+                       self._data["count"] = len(self._data["names"])
+
+                   def hide_all(self):
+                       self._commands.append({"target": "bubble", "action": "hide_all"})
+                       self._data["visibleNames"] = []
+
+                   def clear(self):
+                       self._commands.append({"target": "bubble", "action": "clear"})
+                       self._data["names"] = []
+                       self._data["visibleNames"] = []
+                       self._data["count"] = 0
+
+                   def _track_name(self, name, visible=None):
+                       names = self._data.setdefault("names", [])
+                       if name not in names:
+                           names.append(name)
+
+                       visible_names = self._data.setdefault("visibleNames", [])
+                       if visible is True and name not in visible_names:
+                           visible_names.append(name)
+                       elif visible is False:
+                           self._data["visibleNames"] = [item for item in visible_names if item != name]
+
+                       self._data["count"] = len(names)
+
+               class Bubble:
+                   def __init__(self, manager, name):
+                       self._manager = manager
+                       self.name = name
+
+                   def show(self, text="", header_text="", footer_text=""):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "show",
+                           "name": self.name,
+                           "text": "" if text is None else str(text),
+                           "headerText": "" if header_text is None else str(header_text),
+                           "footerText": "" if footer_text is None else str(footer_text)
+                       })
+                       self._manager._track_name(self.name, visible=True)
+                       return self
+
+                   def hide(self):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "hide",
+                           "name": self.name
+                       })
+                       self._manager._track_name(self.name, visible=False)
+                       return self
+
+                   def remove(self):
+                       self._manager.remove(self.name)
+
+                   def set_visible(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_visible",
+                           "name": self.name,
+                           "flag": bool(value)
+                       })
+                       self._manager._track_name(self.name, visible=bool(value))
+                       return self
+
+                   def set_text(self, text):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_text",
+                           "name": self.name,
+                           "text": "" if text is None else str(text)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_header_text(self, text):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_header_text",
+                           "name": self.name,
+                           "headerText": "" if text is None else str(text)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_footer_text(self, text):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_footer_text",
+                           "name": self.name,
+                           "footerText": "" if text is None else str(text)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_layout_mode(self, layout_mode):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_layout_mode",
+                           "name": self.name,
+                           "mode": str(layout_mode or "absolute")
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_anchor_mode(self, anchor_mode):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_anchor_mode",
+                           "name": self.name,
+                           "mode": str(anchor_mode or "screen")
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_screen_position(self, x, y, layout_mode=None):
+                       payload = {
+                           "target": "bubble",
+                           "action": "set_screen_position",
+                           "name": self.name,
+                           "x": float(x),
+                           "y": float(y)
+                       }
+                       if layout_mode is not None:
+                           payload["mode"] = str(layout_mode)
+                       self._manager._commands.append(payload)
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def use_screen_space(self, x, y, layout_mode=None):
+                       return self.set_screen_position(x, y, layout_mode=layout_mode)
+
+                   def set_screen_offset(self, x, y):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_screen_offset",
+                           "name": self.name,
+                           "x": float(x),
+                           "y": float(y)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_world_position(self, x, y, z):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_world_position",
+                           "name": self.name,
+                           "x": float(x),
+                           "y": float(y),
+                           "z": float(z)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def use_world_space(self, x, y, z):
+                       return self.set_world_position(x, y, z)
+
+                   def set_world_offset(self, x, y, z):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_world_offset",
+                           "name": self.name,
+                           "x": float(x),
+                           "y": float(y),
+                           "z": float(z)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def attach_to_entity(self, entity_id_or_name, use_model_top_anchor=True):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "attach_to_entity",
+                           "name": self.name,
+                           "targetEntity": str(entity_id_or_name or ""),
+                           "flag": bool(use_model_top_anchor)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_width(self, width):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_width",
+                           "name": self.name,
+                           "width": float(width)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_padding(self, x, y):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_padding",
+                           "name": self.name,
+                           "x": float(x),
+                           "y": float(y)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_pivot(self, x, y):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_pivot",
+                           "name": self.name,
+                           "x": float(x),
+                           "y": float(y)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_text_alignment(self, alignment):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_text_alignment",
+                           "name": self.name,
+                           "mode": str(alignment or "left")
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_font_size(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_font_size",
+                           "name": self.name,
+                           "value": float(value)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_header_font_size(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_header_font_size",
+                           "name": self.name,
+                           "value": float(value)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_footer_font_size(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_footer_font_size",
+                           "name": self.name,
+                           "value": float(value)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_background_color(self, r, g, b, a=1.0):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_background_color",
+                           "name": self.name,
+                           "colorR": float(r),
+                           "colorG": float(g),
+                           "colorB": float(b),
+                           "colorA": float(a)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_border_color(self, r, g, b, a=1.0):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_border_color",
+                           "name": self.name,
+                           "colorR": float(r),
+                           "colorG": float(g),
+                           "colorB": float(b),
+                           "colorA": float(a)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_text_color(self, r, g, b, a=1.0):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_text_color",
+                           "name": self.name,
+                           "colorR": float(r),
+                           "colorG": float(g),
+                           "colorB": float(b),
+                           "colorA": float(a)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_header_text_color(self, r, g, b, a=1.0):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_header_text_color",
+                           "name": self.name,
+                           "colorR": float(r),
+                           "colorG": float(g),
+                           "colorB": float(b),
+                           "colorA": float(a)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_footer_text_color(self, r, g, b, a=1.0):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_footer_text_color",
+                           "name": self.name,
+                           "colorR": float(r),
+                           "colorG": float(g),
+                           "colorB": float(b),
+                           "colorA": float(a)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_rounding(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_rounding",
+                           "name": self.name,
+                           "value": float(value)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_border_thickness(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_border_thickness",
+                           "name": self.name,
+                           "value": float(value)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
+
+                   def set_draw_order(self, value):
+                       self._manager._commands.append({
+                           "target": "bubble",
+                           "action": "set_draw_order",
+                           "name": self.name,
+                           "index": int(value)
+                       })
+                       self._manager._track_name(self.name)
+                       return self
 
                class Network:
                    def http_get(self, url, timeout=15, headers=None):
@@ -1645,6 +2059,49 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self._commands.append({
                            "target": "realtime_voice",
                            "action": "cancel_all_requests"
+                       })
+
+               class AsrClient:
+                   def __init__(self, scene, commands):
+                       self._scene = scene
+                       self._commands = commands
+                       self._settings = scene._asr
+
+                   @property
+                   def enabled(self):
+                       return bool(self._settings.get("enabled", False))
+
+                   @property
+                   def provider(self):
+                       return self._settings.get("provider", "")
+
+                   @property
+                   def input_device_index(self):
+                       return self._settings.get("inputDeviceIndex", None)
+
+                   @property
+                   def partial_result_interval_seconds(self):
+                       return float(self._settings.get("partialResultIntervalSeconds", 0.75))
+
+                   @property
+                   def is_recording(self):
+                       return bool(self._settings.get("isRecording", False))
+
+                   def start_streaming_recognition(self, request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error"):
+                       self._commands.append({
+                           "target": "asr",
+                           "action": "start_streaming_recognition",
+                           "requestId": request_id or "",
+                           "onPartial": on_partial or "",
+                           "onCompleted": on_completed or "",
+                           "onError": on_error or ""
+                       })
+
+                   def stop_streaming_recognition(self, request_id=None):
+                       self._commands.append({
+                           "target": "asr",
+                           "action": "stop_streaming_recognition",
+                           "requestId": request_id or ""
                        })
 
                class SaveStore:
@@ -1951,6 +2408,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                getattr(module, callback)(entity, scene, input, audio, llm_event)
                            elif hasattr(module, "llm_event"):
                                module.llm_event(entity, scene, input, audio, llm_event)
+                       elif event == "asr_event":
+                           asr_event = ctx.get("asrEvent", {})
+                           callback = asr_event.get("callbackName", "")
+                           if callback and hasattr(module, callback):
+                               getattr(module, callback)(entity, scene, input, audio, asr_event)
+                           elif hasattr(module, "asr_event"):
+                               module.asr_event(entity, scene, input, audio, asr_event)
                        elif event == "realtime_voice_event":
                            realtime_voice_event = ctx.get("realtimeVoiceEvent", {})
                            callback = realtime_voice_event.get("callbackName", "")
@@ -1984,6 +2448,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 continue;
             }
 
+            if (string.Equals(command.Target, "asr", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyAsrCommand(command, currentEntity, scene);
+                continue;
+            }
+
             if (string.Equals(command.Target, "realtime_voice", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyRealtimeVoiceCommand(command, currentEntity, scene);
@@ -1993,6 +2463,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             if (string.Equals(command.Target, "audio", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyAudioCommand(command, audio);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "bubble", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyBubbleCommand(command, scene);
                 continue;
             }
 
@@ -2288,6 +2764,24 @@ internal sealed class PythonScriptInstance : IScriptInstance
         }
     }
 
+    private static void ApplyAsrCommand(PythonCommand command, RuntimeEntity callbackEntity, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "start_streaming_recognition":
+                scene.Asr.StartStreamingRecognition(
+                    callbackEntity,
+                    requestId: command.RequestId,
+                    onPartialCallback: command.OnPartial,
+                    onCompletedCallback: command.OnCompleted,
+                    onErrorCallback: command.OnError);
+                break;
+            case "stop_streaming_recognition":
+                scene.Asr.StopStreamingRecognition(command.RequestId);
+                break;
+        }
+    }
+
     private static void ApplyDebugCommand(PythonCommand command, RuntimeScene scene)
     {
         switch (command.Action?.ToLowerInvariant())
@@ -2329,6 +2823,133 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_timing_mode" when !string.IsNullOrWhiteSpace(command.Name):
                 scene.Window.SetTimingMode(command.Name);
+                break;
+        }
+    }
+
+    private static void ApplyBubbleCommand(PythonCommand command, RuntimeScene scene)
+    {
+        RuntimeDialogueBubbleManager bubbles = scene.Bubble;
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "clear":
+                bubbles.Clear();
+                return;
+            case "hide_all":
+                bubbles.HideAll();
+                return;
+        }
+
+        if (string.IsNullOrWhiteSpace(command.Name))
+        {
+            return;
+        }
+
+        string bubbleName = command.Name!;
+        if (string.Equals(command.Action, "remove", StringComparison.OrdinalIgnoreCase))
+        {
+            bubbles.Remove(bubbleName);
+            return;
+        }
+
+        RuntimeDialogueBubble bubble = bubbles.GetOrCreate(bubbleName);
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "show":
+                bubble.SetContent(
+                    command.Text ?? string.Empty,
+                    command.HeaderText ?? string.Empty,
+                    command.FooterText ?? string.Empty);
+                bubble.Show();
+                break;
+            case "hide":
+                bubble.Hide();
+                break;
+            case "set_visible" when command.Flag.HasValue:
+                if (command.Flag.Value)
+                {
+                    bubble.Show();
+                }
+                else
+                {
+                    bubble.Hide();
+                }
+
+                break;
+            case "set_text":
+                bubble.SetText(command.Text ?? string.Empty);
+                break;
+            case "set_header_text":
+                bubble.SetHeaderText(command.HeaderText ?? command.Text ?? string.Empty);
+                break;
+            case "set_footer_text":
+                bubble.SetFooterText(command.FooterText ?? command.Text ?? string.Empty);
+                break;
+            case "set_layout_mode" when !string.IsNullOrWhiteSpace(command.Mode):
+                bubble.LayoutMode = command.Mode!;
+                break;
+            case "set_anchor_mode" when !string.IsNullOrWhiteSpace(command.Mode):
+                bubble.AnchorMode = command.Mode!;
+                break;
+            case "set_screen_position" when command.X.HasValue && command.Y.HasValue:
+                bubble.UseScreenSpace((float)command.X.Value, (float)command.Y.Value, command.Mode);
+                break;
+            case "set_screen_offset" when command.X.HasValue && command.Y.HasValue:
+                bubble.SetScreenOffset((float)command.X.Value, (float)command.Y.Value);
+                break;
+            case "set_world_position" when command.X.HasValue && command.Y.HasValue && command.Z.HasValue:
+                bubble.UseWorldSpace((float)command.X.Value, (float)command.Y.Value, (float)command.Z.Value);
+                break;
+            case "set_world_offset" when command.X.HasValue && command.Y.HasValue && command.Z.HasValue:
+                bubble.SetWorldOffset((float)command.X.Value, (float)command.Y.Value, (float)command.Z.Value);
+                break;
+            case "attach_to_entity" when !string.IsNullOrWhiteSpace(command.TargetEntity):
+                bubble.AttachToEntity(command.TargetEntity!, command.Flag ?? true);
+                break;
+            case "set_width" when command.Width.HasValue:
+                bubble.Width = (float)command.Width.Value;
+                break;
+            case "set_padding" when command.X.HasValue && command.Y.HasValue:
+                bubble.SetPadding((float)command.X.Value, (float)command.Y.Value);
+                break;
+            case "set_pivot" when command.X.HasValue && command.Y.HasValue:
+                bubble.SetPivot((float)command.X.Value, (float)command.Y.Value);
+                break;
+            case "set_text_alignment" when !string.IsNullOrWhiteSpace(command.Mode):
+                bubble.TextAlignment = command.Mode!;
+                break;
+            case "set_font_size" when command.Value.HasValue:
+                bubble.FontSize = (float)command.Value.Value;
+                break;
+            case "set_header_font_size" when command.Value.HasValue:
+                bubble.HeaderFontSize = (float)command.Value.Value;
+                break;
+            case "set_footer_font_size" when command.Value.HasValue:
+                bubble.FooterFontSize = (float)command.Value.Value;
+                break;
+            case "set_background_color":
+                bubble.BackgroundColor = GetCommandColor(command, bubble.BackgroundColor);
+                break;
+            case "set_border_color":
+                bubble.BorderColor = GetCommandColor(command, bubble.BorderColor);
+                break;
+            case "set_text_color":
+                bubble.TextColor = GetCommandColor(command, bubble.TextColor);
+                break;
+            case "set_header_text_color":
+                bubble.HeaderTextColor = GetCommandColor(command, bubble.HeaderTextColor);
+                break;
+            case "set_footer_text_color":
+                bubble.FooterTextColor = GetCommandColor(command, bubble.FooterTextColor);
+                break;
+            case "set_rounding" when command.Value.HasValue:
+                bubble.Rounding = (float)command.Value.Value;
+                break;
+            case "set_border_thickness" when command.Value.HasValue:
+                bubble.BorderThickness = (float)command.Value.Value;
+                break;
+            case "set_draw_order" when command.Index.HasValue:
+                bubble.DrawOrder = command.Index.Value;
                 break;
         }
     }
@@ -2886,6 +3507,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonLlmEvent LlmEvent { get; set; } = new();
 
+        public PythonAsrEvent AsrEvent { get; set; } = new();
+
         public PythonRealtimeVoiceEvent RealtimeVoiceEvent { get; set; } = new();
 
         public PythonEntity Entity { get; set; } = new();
@@ -2907,6 +3530,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             string loadingMessage,
             string speechCallback,
             RuntimeLlmScriptEvent? llmEvent,
+            RuntimeAsrScriptEvent? asrEvent,
             RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
         {
             return new PythonEvent
@@ -2920,6 +3544,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 LoadingMessage = loadingMessage,
                 SpeechCallback = speechCallback,
                 LlmEvent = PythonLlmEvent.FromRuntime(llmEvent),
+                AsrEvent = PythonAsrEvent.FromRuntime(asrEvent),
                 RealtimeVoiceEvent = PythonRealtimeVoiceEvent.FromRuntime(realtimeVoiceEvent),
                 Entity = PythonEntity.FromRuntime(entity),
                 Scene = new PythonScene
@@ -2935,7 +3560,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     Window = PythonWindow.FromRuntime(scene.Window),
                     Runtime = PythonRuntime.FromRuntime(scene.Runtime),
                     Llm = PythonLlmSettings.FromRuntime(scene.Llm),
+                    Asr = PythonAsrSettings.FromRuntime(scene.Asr),
                     RealtimeVoice = PythonRealtimeVoiceSettings.FromRuntime(scene.RealtimeVoice),
+                    Bubble = PythonBubbleState.FromRuntime(scene.Bubble),
                     Network = new PythonNetwork(),
                     Performance = PythonPerformance.FromRuntime(scene.Performance)
                 },
@@ -3015,6 +3642,39 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     CallbackName = realtimeVoiceEvent.CallbackName,
                     WakeWord = realtimeVoiceEvent.WakeWord,
                     RecognizedText = realtimeVoiceEvent.RecognizedText
+                };
+        }
+    }
+
+    private sealed class PythonAsrEvent
+    {
+        public string RequestId { get; set; } = string.Empty;
+
+        public string EventName { get; set; } = string.Empty;
+
+        public string Text { get; set; } = string.Empty;
+
+        public bool IsFinal { get; set; }
+
+        public string Error { get; set; } = string.Empty;
+
+        public string CallbackName { get; set; } = string.Empty;
+
+        public double OffsetSeconds { get; set; }
+
+        public static PythonAsrEvent FromRuntime(RuntimeAsrScriptEvent? asrEvent)
+        {
+            return asrEvent is null
+                ? new PythonAsrEvent()
+                : new PythonAsrEvent
+                {
+                    RequestId = asrEvent.RequestId,
+                    EventName = asrEvent.EventName,
+                    Text = asrEvent.Text,
+                    IsFinal = asrEvent.IsFinal,
+                    Error = asrEvent.Error,
+                    CallbackName = asrEvent.CallbackName,
+                    OffsetSeconds = asrEvent.OffsetSeconds
                 };
         }
     }
@@ -3211,7 +3871,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonLlmSettings Llm { get; set; } = new();
 
+        public PythonAsrSettings Asr { get; set; } = new();
+
         public PythonRealtimeVoiceSettings RealtimeVoice { get; set; } = new();
+
+        public PythonBubbleState Bubble { get; set; } = new();
 
         public PythonNetwork Network { get; set; } = new();
 
@@ -3219,6 +3883,25 @@ internal sealed class PythonScriptInstance : IScriptInstance
     }
 
     private sealed class PythonNetwork;
+
+    private sealed class PythonBubbleState
+    {
+        public int Count { get; set; }
+
+        public string[] Names { get; set; } = [];
+
+        public string[] VisibleNames { get; set; } = [];
+
+        public static PythonBubbleState FromRuntime(RuntimeDialogueBubbleManager bubble)
+        {
+            return new PythonBubbleState
+            {
+                Count = bubble.Count,
+                Names = bubble.Names.ToArray(),
+                VisibleNames = bubble.VisibleNames.ToArray()
+            };
+        }
+    }
 
     private sealed class PythonRealtimeVoiceSettings
     {
@@ -3247,6 +3930,31 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 WakeWordEnabled = realtimeVoice.WakeWordEnabled,
                 WakeWords = realtimeVoice.WakeWords.ToArray(),
                 InputDeviceIndex = realtimeVoice.InputDeviceIndex
+            };
+        }
+    }
+
+    private sealed class PythonAsrSettings
+    {
+        public bool Enabled { get; set; }
+
+        public string Provider { get; set; } = string.Empty;
+
+        public int? InputDeviceIndex { get; set; }
+
+        public float PartialResultIntervalSeconds { get; set; }
+
+        public bool IsRecording { get; set; }
+
+        public static PythonAsrSettings FromRuntime(RuntimeAsr asr)
+        {
+            return new PythonAsrSettings
+            {
+                Enabled = asr.Enabled,
+                Provider = asr.Provider,
+                InputDeviceIndex = asr.InputDeviceIndex,
+                PartialResultIntervalSeconds = asr.PartialResultIntervalSeconds,
+                IsRecording = asr.IsRecording
             };
         }
     }
@@ -3715,6 +4423,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public double? TimeoutSeconds { get; set; }
 
+        public string? OnPartial { get; set; }
+
         public string? OnDelta { get; set; }
 
         public string? OnCompleted { get; set; }
@@ -3724,6 +4434,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public string? OnError { get; set; }
 
         public string? Callback { get; set; }
+
+        public string? HeaderText { get; set; }
+
+        public string? FooterText { get; set; }
 
         public string[]? Items { get; set; }
 

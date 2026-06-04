@@ -301,6 +301,7 @@
         <a href="#overview">总览</a>
         <a href="#lifecycle">生命周期</a>
         <a href="#scene">Scene</a>
+        <a href="#bubble">Bubble</a>
         <a href="#entity">Entity</a>
         <a href="#pmx">PMX</a>
         <a href="#water-particles">水面 / 粒子</a>
@@ -314,6 +315,7 @@
         <a href="#debug">Debug / Ray</a>
         <a href="#save">Save</a>
         <a href="#network">Network</a>
+        <a href="#asr">ASR</a>
         <a href="#llm">LLM</a>
         <a href="#realtime-voice">Realtime Voice</a>
         <a href="#notes">边界</a>
@@ -344,6 +346,7 @@
               <tr><td><code>IsLoadingEvent</code></td><td>场景加载脚本事件，配合 <code>LoadingEventName</code>、<code>LoadingProgress</code>、<code>LoadingMessage</code>。</td></tr>
               <tr><td><code>IsSpeechEvent</code></td><td>TTS 完成回调，配合 <code>SpeechCallbackName</code>。</td></tr>
               <tr><td><code>IsLlmEvent</code></td><td>LLM 后台回调，配合 <code>LlmCallbackName</code>、<code>LlmText</code>、<code>LlmDelta</code>、<code>LlmError</code>。</td></tr>
+              <tr><td><code>IsAsrEvent</code></td><td>ASR 回调，配合 <code>AsrEventName</code>、<code>AsrText</code>、<code>AsrError</code>。</td></tr>
               <tr><td><code>IsRealtimeVoiceEvent</code></td><td>Realtime Voice 回调，配合 <code>RealtimeVoiceEventName</code>、<code>RealtimeVoiceText</code>、<code>RealtimeVoiceWakeWord</code>、<code>RealtimeVoiceError</code>。</td></tr>
             </table>
           </div>
@@ -358,6 +361,7 @@
               <tr><td><code>loading_started/progress/completed(...)</code></td><td>场景加载入口脚本事件。</td></tr>
               <tr><td><code>speech_completed(entity, scene, input, audio, callback_name)</code></td><td>TTS 完成回调。</td></tr>
               <tr><td><code>llm_event(entity, scene, input, audio, event)</code></td><td>LLM 通用回调；具名回调函数优先。</td></tr>
+              <tr><td><code>asr_event(entity, scene, input, audio, event)</code></td><td>ASR 通用回调；具名回调函数优先。</td></tr>
               <tr><td><code>realtime_voice_event(entity, scene, input, audio, event)</code></td><td>Realtime Voice 通用回调；具名回调函数优先。</td></tr>
             </table>
           </div>
@@ -377,7 +381,9 @@
           <tr><td><code>Scene.Camera</code></td><td><code>scene.camera</code></td><td>相机控制、射线和 Render Texture。</td></tr>
           <tr><td><code>Scene.Debug</code></td><td><code>scene.debug</code></td><td>调试线和射线绘制。</td></tr>
           <tr><td><code>Scene.Save</code></td><td><code>scene.save</code></td><td>受限到 `saves/` 的存档读写。</td></tr>
+          <tr><td><code>Scene.Bubble</code></td><td><code>scene.bubble</code></td><td>运行时对话气泡 / 提示气泡系统。</td></tr>
           <tr><td><code>Scene.Llm</code></td><td><code>scene.llm</code></td><td>OpenAI-compatible 文本对话。</td></tr>
+          <tr><td><code>Scene.Asr</code></td><td><code>scene.asr</code></td><td>本地麦克风录音和 ASR 识别。</td></tr>
           <tr><td><code>Scene.RealtimeVoice</code></td><td><code>scene.realtime_voice</code></td><td>Realtime Voice 远端语音服务、唤醒词监听和流式语音回复。</td></tr>
           <tr><td><code>Scene.Network</code></td><td><code>scene.network</code></td><td>HTTP/HTTPS、TCP 和 UDP 网络通信。</td></tr>
           <tr><td><code>Scene.Performance</code></td><td><code>scene.performance</code></td><td>FPS、帧号、运行时间。</td></tr>
@@ -485,6 +491,68 @@
         </table>
       </section>
 
+      <section id="bubble" data-search>
+        <h2>Bubble</h2>
+        <p><code>Scene.Bubble</code> / <code>scene.bubble</code> 是纯运行时 overlay，适合做 NPC 头顶对话气泡、系统提示，以及接近 <code>DigitalHuman</code> 风格的三段式气泡。</p>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Bubble.Count</code></td><td><code>scene.bubble.count</code></td><td>当前气泡数量。</td></tr>
+          <tr><td><code>Scene.Bubble.Names</code></td><td><code>scene.bubble.names</code></td><td>当前气泡名称列表。</td></tr>
+          <tr><td><code>Scene.Bubble.VisibleNames</code></td><td><code>scene.bubble.visible_names</code></td><td>当前可见气泡名称列表。</td></tr>
+          <tr><td><code>Scene.Bubble.GetOrCreate(name)</code></td><td><code>scene.bubble.get_or_create(name)</code></td><td>获取或创建命名气泡。</td></tr>
+          <tr><td><code>Scene.Bubble.ShowText(name, text, headerText, footerText)</code></td><td><code>scene.bubble.show(name, text="", header_text="", footer_text="")</code></td><td>快速显示一条气泡。</td></tr>
+          <tr><td><code>Scene.Bubble.HideAll()</code></td><td><code>scene.bubble.hide_all()</code></td><td>隐藏全部气泡。</td></tr>
+          <tr><td><code>Scene.Bubble.Remove(name)</code></td><td><code>scene.bubble.remove(name)</code></td><td>删除指定气泡。</td></tr>
+          <tr><td><code>Scene.Bubble.Clear()</code></td><td><code>scene.bubble.clear()</code></td><td>删除全部气泡。</td></tr>
+        </table>
+        <table>
+          <tr><th>C# / 属性</th><th>Python / 方法</th><th>说明</th></tr>
+          <tr><td><code>HeaderText</code> / <code>Text</code> / <code>FooterText</code></td><td><code>set_header_text</code> / <code>set_text</code> / <code>set_footer_text</code></td><td>三段文本内容，适合“说话人 / 主内容 / 提示”。</td></tr>
+          <tr><td><code>AttachToEntity(...)</code></td><td><code>attach_to_entity(...)</code></td><td>把气泡挂到实体上；PMX 默认取模型顶部中心，更接近数字人气泡。</td></tr>
+          <tr><td><code>UseScreenSpace</code> / <code>SetScreenOffset</code></td><td><code>set_screen_position</code> / <code>set_screen_offset</code></td><td>用屏幕坐标做提示气泡。</td></tr>
+          <tr><td><code>UseWorldSpace</code> / <code>SetWorldOffset</code></td><td><code>set_world_position</code> / <code>set_world_offset</code></td><td>用世界坐标做锚点。</td></tr>
+          <tr><td><code>LayoutMode</code> / <code>Width</code> / <code>SetPadding</code> / <code>SetPivot</code></td><td><code>set_layout_mode</code> / <code>set_width</code> / <code>set_padding</code> / <code>set_pivot</code></td><td>控制气泡尺寸、边距、相对布局和锚点枢轴。</td></tr>
+          <tr><td><code>TextAlignment</code> / <code>FontSize</code> / <code>HeaderFontSize</code> / <code>FooterFontSize</code></td><td><code>set_text_alignment</code> / <code>set_font_size</code> / <code>set_header_font_size</code> / <code>set_footer_font_size</code></td><td>控制对齐方式和三段字号。</td></tr>
+          <tr><td><code>BackgroundColor</code> / <code>BorderColor</code></td><td><code>set_background_color</code> / <code>set_border_color</code></td><td>控制气泡背景和边框颜色。</td></tr>
+          <tr><td><code>TextColor</code> / <code>HeaderTextColor</code> / <code>FooterTextColor</code></td><td><code>set_text_color</code> / <code>set_header_text_color</code> / <code>set_footer_text_color</code></td><td>控制三段文字颜色。</td></tr>
+          <tr><td><code>Rounding</code> / <code>BorderThickness</code> / <code>DrawOrder</code></td><td><code>set_rounding</code> / <code>set_border_thickness</code> / <code>set_draw_order</code></td><td>控制圆角、边框粗细和绘制顺序。</td></tr>
+        </table>
+        <pre><code class="language-csharp">RuntimeDialogueBubble bubble = Scene.Bubble.GetOrCreate("shopkeeper");
+bubble.AttachToEntity("Shopkeeper", useModelTopAnchor: true);
+bubble.SetWorldOffset(0.0f, 0.18f, 0.0f);
+bubble.SetScreenOffset(0.0f, -18.0f);
+bubble.Width = 420.0f;
+bubble.FontSize = 22.0f;
+bubble.HeaderFontSize = 18.0f;
+bubble.FooterFontSize = 16.0f;
+bubble.TextAlignment = "left";
+bubble.BackgroundColor = new Vector4(0.08f, 0.10f, 0.16f, 0.92f);
+bubble.BorderColor = new Vector4(0.62f, 0.84f, 1.0f, 0.95f);
+bubble.SetContent(
+    "欢迎来到海边集市，今天的新货刚到。",
+    headerText: "商店老板",
+    footerText: "按 E 继续");
+bubble.Show();</code></pre>
+        <pre><code class="language-python">tip = scene.bubble.get_or_create("quest-tip")
+tip.set_layout_mode("relative")
+tip.set_screen_position(1180, 48, layout_mode="relative")
+tip.set_pivot(1.0, 0.0)
+tip.set_width(360)
+tip.set_padding(16, 12)
+tip.set_font_size(20)
+tip.set_header_font_size(16)
+tip.set_footer_font_size(15)
+tip.set_background_color(0.08, 0.11, 0.18, 0.92)
+tip.set_border_color(0.54, 0.80, 1.00, 0.95)
+tip.show(
+    text="去码头找渔夫，打听暴风雨前的异常声响。",
+    header_text="支线任务",
+    footer_text="任务日志已更新")
+scene.flush()</code></pre>
+        <p class="note">Python 里的 <code>scene.bubble.names</code> / <code>visible_names</code> 是当前脚本事件快照；如果你在同一事件里修改后想立刻刷新画面，记得调用 <code>scene.flush()</code>。</p>
+        <p class="note">完整的“按住录音 ASR - 可编辑文本框 - 点击发送 - 气泡流式回复 - 句子级顺序 Speak”联动示例请看同目录的 <code>script_api.md</code>，示例会同时串起 <code>Scene.Asr</code>、<code>Scene.Llm</code>、<code>Scene.Bubble</code> 和 <code>SpeakWithCallback(...)</code>。</p>
+      </section>
+
       <section id="gui" data-search>
         <h2>GUI</h2>
         <table>
@@ -493,6 +561,7 @@
           <tr><td><code>Text</code> / <code>Value</code></td><td><code>text</code> / <code>value</code></td><td>显示文本或文本框输入。</td></tr>
           <tr><td><code>SetPosition</code> / <code>SetSize</code></td><td><code>set_position</code> / <code>set_size</code></td><td>位置和尺寸。</td></tr>
           <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
+          <tr><td><code>GuiEventName == "pressed"/"released"</code></td><td><code>event_name == "pressed"/"released"</code></td><td>按钮按下和松开事件，适合 push-to-talk。</td></tr>
           <tr><td><code>SetChecked</code></td><td><code>set_checked</code></td><td>复选框。</td></tr>
           <tr><td><code>SetProgress</code></td><td><code>set_progress</code></td><td>进度条。</td></tr>
           <tr><td><code>SetItems</code> / <code>SetSelectedIndex</code></td><td><code>set_items</code> / <code>set_selected_index</code></td><td>下拉框。</td></tr>
@@ -620,6 +689,44 @@ scene.network.udp_send("127.0.0.1", 9004, b"fire-and-forget", wait_for_response=
           <li>监听端口可能被系统防火墙、杀毒软件或已有进程占用。</li>
           <li>当前没有 WebSocket 封装。</li>
         </ul>
+      </section>
+
+      <section id="asr" data-search>
+        <h2>ASR</h2>
+        <p><code>Scene.Asr</code> / <code>scene.asr</code> 用于本地麦克风录音和 ASR 识别，支持 <code>SherpaOnnx</code> 和 <code>Whisper</code>。</p>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>Scene.Asr.Enabled</code></td><td><code>scene.asr.enabled</code></td><td>当前项目是否启用 ASR。</td></tr>
+          <tr><td><code>Provider</code> / <code>InputDeviceIndex</code></td><td><code>provider</code> / <code>input_device_index</code></td><td>当前 provider 与输入设备索引。</td></tr>
+          <tr><td><code>PartialResultIntervalSeconds</code></td><td><code>partial_result_interval_seconds</code></td><td>部分结果刷新间隔。</td></tr>
+          <tr><td><code>IsRecording</code></td><td><code>is_recording</code></td><td>当前是否正在录音识别。</td></tr>
+          <tr><td><code>StartStreamingRecognition(entity, ...)</code></td><td><code>start_streaming_recognition(...)</code></td><td>开始后台录音并推送部分识别结果。</td></tr>
+          <tr><td><code>StopStreamingRecognition(requestId)</code></td><td><code>stop_streaming_recognition(request_id)</code></td><td>停止当前流式识别并触发最终结果。</td></tr>
+        </table>
+        <pre><code class="language-csharp">if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "pressed")
+{
+    Scene.Asr.StartStreamingRecognition(
+        Entity,
+        requestId: "push_to_talk",
+        onPartialCallback: "asr_partial",
+        onCompletedCallback: "asr_completed",
+        onErrorCallback: "asr_error");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "released")
+{
+    Scene.Asr.StopStreamingRecognition("push_to_talk");
+}</code></pre>
+        <pre><code class="language-python">def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if control_name == "RecordButton" and event_name == "pressed":
+        scene.asr.start_streaming_recognition(
+            request_id="push_to_talk",
+            on_partial="asr_partial",
+            on_completed="asr_completed",
+            on_error="asr_error")
+    if control_name == "RecordButton" and event_name == "released":
+        scene.asr.stop_streaming_recognition("push_to_talk")</code></pre>
+        <p class="note">完整的“按住录音 -> 流式 ASR -> 松开发给 LLM -> 句子级顺序 Speak”示例请看同目录 <code>script_api.md</code> 的 ASR 章节。</p>
       </section>
 
       <section id="llm" data-search>

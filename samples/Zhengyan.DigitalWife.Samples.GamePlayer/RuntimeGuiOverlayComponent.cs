@@ -324,7 +324,18 @@ internal sealed class RuntimeGuiOverlayComponent(
         else
         {
             string buttonText = string.IsNullOrWhiteSpace(control.Text) ? control.Name : control.Text;
-            if (ImGui.Button($"{buttonText}##{control.Id}", controlSize))
+            bool clicked = ImGui.Button($"{buttonText}##{control.Id}", controlSize);
+            if (ImGui.IsItemActivated())
+            {
+                _dispatchEvent(control, "pressed");
+            }
+
+            if (ImGui.IsItemDeactivated())
+            {
+                _dispatchEvent(control, "released");
+            }
+
+            if (clicked)
             {
                 _dispatchEvent(control, string.IsNullOrWhiteSpace(control.EventName) ? "clicked" : control.EventName);
             }

@@ -1244,6 +1244,46 @@ public sealed class RuntimeEntity
         return _model.CreateSpeechTransformUpdater(dictionaries.Kana, dictionaries.Vowel, vowelMorphMap);
     }
 
+    internal bool TryGetBubbleAnchorWorldPosition(bool useModelTopAnchor, out Vector3 position)
+    {
+        if (_model is not null && _model.IsLoaded)
+        {
+            if (useModelTopAnchor)
+            {
+                Vector3 localTop = new(
+                    (_model.BoundsMin.X + _model.BoundsMax.X) * 0.5f,
+                    _model.BoundsMax.Y,
+                    (_model.BoundsMin.Z + _model.BoundsMax.Z) * 0.5f);
+                position = Vector3.Transform(localTop, _model.World);
+                return true;
+            }
+
+            position = _model.Position;
+            return true;
+        }
+
+        if (_particle is not null)
+        {
+            position = _particle.Position;
+            return true;
+        }
+
+        if (_water is not null)
+        {
+            position = _water.Position;
+            return true;
+        }
+
+        if (_plane is not null)
+        {
+            position = _plane.Position;
+            return true;
+        }
+
+        position = Position;
+        return true;
+    }
+
     internal void SyncFromModel()
     {
         if (_model is not null)

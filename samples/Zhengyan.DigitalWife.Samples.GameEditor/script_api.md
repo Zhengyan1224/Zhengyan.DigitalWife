@@ -161,6 +161,11 @@ if (IsLlmEvent)
     Console.WriteLine($"{LlmCallbackName}: {LlmText}");
 }
 
+if (IsAsrEvent)
+{
+    Console.WriteLine($"{AsrCallbackName}: {AsrEventName} -> {AsrText}");
+}
+
 if (IsRealtimeVoiceEvent)
 {
     Console.WriteLine($"{RealtimeVoiceCallbackName}: {RealtimeVoiceEventName} -> {RealtimeVoiceText}");
@@ -197,6 +202,15 @@ C# 全局变量：
 | `LlmIsFinal` | `bool` | 当前回调是否为最终事件。 |
 | `LlmError` | `string` | 错误文本；仅错误回调通常有值。 |
 | `LlmCallbackName` | `string` | `StartChat(...)` 传入的回调名。 |
+| `IsAsrEvent` | `bool` | ASR 后台回调事件。 |
+| `AsrEvent` | `RuntimeAsrScriptEvent?` | ASR 回调事件完整对象。 |
+| `AsrRequestId` | `string` | ASR 请求 Id。 |
+| `AsrEventName` | `string` | 事件名：`partial`、`completed`、`error`。 |
+| `AsrText` | `string` | 当前识别文本。 |
+| `AsrIsFinal` | `bool` | 当前 ASR 事件是否最终事件。 |
+| `AsrError` | `string` | ASR 错误文本。 |
+| `AsrCallbackName` | `string` | ASR 回调名。 |
+| `AsrOffsetSeconds` | `double` | 当前文本对应的音频时长偏移秒数。 |
 | `IsRealtimeVoiceEvent` | `bool` | Realtime Voice 后台回调事件。 |
 | `RealtimeVoiceEvent` | `RuntimeRealtimeVoiceScriptEvent?` | Realtime Voice 回调事件完整对象。 |
 | `RealtimeVoiceRequestId` | `string` | 语音请求 Id。 |
@@ -312,6 +326,9 @@ def speech_completed(entity, scene, input, audio, callback_name):
 def llm_event(entity, scene, input, audio, event):
     print(event.get("callbackName"), event.get("accumulatedText"))
 
+def asr_event(entity, scene, input, audio, event):
+    print(event.get("callbackName"), event.get("eventName"), event.get("text"))
+
 def realtime_voice_event(entity, scene, input, audio, event):
     print(event.get("callbackName"), event.get("eventName"), event.get("text"))
 ```
@@ -327,6 +344,8 @@ def after_speak(entity, scene, input, audio):
 ```
 
 `scene.llm.start_chat(...)` 的回调会优先调用 `on_delta`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `llm_event(entity, scene, input, audio, event)`，则会调用通用 `llm_event`。
+
+`scene.asr.start_streaming_recognition(...)` 的回调会优先调用 `on_partial`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `asr_event(entity, scene, input, audio, event)`，则会调用通用 `asr_event`。
 
 `scene.realtime_voice.start_*` 的回调同样会优先调用传入的同名函数；如果没有同名函数但脚本定义了 `realtime_voice_event(entity, scene, input, audio, event)`，则会调用通用 `realtime_voice_event`。
 
@@ -1140,7 +1159,9 @@ scene.flush()
 | `Scene.Camera` | `scene.camera` | 相机控制。 |
 | `Scene.Debug` | `scene.debug` | 调试绘制。 |
 | `Scene.Save` | `scene.save` | 存档读写。 |
+| `Scene.Bubble` | `scene.bubble` | 运行时对话气泡 / 提示气泡系统。 |
 | `Scene.Llm` | `scene.llm` | LLM / OpenAI-compatible 文本对话。 |
+| `Scene.Asr` | `scene.asr` | 本地麦克风录音和 ASR 识别。 |
 | `Scene.RealtimeVoice` | `scene.realtime_voice` | `RealtimeVoice` 远端语音服务调用。 |
 | `Scene.Network` | `scene.network` | HTTP/HTTPS、TCP 和 UDP 网络通信。 |
 | `Scene.Performance` | `scene.performance` | 性能指标快照，例如 FPS。 |
@@ -1247,6 +1268,479 @@ def loading_completed(entity, scene, input, audio, progress, message):
 
 场景加载进度由 GamePlayer 的资源加载流程自动更新；加载入口脚本可以读取 `LoadingProgress` 和 `LoadingMessage`，但不需要手动设置系统加载进度条。
 
+## Dialogue Bubble API
+
+`Scene.Bubble` / `scene.bubble` 用于在运行时创建、显示、隐藏和删除对话气泡。它和 GUI 控件不同，不需要预先在 GameEditor 里摆一个控件；脚本里按名字创建即可。
+
+适合的场景：
+
+- 给 NPC 头顶挂台词气泡
+- 做屏幕角落的系统提示、任务提示
+- 复刻 `DigitalHuman` 那种 `header + text + footer` 的三段式气泡
+
+管理器 API：
+
+| C# | Python | 说明 |
+| --- | --- | --- |
+| `Scene.Bubble.Count` | `scene.bubble.count` | 当前运行时气泡数量。 |
+| `Scene.Bubble.Names` | `scene.bubble.names` | 当前气泡名称列表。 |
+| `Scene.Bubble.VisibleNames` | `scene.bubble.visible_names` | 当前可见气泡名称列表。 |
+| `Scene.Bubble.Contains(name)` | `scene.bubble.contains(name)` | 是否已存在指定名字的气泡。 |
+| `Scene.Bubble.GetOrCreate(name)` | `scene.bubble.get_or_create(name)` | 获取或创建一个命名气泡。 |
+| `Scene.Bubble.Create(name)` | `scene.bubble.create(name)` | `GetOrCreate` 的别名。 |
+| `Scene.Bubble.ShowText(name, text, headerText, footerText)` | `scene.bubble.show(name, text="", header_text="", footer_text="")` | 快速显示一条气泡。 |
+| `Scene.Bubble.HideAll()` | `scene.bubble.hide_all()` | 隐藏全部气泡，但保留对象。 |
+| `Scene.Bubble.Remove(name)` | `scene.bubble.remove(name)` | 删除指定气泡。 |
+| `Scene.Bubble.Clear()` | `scene.bubble.clear()` | 删除全部气泡。 |
+
+单个气泡常用属性 / 方法：
+
+| C# | Python | 说明 |
+| --- | --- | --- |
+| `Visible` / `Show()` / `Hide()` | `set_visible(value)` / `show(...)` / `hide()` | 显示或隐藏气泡。 |
+| `HeaderText` / `Text` / `FooterText` | `set_header_text(...)` / `set_text(...)` / `set_footer_text(...)` | 三段文本内容。都为空时不会绘制。 |
+| `LayoutMode` | `set_layout_mode("absolute" / "relative")` | `relative` 会按项目窗口基准分辨率缩放位置、宽度、字号和边距。 |
+| `AnchorMode` | `set_anchor_mode("screen" / "world" / "entity")` | 屏幕坐标、世界坐标或绑定实体。 |
+| `AttachToEntity(name, useModelTopAnchor)` | `attach_to_entity(name, use_model_top_anchor=True)` | 把气泡挂到实体上；PMX 默认取模型包围盒顶部中心点，更接近数字人气泡。 |
+| `UseScreenSpace(x, y, layoutMode)` / `SetScreenPosition(x, y)` | `set_screen_position(x, y, layout_mode=None)` | 直接设置屏幕锚点位置。 |
+| `SetScreenOffset(x, y)` | `set_screen_offset(x, y)` | 在最终投影位置上再叠加一个 2D 偏移。 |
+| `UseWorldSpace(x, y, z)` / `SetWorldPosition(x, y, z)` | `set_world_position(x, y, z)` | 把气泡锚到一个世界坐标点。 |
+| `SetWorldOffset(x, y, z)` | `set_world_offset(x, y, z)` | 世界坐标偏移，常用于把气泡抬高一点。 |
+| `Width` | `set_width(width)` | 文本换行宽度。 |
+| `SetPadding(x, y)` | `set_padding(x, y)` | 气泡内边距。 |
+| `SetPivot(x, y)` | `set_pivot(x, y)` | 锚点枢轴，范围 `0.0 ~ 1.0`。例如 `(0.5, 1.0)` 表示底边中心对齐锚点。 |
+| `TextAlignment` | `set_text_alignment("left" / "center" / "right")` | 三段文本统一的水平对齐方式。 |
+| `FontSize` / `HeaderFontSize` / `FooterFontSize` | `set_font_size(...)` / `set_header_font_size(...)` / `set_footer_font_size(...)` | 三段字号。 |
+| `BackgroundColor` / `BorderColor` | `set_background_color(r, g, b, a)` / `set_border_color(...)` | 气泡背景和边框颜色。 |
+| `TextColor` / `HeaderTextColor` / `FooterTextColor` | `set_text_color(...)` / `set_header_text_color(...)` / `set_footer_text_color(...)` | 三段文字颜色。 |
+| `Rounding` | `set_rounding(value)` | 圆角半径。 |
+| `BorderThickness` | `set_border_thickness(value)` | 边框粗细。 |
+| `DrawOrder` | `set_draw_order(value)` | 绘制顺序；值越大越靠后绘制。 |
+
+### C#：挂在 NPC 头顶的对话气泡
+
+```csharp
+RuntimeDialogueBubble bubble = Scene.Bubble.GetOrCreate("shopkeeper");
+bubble.AttachToEntity("Shopkeeper", useModelTopAnchor: true);
+bubble.SetWorldOffset(0.0f, 0.18f, 0.0f);
+bubble.SetScreenOffset(0.0f, -18.0f);
+bubble.Width = 420.0f;
+bubble.TextAlignment = "left";
+bubble.FontSize = 22.0f;
+bubble.HeaderFontSize = 18.0f;
+bubble.FooterFontSize = 16.0f;
+bubble.BackgroundColor = new Vector4(0.08f, 0.10f, 0.16f, 0.92f);
+bubble.BorderColor = new Vector4(0.62f, 0.84f, 1.0f, 0.95f);
+bubble.HeaderTextColor = new Vector4(0.78f, 0.88f, 1.0f, 1.0f);
+bubble.TextColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+bubble.FooterTextColor = new Vector4(0.76f, 0.80f, 0.88f, 1.0f);
+bubble.SetContent(
+    "欢迎来到海边集市，今天的新货刚到。",
+    headerText: "商店老板",
+    footerText: "按 E 继续");
+bubble.Show();
+```
+
+### Python：屏幕右上角任务提示
+
+```python
+tip = scene.bubble.get_or_create("quest-tip")
+tip.set_layout_mode("relative")
+tip.set_screen_position(1180, 48, layout_mode="relative")
+tip.set_pivot(1.0, 0.0)
+tip.set_width(360)
+tip.set_padding(16, 12)
+tip.set_text_alignment("left")
+tip.set_font_size(20)
+tip.set_header_font_size(16)
+tip.set_footer_font_size(15)
+tip.set_background_color(0.08, 0.11, 0.18, 0.92)
+tip.set_border_color(0.54, 0.80, 1.00, 0.95)
+tip.set_header_text_color(0.80, 0.90, 1.00, 1.00)
+tip.set_footer_text_color(0.74, 0.78, 0.86, 1.00)
+tip.show(
+    text="去码头找渔夫，打听暴风雨前的异常声响。",
+    header_text="支线任务",
+    footer_text="任务日志已更新")
+scene.flush()
+```
+
+### Python：更接近 DigitalHuman 的三段式气泡
+
+```python
+reply = scene.bubble.get_or_create("assistant-reply")
+reply.attach_to_entity("DigitalHumanBody", use_model_top_anchor=True)
+reply.set_world_offset(0.0, 0.20, 0.0)
+reply.set_screen_offset(0.0, -16.0)
+reply.set_width(440)
+reply.set_text_alignment("left")
+reply.show(
+    text="当然可以，我已经帮你整理好了今天的待办。",
+    header_text="你：今天有什么安排？",
+    footer_text="语音回复中...")
+```
+
+说明：
+
+- C# 可以直接保留 `RuntimeDialogueBubble` 引用跨帧复用；Python 通常每次通过 `scene.bubble.get_or_create(name)` 取同名气泡即可。
+- Python 里的 `scene.bubble.names` / `visible_names` 是当前脚本事件上下文的快照；如果你在同一事件里更新后想立刻刷新 UI，记得调用 `scene.flush()`。
+- `entity` 模式下如果目标是 PMX 模型，会优先用模型顶部中心作为锚点；不是 PMX 时回退到实体当前 `Position`。
+
+### 完整示例：按住录音 ASR -> 可编辑文本框 -> 点击发送 -> 气泡流式回复 + 句子级顺序 Speak
+
+假设：
+
+- 这个脚本绑定在要说话的角色实体上
+- 场景里有一个录音按钮：`RecordButton`
+- 场景里有一个输入文本框：`PromptInput`
+- 场景里有一个发送按钮：`SendButton`
+- `RecordButton` 使用按钮默认事件里的 `pressed` / `released`
+
+这个示例实现的行为是：
+
+1. 按住 `RecordButton` 时启动本地麦克风流式 ASR
+2. ASR 的部分结果会实时填充到 `PromptInput`
+3. 松开按钮时停止录音
+4. 用户可以手动修改 `PromptInput` 中的文本
+5. 点击 `SendButton` 后，把文本框内容发给 `Scene.Llm.StartChat(...)`
+6. LLM 流式返回时，一边更新角色头顶气泡，一边按“句子”切分回复
+7. 每次只调用一句 `SpeakWithCallback(...)`
+8. 必须等上一句播完，才会播下一句，不会重叠
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+
+static class VoiceChatState
+{
+    public const string BubbleName = "voice-chat-bubble";
+    public const string TtsDoneCallback = "voice_chat_tts_done";
+
+    public static string AsrRequestId = string.Empty;
+    public static string LlmRequestId = string.Empty;
+    public static string CurrentUserText = string.Empty;
+    public static string CurrentAssistantText = string.Empty;
+    public static string PendingSentenceBuffer = string.Empty;
+    public static Queue<string> SpeakQueue = new();
+    public static bool IsRecording;
+    public static bool IsSpeaking;
+    public static bool ReplyCompleted;
+}
+
+RuntimeDialogueBubble GetChatBubble()
+{
+    RuntimeDialogueBubble bubble = Scene.Bubble.GetOrCreate(VoiceChatState.BubbleName);
+    bubble.AttachToEntity(Entity.Id, useModelTopAnchor: true);
+    bubble.SetWorldOffset(0.0f, 0.20f, 0.0f);
+    bubble.SetScreenOffset(0.0f, -16.0f);
+    bubble.Width = 440.0f;
+    bubble.TextAlignment = "left";
+    bubble.FontSize = 20.0f;
+    bubble.HeaderFontSize = 16.0f;
+    bubble.FooterFontSize = 14.0f;
+    bubble.BackgroundColor = new Vector4(0.08f, 0.10f, 0.16f, 0.92f);
+    bubble.BorderColor = new Vector4(0.58f, 0.82f, 1.0f, 0.95f);
+    bubble.HeaderTextColor = new Vector4(0.82f, 0.90f, 1.0f, 1.0f);
+    bubble.TextColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+    bubble.FooterTextColor = new Vector4(0.76f, 0.80f, 0.88f, 1.0f);
+    return bubble;
+}
+
+void ShowListeningBubble(string userText, string footer)
+{
+    RuntimeDialogueBubble bubble = GetChatBubble();
+    bubble.SetContent(
+        userText,
+        headerText: "正在听你说",
+        footerText: footer);
+    bubble.Show();
+}
+
+void ShowReplyBubble(string userText, string assistantText, string footer)
+{
+    RuntimeDialogueBubble bubble = GetChatBubble();
+    bubble.SetContent(
+        assistantText,
+        headerText: string.IsNullOrWhiteSpace(userText) ? "语音助手" : $"你：{userText}",
+        footerText: footer);
+    bubble.Show();
+}
+
+void ResetReplyState(bool stopSpeaking)
+{
+    VoiceChatState.CurrentAssistantText = string.Empty;
+    VoiceChatState.PendingSentenceBuffer = string.Empty;
+    VoiceChatState.SpeakQueue.Clear();
+    VoiceChatState.ReplyCompleted = false;
+    VoiceChatState.IsSpeaking = false;
+
+    if (stopSpeaking)
+    {
+        Entity.StopSpeaking();
+    }
+}
+
+bool IsSentenceEnding(char ch)
+{
+    return ch is '。' or '！' or '？' or '；' or '.' or '!' or '?' or ';' or '\n';
+}
+
+IEnumerable<string> DrainCompletedSentences(ref string buffer, bool flushTail)
+{
+    List<string> result = [];
+    int sentenceStart = 0;
+
+    for (int i = 0; i < buffer.Length; i++)
+    {
+        if (!IsSentenceEnding(buffer[i]))
+        {
+            continue;
+        }
+
+        string sentence = buffer[sentenceStart..(i + 1)].Trim();
+        if (!string.IsNullOrWhiteSpace(sentence))
+        {
+            result.Add(sentence);
+        }
+
+        sentenceStart = i + 1;
+    }
+
+    string tail = sentenceStart >= buffer.Length ? string.Empty : buffer[sentenceStart..];
+    if (flushTail)
+    {
+        string finalSentence = tail.Trim();
+        if (!string.IsNullOrWhiteSpace(finalSentence))
+        {
+            result.Add(finalSentence);
+        }
+
+        buffer = string.Empty;
+    }
+    else
+    {
+        buffer = tail;
+    }
+
+    return result;
+}
+
+void EnqueueAssistantSpeech(string text, bool flushTail)
+{
+    if (!string.IsNullOrEmpty(text))
+    {
+        VoiceChatState.PendingSentenceBuffer += text;
+    }
+
+    foreach (string sentence in DrainCompletedSentences(ref VoiceChatState.PendingSentenceBuffer, flushTail))
+    {
+        VoiceChatState.SpeakQueue.Enqueue(sentence);
+    }
+}
+
+void TrySpeakNext()
+{
+    if (VoiceChatState.IsSpeaking || VoiceChatState.SpeakQueue.Count == 0)
+    {
+        return;
+    }
+
+    string sentence = VoiceChatState.SpeakQueue.Dequeue();
+    VoiceChatState.IsSpeaking = true;
+    ShowReplyBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, "语音回复中...");
+    Entity.SpeakWithCallback(sentence, VoiceChatState.TtsDoneCallback);
+}
+
+string GetPromptInputText()
+{
+    return Scene.GetGuiControl("PromptInput")?.Value.Trim() ?? string.Empty;
+}
+
+void SetPromptInputText(string text)
+{
+    Scene.GetGuiControl("PromptInput")?.SetValue(text ?? string.Empty);
+}
+
+void StartReplyFromPromptInput()
+{
+    string prompt = GetPromptInputText();
+    if (string.IsNullOrWhiteSpace(prompt))
+    {
+        return;
+    }
+
+    VoiceChatState.CurrentUserText = prompt;
+    ResetReplyState(stopSpeaking: true);
+
+    ShowReplyBubble(prompt, string.Empty, "思考中...");
+
+    VoiceChatState.LlmRequestId = Scene.Llm.StartChat(
+        Entity,
+        prompt,
+        systemPrompt: "你是一个中文语音助手，请简洁、自然地回答用户的问题。",
+        onDeltaCallback: "voice_chat_llm_delta",
+        onCompletedCallback: "voice_chat_llm_done",
+        onErrorCallback: "voice_chat_llm_error");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "pressed")
+{
+    if (!Scene.Asr.Enabled || VoiceChatState.IsRecording)
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = true;
+    VoiceChatState.CurrentUserText = string.Empty;
+    ResetReplyState(stopSpeaking: true);
+    SetPromptInputText(string.Empty);
+    ShowListeningBubble(string.Empty, "请说话，松开按钮后停止录音");
+
+    VoiceChatState.AsrRequestId = Scene.Asr.StartStreamingRecognition(
+        Entity,
+        onPartialCallback: "voice_chat_asr_partial",
+        onCompletedCallback: "voice_chat_asr_completed",
+        onErrorCallback: "voice_chat_asr_error");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "released")
+{
+    if (!VoiceChatState.IsRecording)
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = false;
+    Scene.Asr.StopStreamingRecognition(VoiceChatState.AsrRequestId);
+    ShowListeningBubble(VoiceChatState.CurrentUserText, "录音已结束，可编辑后点击发送");
+}
+
+if (IsGuiEvent && GuiControlName == "SendButton" && GuiEventName == "clicked")
+{
+    if (VoiceChatState.IsRecording)
+    {
+        VoiceChatState.IsRecording = false;
+        Scene.Asr.StopStreamingRecognition(VoiceChatState.AsrRequestId);
+    }
+
+    StartReplyFromPromptInput();
+}
+
+if (IsAsrEvent && AsrCallbackName == "voice_chat_asr_partial")
+{
+    if (!string.Equals(AsrRequestId, VoiceChatState.AsrRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.CurrentUserText = AsrText;
+    SetPromptInputText(AsrText);
+    ShowListeningBubble(AsrText, "请继续说，松开按钮后停止录音");
+}
+
+if (IsAsrEvent && AsrCallbackName == "voice_chat_asr_completed")
+{
+    if (!string.Equals(AsrRequestId, VoiceChatState.AsrRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = false;
+    VoiceChatState.CurrentUserText = AsrText.Trim();
+    SetPromptInputText(VoiceChatState.CurrentUserText);
+    ShowReplyBubble(VoiceChatState.CurrentUserText, string.Empty, "可编辑文本框后点击发送");
+}
+
+if (IsAsrEvent && AsrCallbackName == "voice_chat_asr_error")
+{
+    if (!string.Equals(AsrRequestId, VoiceChatState.AsrRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = false;
+    ShowReplyBubble(VoiceChatState.CurrentUserText, string.Empty, "ASR 出错");
+    Console.Error.WriteLine(AsrError);
+}
+
+if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_delta")
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.CurrentAssistantText = LlmText;
+    ShowReplyBubble(
+        VoiceChatState.CurrentUserText,
+        VoiceChatState.CurrentAssistantText,
+        VoiceChatState.IsSpeaking ? "语音回复中..." : "正在生成回复...");
+
+    EnqueueAssistantSpeech(LlmDelta, flushTail: false);
+    TrySpeakNext();
+}
+
+if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_done")
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.ReplyCompleted = true;
+    VoiceChatState.CurrentAssistantText = LlmText;
+    EnqueueAssistantSpeech(string.Empty, flushTail: true);
+
+    ShowReplyBubble(
+        VoiceChatState.CurrentUserText,
+        VoiceChatState.CurrentAssistantText,
+        VoiceChatState.SpeakQueue.Count > 0 || VoiceChatState.IsSpeaking
+            ? "语音回复中..."
+            : "回复完成");
+
+    TrySpeakNext();
+}
+
+if (IsSpeechEvent && SpeechCallbackName == VoiceChatState.TtsDoneCallback)
+{
+    VoiceChatState.IsSpeaking = false;
+    TrySpeakNext();
+
+    if (!VoiceChatState.IsSpeaking && VoiceChatState.SpeakQueue.Count == 0 && VoiceChatState.ReplyCompleted)
+    {
+        ShowReplyBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, "回复完成");
+    }
+}
+
+if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_error")
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    ShowReplyBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, "LLM 出错");
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+这个例子的关键点：
+
+- `RecordButton` 的 `pressed` / `released` 只负责开始和停止 ASR，不会自动发给 LLM
+- `PromptInput` 始终保留为最终可编辑输入源，所以用户可以修正 ASR 结果
+- 发送时走已经实现好的 `Scene.Llm.StartChat(...)`
+- 对话气泡每次都按“用户输入 + 助手回复 + 状态 footer”更新，比较接近 `DigitalHuman` 的呈现方式
+- `LlmDelta` 只用来做“句子切分入队”；真正显示给用户的完整文本始终用 `LlmText`
+- `SpeakWithCallback(...)` + `Queue<string>` 保证一句播完以后才播下一句，不会出现上一句没播完就插播下一句
+
+如果你想写 Python 版，核心 API 对应关系就是：
+
+- `Scene.Asr.StartStreamingRecognition(...)` -> `scene.asr.start_streaming_recognition(...)`
+- `Scene.Llm.StartChat(...)` -> `scene.llm.start_chat(...)`
+- `Scene.Bubble.GetOrCreate(...)` -> `scene.bubble.get_or_create(...)`
+- `Entity.SpeakWithCallback(...)` -> `entity.speak(..., on_completed="callback_name")`
+
 ## GUI API
 
 GUI 控件类型：
@@ -1259,6 +1753,13 @@ GUI 控件类型：
 | `dropdown` | `changed` | 下拉框。 |
 | `textbox` | `changed` | 文本输入框。输入内容保存在 `Text` / `Value`，支持单行或多行。 |
 | `progress_bar` | 无 | 进度条。脚本通过 `Progress` / `set_progress(...)` 控制进度，范围 `0.0` 到 `1.0`。 |
+
+按钮控件除了 `clicked` 外，还会额外派发：
+
+- `pressed`：鼠标按下按钮的那一帧
+- `released`：鼠标松开按钮的那一帧
+
+这两个事件适合做“按住录音、松开结束”的 push-to-talk 场景。
 
 GUI 控件属性：
 
@@ -2135,6 +2636,728 @@ Python 返回值：
 - UDP 是无连接数据包协议，可能丢包、乱序或没有响应；只发不等回复时使用 `waitForResponse: false` / `wait_for_response=False`。
 - 监听端口可能被系统防火墙、杀毒软件或已有进程占用。
 - C# 网络 API 是 `async`；Python 网络 API 是同步阻塞调用。
+
+## ASR API
+
+GamePlayer 支持从脚本调用本地麦克风录音和 ASR 识别。配置在 GameEditor 的 `Project` 标签页 `ASR` 中，也会保存到 `game.project.json` 的 `asr` 节点。
+
+当前支持：
+
+- `SherpaOnnx`
+- `Whisper.net`
+
+主要场景是：
+
+- 按下按钮开始录音
+- 一边录音一边拿到部分识别结果
+- 松开按钮后拿到最终文本
+- 再把最终文本交给 `Scene.Llm` 做后续对话逻辑
+
+配置字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Enabled` | 是否启用脚本 ASR。 |
+| `Provider` | `sherpa` 或 `whisper`。 |
+| `InputDeviceIndex` | 本地 `PortAudio` 输入设备索引；为空时使用默认输入设备。 |
+| `PartialResultIntervalSeconds` | 流式部分结果推送间隔。对 Whisper 更明显；Sherpa 在线模型会更频繁地产生 partial。 |
+| `Capture.SampleRate` / `Channels` / `FramesPerBuffer` | 麦克风打开参数。 |
+| `Sherpa.*` | Sherpa 模型路径、线程、采样率、语言、provider 等。 |
+| `Whisper.*` | Whisper 模型路径、语言、线程、是否用 GPU 等。 |
+
+### C# ASR
+
+`Scene.Asr` 采用后台录音 + 后台识别 + 脚本事件回调模式。
+
+C# API：
+
+| API | 说明 |
+| --- | --- |
+| `Scene.Asr.Enabled` | 当前项目是否启用 ASR。 |
+| `Scene.Asr.Provider` | 当前 ASR Provider 名称。 |
+| `Scene.Asr.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.Asr.PartialResultIntervalSeconds` | 当前部分结果间隔秒数。 |
+| `Scene.Asr.IsRecording` | 当前是否在录音。 |
+| `StartStreamingRecognition(entity, requestId, onPartialCallback, onCompletedCallback, onErrorCallback)` | 开始后台录音，并持续推送部分识别结果。 |
+| `StopStreamingRecognition(requestId)` | 停止指定流式识别；如果不传 requestId，则停止当前录音。 |
+| `StopAllStreamingRecognitions()` | 停止全部流式识别。 |
+
+ASR 回调事件字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `AsrRequestId` | 识别请求 Id。 |
+| `AsrEventName` | `partial`、`completed`、`error`。 |
+| `AsrText` | 当前识别文本。 |
+| `AsrIsFinal` | 当前是否最终结果。 |
+| `AsrError` | 错误文本。 |
+| `AsrCallbackName` | 当前命中的回调名。 |
+| `AsrOffsetSeconds` | 当前结果对应的音频偏移秒数。 |
+
+完整示例：按下按钮开始录音，录音时实时显示 ASR 结果；松开按钮后把最终文本发送给 LLM，流式接收回复，同时按句子顺序调用 `Speak(...)`。
+
+假设场景里有：
+
+- 一个按钮：`Record Button`
+- 一个文本框：`Asr Box`
+- 一个标签：`Reply Label`
+
+```csharp
+using System.Text;
+
+static class AsrChatState
+{
+    public static bool Recording;
+    public static string AsrRequestId = string.Empty;
+    public static string AsrText = string.Empty;
+    public static string LlmReplyText = string.Empty;
+    public static StringBuilder PendingSentenceBuffer = new();
+    public static Queue<string> SpeakQueue = new();
+    public static bool Speaking;
+}
+
+void ClearReplyUi()
+{
+    Scene.GetGuiControl("Reply Label")?.SetValue(string.Empty);
+    AsrChatState.LlmReplyText = string.Empty;
+    AsrChatState.PendingSentenceBuffer.Clear();
+    AsrChatState.SpeakQueue.Clear();
+    AsrChatState.Speaking = false;
+}
+
+void TrySpeakNext()
+{
+    if (AsrChatState.Speaking || AsrChatState.SpeakQueue.Count == 0)
+    {
+        return;
+    }
+
+    string sentence = AsrChatState.SpeakQueue.Dequeue();
+    AsrChatState.Speaking = true;
+    Entity.Speak(sentence, () =>
+    {
+        AsrChatState.Speaking = false;
+        TrySpeakNext();
+    });
+}
+
+void EnqueueCompletedSentences(string text, bool flushTail)
+{
+    AsrChatState.PendingSentenceBuffer.Append(text);
+    string buffer = AsrChatState.PendingSentenceBuffer.ToString();
+    int lastCut = 0;
+    for (int i = 0; i < buffer.Length; i++)
+    {
+        char ch = buffer[i];
+        if (ch is '。' or '！' or '？' or '!' or '?' or ';' or '；')
+        {
+            string sentence = buffer[lastCut..(i + 1)].Trim();
+            if (!string.IsNullOrWhiteSpace(sentence))
+            {
+                AsrChatState.SpeakQueue.Enqueue(sentence);
+            }
+
+            lastCut = i + 1;
+        }
+    }
+
+    if (flushTail)
+    {
+        string tail = buffer[lastCut..].Trim();
+        if (!string.IsNullOrWhiteSpace(tail))
+        {
+            AsrChatState.SpeakQueue.Enqueue(tail);
+        }
+
+        AsrChatState.PendingSentenceBuffer.Clear();
+    }
+    else
+    {
+        AsrChatState.PendingSentenceBuffer.Clear();
+        AsrChatState.PendingSentenceBuffer.Append(buffer[lastCut..]);
+    }
+
+    TrySpeakNext();
+}
+
+if (IsGuiEvent && GuiControlName == "Record Button" && GuiEventName == "pressed")
+{
+    if (!Scene.Asr.Enabled || AsrChatState.Recording)
+    {
+        return;
+    }
+
+    AsrChatState.Recording = true;
+    AsrChatState.AsrText = string.Empty;
+    Scene.GetGuiControl("Asr Box")?.SetValue(string.Empty);
+    ClearReplyUi();
+
+    AsrChatState.AsrRequestId = Scene.Asr.StartStreamingRecognition(
+        Entity,
+        onPartialCallback: "asr_partial",
+        onCompletedCallback: "asr_completed",
+        onErrorCallback: "asr_error");
+}
+
+if (IsGuiEvent && GuiControlName == "Record Button" && GuiEventName == "released")
+{
+    if (!AsrChatState.Recording)
+    {
+        return;
+    }
+
+    AsrChatState.Recording = false;
+    Scene.Asr.StopStreamingRecognition(AsrChatState.AsrRequestId);
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_partial")
+{
+    AsrChatState.AsrText = AsrText;
+    Scene.GetGuiControl("Asr Box")?.SetValue(AsrText);
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_completed")
+{
+    AsrChatState.Recording = false;
+    AsrChatState.AsrText = AsrText.Trim();
+    Scene.GetGuiControl("Asr Box")?.SetValue(AsrChatState.AsrText);
+
+    if (!string.IsNullOrWhiteSpace(AsrChatState.AsrText))
+    {
+        ClearReplyUi();
+        Scene.Llm.StartChat(
+            Entity,
+            AsrChatState.AsrText,
+            systemPrompt: "你是一个中文语音助手，请简洁、自然地回答用户的问题。",
+            onDeltaCallback: "reply_delta",
+            onCompletedCallback: "reply_done",
+            onErrorCallback: "reply_error");
+    }
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_error")
+{
+    AsrChatState.Recording = false;
+    Console.Error.WriteLine(AsrError);
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_delta")
+{
+    AsrChatState.LlmReplyText = LlmText;
+    Scene.GetGuiControl("Reply Label")?.SetValue(AsrChatState.LlmReplyText);
+    EnqueueCompletedSentences(LlmDelta, flushTail: false);
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_done")
+{
+    AsrChatState.LlmReplyText = LlmText;
+    Scene.GetGuiControl("Reply Label")?.SetValue(AsrChatState.LlmReplyText);
+
+    string tail = AsrChatState.PendingSentenceBuffer.ToString();
+    AsrChatState.PendingSentenceBuffer.Clear();
+    if (!string.IsNullOrWhiteSpace(tail))
+    {
+        EnqueueCompletedSentences(tail, flushTail: true);
+    }
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_error")
+{
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+### Python ASR
+
+Python API：
+
+| API | 说明 |
+| --- | --- |
+| `scene.asr.enabled` | 当前项目是否启用 ASR。 |
+| `scene.asr.provider` | 当前 ASR Provider 名称。 |
+| `scene.asr.input_device_index` | 当前输入设备索引。 |
+| `scene.asr.partial_result_interval_seconds` | 当前部分结果间隔秒数。 |
+| `scene.asr.is_recording` | 当前是否在录音。 |
+| `scene.asr.start_streaming_recognition(request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error")` | 开始后台录音并持续识别。 |
+| `scene.asr.stop_streaming_recognition(request_id=None)` | 停止流式识别。 |
+
+Python 通用回调事件字典字段包括：
+
+- `requestId`
+- `eventName`
+- `text`
+- `isFinal`
+- `error`
+- `callbackName`
+- `offsetSeconds`
+
+## ASR API
+
+GamePlayer 支持从脚本调用本地麦克风和 ASR 识别器。配置在 GameEditor 的 `Project` 标签页 `ASR` 中，也会保存到 `game.project.json` 的 `asr` 节点。
+
+当前支持：
+
+- `sherpa`
+- `whisper`
+
+常见用法是：
+
+- 按钮 `pressed` 时启动流式录音识别
+- 一边录音一边更新识别文本
+- 按钮 `released` 时停止录音并拿到最终文本
+- 再把最终文本交给 `Scene.Llm` 继续做对话逻辑
+
+项目配置重点：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Enabled` | 是否启用脚本层 ASR。 |
+| `Provider` | `sherpa` 或 `whisper`。 |
+| `InputDeviceIndex` | 本地 `PortAudio` 输入设备索引；为空表示默认输入设备。 |
+| `PartialResultIntervalSeconds` | 流式部分结果刷新间隔。 |
+| `Capture` | 麦克风打开参数：`SampleRate`、`Channels`、`FramesPerBuffer`。 |
+| `Sherpa.*` | SherpaOnnx 模型与推理参数。 |
+| `Whisper.*` | Whisper 模型与推理参数。 |
+
+### C# ASR
+
+C# API：
+
+| API | 说明 |
+| --- | --- |
+| `Scene.Asr.Enabled` | 当前项目是否启用 ASR。 |
+| `Scene.Asr.Provider` | 当前 provider。 |
+| `Scene.Asr.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.Asr.PartialResultIntervalSeconds` | 当前部分结果刷新间隔。 |
+| `Scene.Asr.IsRecording` | 当前是否正在录音识别。 |
+| `StartStreamingRecognition(entity, requestId, onPartialCallback, onCompletedCallback, onErrorCallback)` | 开始后台录音，并推送部分识别结果。 |
+| `StopStreamingRecognition(requestId)` | 停止指定流式识别；为空则停止当前录音。 |
+| `StopAllStreamingRecognitions()` | 停止所有流式识别任务。 |
+
+ASR 回调字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `AsrRequestId` | 当前请求 Id。 |
+| `AsrEventName` | `partial`、`completed`、`error`。 |
+| `AsrText` | 当前识别文本。 |
+| `AsrIsFinal` | 是否最终结果。 |
+| `AsrError` | 错误文本。 |
+| `AsrCallbackName` | 当前回调名。 |
+| `AsrOffsetSeconds` | 当前识别文本对应的音频时长偏移。 |
+
+### Python ASR
+
+Python API：
+
+| API | 说明 |
+| --- | --- |
+| `scene.asr.enabled` | 当前项目是否启用 ASR。 |
+| `scene.asr.provider` | 当前 provider。 |
+| `scene.asr.input_device_index` | 当前输入设备索引。 |
+| `scene.asr.partial_result_interval_seconds` | 当前部分结果刷新间隔。 |
+| `scene.asr.is_recording` | 当前是否正在录音识别。 |
+| `scene.asr.start_streaming_recognition(request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error")` | 开始后台录音识别。 |
+| `scene.asr.stop_streaming_recognition(request_id=None)` | 停止流式识别。 |
+
+Python 通用事件函数：
+
+```python
+def asr_event(entity, scene, input, audio, event):
+    print(event["eventName"], event["text"])
+```
+
+### 完整示例：按住录音 -> 流式 ASR -> 松开发给 LLM -> 句子级顺序 Speak
+
+假设场景中有：
+
+- 一个按钮：`RecordButton`
+- 一个文本框：`AsrInput`
+- 一个标签：`Reply`
+
+```csharp
+using System.Text;
+
+static class DemoState
+{
+    public static string AsrRequestId = string.Empty;
+    public static string CurrentAsrText = string.Empty;
+    public static string LlmAccumulatedText = string.Empty;
+    public static string PendingSentenceBuffer = string.Empty;
+    public static Queue<string> SpeakQueue = new();
+    public static bool IsSpeaking;
+}
+
+IEnumerable<string> ExtractCompletedSentences(ref string buffer)
+{
+    List<string> result = [];
+    int start = 0;
+    for (int i = 0; i < buffer.Length; i++)
+    {
+        char ch = buffer[i];
+        if (ch is '。' or '！' or '？' or '.' or '!' or '?')
+        {
+            string sentence = buffer[start..(i + 1)].Trim();
+            if (!string.IsNullOrWhiteSpace(sentence))
+            {
+                result.Add(sentence);
+            }
+
+            start = i + 1;
+        }
+    }
+
+    buffer = start >= buffer.Length ? string.Empty : buffer[start..];
+    return result;
+}
+
+void TrySpeakNext()
+{
+    if (DemoState.IsSpeaking || DemoState.SpeakQueue.Count == 0)
+    {
+        return;
+    }
+
+    string sentence = DemoState.SpeakQueue.Dequeue();
+    DemoState.IsSpeaking = true;
+    Entity.SpeakWithCallback(sentence, "llm_sentence_done");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "pressed")
+{
+    DemoState.CurrentAsrText = string.Empty;
+    DemoState.LlmAccumulatedText = string.Empty;
+    DemoState.PendingSentenceBuffer = string.Empty;
+    DemoState.SpeakQueue.Clear();
+    DemoState.IsSpeaking = false;
+
+    Scene.GetGuiControl("AsrInput")?.SetValue("");
+    Scene.GetGuiControl("Reply")?.SetValue("");
+
+    DemoState.AsrRequestId = Scene.Asr.StartStreamingRecognition(
+        Entity,
+        requestId: "push_to_talk",
+        onPartialCallback: "asr_partial",
+        onCompletedCallback: "asr_completed",
+        onErrorCallback: "asr_error");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "released")
+{
+    Scene.Asr.StopStreamingRecognition(DemoState.AsrRequestId);
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_partial")
+{
+    DemoState.CurrentAsrText = AsrText;
+    Scene.GetGuiControl("AsrInput")?.SetValue(AsrText);
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_completed")
+{
+    DemoState.CurrentAsrText = AsrText.Trim();
+    Scene.GetGuiControl("AsrInput")?.SetValue(DemoState.CurrentAsrText);
+
+    if (!string.IsNullOrWhiteSpace(DemoState.CurrentAsrText))
+    {
+        Scene.Llm.StartChat(
+            Entity,
+            DemoState.CurrentAsrText,
+            systemPrompt: "你是一个中文语音助手，请简洁、自然地回答用户的问题。",
+            onDeltaCallback: "reply_delta",
+            onCompletedCallback: "reply_done",
+            onErrorCallback: "reply_error");
+    }
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_error")
+{
+    Console.Error.WriteLine(AsrError);
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_delta")
+{
+    DemoState.LlmAccumulatedText = LlmText;
+    Scene.GetGuiControl("Reply")?.SetValue(DemoState.LlmAccumulatedText);
+
+    string delta = LlmDelta;
+    if (!string.IsNullOrEmpty(delta))
+    {
+        DemoState.PendingSentenceBuffer += delta;
+        foreach (string sentence in ExtractCompletedSentences(ref DemoState.PendingSentenceBuffer))
+        {
+            DemoState.SpeakQueue.Enqueue(sentence);
+        }
+
+        TrySpeakNext();
+    }
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_done")
+{
+    Scene.GetGuiControl("Reply")?.SetValue(LlmText);
+
+    string tail = DemoState.PendingSentenceBuffer.Trim();
+    if (!string.IsNullOrWhiteSpace(tail))
+    {
+        DemoState.SpeakQueue.Enqueue(tail);
+        DemoState.PendingSentenceBuffer = string.Empty;
+    }
+
+    TrySpeakNext();
+}
+
+if (IsSpeechEvent && SpeechCallbackName == "llm_sentence_done")
+{
+    DemoState.IsSpeaking = false;
+    TrySpeakNext();
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_error")
+{
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+这个示例的关键点是：
+
+- ASR 用 `pressed` / `released` 做 push-to-talk
+- LLM 仍然走已经有的 `Scene.Llm.StartChat(...)`
+- `SpeakWithCallback(...)` 保证一句说完后再说下一句，不会重叠播放
+
+## ASR API
+
+GamePlayer 支持从脚本调用本地麦克风和 ASR 识别器。配置在 GameEditor 的 `Project` 标签页 `ASR` 中，也会保存到 `game.project.json` 的 `asr` 节点。
+
+当前支持：
+
+- `sherpa`
+- `whisper`
+
+常见用法是：
+
+- 按钮 `pressed` 时启动流式录音识别
+- 一边录音一边更新识别文本
+- 按钮 `released` 时停止录音并拿到最终文本
+- 再把最终文本交给 `Scene.Llm` 继续做对话逻辑
+
+项目配置重点：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Enabled` | 是否启用脚本层 ASR。 |
+| `Provider` | `sherpa` 或 `whisper`。 |
+| `InputDeviceIndex` | 本地 `PortAudio` 输入设备索引；为空表示默认输入设备。 |
+| `PartialResultIntervalSeconds` | 流式部分结果刷新间隔。 |
+| `Capture` | 麦克风打开参数：`SampleRate`、`Channels`、`FramesPerBuffer`。 |
+| `Sherpa.*` | SherpaOnnx 模型与推理参数。 |
+| `Whisper.*` | Whisper 模型与推理参数。 |
+
+### C# ASR
+
+C# API：
+
+| API | 说明 |
+| --- | --- |
+| `Scene.Asr.Enabled` | 当前项目是否启用 ASR。 |
+| `Scene.Asr.Provider` | 当前 provider。 |
+| `Scene.Asr.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.Asr.PartialResultIntervalSeconds` | 当前部分结果刷新间隔。 |
+| `Scene.Asr.IsRecording` | 当前是否正在录音识别。 |
+| `StartStreamingRecognition(entity, requestId, onPartialCallback, onCompletedCallback, onErrorCallback)` | 开始后台录音，并推送部分识别结果。 |
+| `StopStreamingRecognition(requestId)` | 停止指定流式识别；为空则停止当前录音。 |
+| `StopAllStreamingRecognitions()` | 停止所有流式识别任务。 |
+
+ASR 回调字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `AsrRequestId` | 当前请求 Id。 |
+| `AsrEventName` | `partial`、`completed`、`error`。 |
+| `AsrText` | 当前识别文本。 |
+| `AsrIsFinal` | 是否最终结果。 |
+| `AsrError` | 错误文本。 |
+| `AsrCallbackName` | 当前回调名。 |
+| `AsrOffsetSeconds` | 当前识别文本对应的音频时长偏移。 |
+
+### Python ASR
+
+Python API：
+
+| API | 说明 |
+| --- | --- |
+| `scene.asr.enabled` | 当前项目是否启用 ASR。 |
+| `scene.asr.provider` | 当前 provider。 |
+| `scene.asr.input_device_index` | 当前输入设备索引。 |
+| `scene.asr.partial_result_interval_seconds` | 当前部分结果刷新间隔。 |
+| `scene.asr.is_recording` | 当前是否正在录音识别。 |
+| `scene.asr.start_streaming_recognition(request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error")` | 开始后台录音识别。 |
+| `scene.asr.stop_streaming_recognition(request_id=None)` | 停止流式识别。 |
+
+Python 通用事件函数：
+
+```python
+def asr_event(entity, scene, input, audio, event):
+    print(event["eventName"], event["text"])
+```
+
+### 完整示例：按住录音 -> 流式 ASR -> 松开发给 LLM -> 句子级顺序 Speak
+
+假设场景中有：
+
+- 一个按钮：`RecordButton`
+- 一个文本框：`AsrInput`
+- 一个标签：`Reply`
+
+```csharp
+using System.Text;
+
+static class DemoState
+{
+    public static string AsrRequestId = string.Empty;
+    public static string CurrentAsrText = string.Empty;
+    public static string LlmAccumulatedText = string.Empty;
+    public static string PendingSentenceBuffer = string.Empty;
+    public static Queue<string> SpeakQueue = new();
+    public static bool IsSpeaking;
+}
+
+IEnumerable<string> ExtractCompletedSentences(ref string buffer)
+{
+    List<string> result = [];
+    int start = 0;
+    for (int i = 0; i < buffer.Length; i++)
+    {
+        char ch = buffer[i];
+        if (ch is '。' or '！' or '？' or '.' or '!' or '?')
+        {
+            string sentence = buffer[start..(i + 1)].Trim();
+            if (!string.IsNullOrWhiteSpace(sentence))
+            {
+                result.Add(sentence);
+            }
+
+            start = i + 1;
+        }
+    }
+
+    buffer = start >= buffer.Length ? string.Empty : buffer[start..];
+    return result;
+}
+
+void TrySpeakNext()
+{
+    if (DemoState.IsSpeaking || DemoState.SpeakQueue.Count == 0)
+    {
+        return;
+    }
+
+    string sentence = DemoState.SpeakQueue.Dequeue();
+    DemoState.IsSpeaking = true;
+    Entity.SpeakWithCallback(sentence, "llm_sentence_done");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "pressed")
+{
+    DemoState.CurrentAsrText = string.Empty;
+    DemoState.LlmAccumulatedText = string.Empty;
+    DemoState.PendingSentenceBuffer = string.Empty;
+    DemoState.SpeakQueue.Clear();
+    DemoState.IsSpeaking = false;
+
+    Scene.GetGuiControl("AsrInput")?.SetValue("");
+    Scene.GetGuiControl("Reply")?.SetValue("");
+
+    DemoState.AsrRequestId = Scene.Asr.StartStreamingRecognition(
+        Entity,
+        requestId: "push_to_talk",
+        onPartialCallback: "asr_partial",
+        onCompletedCallback: "asr_completed",
+        onErrorCallback: "asr_error");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "released")
+{
+    Scene.Asr.StopStreamingRecognition(DemoState.AsrRequestId);
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_partial")
+{
+    DemoState.CurrentAsrText = AsrText;
+    Scene.GetGuiControl("AsrInput")?.SetValue(AsrText);
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_completed")
+{
+    DemoState.CurrentAsrText = AsrText.Trim();
+    Scene.GetGuiControl("AsrInput")?.SetValue(DemoState.CurrentAsrText);
+
+    if (!string.IsNullOrWhiteSpace(DemoState.CurrentAsrText))
+    {
+        Scene.Llm.StartChat(
+            Entity,
+            DemoState.CurrentAsrText,
+            systemPrompt: "你是一个中文语音助手，请简洁、自然地回答用户的问题。",
+            onDeltaCallback: "reply_delta",
+            onCompletedCallback: "reply_done",
+            onErrorCallback: "reply_error");
+    }
+}
+
+if (IsAsrEvent && AsrCallbackName == "asr_error")
+{
+    Console.Error.WriteLine(AsrError);
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_delta")
+{
+    DemoState.LlmAccumulatedText = LlmText;
+    Scene.GetGuiControl("Reply")?.SetValue(DemoState.LlmAccumulatedText);
+
+    string delta = LlmDelta;
+    if (!string.IsNullOrEmpty(delta))
+    {
+        DemoState.PendingSentenceBuffer += delta;
+        foreach (string sentence in ExtractCompletedSentences(ref DemoState.PendingSentenceBuffer))
+        {
+            DemoState.SpeakQueue.Enqueue(sentence);
+        }
+
+        TrySpeakNext();
+    }
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_done")
+{
+    Scene.GetGuiControl("Reply")?.SetValue(LlmText);
+
+    string tail = DemoState.PendingSentenceBuffer.Trim();
+    if (!string.IsNullOrWhiteSpace(tail))
+    {
+        DemoState.SpeakQueue.Enqueue(tail);
+        DemoState.PendingSentenceBuffer = string.Empty;
+    }
+
+    TrySpeakNext();
+}
+
+if (IsSpeechEvent && SpeechCallbackName == "llm_sentence_done")
+{
+    DemoState.IsSpeaking = false;
+    TrySpeakNext();
+}
+
+if (IsLlmEvent && LlmCallbackName == "reply_error")
+{
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+这个示例的关键点是：
+
+- ASR 用按钮 `pressed` / `released` 做 push-to-talk
+- LLM 仍然走已经有的 `Scene.Llm.StartChat(...)`
+- `SpeakWithCallback(...)` 保证一句说完后再说下一句
 
 ## LLM / OpenAI-compatible API
 

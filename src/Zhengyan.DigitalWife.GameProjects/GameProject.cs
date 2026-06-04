@@ -20,6 +20,8 @@ public sealed class GameProject
 
     public GameProjectVoiceSettings Voice { get; set; } = new();
 
+    public GameProjectAsrSettings Asr { get; set; } = new();
+
     public GameProjectRealtimeVoiceSettings RealtimeVoice { get; set; } = new();
 
     public GameProjectLlmSettings Llm { get; set; } = new();
@@ -136,6 +138,70 @@ public sealed class GameProjectRealtimeVoiceSettings
     public GameProjectVoiceActivityCaptureSettings UserCapture { get; set; } = new();
 
     public GameProjectRealtimeVoiceWakeWordSettings WakeWord { get; set; } = new();
+}
+
+public sealed class GameProjectAsrSettings
+{
+    public bool Enabled { get; set; }
+
+    public string Provider { get; set; } = "sherpa";
+
+    public int? InputDeviceIndex { get; set; }
+
+    public float PartialResultIntervalSeconds { get; set; } = 0.75f;
+
+    public GameProjectAudioCaptureSettings Capture { get; set; } = new()
+    {
+        SampleRate = 16000,
+        Channels = 1,
+        FramesPerBuffer = 512
+    };
+
+    public GameProjectSherpaAsrSettings Sherpa { get; set; } = new();
+
+    public GameProjectWhisperAsrSettings Whisper { get; set; } = new();
+}
+
+public sealed class GameProjectSherpaAsrSettings
+{
+    public string ModelKind { get; set; } = "OnlineTransducer";
+
+    public string TokensPath { get; set; } = string.Empty;
+
+    public string? EncoderPath { get; set; }
+
+    public string? DecoderPath { get; set; }
+
+    public string? JoinerPath { get; set; }
+
+    public string? ModelPath { get; set; }
+
+    public string Language { get; set; } = "zh";
+
+    public string Provider { get; set; } = "cpu";
+
+    public int SampleRate { get; set; } = 16000;
+
+    public int FeatureDim { get; set; } = 80;
+
+    public int Threads { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
+
+    public string DecodingMethod { get; set; } = "greedy_search";
+}
+
+public sealed class GameProjectWhisperAsrSettings
+{
+    public string ModelPath { get; set; } = string.Empty;
+
+    public string Language { get; set; } = "auto";
+
+    public bool TranslateToEnglish { get; set; }
+
+    public bool UseGpu { get; set; }
+
+    public int Threads { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
+
+    public int SampleRate { get; set; } = 16000;
 }
 
 public class GameProjectAudioCaptureSettings

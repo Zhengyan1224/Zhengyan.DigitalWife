@@ -30,6 +30,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly ScriptHost _scriptHost;
     private LoadingScreenComponent? _loadingScreen;
     private RuntimeGuiOverlayComponent? _guiOverlay;
+    private RuntimeDialogueBubbleOverlayComponent? _bubbleOverlay;
     private RuntimeCameraControllerComponent? _cameraController;
     private RuntimeDebugDrawComponent? _debugDraw;
     private SceneRenderTextureManager? _renderTextureManager;
@@ -39,6 +40,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private RuntimeAudio? _runtimeAudio;
     private RuntimeVoice? _runtimeVoice;
     private RuntimeLlm? _runtimeLlm;
+    private RuntimeAsr? _runtimeAsr;
     private RuntimeRealtimeVoice? _runtimeRealtimeVoice;
     private RuntimePerformance _runtimePerformance = new();
     private RuntimeEntity? _loadingEntity;
@@ -114,17 +116,26 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             DrawOrder = int.MaxValue - 100
         });
 
-            _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
-                () => Project.Scene.GuiControls,
-                () => Project.Scene.Sprites,
-                () => Project.Window,
-                ResolveProjectPath,
-                DispatchGuiEvent)
-            {
-                RuntimeTextureProvider = _renderTextureManager,
-                DrawOrder = int.MaxValue - 10,
-                UpdateOrder = int.MaxValue
-            });
+        _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
+            () => Project.Scene.GuiControls,
+            () => Project.Scene.Sprites,
+            () => Project.Window,
+            ResolveProjectPath,
+            DispatchGuiEvent)
+        {
+            RuntimeTextureProvider = _renderTextureManager,
+            DrawOrder = int.MaxValue - 10,
+            UpdateOrder = int.MaxValue
+        });
+
+        _bubbleOverlay = AddComponent(new RuntimeDialogueBubbleOverlayComponent(
+            () => _runtimeScene,
+            _camera,
+            () => Project.Window)
+        {
+            DrawOrder = int.MaxValue - 20,
+            UpdateOrder = int.MaxValue - 1
+        });
 
         BeginProjectLoad();
     }
@@ -275,6 +286,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = null;
         _runtimeVoice?.Dispose();
         _runtimeVoice = null;
+        _runtimeAsr?.Dispose();
+        _runtimeAsr = null;
         _runtimeRealtimeVoice?.Dispose();
         _runtimeRealtimeVoice = null;
         _runtimeLlm?.Dispose();
@@ -298,6 +311,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _runtimeVoice = new RuntimeVoice(this, _dispatcher, _projectDirectory, Project.Voice);
             _runtimeLlm?.Dispose();
             _runtimeLlm = new RuntimeLlm(Project.Llm, _dispatcher, DispatchLlmEvent);
+            _runtimeAsr?.Dispose();
+            _runtimeAsr = new RuntimeAsr(_projectDirectory, Project.Asr, _dispatcher, DispatchAsrEvent);
             _runtimeRealtimeVoice?.Dispose();
             _runtimeRealtimeVoice = new RuntimeRealtimeVoice(this, _projectDirectory, Project.RealtimeVoice, Project.Voice, _dispatcher, DispatchRealtimeVoiceEvent);
             _runtimePerformance = new RuntimePerformance();
@@ -440,6 +455,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 ?? throw new InvalidOperationException("Runtime debug draw is not initialized.");
             RuntimeLlm runtimeLlm = _runtimeLlm
                 ?? throw new InvalidOperationException("Runtime LLM is not initialized.");
+            RuntimeAsr runtimeAsr = _runtimeAsr
+                ?? throw new InvalidOperationException("Runtime ASR is not initialized.");
             RuntimeRealtimeVoice runtimeRealtimeVoice = _runtimeRealtimeVoice
                 ?? throw new InvalidOperationException("Runtime Realtime Voice is not initialized.");
                 _runtimeScene = new RuntimeScene(
@@ -452,7 +469,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 new RuntimeDebug(debugDraw),
                 new RuntimeSaveStore(_projectDirectory),
                 runtimeLlm,
+                runtimeAsr,
                 runtimeRealtimeVoice,
+                new RuntimeDialogueBubbleManager(),
                 new RuntimeNetwork(),
                 _runtimePerformance,
                 DispatchSpeechEvent,
@@ -625,6 +644,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _scriptTargets.Clear();
         _runtimeVoice?.ClearScene();
+        _runtimeAsr?.ClearScene();
         _runtimeRealtimeVoice?.ClearScene();
 
         foreach (PlayerPmxObject item in _pmxObjects.ToArray())
@@ -1191,6 +1211,34 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    private void DispatchAsrEvent(RuntimeEntity target, RuntimeAsrScriptEvent asrEvent)
+    {
+        if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
+        {
+            return;
+        }
+
+        foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, _) in _scriptTargets.ToArray())
+        {
+            if (!ReferenceEquals(entity, target))
+            {
+                continue;
+            }
+
+            foreach (IScriptInstance script in scripts)
+            {
+                try
+                {
+                    script.AsrEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, asrEvent);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Script ASR event failed for entity '{entity.Name}': {ex.Message}");
+                }
+            }
+        }
+    }
+
     private void DispatchRealtimeVoiceEvent(RuntimeEntity target, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
     {
         if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
@@ -1561,6 +1609,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         if (_guiOverlay is not null)
         {
             excluded.Add(_guiOverlay);
+        }
+
+        if (_bubbleOverlay is not null)
+        {
+            excluded.Add(_bubbleOverlay);
         }
 
         if (_loadingScreen is not null)

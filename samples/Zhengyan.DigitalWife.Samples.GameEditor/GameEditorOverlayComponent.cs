@@ -554,6 +554,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawProjectPanel()
     {
+        ImGui.PushID("projectPanel");
+
         DrawPathInput("Project directory", ref _projectDirectory, 1024, "projectDirectory");
         if (ImGui.Button("Use Directory"))
         {
@@ -590,7 +592,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.Separator();
-        ImGui.InputText("Project name", ref _newProjectName, 256);
+        _ = DrawTextInputWithPaste("Project name", ref _newProjectName, 256, "newProjectName");
         if (ImGui.Button("New Project"))
         {
             _editorGame.SetProjectDirectory(_projectDirectory);
@@ -601,12 +603,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         GameProject project = _editorGame.Project;
         string projectName = project.Name;
         string projectVersion = project.Version;
-        if (ImGui.InputText("Name", ref projectName, 256))
+        if (DrawTextInputWithPaste("Name", ref projectName, 256, "projectName"))
         {
             project.Name = projectName;
         }
 
-        if (ImGui.InputText("Version", ref projectVersion, 128))
+        if (DrawTextInputWithPaste("Version", ref projectVersion, 128, "projectVersion"))
         {
             project.Version = projectVersion;
         }
@@ -622,13 +624,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         DrawLlmSettings(project.Llm);
         DrawVoiceSettings(project.Voice);
+        DrawAsrSettings(project.Asr);
         DrawRealtimeVoiceSettings(project.RealtimeVoice);
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
+        ImGui.PopID();
     }
 
     private void DrawScenesPanel()
     {
+        ImGui.PushID("scenesPanel");
+
         GameProject project = _editorGame.Project;
         GameProjectStore.NormalizeScenes(project);
 
@@ -680,7 +686,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         ImGui.Separator();
 
-        ImGui.InputText("New scene name", ref _newSceneName, 256);
+        _ = DrawTextInputWithPaste("New scene name", ref _newSceneName, 256, "newSceneName");
         if (ImGui.Button("New Scene"))
         {
             try
@@ -738,6 +744,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("Editor scene switching saves the current scene file first, then reloads the selected scene into the viewport. GamePlayer starts from the startup scene.");
+        ImGui.PopID();
     }
 
     private static string BuildSceneLabel(GameProjectScene scene, string scenePath)
@@ -747,12 +754,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             : $"{scene.Name} ({scenePath})";
     }
 
-    private static void DrawLlmSettings(GameProjectLlmSettings llm)
+    private void DrawLlmSettings(GameProjectLlmSettings llm)
     {
         if (!ImGui.CollapsingHeader("LLM / OpenAI-compatible"))
         {
             return;
         }
+
+        ImGui.PushID("llmSettings");
 
         bool enabled = llm.Enabled;
         if (ImGui.Checkbox("Enable runtime LLM", ref enabled))
@@ -761,37 +770,37 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         string provider = llm.Provider;
-        if (ImGui.InputText("LLM provider", ref provider, 128))
+        if (DrawTextInputWithPaste("LLM provider", ref provider, 128, "llmProvider"))
         {
             llm.Provider = provider;
         }
 
         string baseUrl = llm.BaseUrl;
-        if (ImGui.InputText("Base URL", ref baseUrl, 1024))
+        if (DrawTextInputWithPaste("Base URL", ref baseUrl, 1024, "llmBaseUrl"))
         {
             llm.BaseUrl = baseUrl;
         }
 
         string apiKeyEnvironmentVariable = llm.ApiKeyEnvironmentVariable;
-        if (ImGui.InputText("API key env var", ref apiKeyEnvironmentVariable, 128))
+        if (DrawTextInputWithPaste("API key env var", ref apiKeyEnvironmentVariable, 128, "llmApiKeyEnvVar"))
         {
             llm.ApiKeyEnvironmentVariable = apiKeyEnvironmentVariable;
         }
 
         string apiKey = llm.ApiKey;
-        if (ImGui.InputText("API key override", ref apiKey, 1024, ImGuiInputTextFlags.Password))
+        if (DrawTextInputWithPaste("API key override", ref apiKey, 1024, "llmApiKey", ImGuiInputTextFlags.Password))
         {
             llm.ApiKey = apiKey;
         }
 
         string model = llm.Model;
-        if (ImGui.InputText("Model", ref model, 256))
+        if (DrawTextInputWithPaste("Model", ref model, 256, "llmModel"))
         {
             llm.Model = model;
         }
 
         string chatCompletionsPath = llm.ChatCompletionsPath;
-        if (ImGui.InputText("Chat completions path", ref chatCompletionsPath, 256))
+        if (DrawTextInputWithPaste("Chat completions path", ref chatCompletionsPath, 256, "llmChatCompletionsPath"))
         {
             llm.ChatCompletionsPath = string.IsNullOrWhiteSpace(chatCompletionsPath)
                 ? "/v1/chat/completions"
@@ -820,6 +829,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("Scripts call Scene.Llm / scene.llm. Prefer API key environment variables for project files that may be shared.");
+        ImGui.PopID();
     }
 
     private void DrawWindowSettings(GameWindowSettings window)
@@ -829,8 +839,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return;
         }
 
+        ImGui.PushID("windowSettings");
+
         string title = window.Title;
-        if (ImGui.InputText("Window title", ref title, 256))
+        if (DrawTextInputWithPaste("Window title", ref title, 256, "windowTitle"))
         {
             window.Title = title;
         }
@@ -872,6 +884,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("GamePlayer applies these settings on project load. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews window settings in the editor.");
+        ImGui.PopID();
     }
 
     private void DrawVoiceSettings(GameProjectVoiceSettings voice)
@@ -880,6 +893,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             return;
         }
+
+        ImGui.PushID("voiceSettings");
 
         bool enabled = voice.Enabled;
         if (ImGui.Checkbox("Enable runtime TTS", ref enabled))
@@ -905,7 +920,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         ImGui.TextDisabled("Set to -1 to use the default output device. This is only used when speech playback backend is PortAudio.");
 
         string provider = voice.TtsProvider;
-        if (ImGui.InputText("TTS provider", ref provider, 128))
+        if (DrawTextInputWithPaste("TTS provider", ref provider, 128, "ttsProvider"))
         {
             voice.TtsProvider = provider;
         }
@@ -954,7 +969,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         string inferenceProvider = voice.InferenceProvider;
-        if (ImGui.InputText("Inference provider", ref inferenceProvider, 128))
+        if (DrawTextInputWithPaste("Inference provider", ref inferenceProvider, 128, "ttsInferenceProvider"))
         {
             voice.InferenceProvider = inferenceProvider;
         }
@@ -1015,14 +1030,197 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("Scripts call Entity.Speak(...) / entity.speak(...). The runtime uses this project-level TTS configuration.");
+        ImGui.PopID();
     }
 
-    private static void DrawRealtimeVoiceSettings(GameProjectRealtimeVoiceSettings realtimeVoice)
+    private void DrawAsrSettings(GameProjectAsrSettings asr)
+    {
+        if (!ImGui.CollapsingHeader("ASR", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        ImGui.PushID("asrSettings");
+
+        bool enabled = asr.Enabled;
+        if (ImGui.Checkbox("Enable ASR", ref enabled))
+        {
+            asr.Enabled = enabled;
+        }
+
+        string[] providers = ["sherpa", "whisper"];
+        int providerIndex = string.Equals(asr.Provider, "whisper", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        if (ImGui.Combo("ASR provider", ref providerIndex, providers, providers.Length))
+        {
+            asr.Provider = providers[providerIndex];
+        }
+
+        int inputDeviceIndex = asr.InputDeviceIndex ?? -1;
+        if (ImGui.DragInt("Input device index", ref inputDeviceIndex, 1.0f, -1, 9999))
+        {
+            asr.InputDeviceIndex = inputDeviceIndex < 0 ? null : inputDeviceIndex;
+        }
+
+        float partialResultIntervalSeconds = asr.PartialResultIntervalSeconds;
+        if (ImGui.DragFloat("Partial result interval seconds", ref partialResultIntervalSeconds, 0.05f, 0.05f, 10.0f, "%.2f"))
+        {
+            asr.PartialResultIntervalSeconds = Math.Clamp(partialResultIntervalSeconds, 0.05f, 10.0f);
+        }
+
+        if (ImGui.TreeNode("Capture"))
+        {
+            ImGui.PushID("capture");
+            DrawAudioCaptureSettings(asr.Capture);
+            ImGui.PopID();
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Sherpa"))
+        {
+            string[] modelKinds =
+            [
+                "OnlineTransducer",
+                "OnlineParaformer",
+                "OnlineZipformer2Ctc",
+                "OfflineWhisper",
+                "OfflineParaformer",
+                "OfflineTransducer",
+                "OfflineZipformerCtc",
+                "OfflineWenetCtc"
+            ];
+            int modelKindIndex = Array.FindIndex(modelKinds, item => string.Equals(item, asr.Sherpa.ModelKind, StringComparison.OrdinalIgnoreCase));
+            if (modelKindIndex < 0)
+            {
+                modelKindIndex = 0;
+            }
+
+            if (ImGui.Combo("Sherpa model kind", ref modelKindIndex, modelKinds, modelKinds.Length))
+            {
+                asr.Sherpa.ModelKind = modelKinds[modelKindIndex];
+            }
+
+            string sherpaTokensPath = asr.Sherpa.TokensPath;
+            if (DrawPathInput("Sherpa tokens path", ref sherpaTokensPath, 1024, "asrSherpaTokensPath"))
+            {
+                asr.Sherpa.TokensPath = sherpaTokensPath;
+            }
+
+            string sherpaEncoderPath = asr.Sherpa.EncoderPath ?? string.Empty;
+            if (DrawPathInput("Sherpa encoder path", ref sherpaEncoderPath, 1024, "asrSherpaEncoderPath"))
+            {
+                asr.Sherpa.EncoderPath = string.IsNullOrWhiteSpace(sherpaEncoderPath) ? null : sherpaEncoderPath;
+            }
+
+            string sherpaDecoderPath = asr.Sherpa.DecoderPath ?? string.Empty;
+            if (DrawPathInput("Sherpa decoder path", ref sherpaDecoderPath, 1024, "asrSherpaDecoderPath"))
+            {
+                asr.Sherpa.DecoderPath = string.IsNullOrWhiteSpace(sherpaDecoderPath) ? null : sherpaDecoderPath;
+            }
+
+            string sherpaJoinerPath = asr.Sherpa.JoinerPath ?? string.Empty;
+            if (DrawPathInput("Sherpa joiner path", ref sherpaJoinerPath, 1024, "asrSherpaJoinerPath"))
+            {
+                asr.Sherpa.JoinerPath = string.IsNullOrWhiteSpace(sherpaJoinerPath) ? null : sherpaJoinerPath;
+            }
+
+            string sherpaModelPath = asr.Sherpa.ModelPath ?? string.Empty;
+            if (DrawPathInput("Sherpa model path", ref sherpaModelPath, 1024, "asrSherpaModelPath"))
+            {
+                asr.Sherpa.ModelPath = string.IsNullOrWhiteSpace(sherpaModelPath) ? null : sherpaModelPath;
+            }
+
+            string sherpaLanguage = asr.Sherpa.Language;
+            if (DrawTextInputWithPaste("Sherpa language", ref sherpaLanguage, 64, "sherpaLanguage"))
+            {
+                asr.Sherpa.Language = sherpaLanguage;
+            }
+
+            string sherpaProvider = asr.Sherpa.Provider;
+            if (DrawTextInputWithPaste("Sherpa provider", ref sherpaProvider, 64, "sherpaProvider"))
+            {
+                asr.Sherpa.Provider = sherpaProvider;
+            }
+
+            int sherpaSampleRate = asr.Sherpa.SampleRate;
+            if (ImGui.DragInt("Sherpa sample rate", ref sherpaSampleRate, 100.0f, 8000, 192000))
+            {
+                asr.Sherpa.SampleRate = Math.Clamp(sherpaSampleRate, 8000, 192000);
+            }
+
+            int sherpaFeatureDim = asr.Sherpa.FeatureDim;
+            if (ImGui.DragInt("Sherpa feature dim", ref sherpaFeatureDim, 1.0f, 1, 1024))
+            {
+                asr.Sherpa.FeatureDim = Math.Clamp(sherpaFeatureDim, 1, 1024);
+            }
+
+            int sherpaThreads = asr.Sherpa.Threads;
+            if (ImGui.DragInt("Sherpa threads", ref sherpaThreads, 1.0f, 1, 128))
+            {
+                asr.Sherpa.Threads = Math.Clamp(sherpaThreads, 1, 128);
+            }
+
+            string sherpaDecodingMethod = asr.Sherpa.DecodingMethod;
+            if (DrawTextInputWithPaste("Sherpa decoding method", ref sherpaDecodingMethod, 64, "sherpaDecodingMethod"))
+            {
+                asr.Sherpa.DecodingMethod = sherpaDecodingMethod;
+            }
+
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Whisper"))
+        {
+            string whisperModelPath = asr.Whisper.ModelPath;
+            if (DrawPathInput("Whisper model path", ref whisperModelPath, 1024, "asrWhisperModelPath"))
+            {
+                asr.Whisper.ModelPath = whisperModelPath;
+            }
+
+            string whisperLanguage = asr.Whisper.Language;
+            if (DrawTextInputWithPaste("Whisper language", ref whisperLanguage, 64, "whisperLanguage"))
+            {
+                asr.Whisper.Language = whisperLanguage;
+            }
+
+            bool whisperTranslateToEnglish = asr.Whisper.TranslateToEnglish;
+            if (ImGui.Checkbox("Whisper translate to English", ref whisperTranslateToEnglish))
+            {
+                asr.Whisper.TranslateToEnglish = whisperTranslateToEnglish;
+            }
+
+            bool whisperUseGpu = asr.Whisper.UseGpu;
+            if (ImGui.Checkbox("Whisper use GPU", ref whisperUseGpu))
+            {
+                asr.Whisper.UseGpu = whisperUseGpu;
+            }
+
+            int whisperThreads = asr.Whisper.Threads;
+            if (ImGui.DragInt("Whisper threads", ref whisperThreads, 1.0f, 1, 128))
+            {
+                asr.Whisper.Threads = Math.Clamp(whisperThreads, 1, 128);
+            }
+
+            int whisperSampleRate = asr.Whisper.SampleRate;
+            if (ImGui.DragInt("Whisper sample rate", ref whisperSampleRate, 100.0f, 8000, 192000))
+            {
+                asr.Whisper.SampleRate = Math.Clamp(whisperSampleRate, 8000, 192000);
+            }
+
+            ImGui.TreePop();
+        }
+
+        ImGui.TextWrapped("Scripts call Scene.Asr / scene.asr. Buttons can use GUI events like 'pressed' and 'released' for push-to-talk recording flows.");
+        ImGui.PopID();
+    }
+
+    private void DrawRealtimeVoiceSettings(GameProjectRealtimeVoiceSettings realtimeVoice)
     {
         if (!ImGui.CollapsingHeader("Realtime Voice", ImGuiTreeNodeFlags.DefaultOpen))
         {
             return;
         }
+
+        ImGui.PushID("realtimeVoiceSettings");
 
         bool enabled = realtimeVoice.Enabled;
         if (ImGui.Checkbox("Enable Realtime Voice", ref enabled))
@@ -1031,49 +1229,54 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         string baseUrl = realtimeVoice.BaseUrl;
-        if (ImGui.InputText("Base URL", ref baseUrl, 512))
+        if (DrawTextInputWithPaste("Base URL", ref baseUrl, 512, "realtimeBaseUrl"))
         {
             realtimeVoice.BaseUrl = baseUrl;
         }
 
         string realtimePath = realtimeVoice.RealtimePath;
-        if (ImGui.InputText("Realtime path", ref realtimePath, 256))
+        if (DrawTextInputWithPaste("Realtime path", ref realtimePath, 256, "realtimePath"))
         {
             realtimeVoice.RealtimePath = realtimePath;
         }
 
         string audioSpeechPath = realtimeVoice.AudioSpeechPath;
-        if (ImGui.InputText("Audio speech path", ref audioSpeechPath, 256))
+        if (DrawTextInputWithPaste("Audio speech path", ref audioSpeechPath, 256, "realtimeAudioSpeechPath"))
         {
             realtimeVoice.AudioSpeechPath = audioSpeechPath;
         }
 
         string apiKeyEnvironmentVariable = realtimeVoice.ApiKeyEnvironmentVariable;
-        if (ImGui.InputText("API key env var", ref apiKeyEnvironmentVariable, 128))
+        if (DrawTextInputWithPaste("API key env var", ref apiKeyEnvironmentVariable, 128, "realtimeApiKeyEnvVar"))
         {
             realtimeVoice.ApiKeyEnvironmentVariable = apiKeyEnvironmentVariable;
         }
 
         string apiKey = realtimeVoice.ApiKey;
-        if (ImGui.InputText("API key override", ref apiKey, 256))
+        if (DrawTextInputWithPaste("API key override", ref apiKey, 256, "realtimeApiKey"))
         {
             realtimeVoice.ApiKey = apiKey;
         }
 
         string model = realtimeVoice.Model;
-        if (ImGui.InputText("Model", ref model, 128))
+        if (DrawTextInputWithPaste("Model", ref model, 128, "realtimeModel"))
         {
             realtimeVoice.Model = model;
         }
 
         string voice = realtimeVoice.Voice;
-        if (ImGui.InputText("Voice", ref voice, 128))
+        if (DrawTextInputWithPaste("Voice", ref voice, 128, "realtimeVoice"))
         {
             realtimeVoice.Voice = voice;
         }
 
         string instructions = realtimeVoice.Instructions;
-        if (ImGui.InputTextMultiline("Instructions", ref instructions, 4096, new Vector2(-1.0f, ImGui.GetTextLineHeight() * 5.0f)))
+        if (DrawTextInputMultilineWithPaste(
+            "Instructions",
+            ref instructions,
+            4096,
+            new Vector2(-1.0f, ImGui.GetTextLineHeight() * 5.0f),
+            "realtimeInstructions"))
         {
             realtimeVoice.Instructions = instructions;
         }
@@ -1103,19 +1306,19 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         string inputTranscriptionModel = realtimeVoice.InputTranscriptionModel;
-        if (ImGui.InputText("Input transcription model", ref inputTranscriptionModel, 128))
+        if (DrawTextInputWithPaste("Input transcription model", ref inputTranscriptionModel, 128, "realtimeInputTranscriptionModel"))
         {
             realtimeVoice.InputTranscriptionModel = inputTranscriptionModel;
         }
 
         string inputTranscriptionLanguage = realtimeVoice.InputTranscriptionLanguage;
-        if (ImGui.InputText("Input transcription language", ref inputTranscriptionLanguage, 64))
+        if (DrawTextInputWithPaste("Input transcription language", ref inputTranscriptionLanguage, 64, "realtimeInputTranscriptionLanguage"))
         {
             realtimeVoice.InputTranscriptionLanguage = inputTranscriptionLanguage;
         }
 
         string inputTranscriptionPrompt = realtimeVoice.InputTranscriptionPrompt;
-        if (ImGui.InputText("Input transcription prompt", ref inputTranscriptionPrompt, 512))
+        if (DrawTextInputWithPaste("Input transcription prompt", ref inputTranscriptionPrompt, 512, "realtimeInputTranscriptionPrompt"))
         {
             realtimeVoice.InputTranscriptionPrompt = inputTranscriptionPrompt;
         }
@@ -1183,7 +1386,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             }
 
             string keywords = string.Join(", ", realtimeVoice.WakeWord.Keywords);
-            if (ImGui.InputText("Wake word keywords", ref keywords, 1024))
+            if (DrawTextInputWithPaste("Wake word keywords", ref keywords, 1024, "wakeWordKeywords"))
             {
                 realtimeVoice.WakeWord.Keywords = keywords
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -1212,7 +1415,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
             if (ImGui.TreeNode("Wake Word Capture"))
             {
+                ImGui.PushID("wakeWordCapture");
                 DrawAudioCaptureSettings(realtimeVoice.WakeWord.Capture);
+                ImGui.PopID();
                 ImGui.TreePop();
             }
 
@@ -1220,6 +1425,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("Scripts call Scene.RealtimeVoice / scene.realtime_voice for remote speech transcription, wake-word monitoring, and streamed voice replies.");
+        ImGui.PopID();
     }
 
     private static void DrawAudioCaptureSettings(GameProjectAudioCaptureSettings capture)
@@ -1321,18 +1527,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return;
         }
 
+        ImGui.PushID("inspectorPanel");
+
         ImGui.TextUnformatted("Entity");
         string entityName = entity.Name;
         string entityType = entity.Type;
         string assetPath = entity.AssetPath;
         bool textChanged = false;
-        textChanged |= ImGui.InputText("Name", ref entityName, 256);
-        textChanged |= ImGui.InputText("Type", ref entityType, 128);
-        textChanged |= ImGui.InputText("Asset", ref assetPath, 1024);
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Paste##entityAssetPath"))
+        textChanged |= DrawTextInputWithPaste("Name", ref entityName, 256, "entityName");
+        textChanged |= DrawTextInputWithPaste("Type", ref entityType, 128, "entityType");
+        if (DrawPathInput("Asset", ref assetPath, 1024, "entityAssetPath"))
         {
-            PasteClipboard(ref assetPath);
             textChanged = true;
         }
 
@@ -1424,23 +1629,15 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 script.Enabled = enabled;
             }
 
-            if (ImGui.InputText("Language", ref language, 64))
+            if (DrawTextInputWithPaste("Language", ref language, 64, "scriptLanguage"))
             {
                 script.Language = language;
             }
 
-            bool pathEdited = ImGui.InputText("Path", ref path, 512);
-            bool pathCommitted = pathEdited && ImGui.IsItemDeactivatedAfterEdit();
+            bool pathEdited = DrawPathInput("Path", ref path, 512, "scriptPath", out bool pathCommitted);
             if (pathEdited)
             {
                 script.Path = path;
-            }
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Paste##scriptPath"))
-            {
-                PasteClipboard(ref path);
-                script.Path = path;
-                pathCommitted = true;
             }
 
             if (pathCommitted)
@@ -1461,14 +1658,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             _editorGame.AddScriptToSelected("python");
         }
+
+        ImGui.PopID();
     }
 
     private void DrawSceneInspector()
     {
         GameProjectScene scene = _editorGame.Project.Scene;
+        ImGui.PushID("sceneInspector");
         ImGui.TextUnformatted("Scene");
         string sceneName = scene.Name;
-        if (ImGui.InputText("Scene name", ref sceneName, 256))
+        if (DrawTextInputWithPaste("Scene name", ref sceneName, 256, "sceneName"))
         {
             scene.Name = sceneName;
         }
@@ -1533,6 +1733,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         DrawRenderTexturesInspector(scene);
         DrawLoadingScreenInspector(scene);
         DrawSceneLoadingScriptsInspector(scene);
+        ImGui.PopID();
     }
 
     private static void EnsureCameraList(GameProjectScene scene)
@@ -1623,7 +1824,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 Vector2 viewportSize = new(camera.Viewport.Width, camera.Viewport.Height);
                 bool changed = false;
 
-                changed |= ImGui.InputText("Name", ref name, 256);
+                changed |= DrawTextInputWithPaste("Name", ref name, 256, "cameraName");
                 changed |= ImGui.Checkbox("Enabled", ref enabled);
                 changed |= ImGui.DragFloat3("Position", ref position, 0.05f);
                 changed |= ImGui.DragFloat3("Target", ref target, 0.05f);
@@ -1725,7 +1926,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             float refreshIntervalSeconds = renderTexture.RefreshIntervalSeconds;
             bool changed = false;
 
-            changed |= ImGui.InputText("Name", ref name, 256);
+            changed |= DrawTextInputWithPaste("Name", ref name, 256, "renderTextureName");
             changed |= ImGui.Checkbox("Enabled", ref enabled);
             if (cameraNames.Length > 0 && ImGui.Combo("Camera", ref cameraIndex, cameraNames, cameraNames.Length))
             {
@@ -1818,6 +2019,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return;
         }
 
+        ImGui.PushID("loadingScreen");
+
         LoadingScreenSettings loadingScreen = scene.LoadingScreen;
         Vector4 backgroundColor = loadingScreen.BackgroundColor.ToVector4();
         string backgroundImagePath = loadingScreen.BackgroundImagePath;
@@ -1825,15 +2028,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool changed = false;
 
         changed |= ImGui.ColorEdit4("Background color", ref backgroundColor);
-        if (ImGui.InputText("Background image", ref backgroundImagePath, 1024))
+        if (DrawPathInput("Background image", ref backgroundImagePath, 1024, "backgroundImagePath"))
         {
-            changed = true;
-        }
-
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Paste##loadingBackgroundImage"))
-        {
-            PasteClipboard(ref backgroundImagePath);
             changed = true;
         }
 
@@ -1893,6 +2089,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
             ImGui.TreePop();
         }
+
+        ImGui.PopID();
     }
 
     private void DrawSceneLoadingScriptsInspector(GameProjectScene scene)
@@ -1919,24 +2117,15 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 script.Enabled = enabled;
             }
 
-            if (ImGui.InputText("Language", ref language, 64))
+            if (DrawTextInputWithPaste("Language", ref language, 64, "loadingScriptLanguage"))
             {
                 script.Language = language;
             }
 
-            bool pathEdited = ImGui.InputText("Path", ref path, 512);
-            bool pathCommitted = pathEdited && ImGui.IsItemDeactivatedAfterEdit();
+            bool pathEdited = DrawPathInput("Path", ref path, 512, "loadingScriptPath", out bool pathCommitted);
             if (pathEdited)
             {
                 script.Path = path;
-            }
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Paste##loadingScriptPath"))
-            {
-                PasteClipboard(ref path);
-                script.Path = path;
-                pathCommitted = true;
             }
 
             if (pathCommitted)
@@ -1976,6 +2165,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             return;
         }
+
+        ImGui.PushID("guiInspector");
 
         if (ImGui.Button("Add Button"))
         {
@@ -2079,7 +2270,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             bool changed = false;
 
             changed |= ImGui.Checkbox("Visible", ref visible);
-            changed |= ImGui.InputText("Name", ref name, 128);
+            changed |= DrawTextInputWithPaste("Name", ref name, 128, "guiControlName");
             string[] types = ["button", "label", "checkbox", "dropdown", "textbox", "progress_bar"];
             int typeIndex = Array.FindIndex(types, item => string.Equals(item, type, StringComparison.OrdinalIgnoreCase));
             typeIndex = Math.Max(0, typeIndex);
@@ -2091,12 +2282,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
             if (string.Equals(type, "textbox", StringComparison.OrdinalIgnoreCase))
             {
-                changed |= ImGui.InputTextMultiline("Text", ref text, 8192, new Vector2(Math.Max(size.X, 180.0f), 96.0f));
+                changed |= DrawTextInputMultilineWithPaste("Text", ref text, 8192, new Vector2(Math.Max(size.X, 180.0f), 96.0f), "guiControlTextMultiline");
                 changed |= ImGui.Checkbox("Multiline", ref multiline);
             }
             else
             {
-                changed |= ImGui.InputText("Text", ref text, 512);
+                changed |= DrawTextInputWithPaste("Text", ref text, 512, "guiControlText");
             }
 
             changed |= ImGui.Checkbox("Word wrap", ref wordWrap);
@@ -2119,7 +2310,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             }
 
             changed |= DrawEntityTargetCombo("Target entity", ref targetEntity);
-            changed |= ImGui.InputText("Event name", ref eventName, 128);
+            changed |= DrawTextInputWithPaste("Event name", ref eventName, 128, "guiControlEventName");
             changed |= DrawGuiStyleInspector(control.Style);
 
             if (changed)
@@ -2154,9 +2345,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             scene.GuiControls.RemoveAt(removeIndex);
         }
+
+        ImGui.PopID();
     }
 
-    private static bool DrawDropdownItemsInspector(GuiControlSettings control, ref int selectedIndex)
+    private bool DrawDropdownItemsInspector(GuiControlSettings control, ref int selectedIndex)
     {
         bool changed = false;
         if (!ImGui.TreeNode("Dropdown Items"))
@@ -2176,7 +2369,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             ImGui.PushID($"dropdownItem{i}");
             string item = control.Items[i];
-            if (ImGui.InputText("Item", ref item, 256))
+            if (DrawTextInputWithPaste("Item", ref item, 256, "dropdownItemText"))
             {
                 control.Items[i] = item;
                 changed = true;
@@ -2349,6 +2542,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private void DrawAssetsPanel()
     {
+        ImGui.PushID("assetsPanel");
+
         ImGui.Checkbox("Copy imported files into project", ref _copyAssets);
 
         ImGui.SeparatorText("PMX");
@@ -2419,7 +2614,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             bool loop = audio.Loop;
             float volume = audio.Volume;
             bool playOnStart = audio.PlayOnStart;
-            if (ImGui.InputText("Name", ref audioName, 256))
+            if (DrawTextInputWithPaste("Name", ref audioName, 256, "audioName"))
             {
                 audio.Name = audioName;
             }
@@ -2457,25 +2652,20 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             ImGui.Separator();
             string motionName = motion.Name;
             string motionAssetPath = motion.Path;
-            if (ImGui.InputText("Motion name", ref motionName, 256))
+            if (DrawTextInputWithPaste("Motion name", ref motionName, 256, "motionName"))
             {
                 motion.Name = motionName;
             }
 
-            if (ImGui.InputText("Motion path", ref motionAssetPath, 1024))
+            if (DrawPathInput("Motion path", ref motionAssetPath, 1024, "motionAssetPath"))
             {
-                motion.Path = motionAssetPath;
-            }
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Paste##motionAssetPath"))
-            {
-                PasteClipboard(ref motionAssetPath);
                 motion.Path = motionAssetPath;
             }
 
             ImGui.PopID();
         }
+
+        ImGui.PopID();
     }
 
     private void DrawSpriteAssetList()
@@ -2498,7 +2688,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             bool visible = sprite.Visible;
             bool changed = false;
 
-            changed |= ImGui.InputText("Name", ref name, 256);
+            changed |= DrawTextInputWithPaste("Name", ref name, 256, "spriteName");
             if (DrawPathInput("Path", ref path, 1024, "spriteAssetPath"))
             {
                 changed = true;
@@ -2661,11 +2851,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Prevent darkening", ref preventDarkening);
         changed |= ImGui.ColorEdit4("Start color", ref startColor);
         changed |= ImGui.ColorEdit4("End color", ref endColor);
-        changed |= ImGui.InputText("Texture path", ref texturePath, 1024);
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Paste##particleTexturePath"))
+        if (DrawPathInput("Texture path", ref texturePath, 1024, "particleTexturePath"))
         {
-            PasteClipboard(ref texturePath);
             changed = true;
         }
         if (DrawRenderTextureCombo("Render texture", ref texturePath))
@@ -2754,11 +2941,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             float weight = layer.Weight;
             bool resetPhysics = layer.ResetPhysicsOnLoop;
             bool changed = false;
-            changed |= ImGui.InputText("Layer path", ref path, 1024);
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Paste##motionLayerPath"))
+            if (DrawPathInput("Layer path", ref path, 1024, "motionLayerPath"))
             {
-                PasteClipboard(ref path);
                 changed = true;
             }
 
@@ -2842,7 +3026,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 bool changed = false;
 
                 changed |= ImGui.Checkbox("Enabled", ref enabled);
-                changed |= ImGui.InputText("Name", ref name, 256);
+                changed |= DrawTextInputWithPaste("Name", ref name, 256, "colliderName");
                 changed |= DrawStringCombo("Shape", ref shape, ["capsule", "box"]);
                 changed |= ImGui.DragFloat3("Local position", ref position, 0.02f);
                 changed |= ImGui.DragFloat3("Local rotation", ref rotation, 0.5f);
@@ -2949,7 +3133,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             ImGui.TextDisabled("No other PMX entity can be used as relation target.");
         }
 
-        changed |= ImGui.InputText("Relation entity", ref relationEntity, 256);
+        changed |= DrawTextInputWithPaste("Relation entity", ref relationEntity, 256, "relationEntity");
         changed |= ImGui.Checkbox("Bind component transform", ref bindTransform);
         changed |= ImGui.Checkbox("Bind lighting", ref bindLighting);
 
@@ -3106,15 +3290,80 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private bool DrawPathInput(string label, ref string value, uint maxLength, string id)
     {
-        bool changed = ImGui.InputText(label, ref value, maxLength);
+        return DrawTextInputWithPaste(label, ref value, maxLength, id);
+    }
+
+    private bool DrawPathInput(string label, ref string value, uint maxLength, string id, out bool committed)
+    {
+        return DrawTextInputWithPaste(label, ref value, maxLength, id, out committed);
+    }
+
+    private bool DrawTextInputWithPaste(
+        string label,
+        ref string value,
+        uint maxLength,
+        string id,
+        ImGuiInputTextFlags flags = ImGuiInputTextFlags.None)
+    {
+        return DrawTextInputWithPaste(label, ref value, maxLength, id, out _, flags);
+    }
+
+    private bool DrawTextInputWithPaste(
+        string label,
+        ref string value,
+        uint maxLength,
+        string id,
+        out bool committed,
+        ImGuiInputTextFlags flags = ImGuiInputTextFlags.None)
+    {
+        bool changed = ImGui.InputText(WithControlId(label, id), ref value, maxLength, flags);
+        committed = changed && ImGui.IsItemDeactivatedAfterEdit();
         ImGui.SameLine();
         if (ImGui.SmallButton($"Paste##{id}"))
         {
             PasteClipboard(ref value);
             changed = true;
+            committed = true;
         }
 
         return changed;
+    }
+
+    private bool DrawTextInputMultilineWithPaste(
+        string label,
+        ref string value,
+        uint maxLength,
+        Vector2 size,
+        string id,
+        ImGuiInputTextFlags flags = ImGuiInputTextFlags.None)
+    {
+        ImGui.BeginGroup();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(label);
+        ImGui.SameLine();
+        bool changed = false;
+        if (ImGui.SmallButton($"Paste##{id}"))
+        {
+            PasteClipboard(ref value);
+            changed = true;
+        }
+        ImGui.EndGroup();
+
+        Vector2 inputSize = size;
+        if (inputSize.X < 0.0f)
+        {
+            float availableWidth = ImGui.GetContentRegionAvail().X;
+            inputSize.X = Math.Max(120.0f, availableWidth);
+        }
+
+        changed |= ImGui.InputTextMultiline($"##{id}", ref value, maxLength, inputSize, flags);
+
+        return changed;
+    }
+
+    private static string WithControlId(string label, string id)
+    {
+        return string.IsNullOrWhiteSpace(id) ? label : $"{label}##{id}";
     }
 
     private bool DrawRenderTextureCombo(string label, ref string value)
