@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Zhengyan.DigitalWife.GameProjects;
@@ -15,6 +16,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true
     };
+    private static readonly Lazy<string> WorkerScriptPath = new(EnsureWorkerScriptPath, LazyThreadSafetyMode.ExecutionAndPublication);
 
     private readonly Process _process;
 
@@ -203,8 +205,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             CreateNoWindow = true
         };
         startInfo.ArgumentList.Add("-u");
-        startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add(BuildWorkerSource());
+        startInfo.ArgumentList.Add(WorkerScriptPath.Value);
         startInfo.ArgumentList.Add(scriptPath);
         startInfo.ArgumentList.Add(saveDirectory);
 
@@ -224,6 +225,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
     private static string ResolvePythonExecutable()
     {
         return OperatingSystem.IsWindows() ? "python" : "python3";
+    }
+
+    private static string EnsureWorkerScriptPath()
+    {
+        string workerDirectory = Path.Combine(Path.GetTempPath(), "Zhengyan.DigitalWife", "python-worker");
+        Directory.CreateDirectory(workerDirectory);
+
+        string workerSource = BuildWorkerSource();
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(workerSource));
+        string hashText = Convert.ToHexString(hash[..8]).ToLowerInvariant();
+        string workerPath = Path.Combine(workerDirectory, $"runtime_worker_{hashText}.py");
+        File.WriteAllText(workerPath, workerSource, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return workerPath;
     }
 
     private static string BuildWorkerSource()
@@ -434,28 +448,28 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def apply_motion(self, path):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "apply_motion", "path": path})
 
-                    def add_motion_layer(self, path, weight=1.0):
-                        self._commands.append({"target": "entity", "entity": self.id, "action": "add_motion_layer", "path": path, "weight": weight})
+                   def add_motion_layer(self, path, weight=1.0):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "add_motion_layer", "path": path, "weight": weight})
 
-                    def set_motion_layers(self, layers):
-                        normalized_layers = []
-                        for layer in layers or []:
-                            if isinstance(layer, dict):
-                                normalized_layers.append({
-                                    "path": layer.get("path", ""),
-                                    "weight": layer.get("weight", 1.0),
-                                    "resetPhysicsOnLoop": layer.get("resetPhysicsOnLoop", None)
-                                })
-                            elif isinstance(layer, (list, tuple)) and len(layer) >= 2:
-                                normalized_layers.append({
-                                    "path": layer[0],
-                                    "weight": layer[1],
-                                    "resetPhysicsOnLoop": layer[2] if len(layer) >= 3 else None
-                                })
-                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layers", "motionLayers": normalized_layers})
+                   def set_motion_layers(self, layers):
+                       normalized_layers = []
+                       for layer in layers or []:
+                           if isinstance(layer, dict):
+                               normalized_layers.append({
+                                   "path": layer.get("path", ""),
+                                   "weight": layer.get("weight", 1.0),
+                                   "resetPhysicsOnLoop": layer.get("resetPhysicsOnLoop", None)
+                               })
+                           elif isinstance(layer, (list, tuple)) and len(layer) >= 2:
+                               normalized_layers.append({
+                                   "path": layer[0],
+                                   "weight": layer[1],
+                                   "resetPhysicsOnLoop": layer[2] if len(layer) >= 3 else None
+                               })
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layers", "motionLayers": normalized_layers})
 
-                    def set_motion_layer_weight(self, path, weight):
-                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_weight", "path": path, "weight": weight})
+                   def set_motion_layer_weight(self, path, weight):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_weight", "path": path, "weight": weight})
 
                    def set_motion_layer_reset_physics_on_loop(self, path, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_motion_layer_reset_physics_on_loop", "path": path, "flag": bool(enabled)})
@@ -1897,7 +1911,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.total_seconds = data.get("totalSeconds", 0.0)
                        self.frame_count = data.get("frameCount", 0)
 
-                class LlmClient:
+               class LlmClient:
                    def __init__(self, scene, commands):
                        self._scene = scene
                        self._commands = commands
@@ -1951,19 +1965,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                "is_final": bool(chunk.get("is_final", False))
                            }
 
-                    def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
-                        self._commands.append({
-                            "target": "llm",
-                           "action": "start_chat",
-                           "text": text,
-                           "systemPrompt": system_prompt or "",
-                           "model": model or "",
-                           "temperature": temperature,
-                           "requestId": request_id or "",
-                           "onDelta": on_delta or "",
-                            "onCompleted": on_completed or "",
-                            "onError": on_error or ""
-                        })
+               def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
+                   self._commands.append({
+                       "target": "llm",
+                       "action": "start_chat",
+                       "text": text,
+                       "systemPrompt": system_prompt or "",
+                       "model": model or "",
+                       "temperature": temperature,
+                       "requestId": request_id or "",
+                       "onDelta": on_delta or "",
+                       "onCompleted": on_completed or "",
+                       "onError": on_error or ""
+                   })
 
                class RealtimeVoiceClient:
                    def __init__(self, scene, commands):
