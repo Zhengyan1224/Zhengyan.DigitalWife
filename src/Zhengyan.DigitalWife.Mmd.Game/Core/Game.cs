@@ -27,7 +27,11 @@ public abstract class Game : IDisposable
         windowOptions.Title = Options.Title;
         windowOptions.Size = Options.WindowSize;
         windowOptions.WindowState = Options.IsFullscreen ? WindowState.Fullscreen : WindowState.Normal;
-        windowOptions.WindowBorder = Options.IsResizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        windowOptions.WindowBorder = Options.HideWindowBorder
+            ? WindowBorder.Hidden
+            : Options.IsResizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        windowOptions.TopMost = Options.IsTopMost;
+        windowOptions.TransparentFramebuffer = Options.TransparentFramebuffer;
         windowOptions.VSync = Options.VSync;
         windowOptions.Samples = Options.Samples;
         // The built-in shaders only require GLES 3.0, which is a much safer baseline on Windows/WGL.
@@ -92,7 +96,23 @@ public abstract class Game : IDisposable
     public void SetResizable(bool resizable)
     {
         Options.IsResizable = resizable;
-        _window.WindowBorder = resizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        _window.WindowBorder = Options.HideWindowBorder
+            ? WindowBorder.Hidden
+            : resizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+    }
+
+    public void SetTopMost(bool topMost)
+    {
+        Options.IsTopMost = topMost;
+        _window.TopMost = topMost;
+    }
+
+    public void SetWindowBorderHidden(bool hidden)
+    {
+        Options.HideWindowBorder = hidden;
+        _window.WindowBorder = hidden
+            ? WindowBorder.Hidden
+            : Options.IsResizable ? WindowBorder.Resizable : WindowBorder.Fixed;
     }
 
     public void Run() => _window.Run();

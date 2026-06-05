@@ -23,11 +23,34 @@ public sealed class RuntimeInput
 
     public float ScrollY => _game.Input.ScrollDelta.Y;
 
+    public string ClipboardText
+    {
+        get => TryGetClipboardText(out string text) ? text : string.Empty;
+        set => SetClipboardText(value);
+    }
+
+    public bool HasClipboardText => TryGetClipboardText(out _);
+
     public bool IsAltDown => _game.Input.IsAltDown;
 
     public bool IsControlDown => _game.Input.IsControlDown;
 
     public bool IsShiftDown => IsKeyDown("ShiftLeft") || IsKeyDown("ShiftRight");
+
+    public bool TryGetClipboardText(out string text)
+    {
+        return _game.TryGetClipboardText(out text);
+    }
+
+    public bool TrySetClipboardText(string text)
+    {
+        return _game.TrySetClipboardText(text);
+    }
+
+    public void SetClipboardText(string text)
+    {
+        _ = TrySetClipboardText(text);
+    }
 
     public bool IsMouseButtonDown(string button)
     {

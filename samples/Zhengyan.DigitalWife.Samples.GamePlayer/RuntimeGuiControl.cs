@@ -28,13 +28,13 @@ public sealed class RuntimeGuiControl
     public string Text
     {
         get => _control.Text;
-        set => _control.Text = value ?? string.Empty;
+        set => SetTextCore(value);
     }
 
     public string Value
     {
         get => Text;
-        set => Text = value;
+        set => SetTextCore(value);
     }
 
     public bool Visible
@@ -115,6 +115,39 @@ public sealed class RuntimeGuiControl
         set => _control.Multiline = value;
     }
 
+    public int CursorPosition
+    {
+        get
+        {
+            NormalizeTextSelectionState();
+            return _control.CursorPosition;
+        }
+    }
+
+    public int SelectionStart
+    {
+        get
+        {
+            NormalizeTextSelectionState();
+            return Math.Min(_control.SelectionStart, _control.SelectionEnd);
+        }
+    }
+
+    public int SelectionEnd
+    {
+        get
+        {
+            NormalizeTextSelectionState();
+            return Math.Max(_control.SelectionStart, _control.SelectionEnd);
+        }
+    }
+
+    public int SelectionLength => SelectionEnd - SelectionStart;
+
+    public bool HasSelection => SelectionLength > 0;
+
+    public string SelectedText => GetSelectedText();
+
     public void SetWordWrap(bool value)
     {
         WordWrap = value;
@@ -128,6 +161,42 @@ public sealed class RuntimeGuiControl
     public void SetValue(string value)
     {
         Value = value;
+    }
+
+    public string GetSelectedText()
+    {
+        NormalizeTextSelectionState();
+        if (_control.SelectionStart == _control.SelectionEnd)
+        {
+            return string.Empty;
+        }
+
+        string text = _control.Text ?? string.Empty;
+        int start = Math.Min(_control.SelectionStart, _control.SelectionEnd);
+        int end = Math.Max(_control.SelectionStart, _control.SelectionEnd);
+        return text[start..end];
+    }
+
+    public bool TryGetSelectedText(out string text)
+    {
+        text = GetSelectedText();
+        return text.Length > 0;
+    }
+
+    public void ReplaceSelection(string value)
+    {
+        NormalizeTextSelectionState();
+
+        string text = _control.Text ?? string.Empty;
+        string replacement = value ?? string.Empty;
+        int start = Math.Min(_control.SelectionStart, _control.SelectionEnd);
+        int end = Math.Max(_control.SelectionStart, _control.SelectionEnd);
+
+        _control.Text = text[..start] + replacement + text[end..];
+        int nextCursor = start + replacement.Length;
+        _control.CursorPosition = nextCursor;
+        _control.SelectionStart = nextCursor;
+        _control.SelectionEnd = nextCursor;
     }
 
     public IReadOnlyList<string> Items => _control.Items;
@@ -193,5 +262,19 @@ public sealed class RuntimeGuiControl
     public void Hide()
     {
         Visible = false;
+    }
+
+    private void SetTextCore(string? value)
+    {
+        _control.Text = value ?? string.Empty;
+        NormalizeTextSelectionState();
+    }
+
+    private void NormalizeTextSelectionState()
+    {
+        int length = (_control.Text ?? string.Empty).Length;
+        _control.CursorPosition = Math.Clamp(_control.CursorPosition, 0, length);
+        _control.SelectionStart = Math.Clamp(_control.SelectionStart, 0, length);
+        _control.SelectionEnd = Math.Clamp(_control.SelectionEnd, 0, length);
     }
 }

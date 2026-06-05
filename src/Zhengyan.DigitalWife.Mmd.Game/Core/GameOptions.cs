@@ -19,6 +19,12 @@ public sealed class GameOptions
 
     public bool IsResizable { get; set; } = true;
 
+    public bool IsTopMost { get; set; }
+
+    public bool TransparentFramebuffer { get; set; }
+
+    public bool HideWindowBorder { get; set; }
+
     public bool VSync { get; set; } = true;
 
     public int Samples { get; set; } = 4;

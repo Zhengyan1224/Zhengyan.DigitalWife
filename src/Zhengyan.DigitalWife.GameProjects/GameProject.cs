@@ -270,6 +270,10 @@ public sealed class GameWindowSettings
 
     public string IconPath { get; set; } = string.Empty;
 
+    public bool DesktopSpriteMode { get; set; }
+
+    public bool DesktopSpriteClickThrough { get; set; }
+
     public int Width { get; set; } = 1280;
 
     public int Height { get; set; } = 720;
@@ -555,6 +559,15 @@ public sealed class GuiControlSettings
     public List<string> Items { get; set; } = [];
 
     public int SelectedIndex { get; set; }
+
+    [JsonIgnore]
+    public int CursorPosition { get; set; }
+
+    [JsonIgnore]
+    public int SelectionStart { get; set; }
+
+    [JsonIgnore]
+    public int SelectionEnd { get; set; }
 
     public GuiControlStyleSettings Style { get; set; } = new();
 }

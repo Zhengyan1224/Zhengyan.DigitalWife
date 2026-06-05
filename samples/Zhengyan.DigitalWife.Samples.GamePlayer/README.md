@@ -172,6 +172,27 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
             entity.speak(textbox.value)
 ```
 
+文本框还会暴露 `selected_text`、`selection_start`、`selection_end`、`cursor_position`。脚本可以把选中内容写入系统剪贴板，也可以按当前选区做替换：
+
+```csharp
+RuntimeGuiControl? textbox = Scene.GetGuiControl("PromptInput");
+if (textbox?.HasSelection == true)
+{
+    Input.SetClipboardText(textbox.SelectedText);
+}
+
+textbox?.ReplaceSelection(Input.ClipboardText);
+```
+
+```python
+textbox = scene.get_gui_control("PromptInput")
+if textbox is not None and textbox.has_selection:
+    input.set_clipboard_text(textbox.selected_text)
+
+if textbox is not None:
+    textbox.replace_selection(input.clipboard_text)
+```
+
 ## 窗口、Timing 和 2D 精灵
 
 GamePlayer 会读取 `game.project.json` 的 `window` 节点并应用：

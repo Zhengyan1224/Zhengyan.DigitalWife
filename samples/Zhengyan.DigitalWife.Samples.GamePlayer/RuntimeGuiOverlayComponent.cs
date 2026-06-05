@@ -478,9 +478,19 @@ internal sealed class RuntimeGuiOverlayComponent(
         else if (type == "textbox")
         {
             string value = control.Text ?? string.Empty;
+            ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags.CallbackAlways;
             bool changed = control.Multiline
-                ? ImGui.InputTextMultiline($"##textbox{control.Id}", ref value, 8192, controlSize)
-                : ImGui.InputText($"##textbox{control.Id}", ref value, 8192);
+                ? ImGui.InputTextMultiline($"##textbox{control.Id}", ref value, 8192, controlSize, inputFlags, data =>
+                {
+                    UpdateTextBoxSelectionState(control, data.CursorPos, data.SelectionStart, data.SelectionEnd);
+                    return 0;
+                })
+                : ImGui.InputText($"##textbox{control.Id}", ref value, 8192, inputFlags, data =>
+                {
+                    UpdateTextBoxSelectionState(control, data.CursorPos, data.SelectionStart, data.SelectionEnd);
+                    return 0;
+                });
+            ClampTextBoxSelectionState(control, value);
             if (changed)
             {
                 control.Text = value;
@@ -663,6 +673,21 @@ internal sealed class RuntimeGuiOverlayComponent(
             window.Width,
             window.Height);
         return fontSize / BaseFontSize;
+    }
+
+    private static void UpdateTextBoxSelectionState(GuiControlSettings control, int cursorPosition, int selectionStart, int selectionEnd)
+    {
+        control.CursorPosition = Math.Max(0, cursorPosition);
+        control.SelectionStart = Math.Max(0, selectionStart);
+        control.SelectionEnd = Math.Max(0, selectionEnd);
+    }
+
+    private static void ClampTextBoxSelectionState(GuiControlSettings control, string text)
+    {
+        int length = (text ?? string.Empty).Length;
+        control.CursorPosition = Math.Clamp(control.CursorPosition, 0, length);
+        control.SelectionStart = Math.Clamp(control.SelectionStart, 0, length);
+        control.SelectionEnd = Math.Clamp(control.SelectionEnd, 0, length);
     }
 
     private static void DrawAlignedTextBlock(GuiControlSettings control)

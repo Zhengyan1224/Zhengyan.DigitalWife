@@ -949,6 +949,11 @@ Input.ScrollY;
 Input.IsAltDown;
 Input.IsControlDown;
 Input.IsShiftDown;
+Input.ClipboardText;
+Input.HasClipboardText;
+Input.TryGetClipboardText(out string clipboardText);
+Input.SetClipboardText("copied text");
+Input.TrySetClipboardText("copied text");
 Input.IsKeyDown("W");
 Input.IsKeyDown("Space");
 Input.IsMouseButtonDown("left");
@@ -966,10 +971,15 @@ input.scroll_y
 input.alt_down
 input.control_down
 input.shift_down
+input.clipboard_text
+input.has_clipboard_text
+input.set_clipboard_text("copied text")
 input.is_key_down("w")
 input.is_key_down("Space")
 input.is_mouse_button_down("left")
 ```
+
+`Input.ClipboardText` 会在 C# 脚本访问时读取当前原始剪贴板文本，也支持直接赋值；`input.clipboard_text` 是 Python 事件分发时附带的剪贴板快照。读取失败或当前为空时返回空字符串。C# 还可以用 `TryGetClipboardText(...)` 区分“空文本”和“不可用”，用 `SetClipboardText(...)` / `TrySetClipboardText(...)` 写回系统剪贴板；Python 使用 `input.set_clipboard_text(...)`。
 
 常用键名：
 
@@ -1777,6 +1787,11 @@ GUI 控件属性：
 | `Type` | `type` | `button`、`label`、`checkbox`、`dropdown`、`textbox`、`progress_bar`。 |
 | `Text` | `text` | 显示文本；对 `textbox` 表示当前输入内容。 |
 | `Value` | `value` | `Text` 的别名，便于读取文本框输入。 |
+| `SelectedText` | `selected_text` | 文本框当前选中的文本。 |
+| `HasSelection` | `has_selection` | 文本框当前是否存在选区。 |
+| `SelectionStart` / `SelectionEnd` | `selection_start` / `selection_end` | 文本框当前选区起止位置；无选区时两者通常等于光标位置。 |
+| `SelectionLength` | `selection_length` | 文本框当前选区长度。 |
+| `CursorPosition` | `cursor_position` | 文本框当前光标位置。 |
 | `Visible` | `visible` | 是否显示。 |
 | `X` / `Y` | `x` / `y` | 屏幕像素坐标。 |
 | `Width` / `Height` | `width` / `height` | 控件尺寸。 |
@@ -1790,6 +1805,7 @@ GUI 控件属性：
 | `Items` | `items` | 下拉框项目。 |
 | `SelectedIndex` | `selected_index` | 下拉框选中项下标。 |
 | `SelectedItem` | 无 | C# 可直接取当前选中项。 |
+| `ReplaceSelection(text)` | `replace_selection(text)` | 用文本替换当前选区；无选区时在当前光标位置插入。 |
 
 GUI 样式：
 
@@ -1920,6 +1936,8 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
 ```
 
 文本框在 GamePlayer 中使用 ImGui `InputText` / `InputTextMultiline`，输入法和键盘处理走 ImGui.NET + Silk.NET，Windows、Linux、macOS 使用同一套代码路径。Linux 发行版缺少系统 CJK 字体时，程序会优先使用内置 `Resources/Fonts/NotoSansCJKsc-Regular.otf`。
+
+文本框还会暴露 `SelectedText` / `SelectionStart` / `SelectionEnd` / `CursorPosition`。可以配合 `Input.SetClipboardText(...)` / `input.set_clipboard_text(...)` 实现脚本级复制；用 `ReplaceSelection(...)` / `replace_selection(...)` 可以按当前选区或光标位置做粘贴。
 
 样式配置在 GameEditor 中编辑，包括背景色、悬停色、按下色、文字色、边框色、边框宽度、圆角、水平对齐、垂直对齐。
 

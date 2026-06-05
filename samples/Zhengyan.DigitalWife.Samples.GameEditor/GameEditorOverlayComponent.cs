@@ -866,11 +866,26 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         int width = window.Width;
         int height = window.Height;
+        bool desktopSpriteMode = window.DesktopSpriteMode;
+        bool desktopSpriteClickThrough = window.DesktopSpriteClickThrough;
         bool fullscreen = window.Fullscreen;
         bool resizable = window.Resizable;
         string timingMode = window.TimingMode;
         bool useOpenCl = _editorGame.Project.Runtime.UseOpenCL;
         bool changed = false;
+        changed |= ImGui.Checkbox("Desktop sprite mode", ref desktopSpriteMode);
+        if (!desktopSpriteMode)
+        {
+            ImGui.BeginDisabled();
+        }
+
+        changed |= ImGui.Checkbox("Desktop sprite click-through", ref desktopSpriteClickThrough);
+
+        if (!desktopSpriteMode)
+        {
+            ImGui.EndDisabled();
+        }
+
         changed |= ImGui.DragInt("Width", ref width, 1.0f, 320, 7680);
         changed |= ImGui.DragInt("Height", ref height, 1.0f, 240, 4320);
         changed |= ImGui.Checkbox("Fullscreen", ref fullscreen);
@@ -880,9 +895,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         if (changed)
         {
+            window.DesktopSpriteMode = desktopSpriteMode;
+            window.DesktopSpriteClickThrough = desktopSpriteClickThrough;
             window.Width = Math.Max(320, width);
             window.Height = Math.Max(240, height);
-            window.Fullscreen = fullscreen;
+            window.Fullscreen = desktopSpriteMode ? false : fullscreen;
             window.Resizable = resizable;
             window.TimingMode = NormalizeChoice(timingMode, "time_synchronized", ["time_synchronized", "frame_rate_dependent"]);
             _editorGame.Project.Runtime.UseOpenCL = useOpenCl;
@@ -894,7 +911,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplyWindowSettings();
         }
 
-        ImGui.TextWrapped("GamePlayer applies these settings on project load. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews window settings in the editor.");
+        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through makes the desktop sprite ignore mouse input so clicks pass to the desktop or apps underneath. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews regular window settings in the editor.");
         ImGui.PopID();
     }
 

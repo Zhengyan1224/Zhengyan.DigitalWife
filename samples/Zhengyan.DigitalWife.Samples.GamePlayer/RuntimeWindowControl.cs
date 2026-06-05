@@ -60,8 +60,8 @@ public sealed class RuntimeWindowControl
 
     public void SetFullscreen(bool fullscreen)
     {
-        _settings.Fullscreen = fullscreen;
-        _game.SetFullscreen(fullscreen);
+        _settings.Fullscreen = _settings.DesktopSpriteMode ? false : fullscreen;
+        _game.SetFullscreen(_settings.Fullscreen);
     }
 
     public void SetResizable(bool resizable)

@@ -2359,6 +2359,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.multiline = bool(data.get("multiline", False))
                        self.items = data.get("items", [])
                        self.selected_index = data.get("selectedIndex", 0)
+                       self.cursor_position = int(data.get("cursorPosition", 0))
+                       self.selection_start = int(data.get("selectionStart", self.cursor_position))
+                       self.selection_end = int(data.get("selectionEnd", self.cursor_position))
+                       self.selection_length = int(data.get("selectionLength", max(0, self.selection_end - self.selection_start)))
+                       self.selected_text = str(data.get("selectedText", "") or "")
+                       self.has_selection = bool(data.get("hasSelection", False))
                        self._commands = commands
 
                    def set_position(self, x, y):
@@ -2411,8 +2417,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_selected_index(self, index):
                        self._commands.append({"target": "gui", "control": self.id, "action": "set_selected_index", "index": int(index)})
 
+                   def replace_selection(self, text):
+                       self._commands.append({"target": "gui", "control": self.id, "action": "replace_selection", "text": "" if text is None else str(text)})
+
                class Input:
-                   def __init__(self, data):
+                   def __init__(self, data, commands):
                        self._keys = set()
                        for key in data.get("keysDown", []):
                            value = str(key)
@@ -2428,12 +2437,21 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.alt_down = bool(data.get("altDown", False))
                        self.control_down = bool(data.get("controlDown", False))
                        self.shift_down = bool(data.get("shiftDown", False))
+                       self.clipboard_text = str(data.get("clipboardText", "") or "")
+                       self.has_clipboard_text = bool(data.get("hasClipboardText", False))
+                       self._commands = commands
 
                    def is_key_down(self, key):
                        return str(key) in self._keys or str(key).lower() in self._keys
 
                    def is_mouse_button_down(self, button):
                        return str(button).lower() in self._mouse_buttons
+
+                   def set_clipboard_text(self, text):
+                       value = "" if text is None else str(text)
+                       self.clipboard_text = value
+                       self.has_clipboard_text = len(value) > 0
+                       self._commands.append({"target": "input", "action": "set_clipboard_text", "text": value})
 
                class Audio:
                    def __init__(self, commands):
@@ -2460,7 +2478,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        commands = []
                        entity = Entity(ctx.get("entity", {}), commands)
                        scene = Scene(ctx.get("scene", {}), commands)
-                       input = Input(ctx.get("input", {}))
+                       input = Input(ctx.get("input", {}), commands)
                        audio = Audio(commands)
                        event = ctx.get("event", "")
                        if event == "start" and hasattr(module, "start"):
@@ -2565,6 +2583,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             if (string.Equals(command.Target, "gui", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyGuiCommand(command, scene);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "input", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyInputCommand(command, input);
                 continue;
             }
 
@@ -3146,6 +3170,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_selected_index" when command.Index.HasValue:
                 control.SelectedIndex = command.Index.Value;
+                break;
+            case "replace_selection" when command.Text is not null:
+                control.ReplaceSelection(command.Text);
+                break;
+        }
+    }
+
+    private static void ApplyInputCommand(PythonCommand command, RuntimeInput input)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "set_clipboard_text" when command.Text is not null:
+                input.SetClipboardText(command.Text);
                 break;
         }
     }
@@ -4324,6 +4361,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public int SelectedIndex { get; set; }
 
+        public int CursorPosition { get; set; }
+
+        public int SelectionStart { get; set; }
+
+        public int SelectionEnd { get; set; }
+
+        public int SelectionLength { get; set; }
+
+        public string SelectedText { get; set; } = string.Empty;
+
+        public bool HasSelection { get; set; }
+
         public static PythonGuiControl FromRuntime(RuntimeGuiControl control)
         {
             return new PythonGuiControl
@@ -4345,7 +4394,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 WordWrap = control.WordWrap,
                 Multiline = control.Multiline,
                 Items = control.Items.ToArray(),
-                SelectedIndex = control.SelectedIndex
+                SelectedIndex = control.SelectedIndex,
+                CursorPosition = control.CursorPosition,
+                SelectionStart = control.SelectionStart,
+                SelectionEnd = control.SelectionEnd,
+                SelectionLength = control.SelectionLength,
+                SelectedText = control.SelectedText,
+                HasSelection = control.HasSelection
             };
         }
     }
@@ -4387,8 +4442,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool ShiftDown { get; set; }
 
+        public string ClipboardText { get; set; } = string.Empty;
+
+        public bool HasClipboardText { get; set; }
+
         public static PythonInput FromRuntime(RuntimeInput input)
         {
+            string clipboardText = input.ClipboardText;
             return new PythonInput
             {
                 KeysDown = ProbedKeys.Where(input.IsKeyDown).ToArray(),
@@ -4401,7 +4461,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 ScrollY = input.ScrollY,
                 AltDown = input.IsAltDown,
                 ControlDown = input.IsControlDown,
-                ShiftDown = input.IsShiftDown
+                ShiftDown = input.IsShiftDown,
+                ClipboardText = clipboardText,
+                HasClipboardText = clipboardText.Length > 0
             };
         }
     }

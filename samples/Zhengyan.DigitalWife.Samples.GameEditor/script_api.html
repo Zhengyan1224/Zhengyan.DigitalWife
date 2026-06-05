@@ -539,6 +539,7 @@ if portrait is not None:
           <tr><td><code>MouseDeltaX</code> / <code>MouseDeltaY</code></td><td><code>mouse_delta_x</code> / <code>mouse_delta_y</code></td><td>鼠标位移。</td></tr>
           <tr><td><code>ScrollX</code> / <code>ScrollY</code></td><td><code>scroll_x</code> / <code>scroll_y</code></td><td>滚轮。</td></tr>
           <tr><td><code>IsAltDown</code> / <code>IsControlDown</code> / <code>IsShiftDown</code></td><td><code>alt_down</code> / <code>control_down</code> / <code>shift_down</code></td><td>修饰键。</td></tr>
+          <tr><td><code>ClipboardText</code> / <code>HasClipboardText</code> / <code>TryGetClipboardText(out text)</code> / <code>SetClipboardText(text)</code></td><td><code>clipboard_text</code> / <code>has_clipboard_text</code> / <code>set_clipboard_text(text)</code></td><td>C# 访问时读取当前原始剪贴板文本，也支持赋值；Python 为事件分发时的快照。为空或不可用时返回空字符串，C# 可用 <code>TryGetClipboardText</code> / <code>TrySetClipboardText</code> 区分成功与否。</td></tr>
           <tr><td><code>IsKeyDown("W")</code></td><td><code>is_key_down("w")</code></td><td>按键是否按住。</td></tr>
           <tr><td><code>IsMouseButtonDown("left")</code></td><td><code>is_mouse_button_down("left")</code></td><td>鼠标按钮是否按住。</td></tr>
         </table>
@@ -625,12 +626,14 @@ scene.flush()</code></pre>
           <tr><th>C#</th><th>Python</th><th>说明</th></tr>
           <tr><td><code>Scene.GetGuiControl(id)</code></td><td><code>scene.get_gui_control(id)</code></td><td>按 Id 或 Name 查找控件。</td></tr>
           <tr><td><code>Text</code> / <code>Value</code></td><td><code>text</code> / <code>value</code></td><td>显示文本或文本框输入。</td></tr>
+          <tr><td><code>SelectedText</code> / <code>SelectionStart</code> / <code>SelectionEnd</code> / <code>CursorPosition</code></td><td><code>selected_text</code> / <code>selection_start</code> / <code>selection_end</code> / <code>cursor_position</code></td><td>文本框当前选区和光标信息。</td></tr>
           <tr><td><code>SetPosition</code> / <code>SetSize</code></td><td><code>set_position</code> / <code>set_size</code></td><td>位置和尺寸。</td></tr>
           <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
           <tr><td><code>GuiEventName == "pressed"/"released"</code></td><td><code>event_name == "pressed"/"released"</code></td><td>按钮按下和松开事件，适合 push-to-talk。</td></tr>
           <tr><td><code>SetChecked</code></td><td><code>set_checked</code></td><td>复选框。</td></tr>
           <tr><td><code>SetProgress</code></td><td><code>set_progress</code></td><td>进度条。</td></tr>
           <tr><td><code>SetItems</code> / <code>SetSelectedIndex</code></td><td><code>set_items</code> / <code>set_selected_index</code></td><td>下拉框。</td></tr>
+          <tr><td><code>ReplaceSelection(text)</code></td><td><code>replace_selection(text)</code></td><td>用文本替换当前选区；无选区时在当前光标位置插入。</td></tr>
           <tr><td><code>SetLayoutMode</code> / <code>SetFontSize</code></td><td><code>set_layout_mode</code> / <code>set_font_size</code></td><td>布局和字体。</td></tr>
           <tr><td><code>SetWordWrap</code> / <code>SetMultiline</code></td><td><code>set_word_wrap</code> / <code>set_multiline</code></td><td>换行和多行文本框。</td></tr>
         </table>

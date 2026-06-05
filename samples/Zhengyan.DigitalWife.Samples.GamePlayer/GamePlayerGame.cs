@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Numerics;
+using ImGuiNET;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Audio;
@@ -56,17 +58,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private bool _wasLeftMouseDown;
 
     public GamePlayerGame(string projectDirectory)
-        : base(new GameOptions
-        {
-            Title = "Zhengyan.DigitalWife Game Player",
-            WindowSize = new Silk.NET.Maths.Vector2D<int>(1280, 720),
-            VSync = true,
-            Samples = 4,
-            UseOpenCL = false,
-            EnableAudio = true,
-            ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
-            AnimationTimingMode = AnimationTimingMode.TimeSynchronized
-        })
+        : base(CreateInitialOptions(projectDirectory))
     {
         _projectDirectory = projectDirectory;
         _scriptHost = new ScriptHost(projectDirectory);
@@ -92,6 +84,50 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         string iconPath = Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.png");
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
+    }
+
+    private static GameOptions CreateInitialOptions(string projectDirectory)
+    {
+        GameOptions options = new()
+        {
+            Title = "Zhengyan.DigitalWife Game Player",
+            WindowSize = new Silk.NET.Maths.Vector2D<int>(1280, 720),
+            VSync = true,
+            Samples = 4,
+            UseOpenCL = false,
+            EnableAudio = true,
+            ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
+            AnimationTimingMode = AnimationTimingMode.TimeSynchronized
+        };
+
+        try
+        {
+            string projectPath = Path.Combine(projectDirectory, GameProjectStore.ProjectFileName);
+            if (!File.Exists(projectPath))
+            {
+                return options;
+            }
+
+            GameProject project = GameProjectStore.Load(projectDirectory);
+            options.Title = string.IsNullOrWhiteSpace(project.Window.Title) ? options.Title : project.Window.Title;
+            options.WindowSize = new Silk.NET.Maths.Vector2D<int>(
+                Math.Max(320, project.Window.Width),
+                Math.Max(240, project.Window.Height));
+            options.IsFullscreen = project.Window.DesktopSpriteMode ? false : project.Window.Fullscreen;
+            options.IsResizable = project.Window.Resizable;
+            options.IsTopMost = project.Window.DesktopSpriteMode;
+            options.HideWindowBorder = project.Window.DesktopSpriteMode;
+            options.TransparentFramebuffer = project.Window.DesktopSpriteMode;
+            if (project.Window.DesktopSpriteMode)
+            {
+                options.ClearColor = new Vector4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
+        }
+        catch
+        {
+        }
+
+        return options;
     }
 
     protected override void LoadContent()
@@ -572,6 +608,140 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _pendingScenePath = scenePath;
     }
 
+    internal bool TryGetClipboardText(out string text)
+    {
+        text = string.Empty;
+
+        try
+        {
+            string? imguiClipboard = ImGui.GetClipboardText();
+            if (!string.IsNullOrEmpty(imguiClipboard))
+            {
+                text = imguiClipboard;
+                return true;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (Input.Context.Keyboards.Count > 0)
+            {
+                string? keyboardClipboard = Input.Context.Keyboards[0].ClipboardText;
+                if (!string.IsNullOrEmpty(keyboardClipboard))
+                {
+                    text = keyboardClipboard;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            object windowObject = Window;
+            Type windowType = windowObject.GetType();
+
+            string[] propertyNames = ["ClipboardText", "ClipboardString", "Clipboard"];
+            foreach (string propertyName in propertyNames)
+            {
+                PropertyInfo? property = windowType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+                if (property?.CanRead != true || property.PropertyType != typeof(string))
+                {
+                    continue;
+                }
+
+                string? clipboard = (string?)property.GetValue(windowObject);
+                if (!string.IsNullOrEmpty(clipboard))
+                {
+                    text = clipboard;
+                    return true;
+                }
+            }
+
+            MethodInfo? method = windowType.GetMethod("GetClipboardText", BindingFlags.Public | BindingFlags.Instance);
+            if (method is not null && method.ReturnType == typeof(string) && method.GetParameters().Length == 0)
+            {
+                string? clipboard = (string?)method.Invoke(windowObject, null);
+                if (!string.IsNullOrEmpty(clipboard))
+                {
+                    text = clipboard;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    internal bool TrySetClipboardText(string text)
+    {
+        string clipboardText = text ?? string.Empty;
+        bool success = false;
+
+        try
+        {
+            ImGui.SetClipboardText(clipboardText);
+            success = true;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (Input.Context.Keyboards.Count > 0)
+            {
+                Input.Context.Keyboards[0].ClipboardText = clipboardText;
+                success = true;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            object windowObject = Window;
+            Type windowType = windowObject.GetType();
+
+            string[] propertyNames = ["ClipboardText", "ClipboardString", "Clipboard"];
+            foreach (string propertyName in propertyNames)
+            {
+                PropertyInfo? property = windowType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+                if (property?.CanWrite == true && property.PropertyType == typeof(string))
+                {
+                    property.SetValue(windowObject, clipboardText);
+                    success = true;
+                }
+            }
+
+            MethodInfo? method = windowType.GetMethod(
+                "SetClipboardText",
+                BindingFlags.Public | BindingFlags.Instance,
+                binder: null,
+                types: [typeof(string)],
+                modifiers: null);
+            if (method is not null)
+            {
+                _ = method.Invoke(windowObject, [clipboardText]);
+                success = true;
+            }
+        }
+        catch
+        {
+        }
+
+        return success;
+    }
+
     private void ApplyWindowSettings()
     {
         Title = ResolveWindowTitle();
@@ -579,12 +749,21 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         AnimationTimingMode = RuntimeWindowControl.ToAnimationTimingMode(Project.Window.TimingMode);
         SetWindowSize(Project.Window.Width, Project.Window.Height);
         SetResizable(Project.Window.Resizable);
-        SetFullscreen(Project.Window.Fullscreen);
+        ApplyDesktopSpriteWindowSettings();
 
         string iconPath = string.IsNullOrWhiteSpace(Project.Window.IconPath)
             ? Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.png")
             : ResolveProjectPath(Project.Window.IconPath);
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
+    }
+
+    private void ApplyDesktopSpriteWindowSettings()
+    {
+        bool desktopSpriteMode = Project.Window.DesktopSpriteMode;
+        SetFullscreen(desktopSpriteMode ? false : Project.Window.Fullscreen);
+        SetTopMost(desktopSpriteMode);
+        SetWindowBorderHidden(desktopSpriteMode);
+        DesktopSpritePlatform.ApplyClickThrough(Window, desktopSpriteMode && Project.Window.DesktopSpriteClickThrough);
     }
 
     internal void ApplyRuntimeSettings()
@@ -1506,7 +1685,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private void ApplySceneSettings()
     {
         LightingSettings lighting = Project.Scene.Lighting;
-        Options.ClearColor = lighting.ClearColor.ToVector4();
+        Options.ClearColor = Project.Window.DesktopSpriteMode
+            ? new Vector4(0.0f, 0.0f, 0.0f, 0.0f)
+            : lighting.ClearColor.ToVector4();
         if (GraphicsDevice is not null)
         {
             GraphicsDevice.ClearColor = Options.ClearColor;
@@ -1518,7 +1699,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private void ApplySkyboxSettings()
     {
         SkyboxSettings skybox = Project.Scene.Skybox;
-        if (!skybox.Enabled)
+        if (!skybox.Enabled || Project.Window.DesktopSpriteMode)
         {
             if (_skybox is not null)
             {
