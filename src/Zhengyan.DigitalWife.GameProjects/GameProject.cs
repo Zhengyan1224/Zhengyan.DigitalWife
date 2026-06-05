@@ -567,6 +567,10 @@ public sealed class SpriteSettings
 
     public string Path { get; set; } = string.Empty;
 
+    public string LayoutMode { get; set; } = "absolute";
+
+    public string TargetEntity { get; set; } = string.Empty;
+
     public float X { get; set; } = 0.0f;
 
     public float Y { get; set; } = 0.0f;

@@ -196,8 +196,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 continue;
             }
 
-            Vector2 min = viewportMin + new Vector2(sprite.X, sprite.Y);
-            Vector2 max = min + new Vector2(Math.Max(sprite.Width, 1.0f), Math.Max(sprite.Height, 1.0f));
+            LayoutRect rect = ResolveSpriteRect(sprite, viewportSize);
+            Vector2 min = viewportMin + new Vector2(rect.X, rect.Y);
+            Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
             AddSpriteImage(drawList, textureId, min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
@@ -442,6 +443,16 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             control.Y,
             control.Width,
             control.Height,
+            actualSize.X,
+            actualSize.Y,
+            _editorGame.Project.Window.Width,
+            _editorGame.Project.Window.Height);
+    }
+
+    private LayoutRect ResolveSpriteRect(SpriteSettings sprite, Vector2 actualSize)
+    {
+        return SpriteLayoutResolver.Resolve(
+            sprite,
             actualSize.X,
             actualSize.Y,
             _editorGame.Project.Window.Width,
@@ -2686,6 +2697,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
             string name = sprite.Name;
             string path = sprite.Path;
+            string layoutMode = sprite.LayoutMode;
+            string targetEntity = sprite.TargetEntity;
             Vector2 position = new(sprite.X, sprite.Y);
             Vector2 size = new(sprite.Width, sprite.Height);
             float rotation = sprite.RotationDegrees;
@@ -2704,17 +2717,21 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 changed = true;
             }
 
+            changed |= DrawStringCombo("Layout mode", ref layoutMode, ["absolute", "relative"]);
             changed |= ImGui.DragFloat2("Position", ref position, 1.0f);
             changed |= ImGui.DragFloat2("Size", ref size, 1.0f, 1.0f, 4096.0f);
             changed |= ImGui.DragFloat("Rotation", ref rotation, 1.0f, -360.0f, 360.0f);
             changed |= ImGui.SliderFloat("Opacity", ref opacity, 0.0f, 1.0f);
             changed |= ImGui.DragInt("Draw order", ref drawOrder, 1.0f);
             changed |= ImGui.Checkbox("Visible", ref visible);
+            changed |= DrawEntityTargetCombo("Target entity", ref targetEntity);
 
             if (changed)
             {
                 sprite.Name = name;
                 sprite.Path = path;
+                sprite.LayoutMode = LayoutResolver.NormalizeLayoutMode(layoutMode);
+                sprite.TargetEntity = targetEntity;
                 sprite.X = position.X;
                 sprite.Y = position.Y;
                 sprite.Width = Math.Max(1.0f, size.X);
@@ -2724,6 +2741,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 sprite.DrawOrder = drawOrder;
                 sprite.Visible = visible;
             }
+
+            ImGui.TextWrapped("If Target entity is set, GamePlayer will dispatch sprite pointer events like entered / exited / pressed / released / clicked to that entity's scripts.");
 
             if (ImGui.SmallButton("Remove Sprite"))
             {

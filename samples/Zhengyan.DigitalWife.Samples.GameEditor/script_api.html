@@ -343,6 +343,7 @@
               <tr><td><code>DeltaSeconds</code></td><td>当前帧间隔秒数。</td></tr>
               <tr><td><code>IsStart</code> / <code>IsUpdate</code></td><td>启动和每帧更新事件。</td></tr>
               <tr><td><code>IsGuiEvent</code></td><td>GUI 事件，配合 <code>GuiControlId</code>、<code>GuiControlName</code>、<code>GuiEventName</code>。</td></tr>
+              <tr><td><code>IsSpriteEvent</code></td><td>Sprite 指针事件，配合 <code>SpriteId</code>、<code>SpriteName</code>、<code>SpriteEventName</code>。</td></tr>
               <tr><td><code>IsLoadingEvent</code></td><td>场景加载脚本事件，配合 <code>LoadingEventName</code>、<code>LoadingProgress</code>、<code>LoadingMessage</code>。</td></tr>
               <tr><td><code>IsSpeechEvent</code></td><td>TTS 完成回调，配合 <code>SpeechCallbackName</code>。</td></tr>
               <tr><td><code>IsLlmEvent</code></td><td>LLM 后台回调，配合 <code>LlmCallbackName</code>、<code>LlmText</code>、<code>LlmDelta</code>、<code>LlmError</code>。</td></tr>
@@ -358,6 +359,7 @@
               <tr><td><code>start(entity, scene, input, audio)</code></td><td>实体脚本启动。</td></tr>
               <tr><td><code>update(entity, scene, input, audio, delta_seconds)</code></td><td>每帧更新。</td></tr>
               <tr><td><code>gui_event(entity, scene, input, audio, control_id, control_name, event_name)</code></td><td>GUI 控件事件。</td></tr>
+              <tr><td><code>sprite_event(entity, scene, input, audio, sprite_id, sprite_name, event_name)</code></td><td>Sprite 指针事件。</td></tr>
               <tr><td><code>loading_started/progress/completed(...)</code></td><td>场景加载入口脚本事件。</td></tr>
               <tr><td><code>speech_completed(entity, scene, input, audio, callback_name)</code></td><td>TTS 完成回调。</td></tr>
               <tr><td><code>llm_event(entity, scene, input, audio, event)</code></td><td>LLM 通用回调；具名回调函数优先。</td></tr>
@@ -391,6 +393,38 @@
           <tr><td><code>Scene.RenderTexture(name)</code></td><td><code>scene.render_texture(name)</code></td><td>返回 <code>rt:name</code> 引用。</td></tr>
           <tr><td>无</td><td><code>scene.flush()</code></td><td>Python 立即提交当前已累计命令。</td></tr>
         </table>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>LayoutMode</code> / <code>SetLayoutMode</code></td><td><code>layout_mode</code> / <code>set_layout_mode</code></td><td><code>absolute</code> 或 <code>relative</code>。相对布局时位置和尺寸会按项目窗口参考分辨率缩放。</td></tr>
+          <tr><td><code>GetScreenRect()</code> / <code>ContainsPoint(x, y)</code> / <code>ContainsMouse(Input)</code></td><td><code>contains_point(x, y)</code> / <code>contains_mouse(input)</code></td><td>屏幕矩形与命中检测，已考虑相对/绝对布局和旋转。</td></tr>
+        </table>
+        <pre><code class="language-csharp">RuntimeSpriteControl? portrait = Scene.GetSprite("Portrait");
+if (portrait is not null)
+{
+    portrait.SetPosition(24, 420);
+    portrait.SetSize(160, 160);
+    portrait.SetLayoutMode("relative");
+    portrait.Opacity = 0.9f;
+    portrait.Texture = "assets/textures/portrait.png";
+    portrait.Show();
+
+    if (portrait.ContainsMouse(Input) && Input.IsMouseButtonDown("left"))
+    {
+        Console.WriteLine("Portrait clicked.");
+    }
+}</code></pre>
+        <pre><code class="language-python">portrait = scene.get_sprite("Portrait")
+if portrait is not None:
+    portrait.set_position(24, 420)
+    portrait.set_size(160, 160)
+    portrait.set_layout_mode("relative")
+    portrait.set_opacity(0.9)
+    portrait.set_texture("assets/textures/portrait.png")
+    portrait.show()
+
+    if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
+        print("Portrait clicked")</code></pre>
+        <p class="note"><code>relative</code> 模式下 Sprite 仍然使用同一组 <code>X / Y / Width / Height</code> 字段，只是会像 GUI 一样按项目窗口参考分辨率缩放，不额外引入第二套尺寸属性。</p>
       </section>
 
       <section id="entity" data-search>
@@ -412,6 +446,38 @@
           <tr><td><code>CheckCollision</code> / <code>DistanceToCollider</code></td><td><code>check_collision</code> / <code>distance_to_collider</code></td><td>轻量碰撞检测。</td></tr>
           <tr><td><code>Raycast</code></td><td><code>raycast</code></td><td>射线检测当前实体 Collider。</td></tr>
         </table>
+        <table>
+          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+          <tr><td><code>LayoutMode</code> / <code>SetLayoutMode</code></td><td><code>layout_mode</code> / <code>set_layout_mode</code></td><td><code>absolute</code> 或 <code>relative</code>。相对布局时位置和尺寸会按项目窗口参考分辨率缩放。</td></tr>
+          <tr><td><code>GetScreenRect()</code> / <code>ContainsPoint(x, y)</code> / <code>ContainsMouse(Input)</code></td><td><code>contains_point(x, y)</code> / <code>contains_mouse(input)</code></td><td>屏幕矩形与命中检测，已考虑相对/绝对布局和旋转。</td></tr>
+        </table>
+        <pre><code class="language-csharp">RuntimeSpriteControl? portrait = Scene.GetSprite("Portrait");
+if (portrait is not null)
+{
+    portrait.SetPosition(24, 420);
+    portrait.SetSize(160, 160);
+    portrait.SetLayoutMode("relative");
+    portrait.Opacity = 0.9f;
+    portrait.Texture = "assets/textures/portrait.png";
+    portrait.Show();
+
+    if (portrait.ContainsMouse(Input) && Input.IsMouseButtonDown("left"))
+    {
+        Console.WriteLine("Portrait clicked.");
+    }
+}</code></pre>
+        <pre><code class="language-python">portrait = scene.get_sprite("Portrait")
+if portrait is not None:
+    portrait.set_position(24, 420)
+    portrait.set_size(160, 160)
+    portrait.set_layout_mode("relative")
+    portrait.set_opacity(0.9)
+    portrait.set_texture("assets/textures/portrait.png")
+    portrait.show()
+
+    if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
+        print("Portrait clicked")</code></pre>
+        <p class="note"><code>relative</code> 模式下 Sprite 仍然使用同一组 <code>X / Y / Width / Height</code> 字段，只是会像 GUI 一样按项目窗口参考分辨率缩放，不额外引入第二套尺寸属性。</p>
       </section>
 
       <section id="pmx" data-search>
@@ -581,6 +647,40 @@ scene.flush()</code></pre>
           <tr><td><code>Opacity</code></td><td><code>set_opacity</code></td><td>透明度。</td></tr>
           <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
         </table>
+      <table>
+        <tr><th>C#</th><th>Python</th><th>说明</th></tr>
+        <tr><td><code>LayoutMode</code> / <code>SetLayoutMode</code></td><td><code>layout_mode</code> / <code>set_layout_mode</code></td><td><code>absolute</code> 或 <code>relative</code>。相对布局时位置和尺寸会按项目窗口参考分辨率缩放。</td></tr>
+        <tr><td><code>GetScreenRect()</code> / <code>ContainsPoint(x, y)</code> / <code>ContainsMouse(Input)</code></td><td><code>contains_point(x, y)</code> / <code>contains_mouse(input)</code></td><td>屏幕矩形与命中检测，已考虑相对/绝对布局和旋转。</td></tr>
+      </table>
+      <pre><code class="language-csharp">RuntimeSpriteControl? portrait = Scene.GetSprite("Portrait");
+if (portrait is not null)
+{
+    portrait.SetPosition(24, 420);
+    portrait.SetSize(160, 160);
+    portrait.SetLayoutMode("relative");
+    portrait.Opacity = 0.9f;
+    portrait.Texture = "assets/textures/portrait.png";
+    portrait.Show();
+
+    if (portrait.ContainsMouse(Input) && Input.IsMouseButtonDown("left"))
+    {
+        Console.WriteLine("Portrait clicked.");
+    }
+}</code></pre>
+      <pre><code class="language-python">portrait = scene.get_sprite("Portrait")
+if portrait is not None:
+    portrait.set_position(24, 420)
+    portrait.set_size(160, 160)
+    portrait.set_layout_mode("relative")
+    portrait.set_opacity(0.9)
+    portrait.set_texture("assets/textures/portrait.png")
+    portrait.show()
+
+    if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
+        print("Portrait clicked")</code></pre>
+      <p class="note"><code>relative</code> 模式下 Sprite 仍然使用同一组 <code>X / Y / Width / Height</code> 字段，只是会像 GUI 一样按项目窗口参考分辨率缩放，不额外引入第二套尺寸属性。</p>
+      <p class="note">如果在 GameEditor 里给某个 Sprite 配置了 <code>Target entity</code>，GamePlayer 会自动把它的 <code>entered</code>、<code>exited</code>、<code>pressed</code>、<code>released</code>、<code>clicked</code> 指针事件派发到目标实体脚本。</p>
+
       </section>
 
       <section id="window-runtime" data-search>

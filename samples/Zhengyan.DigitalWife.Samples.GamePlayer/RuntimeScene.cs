@@ -63,7 +63,7 @@ public sealed class RuntimeScene
 
     public IEnumerable<RuntimeGuiControl> GuiControls => _scene.GuiControls.Select(control => new RuntimeGuiControl(control));
 
-    public IEnumerable<RuntimeSpriteControl> Sprites => _scene.Sprites.Select(sprite => new RuntimeSpriteControl(sprite));
+    public IEnumerable<RuntimeSpriteControl> Sprites => _scene.Sprites.Select(sprite => new RuntimeSpriteControl(sprite, _window));
 
     public RuntimeWindowControl Window => _window;
 
@@ -134,7 +134,7 @@ public sealed class RuntimeScene
         SpriteSettings? sprite = _scene.Sprites.FirstOrDefault(item =>
             string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
             || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
-        return sprite is null ? null : new RuntimeSpriteControl(sprite);
+        return sprite is null ? null : new RuntimeSpriteControl(sprite, _window);
     }
 
     public void LoadScene(string scenePath)

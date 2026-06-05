@@ -24,6 +24,10 @@ public sealed class RuntimeWindowControl
 
     public int Height => _settings.Height;
 
+    public int ActualWidth => _game.Window.Size.X;
+
+    public int ActualHeight => _game.Window.Size.Y;
+
     public bool Fullscreen
     {
         get => _settings.Fullscreen;

@@ -51,6 +51,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private bool _loadingReadyToFinish;
     private bool _isLoading;
     private bool _renderedSceneThisFrame;
+    private string _hoveredSpriteId = string.Empty;
+    private string _pressedSpriteId = string.Empty;
+    private bool _wasLeftMouseDown;
 
     public GamePlayerGame(string projectDirectory)
         : base(new GameOptions
@@ -155,6 +158,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             return;
         }
+
+        UpdateSpritePointerEvents();
 
         foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, string name) in _scriptTargets.ToArray())
         {
@@ -640,6 +645,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         _scriptTargets.Clear();
+        _hoveredSpriteId = string.Empty;
+        _pressedSpriteId = string.Empty;
+        _wasLeftMouseDown = false;
         _runtimeVoice?.ClearScene();
         _runtimeAsr?.ClearScene();
         _runtimeRealtimeVoice?.ClearScene();
@@ -1094,6 +1102,131 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         if (!dispatched)
         {
             Console.Error.WriteLine($"GUI event '{eventName}' from '{control.Name}' found target '{target.Name}', but no script handled it.");
+        }
+    }
+
+    private void UpdateSpritePointerEvents()
+    {
+        if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
+        {
+            return;
+        }
+
+        SpriteSettings? hoveredSprite = ResolveHoveredSprite();
+        string hoveredSpriteId = hoveredSprite?.Id ?? string.Empty;
+
+        if (!string.Equals(_hoveredSpriteId, hoveredSpriteId, StringComparison.OrdinalIgnoreCase))
+        {
+            if (TryGetSpriteById(_hoveredSpriteId, out SpriteSettings? previousHovered))
+            {
+                DispatchSpriteEvent(previousHovered!, "exited");
+            }
+
+            if (hoveredSprite is not null)
+            {
+                DispatchSpriteEvent(hoveredSprite, "entered");
+            }
+
+            _hoveredSpriteId = hoveredSpriteId;
+        }
+
+        bool isLeftMouseDown = _runtimeInput.IsMouseButtonDown("left");
+        if (!_wasLeftMouseDown && isLeftMouseDown && hoveredSprite is not null)
+        {
+            _pressedSpriteId = hoveredSprite.Id;
+            DispatchSpriteEvent(hoveredSprite, "pressed");
+        }
+        else if (_wasLeftMouseDown && !isLeftMouseDown)
+        {
+            if (TryGetSpriteById(_pressedSpriteId, out SpriteSettings? pressedSprite))
+            {
+                DispatchSpriteEvent(pressedSprite!, "released");
+                if (hoveredSprite is not null && string.Equals(hoveredSprite.Id, _pressedSpriteId, StringComparison.OrdinalIgnoreCase))
+                {
+                    DispatchSpriteEvent(hoveredSprite, "clicked");
+                }
+            }
+
+            _pressedSpriteId = string.Empty;
+        }
+
+        _wasLeftMouseDown = isLeftMouseDown;
+    }
+
+    private SpriteSettings? ResolveHoveredSprite()
+    {
+        if (_runtimeInput is null)
+        {
+            return null;
+        }
+
+        int actualWidth = Math.Max(Window.Size.X, 1);
+        int actualHeight = Math.Max(Window.Size.Y, 1);
+        int referenceWidth = Math.Max(Project.Window.Width, 1);
+        int referenceHeight = Math.Max(Project.Window.Height, 1);
+
+        return Project.Scene.Sprites
+            .Where(sprite =>
+                sprite.Visible
+                && !string.IsNullOrWhiteSpace(sprite.Path)
+                && !string.IsNullOrWhiteSpace(sprite.TargetEntity)
+                && SpriteLayoutResolver.ContainsPoint(
+                    sprite,
+                    _runtimeInput.MouseX,
+                    _runtimeInput.MouseY,
+                    actualWidth,
+                    actualHeight,
+                    referenceWidth,
+                    referenceHeight))
+            .OrderByDescending(sprite => sprite.DrawOrder)
+            .ThenByDescending(sprite => Project.Scene.Sprites.IndexOf(sprite))
+            .FirstOrDefault();
+    }
+
+    private bool TryGetSpriteById(string spriteId, out SpriteSettings? sprite)
+    {
+        sprite = null;
+        if (string.IsNullOrWhiteSpace(spriteId))
+        {
+            return false;
+        }
+
+        sprite = Project.Scene.Sprites.FirstOrDefault(item =>
+            string.Equals(item.Id, spriteId, StringComparison.OrdinalIgnoreCase));
+        return sprite is not null;
+    }
+
+    private void DispatchSpriteEvent(SpriteSettings sprite, string eventName)
+    {
+        if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null || string.IsNullOrWhiteSpace(sprite.TargetEntity))
+        {
+            return;
+        }
+
+        RuntimeEntity? target = _runtimeScene.GetEntity(sprite.TargetEntity);
+        if (target is null)
+        {
+            return;
+        }
+
+        foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, _) in _scriptTargets.ToArray())
+        {
+            if (!ReferenceEquals(entity, target))
+            {
+                continue;
+            }
+
+            foreach (IScriptInstance script in scripts)
+            {
+                try
+                {
+                    script.SpriteEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, sprite.Id, sprite.Name, eventName);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Script sprite event failed for entity '{entity.Name}': {ex.Message}");
+                }
+            }
         }
     }
 

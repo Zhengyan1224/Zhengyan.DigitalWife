@@ -120,8 +120,15 @@ internal sealed class RuntimeGuiOverlayComponent(
                 continue;
             }
 
-            Vector2 min = new(sprite.X, sprite.Y);
-            Vector2 spriteMax = min + new Vector2(Math.Max(sprite.Width, 1.0f), Math.Max(sprite.Height, 1.0f));
+            GameWindowSettings window = _getWindowSettings();
+            LayoutRect rect = SpriteLayoutResolver.Resolve(
+                sprite,
+                Game.Window.Size.X,
+                Game.Window.Size.Y,
+                window.Width,
+                window.Height);
+            Vector2 min = new(rect.X, rect.Y);
+            Vector2 spriteMax = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
             AddSpriteImage(drawList, textureId, min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }

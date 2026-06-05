@@ -38,6 +38,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
         SendEvent("gui_event", entity, scene, input, audio, 0.0, controlId, controlName, eventName);
     }
 
+    public void SpriteEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string spriteId, string spriteName, string eventName)
+    {
+        SendEvent(
+            "sprite_event",
+            entity,
+            scene,
+            input,
+            audio,
+            0.0,
+            spriteId: spriteId,
+            spriteName: spriteName,
+            spriteEventName: eventName);
+    }
+
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
     {
         SendEvent(eventName, entity, scene, input, audio, 0.0, controlId: string.Empty, controlName: string.Empty, guiEventName: string.Empty, loadingProgress: progress, loadingMessage: message);
@@ -130,6 +144,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
         string controlId = "",
         string controlName = "",
         string guiEventName = "",
+        string spriteId = "",
+        string spriteName = "",
+        string spriteEventName = "",
         float loadingProgress = 0.0f,
         string loadingMessage = "",
         string speechCallback = "",
@@ -142,7 +159,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
         }
 
-        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, asrEvent, realtimeVoiceEvent);
+        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, spriteId, spriteName, spriteEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, asrEvent, realtimeVoiceEvent);
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -1346,7 +1363,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def get_sprite(self, id_or_name):
                        for item in self._sprites:
                            if item.get("id") == id_or_name or item.get("name") == id_or_name:
-                               return Sprite(item, self._commands)
+                               return Sprite(self, item, self._commands)
                        return None
 
                    def load_scene(self, scene_path):
@@ -2188,6 +2205,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.title = data.get("title", "")
                        self.width = data.get("width", 1280)
                        self.height = data.get("height", 720)
+                       self.actual_width = data.get("actualWidth", self.width)
+                       self.actual_height = data.get("actualHeight", self.height)
                        self.fullscreen = bool(data.get("fullscreen", False))
                        self.resizable = bool(data.get("resizable", True))
                        self.timing_mode = data.get("timingMode", "time_synchronized")
@@ -2220,36 +2239,85 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self._commands.append({"target": "runtime", "action": "set_use_opencl", "flag": self.use_opencl})
 
                class Sprite:
-                   def __init__(self, data, commands):
+                   def __init__(self, scene, data, commands):
+                       self._scene = scene
                        self.id = data.get("id", "")
                        self.name = data.get("name", "")
                        self.path = data.get("path", "")
                        self.texture = data.get("texture", self.path)
+                       self.layout_mode = data.get("layoutMode", "absolute")
                        self.x = data.get("x", 0)
                        self.y = data.get("y", 0)
                        self.width = data.get("width", 1)
                        self.height = data.get("height", 1)
+                       self.rotation_degrees = float(data.get("rotationDegrees", 0.0))
                        self.opacity = data.get("opacity", 1)
                        self.visible = bool(data.get("visible", True))
                        self._commands = commands
 
                    def set_position(self, x, y):
+                       self.x = x
+                       self.y = y
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_position", "x": x, "y": y})
 
                    def set_size(self, width, height):
+                       self.width = width
+                       self.height = height
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_size", "width": width, "height": height})
 
                    def set_visible(self, enabled):
+                       self.visible = bool(enabled)
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_visible", "flag": bool(enabled)})
 
                    def set_opacity(self, opacity):
+                       self.opacity = opacity
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_opacity", "value": opacity})
 
                    def set_texture(self, texture):
+                       self.texture = texture
+                       self.path = texture
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_texture", "texture": texture})
+
+                   def set_layout_mode(self, layout_mode):
+                       self.layout_mode = str(layout_mode or "absolute")
+                       self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_layout_mode", "mode": self.layout_mode})
 
                    def set_render_texture(self, render_texture_name):
                        self.set_texture(render_texture(render_texture_name))
+
+                   def _resolve_rect(self):
+                       actual_width = max(float(getattr(self._scene.window, "actual_width", self._scene.window.width) or 1.0), 1.0)
+                       actual_height = max(float(getattr(self._scene.window, "actual_height", self._scene.window.height) or 1.0), 1.0)
+                       reference_width = max(float(self._scene.window.width or 1.0), 1.0)
+                       reference_height = max(float(self._scene.window.height or 1.0), 1.0)
+                       if str(self.layout_mode or "absolute").lower() in ("relative", "scaled", "scale"):
+                           scale_x = actual_width / reference_width
+                           scale_y = actual_height / reference_height
+                           return (
+                               float(self.x) * scale_x,
+                               float(self.y) * scale_y,
+                               max(float(self.width) * scale_x, 1.0),
+                               max(float(self.height) * scale_y, 1.0)
+                           )
+                       return (float(self.x), float(self.y), max(float(self.width), 1.0), max(float(self.height), 1.0))
+
+                   def contains_point(self, x, y):
+                       if not self.visible or not self.path:
+                           return False
+                       rect_x, rect_y, rect_w, rect_h = self._resolve_rect()
+                       center_x = rect_x + (rect_w * 0.5)
+                       center_y = rect_y + (rect_h * 0.5)
+                       dx = float(x) - center_x
+                       dy = float(y) - center_y
+                       radians = math.radians(-float(self.rotation_degrees))
+                       cos_v = math.cos(radians)
+                       sin_v = math.sin(radians)
+                       local_x = (dx * cos_v) - (dy * sin_v)
+                       local_y = (dx * sin_v) + (dy * cos_v)
+                       return abs(local_x) <= rect_w * 0.5 and abs(local_y) <= rect_h * 0.5
+
+                   def contains_mouse(self, input):
+                       return self.contains_point(input.mouse_x, input.mouse_y)
 
                    def show(self):
                        self.set_visible(True)
@@ -2393,6 +2461,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                module.gui_event(entity, scene, input, audio, control_id, control_name, gui_event_name)
                            else:
                                module.gui_event(entity, scene, input, audio, control_id, gui_event_name)
+                       elif event == "sprite_event" and hasattr(module, "sprite_event"):
+                           sprite_id = ctx.get("spriteId", "")
+                           sprite_name = ctx.get("spriteName", "")
+                           sprite_event_name = ctx.get("spriteEventName", "")
+                           if len(inspect.signature(module.sprite_event).parameters) >= 7:
+                               module.sprite_event(entity, scene, input, audio, sprite_id, sprite_name, sprite_event_name)
+                           else:
+                               module.sprite_event(entity, scene, input, audio, sprite_id, sprite_event_name)
                        elif event in ("loading_started", "loading_progress", "loading_completed") and hasattr(module, event):
                            getattr(module, event)(entity, scene, input, audio, ctx.get("loadingProgress", 0.0), ctx.get("loadingMessage", ""))
                        elif event == "speech_completed":
@@ -2985,6 +3061,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_size" when command.Width.HasValue && command.Height.HasValue:
                 sprite.SetSize((float)command.Width.Value, (float)command.Height.Value);
                 break;
+            case "set_layout_mode" when !string.IsNullOrWhiteSpace(command.Mode):
+                sprite.SetLayoutMode(command.Mode!);
+                break;
             case "set_visible" when command.Flag.HasValue:
                 sprite.Visible = command.Flag.Value;
                 break;
@@ -3499,6 +3578,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string GuiEventName { get; set; } = string.Empty;
 
+        public string SpriteId { get; set; } = string.Empty;
+
+        public string SpriteName { get; set; } = string.Empty;
+
+        public string SpriteEventName { get; set; } = string.Empty;
+
         public float LoadingProgress { get; set; }
 
         public string LoadingMessage { get; set; } = string.Empty;
@@ -3526,6 +3611,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             string controlId,
             string controlName,
             string guiEventName,
+            string spriteId,
+            string spriteName,
+            string spriteEventName,
             float loadingProgress,
             string loadingMessage,
             string speechCallback,
@@ -3540,6 +3628,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 ControlId = controlId,
                 ControlName = controlName,
                 GuiEventName = guiEventName,
+                SpriteId = spriteId,
+                SpriteName = spriteName,
+                SpriteEventName = spriteEventName,
                 LoadingProgress = loadingProgress,
                 LoadingMessage = loadingMessage,
                 SpeechCallback = speechCallback,
@@ -4109,6 +4200,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public int Height { get; set; }
 
+        public int ActualWidth { get; set; }
+
+        public int ActualHeight { get; set; }
+
         public bool Fullscreen { get; set; }
 
         public bool Resizable { get; set; }
@@ -4122,6 +4217,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Title = window.Title,
                 Width = window.Width,
                 Height = window.Height,
+                ActualWidth = window.ActualWidth,
+                ActualHeight = window.ActualHeight,
                 Fullscreen = window.Fullscreen,
                 Resizable = window.Resizable,
                 TimingMode = window.TimingMode
@@ -4139,6 +4236,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string Texture { get; set; } = string.Empty;
 
+        public string LayoutMode { get; set; } = "absolute";
+
         public float X { get; set; }
 
         public float Y { get; set; }
@@ -4146,6 +4245,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public float Width { get; set; }
 
         public float Height { get; set; }
+
+        public float RotationDegrees { get; set; }
 
         public float Opacity { get; set; }
 
@@ -4159,10 +4260,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Name = sprite.Name,
                 Path = sprite.Path,
                 Texture = sprite.Texture,
+                LayoutMode = sprite.LayoutMode,
                 X = sprite.X,
                 Y = sprite.Y,
                 Width = sprite.Width,
                 Height = sprite.Height,
+                RotationDegrees = sprite.RotationDegrees,
                 Opacity = sprite.Opacity,
                 Visible = sprite.Visible
             };

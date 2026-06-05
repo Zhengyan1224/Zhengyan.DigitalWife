@@ -5,10 +5,12 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 public sealed class RuntimeSpriteControl
 {
     private readonly SpriteSettings _sprite;
+    private readonly RuntimeWindowControl _window;
 
-    internal RuntimeSpriteControl(SpriteSettings sprite)
+    internal RuntimeSpriteControl(SpriteSettings sprite, RuntimeWindowControl window)
     {
         _sprite = sprite;
+        _window = window;
     }
 
     public string Id => _sprite.Id;
@@ -79,6 +81,18 @@ public sealed class RuntimeSpriteControl
         set => _sprite.Path = value ?? string.Empty;
     }
 
+    public string LayoutMode
+    {
+        get => _sprite.LayoutMode;
+        set => _sprite.LayoutMode = LayoutResolver.NormalizeLayoutMode(value);
+    }
+
+    public string TargetEntity
+    {
+        get => _sprite.TargetEntity;
+        set => _sprite.TargetEntity = value ?? string.Empty;
+    }
+
     public void SetPosition(float x, float y)
     {
         X = x;
@@ -89,6 +103,39 @@ public sealed class RuntimeSpriteControl
     {
         Width = width;
         Height = height;
+    }
+
+    public void SetLayoutMode(string layoutMode)
+    {
+        LayoutMode = layoutMode;
+    }
+
+    public LayoutRect GetScreenRect()
+    {
+        return SpriteLayoutResolver.Resolve(
+            _sprite,
+            Math.Max(_window.ActualWidth, 1),
+            Math.Max(_window.ActualHeight, 1),
+            Math.Max(_window.Width, 1),
+            Math.Max(_window.Height, 1));
+    }
+
+    public bool ContainsPoint(float x, float y)
+    {
+        return SpriteLayoutResolver.ContainsPoint(
+            _sprite,
+            x,
+            y,
+            Math.Max(_window.ActualWidth, 1),
+            Math.Max(_window.ActualHeight, 1),
+            Math.Max(_window.Width, 1),
+            Math.Max(_window.Height, 1));
+    }
+
+    public bool ContainsMouse(RuntimeInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        return ContainsPoint(input.MouseX, input.MouseY);
     }
 
     public void Show()
