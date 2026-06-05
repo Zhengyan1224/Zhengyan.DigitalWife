@@ -193,6 +193,29 @@ if textbox is not None:
     textbox.replace_selection(input.clipboard_text)
 ```
 
+脚本层也能读取主手柄快照。当前会暴露 `HasGamepad` / `has_gamepad`、手柄名称和索引、左右摇杆 XY、左右扳机值，以及 `IsGamepadButtonDown(...)` / `is_gamepad_button_down(...)`：
+
+```csharp
+if (Input.HasGamepad)
+{
+    Entity.Translate(Input.LeftStickX * 3.0f * (float)DeltaSeconds, 0.0f, -Input.LeftStickY * 3.0f * (float)DeltaSeconds);
+    if (Input.IsGamepadButtonDown("A"))
+    {
+        Entity.Speak("手柄 A 被按住");
+    }
+}
+```
+
+```python
+def update(entity, scene, input, audio, delta_seconds):
+    if not input.has_gamepad:
+        return
+
+    entity.translate(input.left_stick_x * 3.0 * delta_seconds, 0.0, -input.left_stick_y * 3.0 * delta_seconds)
+    if input.is_gamepad_button_down("A"):
+        entity.speak("手柄 A 被按住")
+```
+
 ## 窗口、Timing 和 2D 精灵
 
 GamePlayer 会读取 `game.project.json` 的 `window` 节点并应用：

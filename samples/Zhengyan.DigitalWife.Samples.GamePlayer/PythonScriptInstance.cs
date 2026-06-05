@@ -2437,6 +2437,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.alt_down = bool(data.get("altDown", False))
                        self.control_down = bool(data.get("controlDown", False))
                        self.shift_down = bool(data.get("shiftDown", False))
+                       self.has_gamepad = bool(data.get("hasGamepad", False))
+                       self.gamepad_name = str(data.get("gamepadName", "") or "")
+                       self.gamepad_index = int(data.get("gamepadIndex", -1))
+                       self.left_stick_x = float(data.get("leftStickX", 0.0))
+                       self.left_stick_y = float(data.get("leftStickY", 0.0))
+                       self.right_stick_x = float(data.get("rightStickX", 0.0))
+                       self.right_stick_y = float(data.get("rightStickY", 0.0))
+                       self.left_trigger = float(data.get("leftTrigger", 0.0))
+                       self.right_trigger = float(data.get("rightTrigger", 0.0))
+                       self._gamepad_buttons = set()
+                       for button in data.get("gamepadButtonsDown", []):
+                           value = str(button)
+                           self._gamepad_buttons.add(value)
+                           self._gamepad_buttons.add(value.lower())
                        self.clipboard_text = str(data.get("clipboardText", "") or "")
                        self.has_clipboard_text = bool(data.get("hasClipboardText", False))
                        self._commands = commands
@@ -2446,6 +2460,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def is_mouse_button_down(self, button):
                        return str(button).lower() in self._mouse_buttons
+
+                   def is_gamepad_button_down(self, button):
+                       return str(button) in self._gamepad_buttons or str(button).lower() in self._gamepad_buttons
 
                    def set_clipboard_text(self, text):
                        value = "" if text is None else str(text)
@@ -4420,6 +4437,25 @@ internal sealed class PythonScriptInstance : IScriptInstance
             "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight"
         ];
 
+        private static readonly (string Name, ButtonName Button)[] ProbedGamepadButtons =
+        [
+            ("A", ButtonName.A),
+            ("B", ButtonName.B),
+            ("X", ButtonName.X),
+            ("Y", ButtonName.Y),
+            ("LeftBumper", ButtonName.LeftBumper),
+            ("RightBumper", ButtonName.RightBumper),
+            ("Back", ButtonName.Back),
+            ("Start", ButtonName.Start),
+            ("Home", ButtonName.Home),
+            ("LeftStick", ButtonName.LeftStick),
+            ("RightStick", ButtonName.RightStick),
+            ("DPadUp", ButtonName.DPadUp),
+            ("DPadRight", ButtonName.DPadRight),
+            ("DPadDown", ButtonName.DPadDown),
+            ("DPadLeft", ButtonName.DPadLeft)
+        ];
+
         public string[] KeysDown { get; set; } = [];
 
         public string[] MouseButtonsDown { get; set; } = [];
@@ -4442,6 +4478,26 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool ShiftDown { get; set; }
 
+        public bool HasGamepad { get; set; }
+
+        public string GamepadName { get; set; } = string.Empty;
+
+        public int GamepadIndex { get; set; } = -1;
+
+        public float LeftStickX { get; set; }
+
+        public float LeftStickY { get; set; }
+
+        public float RightStickX { get; set; }
+
+        public float RightStickY { get; set; }
+
+        public float LeftTrigger { get; set; }
+
+        public float RightTrigger { get; set; }
+
+        public string[] GamepadButtonsDown { get; set; } = [];
+
         public string ClipboardText { get; set; } = string.Empty;
 
         public bool HasClipboardText { get; set; }
@@ -4462,6 +4518,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 AltDown = input.IsAltDown,
                 ControlDown = input.IsControlDown,
                 ShiftDown = input.IsShiftDown,
+                HasGamepad = input.HasGamepad,
+                GamepadName = input.GamepadName,
+                GamepadIndex = input.GamepadIndex,
+                LeftStickX = input.LeftStickX,
+                LeftStickY = input.LeftStickY,
+                RightStickX = input.RightStickX,
+                RightStickY = input.RightStickY,
+                LeftTrigger = input.LeftTrigger,
+                RightTrigger = input.RightTrigger,
+                GamepadButtonsDown = ProbedGamepadButtons
+                    .Where(button => input.IsGamepadButtonDown(button.Name))
+                    .Select(button => button.Name)
+                    .ToArray(),
                 ClipboardText = clipboardText,
                 HasClipboardText = clipboardText.Length > 0
             };

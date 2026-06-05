@@ -949,6 +949,17 @@ Input.ScrollY;
 Input.IsAltDown;
 Input.IsControlDown;
 Input.IsShiftDown;
+Input.HasGamepad;
+Input.GamepadName;
+Input.GamepadIndex;
+Input.LeftStickX;
+Input.LeftStickY;
+Input.RightStickX;
+Input.RightStickY;
+Input.LeftTrigger;
+Input.RightTrigger;
+Input.IsGamepadButtonDown("A");
+Input.IsGamepadButtonDown("LeftBumper");
 Input.ClipboardText;
 Input.HasClipboardText;
 Input.TryGetClipboardText(out string clipboardText);
@@ -971,6 +982,17 @@ input.scroll_y
 input.alt_down
 input.control_down
 input.shift_down
+input.has_gamepad
+input.gamepad_name
+input.gamepad_index
+input.left_stick_x
+input.left_stick_y
+input.right_stick_x
+input.right_stick_y
+input.left_trigger
+input.right_trigger
+input.is_gamepad_button_down("A")
+input.is_gamepad_button_down("LeftBumper")
 input.clipboard_text
 input.has_clipboard_text
 input.set_clipboard_text("copied text")
@@ -981,6 +1003,8 @@ input.is_mouse_button_down("left")
 
 `Input.ClipboardText` 会在 C# 脚本访问时读取当前原始剪贴板文本，也支持直接赋值；`input.clipboard_text` 是 Python 事件分发时附带的剪贴板快照。读取失败或当前为空时返回空字符串。C# 还可以用 `TryGetClipboardText(...)` 区分“空文本”和“不可用”，用 `SetClipboardText(...)` / `TrySetClipboardText(...)` 写回系统剪贴板；Python 使用 `input.set_clipboard_text(...)`。
 
+手柄状态以“当前主手柄快照”的形式暴露。`HasGamepad` / `input.has_gamepad` 为 `true` 时，脚本可以读取手柄名、索引、左右摇杆 XY、左右扳机值，并通过 `IsGamepadButtonDown(...)` / `input.is_gamepad_button_down(...)` 判断按钮状态。
+
 常用键名：
 
 - 字母：`A` 到 `Z`，例如 `W`、`A`、`S`、`D`。
@@ -988,6 +1012,40 @@ input.is_mouse_button_down("left")
 - 方向键：`Up`、`Down`、`Left`、`Right`。
 - 功能键：`F1` 到 `F12`。
 - 控制键：`Space`、`Enter`、`Escape`、`Tab`、`Backspace`、`Delete`。
+
+常用手柄按钮名：
+
+- 面键：`A`、`B`、`X`、`Y`
+- 肩键：`LeftBumper` / `lb` / `l1`，`RightBumper` / `rb` / `r1`
+- 中键：`Back` / `select`，`Start`
+- 摇杆按压：`LeftStick` / `ls` / `l3`，`RightStick` / `rs` / `r3`
+- 方向键：`DPadUp`、`DPadRight`、`DPadDown`、`DPadLeft`
+
+手柄输入示例：
+
+```csharp
+if (IsUpdate && Input.HasGamepad)
+{
+    float moveX = Input.LeftStickX;
+    float moveZ = -Input.LeftStickY;
+    Entity.Translate(moveX * 3.0f * (float)DeltaSeconds, 0.0f, moveZ * 3.0f * (float)DeltaSeconds);
+
+    if (Input.IsGamepadButtonDown("A"))
+    {
+        Entity.Speak("手柄 A 被按住");
+    }
+}
+```
+
+```python
+def update(entity, scene, input, audio, delta_seconds):
+    if not input.has_gamepad:
+        return
+
+    entity.translate(input.left_stick_x * 3.0 * delta_seconds, 0.0, -input.left_stick_y * 3.0 * delta_seconds)
+    if input.is_gamepad_button_down("A"):
+        entity.speak("手柄 A 被按住")
+```
 - 修饰键：`ShiftLeft`、`ShiftRight`、`ControlLeft`、`ControlRight`、`AltLeft`、`AltRight`。
 - 鼠标：`left`、`right`、`middle`，也支持 `button0`、`button1`、`button2`。
 
