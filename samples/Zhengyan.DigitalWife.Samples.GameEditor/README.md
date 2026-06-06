@@ -24,6 +24,8 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.Di
 
 不传 `<project-directory>` 时，`GamePlayer` 会读取默认 DemoGame 目录。
 
+如果正式使用时不希望显示控制台窗口，见 [GamePlayer README](../Zhengyan.DigitalWife.Samples.GamePlayer/README.md#隐藏控制台--无终端启动)。
+
 ## 工程结构
 
 ```text

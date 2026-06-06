@@ -14,6 +14,14 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.Di
 bin/Debug/net10.0/GameEditorProjects/DemoGame
 ```
 
+### 隐藏控制台 / 无终端启动
+
+开发调试时推荐保留控制台，方便查看加载日志、脚本错误和平台兼容性提示。正式使用时可按平台选择无终端启动方式：
+
+- Windows：如果希望双击运行时不弹出控制台，可将 `GamePlayer` 项目的 `OutputType` 从 `Exe` 改为 `WinExe` 后再发布。需要调试日志时建议保留一个控制台构建或把日志写入文件。
+- Linux：不要从终端直接 `dotnet run` 启动；可通过 `.desktop` 启动器、系统启动项或后台命令启动。示例：`nohup dotnet Zhengyan.DigitalWife.Samples.GamePlayer.dll /path/to/project >/tmp/digitalwife-gameplayer.log 2>&1 &`，随后可 `disown` 脱离当前 shell。
+- macOS：建议打包为 `.app` 后通过 Finder 或 `open` 启动；不要从 Terminal 直接运行。若直接用 `dotnet` 启动，终端窗口属于启动方式本身，GamePlayer 无法隐藏父终端。
+
 ## 加载界面
 
 启动加载和脚本调用 `Scene.LoadScene(...)` / `scene.load_scene(...)` 切换场景时，都会进入同一套加载流程：
