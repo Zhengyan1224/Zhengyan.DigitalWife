@@ -494,6 +494,11 @@ internal sealed class RuntimeCameraControllerComponent(
 
         bool canProcessMouseDrag = CanProcessMouseDrag?.Invoke() != false;
         CameraDragMode dragMode = canProcessMouseDrag ? ResolveEditorDragMode() : CameraDragMode.None;
+        if (dragMode != CameraDragMode.None && !IsEditorDragButtonStillDown(dragMode))
+        {
+            dragMode = CameraDragMode.None;
+        }
+
         if (dragMode == CameraDragMode.None)
         {
             _dragFirstMove = true;
@@ -587,7 +592,7 @@ internal sealed class RuntimeCameraControllerComponent(
             return;
         }
 
-        if (RequireRightMouseForMouseLook && !Game.Input.IsMouseButtonDown(MouseButton.Right))
+        if (RequireRightMouseForMouseLook && !IsMouseButtonEffectivelyDown(MouseButton.Right))
         {
             _dragFirstMove = true;
             return;
@@ -632,22 +637,50 @@ internal sealed class RuntimeCameraControllerComponent(
         }
 
         bool altPressed = Game.Input.IsAltDown;
-        if (altPressed && Game.Input.IsMouseButtonDown(MouseButton.Right))
+        if (altPressed && IsMouseButtonEffectivelyDown(MouseButton.Right))
         {
             return CameraDragMode.Dolly;
         }
 
-        if (Game.Input.IsMouseButtonDown(MouseButton.Right))
+        if (IsMouseButtonEffectivelyDown(MouseButton.Right))
         {
             return CameraDragMode.Orbit;
         }
 
-        if (altPressed && (Game.Input.IsMouseButtonDown(MouseButton.Middle) || Game.Input.IsMouseButtonDown(MouseButton.Left)))
+        if (altPressed && (IsMouseButtonEffectivelyDown(MouseButton.Middle) || IsMouseButtonEffectivelyDown(MouseButton.Left)))
         {
             return CameraDragMode.Orbit;
         }
 
-        return Game.Input.IsMouseButtonDown(MouseButton.Middle) ? CameraDragMode.Pan : CameraDragMode.None;
+        return IsMouseButtonEffectivelyDown(MouseButton.Middle) ? CameraDragMode.Pan : CameraDragMode.None;
+    }
+
+    private bool IsEditorDragButtonStillDown(CameraDragMode dragMode)
+    {
+        if (Game is null)
+        {
+            return false;
+        }
+
+        bool altPressed = Game.Input.IsAltDown;
+        return dragMode switch
+        {
+            CameraDragMode.Dolly => IsMouseButtonEffectivelyDown(MouseButton.Right),
+            CameraDragMode.Pan => IsMouseButtonEffectivelyDown(MouseButton.Middle),
+            CameraDragMode.Orbit => IsMouseButtonEffectivelyDown(MouseButton.Right)
+                || (altPressed && (IsMouseButtonEffectivelyDown(MouseButton.Middle) || IsMouseButtonEffectivelyDown(MouseButton.Left))),
+            _ => false
+        };
+    }
+
+    private bool IsMouseButtonEffectivelyDown(MouseButton button)
+    {
+        if (Game is null || !Game.Input.IsMouseButtonDown(button))
+        {
+            return false;
+        }
+
+        return !DesktopSpritePlatform.TryGetGlobalMouseButtonState(Game.Window, button, out bool globalDown) || globalDown;
     }
 
     private static Vector3 CreateForward(float yawDegrees, float pitchDegrees)

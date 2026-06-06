@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Silk.NET.Input;
 using Silk.NET.OpenGLES;
 using Silk.NET.Windowing;
 
@@ -9,7 +10,9 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 internal static unsafe class DesktopSpritePlatform
 {
     private const int RegionSampleStep = 4;
+    private const int X11RegionSampleStep = 1;
     private const byte RegionAlphaThreshold = 8;
+    private const byte X11RegionAlphaThreshold = 48;
     private static readonly object LogLock = new();
     private static readonly HashSet<string> LoggedMessages = [];
     private static readonly Dictionary<IntPtr, WindowsClickThroughState> WindowsClickThroughStates = [];
@@ -186,6 +189,83 @@ internal static unsafe class DesktopSpritePlatform
                 MacPoint point = MacNative.objc_msgSend_MacPoint(nsEvent, MacNative.sel_registerName("mouseLocation"));
                 double screenHeight = TryGetMacMainScreenHeight();
                 position = new System.Numerics.Vector2((float)point.X, (float)(screenHeight - point.Y));
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    public static bool TryGetGlobalMouseButtonState(IWindow window, MouseButton button, out bool isDown)
+    {
+        _ = window;
+        isDown = false;
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                int virtualKey = button switch
+                {
+                    MouseButton.Left => WindowsNative.VkLButton,
+                    MouseButton.Right => WindowsNative.VkRButton,
+                    MouseButton.Middle => WindowsNative.VkMButton,
+                    _ => 0
+                };
+                if (virtualKey == 0)
+                {
+                    return false;
+                }
+
+                isDown = (WindowsNative.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+                return true;
+            }
+
+            if (OperatingSystem.IsLinux())
+            {
+                if (!TryGetX11Display(out IntPtr display, allowFallbackOpenDisplay: true, logFailure: false))
+                {
+                    return false;
+                }
+
+                nint root = X11Native.XDefaultRootWindow(display);
+                if (root == 0)
+                {
+                    return false;
+                }
+
+                int result = X11Native.XQueryPointer(
+                    display,
+                    root,
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out uint mask);
+                if (result == 0)
+                {
+                    return false;
+                }
+
+                uint buttonMask = button switch
+                {
+                    MouseButton.Left => X11Native.Button1Mask,
+                    MouseButton.Middle => X11Native.Button2Mask,
+                    MouseButton.Right => X11Native.Button3Mask,
+                    _ => 0
+                };
+                if (buttonMask == 0)
+                {
+                    return false;
+                }
+
+                isDown = (mask & buttonMask) != 0;
                 return true;
             }
         }
@@ -974,7 +1054,7 @@ internal static unsafe class DesktopSpritePlatform
             return IntPtr.Zero;
         }
 
-        int step = Math.Max(RegionSampleStep, 1);
+        int step = Math.Max(X11RegionSampleStep, 1);
         for (int sourceY = height - 1; sourceY >= 0; sourceY -= step)
         {
             int windowY = height - 1 - sourceY;
@@ -983,7 +1063,7 @@ internal static unsafe class DesktopSpritePlatform
 
             for (int x = 0; x < width; x += step)
             {
-                if (HasVisibleAlphaInBlock(pixels, width, height, x, sourceY, step))
+                if (HasVisibleAlphaInBlock(pixels, width, height, x, sourceY, step, X11RegionAlphaThreshold))
                 {
                     if (runStart < 0)
                     {
@@ -1067,7 +1147,7 @@ internal static unsafe class DesktopSpritePlatform
         return reusableRegion;
     }
 
-    private static bool HasVisibleAlphaInBlock(byte[] pixels, int width, int height, int startX, int startY, int step)
+    private static bool HasVisibleAlphaInBlock(byte[] pixels, int width, int height, int startX, int startY, int step, byte threshold = RegionAlphaThreshold)
     {
         int endX = Math.Min(startX + step, width);
         int endY = Math.Max(startY - step + 1, 0);
@@ -1076,7 +1156,7 @@ internal static unsafe class DesktopSpritePlatform
             int rowOffset = y * width * 4;
             for (int x = startX; x < endX; x++)
             {
-                if (pixels[rowOffset + (x * 4) + 3] >= RegionAlphaThreshold)
+                if (pixels[rowOffset + (x * 4) + 3] >= threshold)
                 {
                     return true;
                 }
@@ -1211,6 +1291,9 @@ internal static unsafe class DesktopSpritePlatform
 
     private static class WindowsNative
     {
+        internal const int VkLButton = 0x01;
+        internal const int VkRButton = 0x02;
+        internal const int VkMButton = 0x04;
         internal const int GwlExStyle = -20;
         internal const long WsExTransparent = 0x20L;
         internal const uint SwpNosize = 0x0001;
@@ -1253,6 +1336,9 @@ internal static unsafe class DesktopSpritePlatform
         [DllImport("user32.dll", EntryPoint = "GetCursorPos")]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool GetCursorPos(out WindowsPoint point);
+
+        [DllImport("user32.dll", EntryPoint = "GetAsyncKeyState")]
+        internal static extern short GetAsyncKeyState(int virtualKey);
     }
 
     private static class X11Native
@@ -1262,6 +1348,9 @@ internal static unsafe class DesktopSpritePlatform
         internal const int ShapeSet = 0;
         internal const int ShapeBounding = 0;
         internal const int ShapeInput = 2;
+        internal const uint Button1Mask = 1 << 8;
+        internal const uint Button2Mask = 1 << 9;
+        internal const uint Button3Mask = 1 << 10;
 
         [DllImport("libglfw.so.3", EntryPoint = "glfwGetX11Display", CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr GetX11Display();
