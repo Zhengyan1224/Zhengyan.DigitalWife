@@ -170,6 +170,11 @@ if (IsRealtimeVoiceEvent)
 {
     Console.WriteLine($"{RealtimeVoiceCallbackName}: {RealtimeVoiceEventName} -> {RealtimeVoiceText}");
 }
+
+if (IsTrayMenuEvent)
+{
+    Console.WriteLine($"tray: {TrayMenuItemText} ({TrayMenuItemId}) -> {TrayMenuEventName}");
+}
 ```
 
 C# 全局变量：
@@ -191,6 +196,10 @@ C# 全局变量：
 | `SpriteId` | `string` | 触发事件的 Sprite Id。 |
 | `SpriteName` | `string` | 触发事件的 Sprite 名称。 |
 | `SpriteEventName` | `string` | Sprite 事件名，例如 `entered`、`exited`、`pressed`、`released`、`clicked`。 |
+| `IsTrayMenuEvent` | `bool` | 桌面精灵系统托盘菜单事件。 |
+| `TrayMenuItemId` | `string` | 被点击的托盘菜单项 Id。 |
+| `TrayMenuItemText` | `string` | 被点击的托盘菜单项显示文本。 |
+| `TrayMenuEventName` | `string` | GameEditor 中为该菜单项配置的脚本事件名。 |
 | `IsLoadingEvent` | `bool` | 场景加载入口脚本事件。 |
 | `LoadingEventName` | `string` | `loading_started`、`loading_progress`、`loading_completed`。 |
 | `LoadingProgress` | `float` | 加载进度，范围 `0.0` 到 `1.0`。 |
@@ -355,6 +364,8 @@ def after_speak(entity, scene, input, audio):
 `scene.asr.start_streaming_recognition(...)` 的回调会优先调用 `on_partial`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `asr_event(entity, scene, input, audio, event)`，则会调用通用 `asr_event`。
 
 `scene.realtime_voice.start_*` 的回调同样会优先调用传入的同名函数；如果没有同名函数但脚本定义了 `realtime_voice_event(entity, scene, input, audio, event)`，则会调用通用 `realtime_voice_event`。
+
+桌面精灵系统托盘菜单项可以在 GameEditor 中配置 `Script event`。Python 会优先调用同名函数，例如 `tray_exit(entity, scene, input, audio, item_id, item_text, event_name)`；如果没有同名函数但定义了 `tray_menu_event(entity, scene, input, audio, item_id, item_text, event_name)`，则调用通用入口。旧式五参数写法 `tray_menu_event(entity, scene, input, audio, item_id, event_name)` 仍可工作。
 
 Python 模块级变量会保留，可用于跨帧状态：
 
@@ -2133,10 +2144,14 @@ Scene.Window.SetSize(1600, 900);
 Scene.Window.SetFullscreen(false);
 Scene.Window.SetResizable(true);
 Scene.Window.SetTimingMode("time_synchronized");
+Scene.Window.SetVisible(true);
 
 Console.WriteLine(Scene.Runtime.ComputeBackend);
 Console.WriteLine(Scene.Runtime.IsUsingOpenCL);
 Scene.Runtime.SetUseOpenCL(true);
+
+RuntimeCommandResult result = Scene.Runtime.ExecuteShellCommand("echo hello");
+Console.WriteLine(result.StandardOutput);
 ```
 
 Python：
@@ -2147,10 +2162,14 @@ scene.window.set_size(1600, 900)
 scene.window.set_fullscreen(False)
 scene.window.set_resizable(True)
 scene.window.set_timing_mode("time_synchronized")
+scene.window.set_visible(True)
 
 print(scene.runtime.compute_backend)
 print(scene.runtime.is_using_opencl)
 scene.runtime.set_use_opencl(True)
+
+result = scene.runtime.execute_shell_command("echo hello")
+print(result["stdout"])
 ```
 
 Runtime 设置：
@@ -2161,6 +2180,8 @@ Runtime 设置：
 | `Scene.Runtime.IsUsingOpenCL` | `scene.runtime.is_using_opencl` | 当前已加载 PMX 是否实际使用 OpenCL 后端。OpenCL 不可用或初始化失败时为 `false`。 |
 | `Scene.Runtime.ComputeBackend` | `scene.runtime.compute_backend` | 当前实际计算后端，通常为 `OpenCL` 或 `CPU`。 |
 | `Scene.Runtime.SetUseOpenCL(value)` | `scene.runtime.set_use_opencl(value)` | 切换是否请求 OpenCL；GamePlayer 会重新应用运行时设置，失败时自动回退 CPU。 |
+| `Scene.Runtime.ExecuteCommand(fileName, arguments, timeoutMilliseconds, workingDirectory)` | `scene.runtime.execute_command(file_name, args=None, timeout_seconds=30, working_directory=None, shell=False)` | 执行系统命令并返回退出码、标准输出、标准错误和是否超时。默认不经过 shell。 |
+| `Scene.Runtime.ExecuteShellCommand(command, timeoutMilliseconds, workingDirectory)` | `scene.runtime.execute_shell_command(command, timeout_seconds=30, working_directory=None)` | 通过系统 shell 执行命令。Windows 使用 `cmd.exe /c`，Linux/macOS 使用 `/bin/sh -c`。 |
 
 窗口设置：
 
@@ -2172,6 +2193,25 @@ Runtime 设置：
 | `Scene.Window.Resizable` | `scene.window.resizable` | 是否允许调整窗口大小。C# 可直接赋值，Python 用 `set_resizable` 修改。 |
 | `Scene.Window.TimingMode` | `scene.window.timing_mode` | 动画计时模式。C# 可直接赋值，Python 用 `set_timing_mode` 修改。 |
 | `Scene.Window.SetSize(width, height)` | `scene.window.set_size(width, height)` | 设置窗口尺寸。 |
+| `Scene.Window.Visible` / `SetVisible(value)` / `ToggleVisible()` | `scene.window.set_visible(value)` / `scene.window.toggle_visible()` | 显示、隐藏或切换窗口可见状态，常用于桌面精灵系统托盘菜单。 |
+| `Scene.Window.Exit()` / `Quit()` | `scene.window.exit()` / `scene.window.quit()` | 从脚本退出 GamePlayer。 |
+
+系统命令返回值：
+
+| 字段 | 说明 |
+| --- | --- |
+| `ExitCode` / `exit_code` | 进程退出码。超时时为 `-1`。 |
+| `StandardOutput` / `stdout` | 标准输出文本。 |
+| `StandardError` / `stderr` | 标准错误文本。 |
+| `TimedOut` / `timed_out` | 是否超时。 |
+| `Success` / `success` | 未超时且退出码为 `0`。 |
+
+桌面精灵托盘：
+
+- GameEditor 的 Window / Runtime 面板在开启 Desktop sprite mode 后可启用系统托盘、设置 Windows `.ico` 图标、编辑右键菜单项。
+- 菜单项字段包括 `Id`、显示文本、内置动作和脚本事件名。内置动作当前支持 `none`、`toggle_visibility`、`exit`。
+- 点击菜单项会触发 C# 的 `IsTrayMenuEvent`，并传入 `TrayMenuItemId`、`TrayMenuItemText`、`TrayMenuEventName`；Python 会优先调用同名 `Script event` 函数，否则调用 `tray_menu_event(...)`。
+- 当前 Windows 使用原生系统托盘实现。Linux/macOS 保留同一配置和脚本 API，但运行时会安全降级为不创建托盘；后续可按桌面环境补原生托盘实现。
 
 `TimingMode` 可用值：
 

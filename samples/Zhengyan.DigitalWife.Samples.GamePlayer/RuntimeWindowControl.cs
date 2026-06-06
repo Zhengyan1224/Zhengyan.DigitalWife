@@ -28,6 +28,12 @@ public sealed class RuntimeWindowControl
 
     public int ActualHeight => _game.Window.Size.Y;
 
+    public bool Visible
+    {
+        get => _game.IsWindowVisible;
+        set => _game.SetWindowVisible(value);
+    }
+
     public bool Fullscreen
     {
         get => _settings.Fullscreen;
@@ -74,6 +80,26 @@ public sealed class RuntimeWindowControl
     {
         _settings.TimingMode = NormalizeTimingMode(timingMode);
         _game.AnimationTimingMode = ToAnimationTimingMode(_settings.TimingMode);
+    }
+
+    public void SetVisible(bool visible)
+    {
+        _game.SetWindowVisible(visible);
+    }
+
+    public void ToggleVisible()
+    {
+        _game.ToggleWindowVisible();
+    }
+
+    public void Exit()
+    {
+        _game.RequestExit();
+    }
+
+    public void Quit()
+    {
+        Exit();
     }
 
     internal static AnimationTimingMode ToAnimationTimingMode(string timingMode)

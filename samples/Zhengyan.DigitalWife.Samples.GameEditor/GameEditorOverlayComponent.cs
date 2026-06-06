@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text.RegularExpressions;
 using ImGuiNET;
 using Silk.NET.OpenGLES;
 using Silk.NET.OpenGLES.Extensions.ImGui;
@@ -868,6 +869,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         int height = window.Height;
         bool desktopSpriteMode = window.DesktopSpriteMode;
         bool desktopSpriteClickThrough = window.DesktopSpriteClickThrough;
+        string desktopSpriteDragButton = NormalizeDesktopSpriteDragButton(window.DesktopSpriteDragButton);
+        bool desktopSpriteTrayEnabled = window.DesktopSpriteTrayEnabled;
+        string desktopSpriteTrayIconPath = window.DesktopSpriteTrayIconPath;
         bool fullscreen = window.Fullscreen;
         bool resizable = window.Resizable;
         string timingMode = window.TimingMode;
@@ -880,6 +884,13 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         changed |= ImGui.Checkbox("Desktop sprite click-through", ref desktopSpriteClickThrough);
+        changed |= DrawStringCombo("Desktop sprite drag button", ref desktopSpriteDragButton, ["none", "left", "right", "middle"]);
+        changed |= ImGui.Checkbox("Desktop sprite system tray", ref desktopSpriteTrayEnabled);
+        if (DrawPathInput("Desktop sprite tray icon", ref desktopSpriteTrayIconPath, 1024, "desktopSpriteTrayIconPath"))
+        {
+            changed = true;
+        }
+        DrawDesktopSpriteTrayMenuItems(window);
 
         if (!desktopSpriteMode)
         {
@@ -897,6 +908,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             window.DesktopSpriteMode = desktopSpriteMode;
             window.DesktopSpriteClickThrough = desktopSpriteClickThrough;
+            window.DesktopSpriteDragButton = NormalizeDesktopSpriteDragButton(desktopSpriteDragButton);
+            window.DesktopSpriteTrayEnabled = desktopSpriteTrayEnabled;
+            window.DesktopSpriteTrayIconPath = desktopSpriteTrayIconPath;
             window.Width = Math.Max(320, width);
             window.Height = Math.Max(240, height);
             window.Fullscreen = desktopSpriteMode ? false : fullscreen;
@@ -911,7 +925,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplyWindowSettings();
         }
 
-        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through makes the desktop sprite ignore mouse input so clicks pass to the desktop or apps underneath. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews regular window settings in the editor.");
+        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews regular window settings in the editor.");
         ImGui.PopID();
     }
 
@@ -1059,6 +1073,108 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         ImGui.TextWrapped("Scripts call Entity.Speak(...) / entity.speak(...). The runtime uses this project-level TTS configuration.");
         ImGui.PopID();
+    }
+
+    private void DrawDesktopSpriteTrayMenuItems(GameWindowSettings window)
+    {
+        window.DesktopSpriteTrayMenuItems ??= [];
+
+        if (!ImGui.TreeNodeEx("Desktop sprite tray menu", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        if (window.DesktopSpriteTrayMenuItems.Count == 0)
+        {
+            if (ImGui.Button("Add default tray items"))
+            {
+                window.DesktopSpriteTrayMenuItems.Add(new DesktopSpriteTrayMenuItemSettings
+                {
+                    Id = "toggle_visibility",
+                    Text = "Show / Hide",
+                    BuiltInAction = "toggle_visibility",
+                    EventName = "tray_toggle_visibility"
+                });
+                window.DesktopSpriteTrayMenuItems.Add(new DesktopSpriteTrayMenuItemSettings
+                {
+                    Id = "exit",
+                    Text = "Exit",
+                    BuiltInAction = "exit",
+                    EventName = "tray_exit"
+                });
+            }
+
+            ImGui.TreePop();
+            return;
+        }
+
+        int removeIndex = -1;
+        string[] actions = ["none", "toggle_visibility", "exit"];
+        for (int i = 0; i < window.DesktopSpriteTrayMenuItems.Count; i++)
+        {
+            DesktopSpriteTrayMenuItemSettings item = window.DesktopSpriteTrayMenuItems[i];
+            ImGui.PushID($"trayItem{i}");
+            if (ImGui.TreeNodeEx(string.IsNullOrWhiteSpace(item.Text) ? item.Id : item.Text, ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                string id = item.Id;
+                if (DrawTextInputWithPaste("Id", ref id, 128, "trayItemId"))
+                {
+                    item.Id = string.IsNullOrWhiteSpace(id) ? Guid.NewGuid().ToString("N") : id.Trim();
+                }
+
+                string text = item.Text;
+                if (DrawTextInputWithPaste("Text", ref text, 128, "trayItemText"))
+                {
+                    item.Text = string.IsNullOrWhiteSpace(text) ? "Menu Item" : text;
+                }
+
+                bool enabled = item.Enabled;
+                if (ImGui.Checkbox("Enabled", ref enabled))
+                {
+                    item.Enabled = enabled;
+                }
+
+                string action = NormalizeTrayBuiltInAction(item.BuiltInAction);
+                if (DrawStringCombo("Built-in action", ref action, actions))
+                {
+                    item.BuiltInAction = NormalizeTrayBuiltInAction(action);
+                }
+
+                string eventName = item.EventName;
+                if (DrawTextInputWithPaste("Script event", ref eventName, 128, "trayItemEvent"))
+                {
+                    item.EventName = NormalizeScriptEventName(eventName);
+                }
+
+                if (ImGui.Button("Remove"))
+                {
+                    removeIndex = i;
+                }
+
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+        }
+
+        if (removeIndex >= 0)
+        {
+            window.DesktopSpriteTrayMenuItems.RemoveAt(removeIndex);
+        }
+
+        if (ImGui.Button("Add tray item"))
+        {
+            window.DesktopSpriteTrayMenuItems.Add(new DesktopSpriteTrayMenuItemSettings
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Text = "Menu Item",
+                BuiltInAction = "none",
+                EventName = "tray_menu_item"
+            });
+        }
+
+        ImGui.TextWrapped("Script event calls tray_menu_event / TrayMenuEvent with this event name. Built-in actions run before the script event.");
+        ImGui.TreePop();
     }
 
     private void DrawAsrSettings(GameProjectAsrSettings asr)
@@ -2514,6 +2630,41 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private static string NormalizeChoice(string value, string fallback, string[] choices)
     {
         return choices.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? fallback;
+    }
+
+    private static string NormalizeDesktopSpriteDragButton(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+        return normalized switch
+        {
+            "left" or "mouse_left" or "left_mouse" => "left",
+            "right" or "mouse_right" or "right_mouse" => "right",
+            "middle" or "mouse_middle" or "middle_mouse" => "middle",
+            _ => "none"
+        };
+    }
+
+    private static string NormalizeTrayBuiltInAction(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+        return normalized switch
+        {
+            "toggle_visibility" or "toggle" or "show_hide" or "showhide" => "toggle_visibility",
+            "exit" or "quit" => "exit",
+            _ => "none"
+        };
+    }
+
+    private static string NormalizeScriptEventName(string value)
+    {
+        string trimmed = (value ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        string normalized = Regex.Replace(trimmed, @"[^\p{L}\p{Nd}_]+", "_");
+        return normalized.Trim('_');
     }
 
     private static string GetRelationLabel(GameEntity entity)

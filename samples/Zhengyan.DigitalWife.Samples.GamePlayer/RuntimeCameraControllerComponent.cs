@@ -52,6 +52,8 @@ internal sealed class RuntimeCameraControllerComponent(
 
     public bool RequireRightMouseForMouseLook { get; set; } = true;
 
+    public Func<bool>? CanProcessMouseDrag { get; set; }
+
     public float YawDegrees => _yawDegrees;
 
     public float PitchDegrees => _pitchDegrees;
@@ -490,7 +492,8 @@ internal sealed class RuntimeCameraControllerComponent(
             _camera.Dolly(Game.Input.ScrollDelta.Y * ZoomSensitivity);
         }
 
-        CameraDragMode dragMode = ResolveEditorDragMode();
+        bool canProcessMouseDrag = CanProcessMouseDrag?.Invoke() != false;
+        CameraDragMode dragMode = canProcessMouseDrag ? ResolveEditorDragMode() : CameraDragMode.None;
         if (dragMode == CameraDragMode.None)
         {
             _dragFirstMove = true;
@@ -578,7 +581,7 @@ internal sealed class RuntimeCameraControllerComponent(
 
     private void UpdateMouseLook(bool allowPitch)
     {
-        if (Game is null || !EnableMouseLook)
+        if (Game is null || !EnableMouseLook || CanProcessMouseDrag?.Invoke() == false)
         {
             _dragFirstMove = true;
             return;

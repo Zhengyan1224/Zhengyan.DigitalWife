@@ -274,6 +274,30 @@ public sealed class GameWindowSettings
 
     public bool DesktopSpriteClickThrough { get; set; }
 
+    public string DesktopSpriteDragButton { get; set; } = "none";
+
+    public bool DesktopSpriteTrayEnabled { get; set; }
+
+    public string DesktopSpriteTrayIconPath { get; set; } = string.Empty;
+
+    public List<DesktopSpriteTrayMenuItemSettings>? DesktopSpriteTrayMenuItems { get; set; } =
+    [
+        new DesktopSpriteTrayMenuItemSettings
+        {
+            Id = "toggle_visibility",
+            Text = "Show / Hide",
+            BuiltInAction = "toggle_visibility",
+            EventName = "tray_toggle_visibility"
+        },
+        new DesktopSpriteTrayMenuItemSettings
+        {
+            Id = "exit",
+            Text = "Exit",
+            BuiltInAction = "exit",
+            EventName = "tray_exit"
+        }
+    ];
+
     public int Width { get; set; } = 1280;
 
     public int Height { get; set; } = 720;
@@ -283,6 +307,19 @@ public sealed class GameWindowSettings
     public bool Resizable { get; set; } = true;
 
     public string TimingMode { get; set; } = "time_synchronized";
+}
+
+public sealed class DesktopSpriteTrayMenuItemSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Text { get; set; } = "Menu Item";
+
+    public bool Enabled { get; set; } = true;
+
+    public string BuiltInAction { get; set; } = "none";
+
+    public string EventName { get; set; } = string.Empty;
 }
 
 public sealed class GameProjectLipSyncSettings

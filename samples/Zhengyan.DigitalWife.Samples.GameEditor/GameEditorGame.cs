@@ -1052,6 +1052,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _resourceImportCache.Clear();
 
         Project.Window.IconPath = ImportOptionalResource(Project.Window.IconPath, "window-icons", ref imported, warnings);
+        Project.Window.DesktopSpriteTrayIconPath = ImportOptionalResource(Project.Window.DesktopSpriteTrayIconPath, "tray-icons", ref imported, warnings);
 
         GameProjectVoiceSettings voice = Project.Voice;
         voice.ModelPath = ImportOptionalResource(voice.ModelPath, "tts", ref imported, warnings);

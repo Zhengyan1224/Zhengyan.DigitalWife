@@ -20,6 +20,8 @@ public sealed class CSharpScriptGlobals
 
     public bool IsSpriteEvent { get; init; }
 
+    public bool IsTrayMenuEvent { get; init; }
+
     public bool IsLoadingEvent { get; init; }
 
     public bool IsSpeechEvent { get; init; }
@@ -103,4 +105,10 @@ public sealed class CSharpScriptGlobals
     public string SpriteName { get; init; } = string.Empty;
 
     public string SpriteEventName { get; init; } = string.Empty;
+
+    public string TrayMenuItemId { get; init; } = string.Empty;
+
+    public string TrayMenuItemText { get; init; } = string.Empty;
+
+    public string TrayMenuEventName { get; init; } = string.Empty;
 }

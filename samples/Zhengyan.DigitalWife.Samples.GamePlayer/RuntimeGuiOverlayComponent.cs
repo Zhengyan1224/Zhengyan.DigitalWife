@@ -399,7 +399,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         return path.Trim().StartsWith("rt:", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void DrawControl(GuiControlSettings control)
+    private unsafe void DrawControl(GuiControlSettings control)
     {
         LayoutRect rect = ResolveGuiRect(control);
         ImGui.SetNextWindowPos(new Vector2(rect.X, rect.Y), ImGuiCond.Always);
@@ -482,12 +482,14 @@ internal sealed class RuntimeGuiOverlayComponent(
             bool changed = control.Multiline
                 ? ImGui.InputTextMultiline($"##textbox{control.Id}", ref value, 8192, controlSize, inputFlags, data =>
                 {
-                    UpdateTextBoxSelectionState(control, data.CursorPos, data.SelectionStart, data.SelectionEnd);
+                    ImGuiInputTextCallbackDataPtr callbackData = new(data);
+                    UpdateTextBoxSelectionState(control, callbackData.CursorPos, callbackData.SelectionStart, callbackData.SelectionEnd);
                     return 0;
                 })
                 : ImGui.InputText($"##textbox{control.Id}", ref value, 8192, inputFlags, data =>
                 {
-                    UpdateTextBoxSelectionState(control, data.CursorPos, data.SelectionStart, data.SelectionEnd);
+                    ImGuiInputTextCallbackDataPtr callbackData = new(data);
+                    UpdateTextBoxSelectionState(control, callbackData.CursorPos, callbackData.SelectionStart, callbackData.SelectionEnd);
                     return 0;
                 });
             ClampTextBoxSelectionState(control, value);

@@ -344,6 +344,7 @@
               <tr><td><code>IsStart</code> / <code>IsUpdate</code></td><td>启动和每帧更新事件。</td></tr>
               <tr><td><code>IsGuiEvent</code></td><td>GUI 事件，配合 <code>GuiControlId</code>、<code>GuiControlName</code>、<code>GuiEventName</code>。</td></tr>
               <tr><td><code>IsSpriteEvent</code></td><td>Sprite 指针事件，配合 <code>SpriteId</code>、<code>SpriteName</code>、<code>SpriteEventName</code>。</td></tr>
+              <tr><td><code>IsTrayMenuEvent</code></td><td>桌面精灵托盘菜单事件，配合 <code>TrayMenuItemId</code>、<code>TrayMenuItemText</code>、<code>TrayMenuEventName</code>。</td></tr>
               <tr><td><code>IsLoadingEvent</code></td><td>场景加载脚本事件，配合 <code>LoadingEventName</code>、<code>LoadingProgress</code>、<code>LoadingMessage</code>。</td></tr>
               <tr><td><code>IsSpeechEvent</code></td><td>TTS 完成回调，配合 <code>SpeechCallbackName</code>。</td></tr>
               <tr><td><code>IsLlmEvent</code></td><td>LLM 后台回调，配合 <code>LlmCallbackName</code>、<code>LlmText</code>、<code>LlmDelta</code>、<code>LlmError</code>。</td></tr>
@@ -360,6 +361,7 @@
               <tr><td><code>update(entity, scene, input, audio, delta_seconds)</code></td><td>每帧更新。</td></tr>
               <tr><td><code>gui_event(entity, scene, input, audio, control_id, control_name, event_name)</code></td><td>GUI 控件事件。</td></tr>
               <tr><td><code>sprite_event(entity, scene, input, audio, sprite_id, sprite_name, event_name)</code></td><td>Sprite 指针事件。</td></tr>
+              <tr><td><code>tray_menu_event(entity, scene, input, audio, item_id, item_text, event_name)</code></td><td>桌面精灵托盘菜单事件；如果菜单项配置了同名 Script event，则优先调用同名函数。</td></tr>
               <tr><td><code>loading_started/progress/completed(...)</code></td><td>场景加载入口脚本事件。</td></tr>
               <tr><td><code>speech_completed(entity, scene, input, audio, callback_name)</code></td><td>TTS 完成回调。</td></tr>
               <tr><td><code>llm_event(entity, scene, input, audio, event)</code></td><td>LLM 通用回调；具名回调函数优先。</td></tr>
@@ -698,12 +700,18 @@ if portrait is not None:
           <tr><td><code>Scene.Window.SetSize</code></td><td><code>scene.window.set_size</code></td><td>设置窗口尺寸，最小 `320 x 240`。</td></tr>
           <tr><td><code>SetFullscreen</code> / <code>SetResizable</code></td><td><code>set_fullscreen</code> / <code>set_resizable</code></td><td>全屏和可调整大小。</td></tr>
           <tr><td><code>SetTimingMode</code></td><td><code>set_timing_mode</code></td><td>`time_synchronized` 或 `frame_rate_dependent`。</td></tr>
+          <tr><td><code>SetVisible</code> / <code>ToggleVisible</code></td><td><code>set_visible</code> / <code>toggle_visible</code></td><td>显示、隐藏或切换窗口显示状态，适合桌面精灵托盘菜单。</td></tr>
+          <tr><td><code>Scene.Window.Exit()</code> / <code>Quit()</code></td><td><code>scene.window.exit()</code> / <code>quit()</code></td><td>从脚本退出 GamePlayer。</td></tr>
           <tr><td><code>Scene.Runtime.UseOpenCL</code></td><td><code>scene.runtime.use_opencl</code></td><td>是否请求 OpenCL。</td></tr>
           <tr><td><code>Scene.Runtime.IsUsingOpenCL</code></td><td><code>scene.runtime.is_using_opencl</code></td><td>当前是否实际使用 OpenCL。</td></tr>
           <tr><td><code>Scene.Runtime.ComputeBackend</code></td><td><code>scene.runtime.compute_backend</code></td><td>当前后端：`OpenCL` 或 `CPU`。</td></tr>
           <tr><td><code>SetUseOpenCL</code></td><td><code>set_use_opencl</code></td><td>切换 OpenCL 偏好，失败回退 CPU。</td></tr>
+          <tr><td><code>ExecuteCommand</code></td><td><code>execute_command</code></td><td>执行系统命令并返回退出码、标准输出、标准错误、超时状态；默认不经过 shell。</td></tr>
+          <tr><td><code>ExecuteShellCommand</code></td><td><code>execute_shell_command</code></td><td>通过系统 shell 执行命令。Windows 使用 <code>cmd.exe /c</code>，Linux/macOS 使用 <code>/bin/sh -c</code>。</td></tr>
         </table>
         <p class="note">`UseOpenCL` 是偏好设置，实际后端以 `IsUsingOpenCL` 和 `ComputeBackend` 为准。</p>
+        <p class="note">系统命令返回 <code>ExitCode/exit_code</code>、<code>StandardOutput/stdout</code>、<code>StandardError/stderr</code>、<code>TimedOut/timed_out</code>、<code>Success/success</code>。脚本是受信任本地脚本，不是安全沙箱。</p>
+        <p class="note">桌面精灵托盘在 GameEditor 的 Window / Runtime 面板配置。菜单项支持 <code>none</code>、<code>toggle_visibility</code>、<code>exit</code> 内置动作，并可绑定脚本事件。Windows 使用原生系统托盘；Linux/macOS 当前安全降级为不创建托盘，但保留同一配置和脚本 API。</p>
       </section>
 
       <section id="camera" data-search>

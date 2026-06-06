@@ -34,6 +34,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private RuntimeGuiOverlayComponent? _guiOverlay;
     private RuntimeCameraControllerComponent? _cameraController;
     private RuntimeDebugDrawComponent? _debugDraw;
+    private DesktopSpriteHitTestComponent? _desktopSpriteHitTest;
+    private DesktopSpriteWindowDragComponent? _desktopSpriteWindowDrag;
+    private DesktopSpriteTrayComponent? _desktopSpriteTray;
     private SceneRenderTextureManager? _renderTextureManager;
     private SkyboxComponent? _skybox;
     private RuntimeScene? _runtimeScene;
@@ -75,6 +78,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public IReadOnlyList<RuntimeWaterObject> WaterObjects => _waterObjects;
 
     public IReadOnlyList<RuntimePlaneObject> PlaneObjects => _planeObjects;
+
+    internal string ProjectDirectory => _projectDirectory;
 
     private float LoadingProgress => _loadingTotalSteps <= 0
         ? 0.0f
@@ -138,11 +143,25 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             PanSensitivity = 1.0f,
             ZoomSensitivity = 1.0f,
             KeyboardPanSpeed = 4.0f,
+            CanProcessMouseDrag = () => _desktopSpriteWindowDrag?.IsDragging != true,
             UpdateOrder = int.MaxValue - 100
         });
 
         _runtimeInput = new RuntimeInput(this);
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
+
+        _desktopSpriteWindowDrag = AddComponent(new DesktopSpriteWindowDragComponent(() => Project.Window)
+        {
+            UpdateOrder = int.MaxValue - 200
+        });
+
+        _desktopSpriteTray = AddComponent(new DesktopSpriteTrayComponent(
+            () => Project.Window,
+            ResolveProjectPath,
+            item => _dispatcher.Post(() => HandleTrayMenuItemClicked(item)))
+        {
+            UpdateOrder = int.MaxValue - 250
+        });
 
         _ = AddComponent(new GroundShadowPassComponent(this)
         {
@@ -166,6 +185,12 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             RuntimeTextureProvider = _renderTextureManager,
             DrawOrder = int.MaxValue - 10,
             UpdateOrder = int.MaxValue
+        });
+
+        _desktopSpriteHitTest = AddComponent(new DesktopSpriteHitTestComponent(
+            () => Project.Window.DesktopSpriteMode && Project.Window.DesktopSpriteClickThrough)
+        {
+            DrawOrder = int.MaxValue
         });
 
         BeginProjectLoad();
@@ -317,6 +342,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ClearRuntimeScene();
         _renderTextureManager?.Dispose();
         _renderTextureManager = null;
+        _desktopSpriteTray?.Dispose();
+        _desktopSpriteTray = null;
+        DesktopSpritePlatform.ApplyClickThrough(Window, false);
         _runtimeVoice?.Dispose();
         _runtimeVoice = null;
         _runtimeAsr?.Dispose();
@@ -384,7 +412,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             () => Project.Scene.LoadingScreen,
             ResolveProjectPath)
         {
-            DrawOrder = int.MaxValue
+            DrawOrder = int.MaxValue - 1
         });
     }
 
@@ -603,6 +631,61 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _loadingEntity = null;
     }
 
+    private void HandleTrayMenuItemClicked(DesktopSpriteTrayMenuItemSettings item)
+    {
+        string action = NormalizeTrayBuiltInAction(item.BuiltInAction);
+        switch (action)
+        {
+            case "toggle_visibility":
+                ToggleWindowVisible();
+                break;
+            case "exit":
+                DispatchTrayMenuEvent(item);
+                RequestExit();
+                return;
+        }
+
+        DispatchTrayMenuEvent(item);
+    }
+
+    private void DispatchTrayMenuEvent(DesktopSpriteTrayMenuItemSettings item)
+    {
+        if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
+        {
+            return;
+        }
+
+        string eventName = string.IsNullOrWhiteSpace(item.EventName)
+            ? "tray_menu_event"
+            : item.EventName.Trim();
+
+        foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, string name) in _scriptTargets.ToArray())
+        {
+            foreach (IScriptInstance script in scripts)
+            {
+                try
+                {
+                    script.TrayMenuEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, item.Id, item.Text, eventName);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Script tray menu event failed for entity '{name}': {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private static string NormalizeTrayBuiltInAction(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+        return normalized switch
+        {
+            "toggle_visibility" or "toggle" or "show_hide" or "showhide" => "toggle_visibility",
+            "exit" or "quit" => "exit",
+            _ => "none"
+        };
+    }
+
     private void RequestSceneChange(string scenePath)
     {
         _pendingScenePath = scenePath;
@@ -797,6 +880,55 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         Project.Window.Title = title;
         Title = ResolveWindowTitle();
+    }
+
+    internal bool IsWindowVisible
+    {
+        get
+        {
+            object windowObject = Window;
+            Type windowType = windowObject.GetType();
+            foreach (string propertyName in new[] { "IsVisible", "Visible" })
+            {
+                PropertyInfo? property = windowType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+                if (property?.CanRead == true && property.PropertyType == typeof(bool))
+                {
+                    return (bool)(property.GetValue(windowObject) ?? true);
+                }
+            }
+
+            return true;
+        }
+    }
+
+    internal void SetWindowVisible(bool visible)
+    {
+        object windowObject = Window;
+        Type windowType = windowObject.GetType();
+
+        foreach (string propertyName in new[] { "IsVisible", "Visible" })
+        {
+            PropertyInfo? property = windowType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+            if (property?.CanWrite == true && property.PropertyType == typeof(bool))
+            {
+                property.SetValue(windowObject, visible);
+                return;
+            }
+        }
+
+        string methodName = visible ? "Show" : "Hide";
+        MethodInfo? method = windowType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance, binder: null, types: [], modifiers: null);
+        _ = method?.Invoke(windowObject, null);
+    }
+
+    internal void ToggleWindowVisible()
+    {
+        SetWindowVisible(!IsWindowVisible);
+    }
+
+    internal void RequestExit()
+    {
+        Exit();
     }
 
     private string ResolveWindowTitle()
@@ -1930,6 +2062,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         if (_debugDraw is not null)
         {
             excluded.Add(_debugDraw);
+        }
+
+        if (_desktopSpriteHitTest is not null)
+        {
+            excluded.Add(_desktopSpriteHitTest);
         }
 
         return excluded;

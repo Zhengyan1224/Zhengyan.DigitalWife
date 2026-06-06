@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Silk.NET.Input;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
@@ -52,6 +53,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
             spriteId: spriteId,
             spriteName: spriteName,
             spriteEventName: eventName);
+    }
+
+    public void TrayMenuEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string itemId, string itemText, string eventName)
+    {
+        SendEvent(
+            "tray_menu_event",
+            entity,
+            scene,
+            input,
+            audio,
+            0.0,
+            trayMenuItemId: itemId,
+            trayMenuItemText: itemText,
+            trayMenuEventName: eventName);
     }
 
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
@@ -149,6 +164,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
         string spriteId = "",
         string spriteName = "",
         string spriteEventName = "",
+        string trayMenuItemId = "",
+        string trayMenuItemText = "",
+        string trayMenuEventName = "",
         float loadingProgress = 0.0f,
         string loadingMessage = "",
         string speechCallback = "",
@@ -161,7 +179,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
             throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
         }
 
-        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, spriteId, spriteName, spriteEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, asrEvent, realtimeVoiceEvent);
+        PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, spriteId, spriteName, spriteEventName, trayMenuItemId, trayMenuItemText, trayMenuEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, asrEvent, realtimeVoiceEvent);
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -253,6 +271,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                import re
                import socket
                import statistics
+               import subprocess
                import sys
                import time
                import urllib.error
@@ -274,6 +293,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                module.random = random
                module.re = re
                module.statistics = statistics
+               module.subprocess = subprocess
                module.time = time
 
                spec.loader.exec_module(module)
@@ -305,6 +325,34 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    if not name:
                        return ""
                    return os.environ.get(str(name), "")
+
+               def execute_process(command, timeout_seconds=30, working_directory=None, shell=False):
+                   timeout = None if timeout_seconds is None or float(timeout_seconds) <= 0 else float(timeout_seconds)
+                   try:
+                       completed = subprocess.run(
+                           command,
+                           cwd=working_directory or None,
+                           capture_output=True,
+                           text=True,
+                           encoding="utf-8",
+                           errors="replace",
+                           timeout=timeout,
+                           shell=bool(shell))
+                       return {
+                           "exit_code": completed.returncode,
+                           "stdout": completed.stdout or "",
+                           "stderr": completed.stderr or "",
+                           "timed_out": False,
+                           "success": completed.returncode == 0
+                       }
+                   except subprocess.TimeoutExpired as ex:
+                       return {
+                           "exit_code": -1,
+                           "stdout": ex.stdout or "",
+                           "stderr": ex.stderr or "",
+                           "timed_out": True,
+                           "success": False
+                       }
 
                def emit_commands(commands):
                    print(FLUSH_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
@@ -2241,6 +2289,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_timing_mode(self, mode):
                        self._commands.append({"target": "window", "action": "set_timing_mode", "name": mode})
 
+                   def set_visible(self, enabled):
+                       self._commands.append({"target": "window", "action": "set_visible", "flag": bool(enabled)})
+
+                   def toggle_visible(self):
+                       self._commands.append({"target": "window", "action": "toggle_visible"})
+
+                   def exit(self):
+                       self._commands.append({"target": "window", "action": "exit"})
+
+                   def quit(self):
+                       self.exit()
+
                class Runtime:
                    def __init__(self, data, commands):
                        self.use_opencl = bool(data.get("useOpenCl", True))
@@ -2251,6 +2311,17 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_use_opencl(self, enabled):
                        self.use_opencl = bool(enabled)
                        self._commands.append({"target": "runtime", "action": "set_use_opencl", "flag": self.use_opencl})
+
+                   def execute_command(self, file_name, args=None, timeout_seconds=30, working_directory=None, shell=False):
+                       command_args = [] if args is None else args
+                       if isinstance(command_args, str):
+                           command = [str(file_name)] + ([command_args] if command_args else [])
+                       else:
+                           command = [str(file_name)] + [str(item) for item in command_args]
+                       return execute_process(command if not shell else str(file_name), timeout_seconds, working_directory, bool(shell))
+
+                   def execute_shell_command(self, command, timeout_seconds=30, working_directory=None):
+                       return execute_process(str(command), timeout_seconds, working_directory, True)
 
                class Sprite:
                    def __init__(self, scene, data, commands):
@@ -2518,6 +2589,21 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                module.sprite_event(entity, scene, input, audio, sprite_id, sprite_name, sprite_event_name)
                            else:
                                module.sprite_event(entity, scene, input, audio, sprite_id, sprite_event_name)
+                       elif event == "tray_menu_event":
+                           item_id = ctx.get("trayMenuItemId", "")
+                           item_text = ctx.get("trayMenuItemText", "")
+                           tray_event_name = ctx.get("trayMenuEventName", "")
+                           if tray_event_name and hasattr(module, tray_event_name):
+                               callback = getattr(module, tray_event_name)
+                               if len(inspect.signature(callback).parameters) >= 7:
+                                   callback(entity, scene, input, audio, item_id, item_text, tray_event_name)
+                               else:
+                                   callback(entity, scene, input, audio, item_id, tray_event_name)
+                           elif hasattr(module, "tray_menu_event"):
+                               if len(inspect.signature(module.tray_menu_event).parameters) >= 7:
+                                   module.tray_menu_event(entity, scene, input, audio, item_id, item_text, tray_event_name)
+                               else:
+                                   module.tray_menu_event(entity, scene, input, audio, item_id, tray_event_name)
                        elif event in ("loading_started", "loading_progress", "loading_completed") and hasattr(module, event):
                            getattr(module, event)(entity, scene, input, audio, ctx.get("loadingProgress", 0.0), ctx.get("loadingMessage", ""))
                        elif event == "speech_completed":
@@ -2954,6 +3040,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_timing_mode" when !string.IsNullOrWhiteSpace(command.Name):
                 scene.Window.SetTimingMode(command.Name);
+                break;
+            case "set_visible" when command.Flag.HasValue:
+                scene.Window.SetVisible(command.Flag.Value);
+                break;
+            case "toggle_visible":
+                scene.Window.ToggleVisible();
+                break;
+            case "exit":
+            case "quit":
+                scene.Window.Exit();
                 break;
         }
     }
@@ -3652,6 +3748,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string SpriteEventName { get; set; } = string.Empty;
 
+        public string TrayMenuItemId { get; set; } = string.Empty;
+
+        public string TrayMenuItemText { get; set; } = string.Empty;
+
+        public string TrayMenuEventName { get; set; } = string.Empty;
+
         public float LoadingProgress { get; set; }
 
         public string LoadingMessage { get; set; } = string.Empty;
@@ -3682,6 +3784,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             string spriteId,
             string spriteName,
             string spriteEventName,
+            string trayMenuItemId,
+            string trayMenuItemText,
+            string trayMenuEventName,
             float loadingProgress,
             string loadingMessage,
             string speechCallback,
@@ -3699,6 +3804,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 SpriteId = spriteId,
                 SpriteName = spriteName,
                 SpriteEventName = spriteEventName,
+                TrayMenuItemId = trayMenuItemId,
+                TrayMenuItemText = trayMenuItemText,
+                TrayMenuEventName = trayMenuEventName,
                 LoadingProgress = loadingProgress,
                 LoadingMessage = loadingMessage,
                 SpeechCallback = speechCallback,

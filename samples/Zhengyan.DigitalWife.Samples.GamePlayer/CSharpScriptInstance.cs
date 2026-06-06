@@ -44,47 +44,52 @@ internal sealed class CSharpScriptInstance : IScriptInstance
 
     public void Start(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: true, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void Update(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, double deltaSeconds)
     {
-        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
+        Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void SpriteEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string spriteId, string spriteName, string eventName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, spriteId, spriteName, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: true, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, spriteId, spriteName, eventName, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
+    }
+
+    public void TrayMenuEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string itemId, string itemText, string eventName)
+    {
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: true, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, itemId, itemText, eventName, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
     public void LoadingEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string eventName, float progress, string message)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, eventName, progress, message, string.Empty, null, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: true, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, eventName, progress, message, string.Empty, null, null, null);
     }
 
     public void SpeechEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string callbackName)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: true, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, callbackName, null, null, null);
     }
 
     public void LlmEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null, null);
     }
 
     public void AsrEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeAsrScriptEvent asrEvent)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: true, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, asrEvent, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: true, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, asrEvent, null);
     }
 
     public void RealtimeVoiceEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeRealtimeVoiceScriptEvent realtimeVoiceEvent)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: true, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, realtimeVoiceEvent);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: true, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, realtimeVoiceEvent);
     }
 
     public void Dispose()
@@ -101,6 +106,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         bool isUpdate,
         bool isGuiEvent,
         bool isSpriteEvent,
+        bool isTrayMenuEvent,
         bool isLoadingEvent,
         bool isSpeechEvent,
         bool isLlmEvent,
@@ -112,6 +118,9 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         string spriteId,
         string spriteName,
         string spriteEventName,
+        string trayMenuItemId,
+        string trayMenuItemText,
+        string trayMenuEventName,
         string loadingEventName,
         float loadingProgress,
         string loadingMessage,
@@ -135,6 +144,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             IsUpdate = isUpdate,
             IsGuiEvent = isGuiEvent,
             IsSpriteEvent = isSpriteEvent,
+            IsTrayMenuEvent = isTrayMenuEvent,
             IsLoadingEvent = isLoadingEvent,
             IsSpeechEvent = isSpeechEvent,
             IsLlmEvent = isLlmEvent,
@@ -149,6 +159,9 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             SpriteId = spriteId,
             SpriteName = spriteName,
             SpriteEventName = spriteEventName,
+            TrayMenuItemId = trayMenuItemId,
+            TrayMenuItemText = trayMenuItemText,
+            TrayMenuEventName = trayMenuEventName,
             LoadingEventName = loadingEventName,
             LoadingProgress = loadingProgress,
             LoadingMessage = loadingMessage,
