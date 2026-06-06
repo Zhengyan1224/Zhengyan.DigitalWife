@@ -1053,6 +1053,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         Project.Window.IconPath = ImportOptionalResource(Project.Window.IconPath, "window-icons", ref imported, warnings);
         Project.Window.DesktopSpriteTrayIconPath = ImportOptionalResource(Project.Window.DesktopSpriteTrayIconPath, "tray-icons", ref imported, warnings);
+        Project.Window.DesktopSpriteTrayWindowsIconPath = ImportOptionalResource(Project.Window.DesktopSpriteTrayWindowsIconPath, "tray-icons/windows", ref imported, warnings);
+        Project.Window.DesktopSpriteTrayLinuxIconPath = ImportOptionalResource(Project.Window.DesktopSpriteTrayLinuxIconPath, "tray-icons/linux", ref imported, warnings);
+        Project.Window.DesktopSpriteTrayMacOSIconPath = ImportOptionalResource(Project.Window.DesktopSpriteTrayMacOSIconPath, "tray-icons/macos", ref imported, warnings);
 
         GameProjectVoiceSettings voice = Project.Voice;
         voice.ModelPath = ImportOptionalResource(voice.ModelPath, "tts", ref imported, warnings);

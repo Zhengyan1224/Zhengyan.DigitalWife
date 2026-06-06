@@ -280,6 +280,12 @@ public sealed class GameWindowSettings
 
     public string DesktopSpriteTrayIconPath { get; set; } = string.Empty;
 
+    public string DesktopSpriteTrayWindowsIconPath { get; set; } = string.Empty;
+
+    public string DesktopSpriteTrayLinuxIconPath { get; set; } = string.Empty;
+
+    public string DesktopSpriteTrayMacOSIconPath { get; set; } = string.Empty;
+
     public List<DesktopSpriteTrayMenuItemSettings>? DesktopSpriteTrayMenuItems { get; set; } =
     [
         new DesktopSpriteTrayMenuItemSettings

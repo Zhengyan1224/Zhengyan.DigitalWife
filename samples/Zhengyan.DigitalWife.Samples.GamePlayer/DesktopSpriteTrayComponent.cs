@@ -94,6 +94,18 @@ internal sealed class DesktopSpriteTrayComponent(
 
     private string ResolveTrayIconPath(GameWindowSettings settings)
     {
+        string platformIconPath = OperatingSystem.IsWindows()
+            ? settings.DesktopSpriteTrayWindowsIconPath
+            : OperatingSystem.IsLinux()
+                ? settings.DesktopSpriteTrayLinuxIconPath
+                : OperatingSystem.IsMacOS()
+                    ? settings.DesktopSpriteTrayMacOSIconPath
+                    : string.Empty;
+        if (!string.IsNullOrWhiteSpace(platformIconPath))
+        {
+            return _resolveProjectPath(platformIconPath);
+        }
+
         if (!string.IsNullOrWhiteSpace(settings.DesktopSpriteTrayIconPath))
         {
             return _resolveProjectPath(settings.DesktopSpriteTrayIconPath);
@@ -120,6 +132,9 @@ internal sealed class DesktopSpriteTrayComponent(
         builder.Append(settings.DesktopSpriteMode).Append('|')
             .Append(settings.DesktopSpriteTrayEnabled).Append('|')
             .Append(settings.DesktopSpriteTrayIconPath).Append('|')
+            .Append(settings.DesktopSpriteTrayWindowsIconPath).Append('|')
+            .Append(settings.DesktopSpriteTrayLinuxIconPath).Append('|')
+            .Append(settings.DesktopSpriteTrayMacOSIconPath).Append('|')
             .Append(settings.IconPath);
 
         foreach (DesktopSpriteTrayMenuItemSettings item in settings.DesktopSpriteTrayMenuItems ?? [])
@@ -593,20 +608,26 @@ internal sealed class DesktopSpriteTrayComponent(
 
         private static bool _missingLibrariesLogged;
         private static bool _gtkInitFailedLogged;
+        private static bool _legacyFallbackLogged;
         private readonly List<DesktopSpriteTrayMenuItemSettings> _items;
         private readonly List<ActivatedCallback> _callbacks = [];
         private readonly Action<DesktopSpriteTrayMenuItemSettings> _onMenuItemClicked;
         private readonly IntPtr _indicator;
+        private readonly IntPtr _statusIcon;
         private readonly IntPtr _menu;
+        private StatusIconPopupCallback? _statusIconPopupCallback;
+        private ActivatedCallback? _statusIconActivateCallback;
         private bool _disposed;
 
         private LinuxGtkDesktopSpriteTray(
             IntPtr indicator,
+            IntPtr statusIcon,
             IntPtr menu,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
             _indicator = indicator;
+            _statusIcon = statusIcon;
             _menu = menu;
             _items = items
                 .Where(item => !string.IsNullOrWhiteSpace(item.Text))
@@ -625,12 +646,12 @@ internal sealed class DesktopSpriteTrayComponent(
                 return null;
             }
 
-            if (!LinuxTrayNative.TryLoad())
+            if (!LinuxTrayNative.TryLoadGtk())
             {
                 if (!_missingLibrariesLogged)
                 {
                     _missingLibrariesLogged = true;
-                    Console.WriteLine("[DesktopSprite] Linux tray requires GTK3 and Ayatana/AppIndicator native libraries, for example: libgtk-3-0 and libayatana-appindicator3-1.");
+                    Console.WriteLine("[DesktopSprite] Linux tray requires GTK3 native libraries, for example: libgtk-3-0.");
                 }
 
                 return null;
@@ -646,6 +667,26 @@ internal sealed class DesktopSpriteTrayComponent(
                     Console.WriteLine("[DesktopSprite] Linux tray could not initialize GTK; system tray is disabled.");
                 }
 
+                return null;
+            }
+
+            if (PreferLegacyGtkStatusIcon())
+            {
+                return TryCreateGtkStatusIcon(iconPath, items, onMenuItemClicked)
+                    ?? TryCreateAppIndicator(iconPath, items, onMenuItemClicked);
+            }
+
+            return TryCreateAppIndicator(iconPath, items, onMenuItemClicked)
+                ?? TryCreateGtkStatusIcon(iconPath, items, onMenuItemClicked);
+        }
+
+        private static LinuxGtkDesktopSpriteTray? TryCreateAppIndicator(
+            string iconPath,
+            IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
+            Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+        {
+            if (!LinuxTrayNative.TryLoadAppIndicator())
+            {
                 return null;
             }
 
@@ -677,11 +718,54 @@ internal sealed class DesktopSpriteTrayComponent(
                 return null;
             }
 
-            LinuxGtkDesktopSpriteTray tray = new(indicator, menu, items, onMenuItemClicked);
+            LinuxGtkDesktopSpriteTray tray = new(indicator, IntPtr.Zero, menu, items, onMenuItemClicked);
             tray.BuildMenu();
             LinuxTrayNative.app_indicator_set_status(indicator, AppIndicatorStatusActive);
             LinuxTrayNative.app_indicator_set_menu(indicator, menu);
             return tray;
+        }
+
+        private static LinuxGtkDesktopSpriteTray? TryCreateGtkStatusIcon(
+            string iconPath,
+            IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
+            Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+        {
+            try
+            {
+                IntPtr statusIcon = LinuxTrayNative.gtk_status_icon_new();
+                if (statusIcon == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                IntPtr menu = LinuxTrayNative.gtk_menu_new();
+                if (menu == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                LinuxGtkDesktopSpriteTray tray = new(IntPtr.Zero, statusIcon, menu, items, onMenuItemClicked);
+                tray.BuildMenu();
+                tray.ConfigureStatusIcon(iconPath);
+                tray.ConnectStatusIconMenu();
+                LinuxTrayNative.gtk_status_icon_set_visible(statusIcon, true);
+
+                if (!_legacyFallbackLogged)
+                {
+                    _legacyFallbackLogged = true;
+                    Console.WriteLine("[DesktopSprite] Linux tray is using legacy GtkStatusIcon fallback.");
+                }
+
+                return tray;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                return null;
+            }
+            catch (DllNotFoundException)
+            {
+                return null;
+            }
         }
 
         public void Pump()
@@ -708,6 +792,11 @@ internal sealed class DesktopSpriteTrayComponent(
             if (_indicator != IntPtr.Zero)
             {
                 LinuxTrayNative.app_indicator_set_status(_indicator, AppIndicatorStatusPassive);
+            }
+
+            if (_statusIcon != IntPtr.Zero)
+            {
+                LinuxTrayNative.gtk_status_icon_set_visible(_statusIcon, false);
             }
         }
 
@@ -740,6 +829,52 @@ internal sealed class DesktopSpriteTrayComponent(
             LinuxTrayNative.gtk_widget_show(_menu);
         }
 
+        private void ConfigureStatusIcon(string iconPath)
+        {
+            LinuxTrayNative.gtk_status_icon_set_tooltip_text(_statusIcon, "Zhengyan.DigitalWife");
+
+            if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
+            {
+                LinuxTrayNative.gtk_status_icon_set_from_file(_statusIcon, Path.GetFullPath(iconPath));
+                return;
+            }
+
+            LinuxTrayNative.gtk_status_icon_set_from_icon_name(_statusIcon, "application-x-executable");
+        }
+
+        private void ConnectStatusIconMenu()
+        {
+            _statusIconPopupCallback = (_, button, activateTime, _) => ShowStatusIconMenu(button, activateTime);
+            LinuxTrayNative.g_signal_connect_data(
+                _statusIcon,
+                "popup-menu",
+                Marshal.GetFunctionPointerForDelegate(_statusIconPopupCallback),
+                IntPtr.Zero,
+                IntPtr.Zero,
+                0);
+
+            _statusIconActivateCallback = (_, _) => ShowStatusIconMenu(0, 0);
+            LinuxTrayNative.g_signal_connect_data(
+                _statusIcon,
+                "activate",
+                Marshal.GetFunctionPointerForDelegate(_statusIconActivateCallback),
+                IntPtr.Zero,
+                IntPtr.Zero,
+                0);
+        }
+
+        private void ShowStatusIconMenu(uint button, uint activateTime)
+        {
+            try
+            {
+                LinuxTrayNative.gtk_menu_popup_at_pointer(_menu, IntPtr.Zero);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                LinuxTrayNative.gtk_menu_popup(_menu, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, button, activateTime);
+            }
+        }
+
         private void DispatchIndex(int index)
         {
             if (index < 0 || index >= _items.Count)
@@ -770,6 +905,21 @@ internal sealed class DesktopSpriteTrayComponent(
             return "application-x-executable";
         }
 
+        private static bool PreferLegacyGtkStatusIcon()
+        {
+            string desktop = string.Join(
+                ' ',
+                Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP") ?? string.Empty,
+                Environment.GetEnvironmentVariable("DESKTOP_SESSION") ?? string.Empty,
+                Environment.GetEnvironmentVariable("GDMSESSION") ?? string.Empty)
+                .ToLowerInvariant();
+            return desktop.Contains("xfce", StringComparison.Ordinal)
+                || desktop.Contains("lxde", StringComparison.Ordinal)
+                || desktop.Contains("mate", StringComparison.Ordinal)
+                || desktop.Contains("kali", StringComparison.Ordinal)
+                || desktop.Contains("trinity", StringComparison.Ordinal);
+        }
+
         private static DesktopSpriteTrayMenuItemSettings CloneMenuItem(DesktopSpriteTrayMenuItemSettings item)
         {
             return new DesktopSpriteTrayMenuItemSettings
@@ -796,11 +946,16 @@ internal sealed class DesktopSpriteTrayComponent(
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void ActivatedCallback(IntPtr widget, IntPtr userData);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void StatusIconPopupCallback(IntPtr statusIcon, uint button, uint activateTime, IntPtr userData);
+
         private static class LinuxTrayNative
         {
             private const int RtldLazy = 1;
-            private static bool _loaded;
-            private static bool _loadAttempted;
+            private static bool _gtkLoaded;
+            private static bool _gtkLoadAttempted;
+            private static bool _appIndicatorLoaded;
+            private static bool _appIndicatorLoadAttempted;
             private static bool _gtkInitialized;
             private static AppIndicatorNewDelegate? _appIndicatorNew;
             private static AppIndicatorSetStatusDelegate? _appIndicatorSetStatus;
@@ -810,17 +965,16 @@ internal sealed class DesktopSpriteTrayComponent(
 
             public static bool SupportsCustomIconPath => _appIndicatorSetIconThemePath is not null && _appIndicatorSetIconFull is not null;
 
-            public static bool TryLoad()
+            public static bool TryLoadGtk()
             {
-                if (_loadAttempted)
+                if (_gtkLoadAttempted)
                 {
-                    return _loaded;
+                    return _gtkLoaded;
                 }
 
-                _loadAttempted = true;
-                _loaded = TryLoadLibrary("libgtk-3.so.0", out _)
-                    && TryLoadAppIndicator();
-                return _loaded;
+                _gtkLoadAttempted = true;
+                _gtkLoaded = TryLoadLibrary("libgtk-3.so.0", out _);
+                return _gtkLoaded;
             }
 
             public static bool InitializeGtk(ref int argc, ref IntPtr argv)
@@ -859,16 +1013,24 @@ internal sealed class DesktopSpriteTrayComponent(
                 _appIndicatorSetIconFull?.Invoke(indicator, iconName, iconDescription);
             }
 
-            private static bool TryLoadAppIndicator()
+            public static bool TryLoadAppIndicator()
             {
+                if (_appIndicatorLoadAttempted)
+                {
+                    return _appIndicatorLoaded;
+                }
+
+                _appIndicatorLoadAttempted = true;
                 foreach (string libraryName in new[] { "libayatana-appindicator3.so.1", "libappindicator3.so.1" })
                 {
                     if (TryLoadLibrary(libraryName, out IntPtr library) && TryBindAppIndicator(library))
                     {
+                        _appIndicatorLoaded = true;
                         return true;
                     }
                 }
 
+                _appIndicatorLoaded = false;
                 return false;
             }
 
@@ -958,6 +1120,27 @@ internal sealed class DesktopSpriteTrayComponent(
 
             [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
             internal static extern void gtk_widget_set_sensitive(IntPtr widget, bool sensitive);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_menu_popup_at_pointer(IntPtr menu, IntPtr triggerEvent);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_menu_popup(IntPtr menu, IntPtr parentMenuShell, IntPtr parentMenuItem, IntPtr func, IntPtr data, uint button, uint activateTime);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern IntPtr gtk_status_icon_new();
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_status_icon_set_from_file(IntPtr statusIcon, string filename);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_status_icon_set_from_icon_name(IntPtr statusIcon, string iconName);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_status_icon_set_visible(IntPtr statusIcon, bool visible);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_status_icon_set_tooltip_text(IntPtr statusIcon, string tooltipText);
 
             [DllImport("libglib-2.0.so.0", CallingConvention = CallingConvention.Cdecl)]
             internal static extern bool g_main_context_pending(IntPtr context);

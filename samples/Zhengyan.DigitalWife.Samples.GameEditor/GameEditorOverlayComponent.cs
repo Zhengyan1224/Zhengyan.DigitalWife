@@ -872,6 +872,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         string desktopSpriteDragButton = NormalizeDesktopSpriteDragButton(window.DesktopSpriteDragButton);
         bool desktopSpriteTrayEnabled = window.DesktopSpriteTrayEnabled;
         string desktopSpriteTrayIconPath = window.DesktopSpriteTrayIconPath;
+        string desktopSpriteTrayWindowsIconPath = window.DesktopSpriteTrayWindowsIconPath;
+        string desktopSpriteTrayLinuxIconPath = window.DesktopSpriteTrayLinuxIconPath;
+        string desktopSpriteTrayMacOSIconPath = window.DesktopSpriteTrayMacOSIconPath;
         bool fullscreen = window.Fullscreen;
         bool resizable = window.Resizable;
         string timingMode = window.TimingMode;
@@ -886,7 +889,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Desktop sprite click-through", ref desktopSpriteClickThrough);
         changed |= DrawStringCombo("Desktop sprite drag button", ref desktopSpriteDragButton, ["none", "left", "right", "middle"]);
         changed |= ImGui.Checkbox("Desktop sprite system tray", ref desktopSpriteTrayEnabled);
-        if (DrawPathInput("Desktop sprite tray icon", ref desktopSpriteTrayIconPath, 1024, "desktopSpriteTrayIconPath"))
+        if (DrawPathInput("Desktop sprite tray icon (fallback)", ref desktopSpriteTrayIconPath, 1024, "desktopSpriteTrayIconPath"))
+        {
+            changed = true;
+        }
+
+        if (DrawPathInput("Windows tray icon (.ico)", ref desktopSpriteTrayWindowsIconPath, 1024, "desktopSpriteTrayWindowsIconPath"))
+        {
+            changed = true;
+        }
+
+        if (DrawPathInput("Linux tray icon (.png)", ref desktopSpriteTrayLinuxIconPath, 1024, "desktopSpriteTrayLinuxIconPath"))
+        {
+            changed = true;
+        }
+
+        if (DrawPathInput("macOS tray icon (.png)", ref desktopSpriteTrayMacOSIconPath, 1024, "desktopSpriteTrayMacOSIconPath"))
         {
             changed = true;
         }
@@ -911,6 +929,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             window.DesktopSpriteDragButton = NormalizeDesktopSpriteDragButton(desktopSpriteDragButton);
             window.DesktopSpriteTrayEnabled = desktopSpriteTrayEnabled;
             window.DesktopSpriteTrayIconPath = desktopSpriteTrayIconPath;
+            window.DesktopSpriteTrayWindowsIconPath = desktopSpriteTrayWindowsIconPath;
+            window.DesktopSpriteTrayLinuxIconPath = desktopSpriteTrayLinuxIconPath;
+            window.DesktopSpriteTrayMacOSIconPath = desktopSpriteTrayMacOSIconPath;
             window.Width = Math.Max(320, width);
             window.Height = Math.Max(240, height);
             window.Fullscreen = desktopSpriteMode ? false : fullscreen;
