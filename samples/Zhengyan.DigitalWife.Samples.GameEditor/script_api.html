@@ -6,50 +6,37 @@
   <title>GameEditor / GamePlayer 脚本 API</title>
   <style>
     :root {
-      --bg: #f6f3ee;
+      --bg: #f5efe5;
       --panel: #fffaf2;
-      --panel-strong: #efe3d2;
-      --ink: #23211d;
-      --muted: #70695f;
-      --line: #d9c9b4;
+      --panel-2: #f0dfc7;
+      --ink: #211f1b;
+      --muted: #6e665b;
+      --line: #d5c2aa;
       --accent: #0f766e;
-      --accent-ink: #063f3b;
-      --code-bg: #1f2522;
-      --code-ink: #e8f2ed;
-      --shadow: rgba(45, 34, 22, 0.12);
+      --accent-2: #9a5b20;
+      --code-bg: #17211d;
+      --code-ink: #e9f5ef;
+      --shadow: rgba(40, 29, 16, 0.14);
     }
 
-    * {
-      box-sizing: border-box;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
       color: var(--ink);
       background:
-        linear-gradient(135deg, rgba(15, 118, 110, 0.10), transparent 34rem),
-        linear-gradient(315deg, rgba(184, 110, 42, 0.10), transparent 30rem),
-        var(--bg);
+        radial-gradient(circle at 12% 10%, rgba(15, 118, 110, 0.14), transparent 28rem),
+        radial-gradient(circle at 88% 20%, rgba(154, 91, 32, 0.13), transparent 30rem),
+        linear-gradient(180deg, #fff7ea, var(--bg));
       font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
-      line-height: 1.65;
+      line-height: 1.62;
     }
 
-    a {
-      color: var(--accent-ink);
-      text-decoration: none;
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
+    a { color: var(--accent); }
 
     .layout {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr);
+      grid-template-columns: 360px minmax(0, 1fr);
       min-height: 100vh;
     }
 
@@ -58,21 +45,20 @@
       top: 0;
       height: 100vh;
       overflow: auto;
-      padding: 24px 18px;
+      padding: 22px 18px;
       border-right: 1px solid var(--line);
-      background: rgba(255, 250, 242, 0.88);
-      backdrop-filter: blur(10px);
+      background: rgba(255, 250, 242, 0.91);
+      backdrop-filter: blur(12px);
     }
 
     .brand {
-      margin-bottom: 18px;
       padding-bottom: 16px;
       border-bottom: 1px solid var(--line);
     }
 
     .brand h1 {
-      margin: 0 0 6px;
-      font-size: 22px;
+      margin: 0 0 8px;
+      font-size: 23px;
       line-height: 1.2;
     }
 
@@ -84,888 +70,533 @@
 
     .search {
       width: 100%;
-      margin: 0 0 18px;
-      padding: 10px 12px;
-      color: var(--ink);
+      margin: 18px 0 10px;
+      padding: 12px 13px;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 10px;
+      color: var(--ink);
       background: #fffdf8;
       font: inherit;
       outline: none;
+      box-shadow: 0 8px 22px rgba(45, 34, 22, 0.06);
     }
 
     .search:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+      box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
     }
 
-    .toc {
-      display: grid;
-      gap: 5px;
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin: 0 0 12px;
     }
 
-    .toc a {
-      display: block;
-      padding: 7px 10px;
-      border-radius: 6px;
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
       color: var(--ink);
-      font-size: 14px;
+      background: #fffdf8;
+      font-size: 12px;
+      cursor: pointer;
     }
 
-    .toc a:hover {
-      background: var(--panel-strong);
-      text-decoration: none;
+    .chip.active {
+      border-color: rgba(15, 118, 110, 0.45);
+      color: #073f3a;
+      background: rgba(15, 118, 110, 0.12);
+      font-weight: 700;
+    }
+
+    .result-count {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .doc-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .doc-button {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 11px 12px;
+      color: var(--ink);
+      background: rgba(255, 253, 248, 0.88);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .doc-button:hover,
+    .doc-button.active {
+      border-color: rgba(15, 118, 110, 0.48);
+      background: rgba(15, 118, 110, 0.10);
+    }
+
+    .doc-title {
+      display: block;
+      font-weight: 800;
+      line-height: 1.25;
+    }
+
+    .doc-summary {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
     }
 
     main {
-      width: min(1120px, 100%);
-      padding: 42px 48px 72px;
+      width: min(1200px, 100%);
+      padding: 34px 42px 70px;
+    }
+
+    .hero,
+    .content-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 250, 242, 0.92);
+      box-shadow: 0 18px 42px var(--shadow);
     }
 
     .hero {
-      margin-bottom: 26px;
+      margin-bottom: 18px;
       padding: 28px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: rgba(255, 250, 242, 0.78);
-      box-shadow: 0 16px 38px var(--shadow);
     }
 
     .hero h2 {
-      margin: 0 0 10px;
-      font-size: clamp(28px, 4vw, 42px);
-      line-height: 1.12;
+      margin: 0 0 8px;
+      font-size: clamp(30px, 4vw, 44px);
+      line-height: 1.08;
     }
 
     .hero p {
-      max-width: 860px;
+      max-width: 920px;
       margin: 0;
       color: var(--muted);
     }
 
-    section {
-      margin: 28px 0;
-      padding: 24px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: rgba(255, 250, 242, 0.9);
+    .content-card {
+      padding: 28px;
     }
 
-    h2 {
-      margin: 0 0 14px;
-      font-size: 25px;
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin: 18px 0 20px;
+    }
+
+    .meta-item {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: #fffdf8;
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .meta-value {
+      margin-top: 4px;
+      font-weight: 700;
+    }
+
+    .doc-content h1,
+    .doc-content h2,
+    .doc-content h3 {
       line-height: 1.25;
     }
 
-    h3 {
-      margin: 22px 0 10px;
+    .doc-content h1 {
+      margin: 0 0 12px;
+      font-size: 32px;
+    }
+
+    .doc-content h2 {
+      margin: 30px 0 12px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      font-size: 23px;
+    }
+
+    .doc-content h3 {
+      margin: 24px 0 10px;
       font-size: 18px;
     }
 
-    p {
-      margin: 8px 0 14px;
+    .doc-content p {
+      margin: 9px 0 14px;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 14px;
-    }
-
-    .card {
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fffdf8;
-    }
-
-    .card h3 {
-      margin-top: 0;
-    }
-
-    table {
+    .doc-content table {
       width: 100%;
+      margin: 14px 0 18px;
       border-collapse: collapse;
-      margin: 12px 0 18px;
-      overflow: hidden;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 10px;
+      overflow: hidden;
       background: #fffdf8;
     }
 
-    th,
-    td {
+    .doc-content th,
+    .doc-content td {
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
     }
 
-    th {
-      background: var(--panel-strong);
-      font-weight: 700;
+    .doc-content th {
+      background: var(--panel-2);
+      font-weight: 800;
     }
 
-    tr:last-child td {
+    .doc-content tr:last-child td {
       border-bottom: 0;
     }
 
-    code {
+    .doc-content code,
+    .meta-value code {
+      border-radius: 5px;
       padding: 2px 5px;
-      border-radius: 4px;
+      color: #073f3a;
       background: rgba(15, 118, 110, 0.10);
-      color: var(--accent-ink);
       font-family: "Cascadia Mono", Consolas, monospace;
       font-size: 0.92em;
     }
 
-    pre {
+    .doc-content pre {
       overflow: auto;
-      padding: 14px 16px;
-      border-radius: 8px;
-      background: var(--code-bg);
+      padding: 15px 16px;
+      border-radius: 12px;
       color: var(--code-ink);
+      background: var(--code-bg);
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     }
 
-    pre code {
+    .doc-content pre code {
       padding: 0;
-      background: transparent;
       color: inherit;
+      background: transparent;
     }
 
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      margin: 0 6px 6px 0;
-      padding: 3px 8px;
-      border: 1px solid rgba(15, 118, 110, 0.28);
-      border-radius: 999px;
-      color: var(--accent-ink);
-      background: rgba(15, 118, 110, 0.08);
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .note {
-      padding: 12px 14px;
+    .doc-content blockquote {
+      margin: 14px 0;
+      padding: 8px 14px;
       border-left: 4px solid var(--accent);
       background: rgba(15, 118, 110, 0.08);
     }
 
-    .hidden {
-      display: none;
+    .doc-content li {
+      margin: 5px 0;
     }
 
-    @media (max-width: 860px) {
-      .layout {
-        display: block;
-      }
+    .empty {
+      padding: 30px;
+      color: var(--muted);
+      text-align: center;
+    }
 
+    mark {
+      border-radius: 3px;
+      padding: 0 2px;
+      color: inherit;
+      background: rgba(242, 184, 84, 0.5);
+    }
+
+    @media (max-width: 900px) {
+      .layout { display: block; }
       .sidebar {
         position: static;
         height: auto;
         border-right: 0;
         border-bottom: 1px solid var(--line);
       }
-
-      .toc {
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      }
-
-      main {
-        padding: 24px 16px 48px;
-      }
-
-      section,
-      .hero {
-        padding: 18px;
-      }
-
-      table {
+      main { padding: 22px 14px 48px; }
+      .hero,
+      .content-card { padding: 18px; }
+      .doc-content table {
         display: block;
         overflow-x: auto;
       }
     }
   </style>
+  <script src="api_docs/api_manifest.js"></script>
 </head>
 <body>
   <div class="layout">
     <aside class="sidebar">
       <div class="brand">
-        <h1>脚本 API 查询</h1>
-        <p>GameEditor / GamePlayer C# 与 Python 运行时接口速查。</p>
+        <h1>脚本 API 检索</h1>
+        <p>从 <code>api_docs</code> 模块文档加载。支持对象、属性、方法、参数和示例全文检索。</p>
       </div>
-      <input id="apiSearch" class="search" type="search" placeholder="搜索 API、对象、说明">
-      <nav class="toc" aria-label="目录">
-        <a href="#overview">总览</a>
-        <a href="#lifecycle">生命周期</a>
-        <a href="#scene">Scene</a>
-        <a href="#bubble">Bubble</a>
-        <a href="#entity">Entity</a>
-        <a href="#pmx">PMX</a>
-        <a href="#water-particles">水面 / 粒子</a>
-        <a href="#tts">TTS</a>
-        <a href="#input">Input</a>
-        <a href="#audio">Audio</a>
-        <a href="#gui">GUI</a>
-        <a href="#sprite">2D Sprite</a>
-        <a href="#window-runtime">Window / Runtime</a>
-        <a href="#camera">Camera</a>
-        <a href="#debug">Debug / Ray</a>
-        <a href="#save">Save</a>
-        <a href="#network">Network</a>
-        <a href="#asr">ASR</a>
-        <a href="#llm">LLM</a>
-        <a href="#realtime-voice">Realtime Voice</a>
-        <a href="#notes">边界</a>
-      </nav>
+      <input id="searchInput" class="search" type="search" placeholder="搜索 API、对象、方法、参数，例如 Entity / SetVisible / clipboard">
+      <div id="filters" class="filters"></div>
+      <p id="resultCount" class="result-count"></p>
+      <div id="docList" class="doc-list"></div>
     </aside>
 
     <main>
-      <div class="hero" id="overview" data-search>
+      <section class="hero">
         <h2>GameEditor / GamePlayer 脚本 API</h2>
-        <p>本页是 `script_api.md` 的查询版，按运行时对象组织。C# 使用 `.csx` 全局变量，Python 使用事件函数参数。详细解释、长示例和边界说明仍以同目录的 `script_api.md` 为准。</p>
-      </div>
-
-      <section id="lifecycle" data-search>
-        <h2>生命周期</h2>
-        <div class="grid">
-          <div class="card">
-            <h3>C# 全局变量</h3>
-            <p><span class="tag">C#</span><span class="tag">csx</span></p>
-            <table>
-              <tr><th>变量</th><th>说明</th></tr>
-              <tr><td><code>Entity</code></td><td>当前脚本绑定实体。</td></tr>
-              <tr><td><code>Scene</code></td><td>当前运行时场景。</td></tr>
-              <tr><td><code>Input</code></td><td>当前帧输入快照。</td></tr>
-              <tr><td><code>Audio</code></td><td>音频控制入口。</td></tr>
-              <tr><td><code>DeltaSeconds</code></td><td>当前帧间隔秒数。</td></tr>
-              <tr><td><code>IsStart</code> / <code>IsUpdate</code></td><td>启动和每帧更新事件。</td></tr>
-              <tr><td><code>IsGuiEvent</code></td><td>GUI 事件，配合 <code>GuiControlId</code>、<code>GuiControlName</code>、<code>GuiEventName</code>。</td></tr>
-              <tr><td><code>IsSpriteEvent</code></td><td>Sprite 指针事件，配合 <code>SpriteId</code>、<code>SpriteName</code>、<code>SpriteEventName</code>。</td></tr>
-              <tr><td><code>IsTrayMenuEvent</code></td><td>桌面精灵托盘菜单事件，配合 <code>TrayMenuItemId</code>、<code>TrayMenuItemText</code>、<code>TrayMenuEventName</code>。</td></tr>
-              <tr><td><code>IsLoadingEvent</code></td><td>场景加载脚本事件，配合 <code>LoadingEventName</code>、<code>LoadingProgress</code>、<code>LoadingMessage</code>。</td></tr>
-              <tr><td><code>IsSpeechEvent</code></td><td>TTS 完成回调，配合 <code>SpeechCallbackName</code>。</td></tr>
-              <tr><td><code>IsLlmEvent</code></td><td>LLM 后台回调，配合 <code>LlmCallbackName</code>、<code>LlmText</code>、<code>LlmDelta</code>、<code>LlmError</code>。</td></tr>
-              <tr><td><code>IsAsrEvent</code></td><td>ASR 回调，配合 <code>AsrEventName</code>、<code>AsrText</code>、<code>AsrError</code>。</td></tr>
-              <tr><td><code>IsRealtimeVoiceEvent</code></td><td>Realtime Voice 回调，配合 <code>RealtimeVoiceEventName</code>、<code>RealtimeVoiceText</code>、<code>RealtimeVoiceWakeWord</code>、<code>RealtimeVoiceError</code>。</td></tr>
-            </table>
-          </div>
-          <div class="card">
-            <h3>Python 事件函数</h3>
-            <p><span class="tag">Python</span><span class="tag">py</span></p>
-            <table>
-              <tr><th>函数</th><th>说明</th></tr>
-              <tr><td><code>start(entity, scene, input, audio)</code></td><td>实体脚本启动。</td></tr>
-              <tr><td><code>update(entity, scene, input, audio, delta_seconds)</code></td><td>每帧更新。</td></tr>
-              <tr><td><code>gui_event(entity, scene, input, audio, control_id, control_name, event_name)</code></td><td>GUI 控件事件。</td></tr>
-              <tr><td><code>sprite_event(entity, scene, input, audio, sprite_id, sprite_name, event_name)</code></td><td>Sprite 指针事件。</td></tr>
-              <tr><td><code>tray_menu_event(entity, scene, input, audio, item_id, item_text, event_name)</code></td><td>桌面精灵托盘菜单事件；如果菜单项配置了同名 Script event，则优先调用同名函数。</td></tr>
-              <tr><td><code>loading_started/progress/completed(...)</code></td><td>场景加载入口脚本事件。</td></tr>
-              <tr><td><code>speech_completed(entity, scene, input, audio, callback_name)</code></td><td>TTS 完成回调。</td></tr>
-              <tr><td><code>llm_event(entity, scene, input, audio, event)</code></td><td>LLM 通用回调；具名回调函数优先。</td></tr>
-              <tr><td><code>asr_event(entity, scene, input, audio, event)</code></td><td>ASR 通用回调；具名回调函数优先。</td></tr>
-              <tr><td><code>realtime_voice_event(entity, scene, input, audio, event)</code></td><td>Realtime Voice 通用回调；具名回调函数优先。</td></tr>
-            </table>
-          </div>
-        </div>
+        <p>根 Markdown 已拆分为模块文档。左侧检索后点击模块，可在这里查看该对象的属性表、方法参数说明和示例。通过本地文件直接打开时，页面使用 <code>api_manifest.js</code> 离线快照；通过 HTTP 服务打开时，会优先读取对应的 <code>api_docs/*.md</code> 文件。</p>
       </section>
-
-      <section id="scene" data-search>
-        <h2>Scene</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Name</code></td><td><code>scene.name</code></td><td>当前场景名。</td></tr>
-          <tr><td><code>Scene.Entities</code></td><td><code>scene.get_entity(id_or_name)</code></td><td>实体枚举或按 Id / Name 获取实体。</td></tr>
-          <tr><td><code>Scene.GuiControls</code></td><td><code>scene.get_gui_control(id_or_name)</code></td><td>GUI 控件枚举或查找。</td></tr>
-          <tr><td><code>Scene.Sprites</code></td><td><code>scene.get_sprite(id_or_name)</code></td><td>2D Sprite 枚举或查找。</td></tr>
-          <tr><td><code>Scene.Window</code></td><td><code>scene.window</code></td><td>窗口控制。</td></tr>
-          <tr><td><code>Scene.Runtime</code></td><td><code>scene.runtime</code></td><td>运行时项目设置和计算后端查询。</td></tr>
-          <tr><td><code>Scene.Camera</code></td><td><code>scene.camera</code></td><td>相机控制、射线和 Render Texture。</td></tr>
-          <tr><td><code>Scene.Debug</code></td><td><code>scene.debug</code></td><td>调试线和射线绘制。</td></tr>
-          <tr><td><code>Scene.Save</code></td><td><code>scene.save</code></td><td>受限到 `saves/` 的存档读写。</td></tr>
-          <tr><td><code>Scene.Bubble</code></td><td><code>scene.bubble</code></td><td>运行时对话气泡 / 提示气泡系统。</td></tr>
-          <tr><td><code>Scene.Llm</code></td><td><code>scene.llm</code></td><td>OpenAI-compatible 文本对话。</td></tr>
-          <tr><td><code>Scene.Asr</code></td><td><code>scene.asr</code></td><td>本地麦克风录音和 ASR 识别。</td></tr>
-          <tr><td><code>Scene.RealtimeVoice</code></td><td><code>scene.realtime_voice</code></td><td>Realtime Voice 远端语音服务、唤醒词监听和流式语音回复。</td></tr>
-          <tr><td><code>Scene.Network</code></td><td><code>scene.network</code></td><td>HTTP/HTTPS、TCP 和 UDP 网络通信。</td></tr>
-          <tr><td><code>Scene.Performance</code></td><td><code>scene.performance</code></td><td>FPS、帧号、运行时间。</td></tr>
-          <tr><td><code>Scene.LoadScene(path)</code></td><td><code>scene.load_scene(path)</code></td><td>切换工程内场景文件。</td></tr>
-          <tr><td><code>Scene.RenderTexture(name)</code></td><td><code>scene.render_texture(name)</code></td><td>返回 <code>rt:name</code> 引用。</td></tr>
-          <tr><td>无</td><td><code>scene.flush()</code></td><td>Python 立即提交当前已累计命令。</td></tr>
-        </table>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>LayoutMode</code> / <code>SetLayoutMode</code></td><td><code>layout_mode</code> / <code>set_layout_mode</code></td><td><code>absolute</code> 或 <code>relative</code>。相对布局时位置和尺寸会按项目窗口参考分辨率缩放。</td></tr>
-          <tr><td><code>GetScreenRect()</code> / <code>ContainsPoint(x, y)</code> / <code>ContainsMouse(Input)</code></td><td><code>contains_point(x, y)</code> / <code>contains_mouse(input)</code></td><td>屏幕矩形与命中检测，已考虑相对/绝对布局和旋转。</td></tr>
-        </table>
-        <pre><code class="language-csharp">RuntimeSpriteControl? portrait = Scene.GetSprite("Portrait");
-if (portrait is not null)
-{
-    portrait.SetPosition(24, 420);
-    portrait.SetSize(160, 160);
-    portrait.SetLayoutMode("relative");
-    portrait.Opacity = 0.9f;
-    portrait.Texture = "assets/textures/portrait.png";
-    portrait.Show();
-
-    if (portrait.ContainsMouse(Input) && Input.IsMouseButtonDown("left"))
-    {
-        Console.WriteLine("Portrait clicked.");
-    }
-}</code></pre>
-        <pre><code class="language-python">portrait = scene.get_sprite("Portrait")
-if portrait is not None:
-    portrait.set_position(24, 420)
-    portrait.set_size(160, 160)
-    portrait.set_layout_mode("relative")
-    portrait.set_opacity(0.9)
-    portrait.set_texture("assets/textures/portrait.png")
-    portrait.show()
-
-    if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
-        print("Portrait clicked")</code></pre>
-        <p class="note"><code>relative</code> 模式下 Sprite 仍然使用同一组 <code>X / Y / Width / Height</code> 字段，只是会像 GUI 一样按项目窗口参考分辨率缩放，不额外引入第二套尺寸属性。</p>
-      </section>
-
-      <section id="entity" data-search>
-        <h2>Entity</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Id</code> / <code>Name</code> / <code>Type</code></td><td><code>id</code> / <code>name</code> / <code>type</code></td><td>实体标识、名称、类型。</td></tr>
-          <tr><td><code>Position</code> / <code>SetPosition</code></td><td><code>position</code> / <code>set_position</code></td><td>世界位置。</td></tr>
-          <tr><td><code>Translate</code></td><td><code>translate</code></td><td>相对位移。</td></tr>
-          <tr><td><code>Scale</code> / <code>SetScale</code></td><td><code>scale</code> / <code>set_scale</code></td><td>缩放。</td></tr>
-          <tr><td><code>RotateX/Y/Z</code></td><td><code>rotate_x/y/z</code></td><td>按角度旋转。</td></tr>
-          <tr><td><code>Visible</code></td><td><code>set_visible</code></td><td>显示或隐藏实体。</td></tr>
-          <tr><td><code>IsPlaying</code></td><td><code>set_playing</code></td><td>PMX 动作、粒子或水面启停。</td></tr>
-          <tr><td><code>PlaybackSpeed</code></td><td><code>set_playback_speed</code></td><td>动作或模拟速度。</td></tr>
-          <tr><td><code>EnableEdge</code> / <code>EnableShadow</code></td><td><code>set_edge_enabled</code> / <code>set_shadow_enabled</code></td><td>PMX 描边和阴影。</td></tr>
-          <tr><td><code>DrawShadowInMainPass</code></td><td><code>set_draw_shadow_in_main_pass</code></td><td>PMX 主 pass 地面影子。</td></tr>
-          <tr><td><code>BindRelation</code> / <code>ClearRelationBinding</code></td><td><code>bind_relation</code> / <code>clear_relation</code></td><td>PMX 与 PMX 绑定关系。</td></tr>
-          <tr><td><code>AddCapsuleCollider</code> / <code>AddBoxCollider</code></td><td><code>add_capsule_collider</code> / <code>add_box_collider</code></td><td>添加碰撞体。</td></tr>
-          <tr><td><code>CheckCollision</code> / <code>DistanceToCollider</code></td><td><code>check_collision</code> / <code>distance_to_collider</code></td><td>轻量碰撞检测。</td></tr>
-          <tr><td><code>Raycast</code></td><td><code>raycast</code></td><td>射线检测当前实体 Collider。</td></tr>
-        </table>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>LayoutMode</code> / <code>SetLayoutMode</code></td><td><code>layout_mode</code> / <code>set_layout_mode</code></td><td><code>absolute</code> 或 <code>relative</code>。相对布局时位置和尺寸会按项目窗口参考分辨率缩放。</td></tr>
-          <tr><td><code>GetScreenRect()</code> / <code>ContainsPoint(x, y)</code> / <code>ContainsMouse(Input)</code></td><td><code>contains_point(x, y)</code> / <code>contains_mouse(input)</code></td><td>屏幕矩形与命中检测，已考虑相对/绝对布局和旋转。</td></tr>
-        </table>
-        <pre><code class="language-csharp">RuntimeSpriteControl? portrait = Scene.GetSprite("Portrait");
-if (portrait is not null)
-{
-    portrait.SetPosition(24, 420);
-    portrait.SetSize(160, 160);
-    portrait.SetLayoutMode("relative");
-    portrait.Opacity = 0.9f;
-    portrait.Texture = "assets/textures/portrait.png";
-    portrait.Show();
-
-    if (portrait.ContainsMouse(Input) && Input.IsMouseButtonDown("left"))
-    {
-        Console.WriteLine("Portrait clicked.");
-    }
-}</code></pre>
-        <pre><code class="language-python">portrait = scene.get_sprite("Portrait")
-if portrait is not None:
-    portrait.set_position(24, 420)
-    portrait.set_size(160, 160)
-    portrait.set_layout_mode("relative")
-    portrait.set_opacity(0.9)
-    portrait.set_texture("assets/textures/portrait.png")
-    portrait.show()
-
-    if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
-        print("Portrait clicked")</code></pre>
-        <p class="note"><code>relative</code> 模式下 Sprite 仍然使用同一组 <code>X / Y / Width / Height</code> 字段，只是会像 GUI 一样按项目窗口参考分辨率缩放，不额外引入第二套尺寸属性。</p>
-      </section>
-
-      <section id="pmx" data-search>
-        <h2>PMX</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>ApplyMotion(path)</code></td><td><code>apply_motion(path)</code></td><td>加载 VMD 动作。</td></tr>
-          <tr><td><code>SetMotionLayers(layers)</code></td><td><code>set_motion_layers(layers)</code></td><td>一次性设置整组动作层，适合做双动作平滑混合。</td></tr>
-          <tr><td><code>AddMotionLayer(path, weight)</code></td><td><code>add_motion_layer(path, weight)</code></td><td>叠加动作层。</td></tr>
-          <tr><td><code>SetMotionLayerWeight</code></td><td><code>set_motion_layer_weight</code></td><td>设置动作层权重。</td></tr>
-          <tr><td><code>PlayMotion</code> / <code>PauseMotion</code> / <code>StopMotion</code></td><td><code>play_motion</code> / <code>pause_motion</code> / <code>stop_motion</code></td><td>动作播放控制。</td></tr>
-          <tr><td><code>SeekMotionTime</code> / <code>SeekMotionFrame</code></td><td><code>seek_motion_time</code> / <code>seek_motion_frame</code></td><td>跳转动作时间或帧。</td></tr>
-          <tr><td><code>MorphNames</code> / <code>MorphWeights</code></td><td><code>morph_names</code> / <code>morph_weights</code></td><td>Morph 查询。</td></tr>
-          <tr><td><code>SetMorphWeight</code></td><td><code>set_morph_weight</code></td><td>设置 Morph 权重。</td></tr>
-          <tr><td><code>SaveBaseAnimation</code> / <code>LoadBaseAnimation</code></td><td><code>save_base_animation</code> / <code>load_base_animation</code></td><td>保存或恢复 PMX 基准动画。</td></tr>
-          <tr><td><code>NodeNames</code> / <code>GetNodeState</code></td><td><code>node_names</code> / <code>get_node_state</code></td><td>骨骼节点查询。</td></tr>
-          <tr><td><code>SetNodeTranslate/Rotate/Scale</code></td><td><code>set_node_translate/rotate/scale</code></td><td>基础骨骼 TRS。</td></tr>
-          <tr><td><code>SetNodeAnimTranslate/Rotate</code></td><td><code>set_node_anim_translate/rotate</code></td><td>动画偏移。</td></tr>
-          <tr><td><code>SetMaterialTexture</code></td><td><code>set_material_texture</code></td><td>材质贴图覆盖。</td></tr>
-          <tr><td><code>SetMaterialRenderTexture</code></td><td><code>set_material_render_texture</code></td><td>绑定 Render Texture 到材质。</td></tr>
-        </table>
-      </section>
-
-      <section id="water-particles" data-search>
-        <h2>水面 / 粒子</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>EnableWaterInteraction</code></td><td><code>enable_water_interaction</code> / <code>set_enable_water_interaction</code></td><td>粒子系统是否参与水体交互。</td></tr>
-          <tr><td><code>KillOnWaterContact</code></td><td><code>kill_on_water_contact</code> / <code>set_kill_on_water_contact</code></td><td>粒子接触水面后是否消失。</td></tr>
-          <tr><td><code>WaterInteractionEnabled</code></td><td><code>water_interaction_enabled</code> / <code>set_water_interaction_enabled</code></td><td>水面是否启用交互检测。</td></tr>
-          <tr><td><code>WaterInteractionRadius</code></td><td><code>water_interaction_radius</code> / <code>set_water_interaction_radius</code></td><td>水面波纹半径。</td></tr>
-          <tr><td><code>WaterInteractionStrength</code></td><td><code>water_interaction_strength</code> / <code>set_water_interaction_strength</code></td><td>水面波纹强度。</td></tr>
-          <tr><td><code>ParticleRippleMinIntervalSeconds</code></td><td><code>particle_ripple_min_interval_seconds</code> / <code>set_particle_ripple_min_interval_seconds</code></td><td>同一区域粒子触水的最小波纹间隔。</td></tr>
-          <tr><td><code>ParticleRippleMergeDistance</code></td><td><code>particle_ripple_merge_distance</code> / <code>set_particle_ripple_merge_distance</code></td><td>粒子触水波纹空间合并距离。</td></tr>
-          <tr><td><code>RippleLifetimeSeconds</code></td><td><code>ripple_lifetime_seconds</code> / <code>set_ripple_lifetime_seconds</code></td><td>波纹持续时间。</td></tr>
-          <tr><td><code>RippleWaveSpeed</code></td><td><code>ripple_wave_speed</code> / <code>set_ripple_wave_speed</code></td><td>波纹传播速度。</td></tr>
-          <tr><td><code>RippleFrequency</code></td><td><code>ripple_frequency</code> / <code>set_ripple_frequency</code></td><td>波纹频率。</td></tr>
-          <tr><td><code>RippleNormalStrength</code></td><td><code>ripple_normal_strength</code> / <code>set_ripple_normal_strength</code></td><td>水面法线扰动强度。</td></tr>
-        </table>
-        <p class="note">粒子实体使用 <code>set_enable_water_interaction(...)</code>；水面实体使用 <code>set_water_interaction_enabled(...)</code>。</p>
-      </section>
-
-      <section id="tts" data-search>
-        <h2>TTS / 说话</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Entity.Speak(text)</code></td><td><code>entity.speak(text)</code></td><td>非阻塞说话。</td></tr>
-          <tr><td><code>Speak(text, speakerId, speed, volume)</code></td><td><code>speak(text, speaker_id, speed, volume)</code></td><td>指定 speaker、语速和音量。</td></tr>
-          <tr><td><code>SpeakWithCallback(text, callbackName)</code></td><td><code>speak(..., on_completed="name")</code></td><td>播放完成后回调脚本事件。</td></tr>
-          <tr><td><code>StopSpeaking()</code></td><td><code>stop_speaking()</code></td><td>停止当前实体 TTS。</td></tr>
-        </table>
-      </section>
-
-      <section id="input" data-search>
-        <h2>Input</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>MouseX</code> / <code>MouseY</code></td><td><code>mouse_x</code> / <code>mouse_y</code></td><td>鼠标位置。</td></tr>
-          <tr><td><code>MouseDeltaX</code> / <code>MouseDeltaY</code></td><td><code>mouse_delta_x</code> / <code>mouse_delta_y</code></td><td>鼠标位移。</td></tr>
-          <tr><td><code>ScrollX</code> / <code>ScrollY</code></td><td><code>scroll_x</code> / <code>scroll_y</code></td><td>滚轮。</td></tr>
-          <tr><td><code>IsAltDown</code> / <code>IsControlDown</code> / <code>IsShiftDown</code></td><td><code>alt_down</code> / <code>control_down</code> / <code>shift_down</code></td><td>修饰键。</td></tr>
-          <tr><td><code>HasGamepad</code> / <code>GamepadName</code> / <code>GamepadIndex</code></td><td><code>has_gamepad</code> / <code>gamepad_name</code> / <code>gamepad_index</code></td><td>当前主手柄是否可用，以及其名称和索引。</td></tr>
-          <tr><td><code>LeftStickX</code> / <code>LeftStickY</code> / <code>RightStickX</code> / <code>RightStickY</code></td><td><code>left_stick_x</code> / <code>left_stick_y</code> / <code>right_stick_x</code> / <code>right_stick_y</code></td><td>左右摇杆当前坐标，范围通常为 <code>-1.0</code> 到 <code>1.0</code>。</td></tr>
-          <tr><td><code>LeftTrigger</code> / <code>RightTrigger</code></td><td><code>left_trigger</code> / <code>right_trigger</code></td><td>左右扳机当前按下程度，范围通常为 <code>0.0</code> 到 <code>1.0</code>。</td></tr>
-          <tr><td><code>IsGamepadButtonDown("A")</code></td><td><code>is_gamepad_button_down("A")</code></td><td>手柄按钮是否按住，支持 <code>lb</code> / <code>rb</code> / <code>ls</code> / <code>rs</code> / <code>dpad_up</code> 等常见别名。</td></tr>
-          <tr><td><code>ClipboardText</code> / <code>HasClipboardText</code> / <code>TryGetClipboardText(out text)</code> / <code>SetClipboardText(text)</code></td><td><code>clipboard_text</code> / <code>has_clipboard_text</code> / <code>set_clipboard_text(text)</code></td><td>C# 访问时读取当前原始剪贴板文本，也支持赋值；Python 为事件分发时的快照。为空或不可用时返回空字符串，C# 可用 <code>TryGetClipboardText</code> / <code>TrySetClipboardText</code> 区分成功与否。</td></tr>
-          <tr><td><code>IsKeyDown("W")</code></td><td><code>is_key_down("w")</code></td><td>按键是否按住。</td></tr>
-          <tr><td><code>IsMouseButtonDown("left")</code></td><td><code>is_mouse_button_down("left")</code></td><td>鼠标按钮是否按住。</td></tr>
-        </table>
-      </section>
-
-      <section id="audio" data-search>
-        <h2>Audio</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Audio.Play(name)</code></td><td><code>audio.play(name)</code></td><td>播放已注册音频。</td></tr>
-          <tr><td><code>Audio.Pause(name)</code></td><td><code>audio.pause(name)</code></td><td>暂停。</td></tr>
-          <tr><td><code>Audio.Stop(name)</code></td><td><code>audio.stop(name)</code></td><td>停止。</td></tr>
-          <tr><td><code>Audio.SetVolume(name, volume)</code></td><td><code>audio.set_volume(name, volume)</code></td><td>设置音量。</td></tr>
-          <tr><td><code>Audio.SetLoop(name, loop)</code></td><td><code>audio.set_loop(name, loop)</code></td><td>设置循环。</td></tr>
-          <tr><td><code>Audio.GetLoop(name)</code></td><td>无</td><td>读取 C# 当前循环状态。</td></tr>
-        </table>
-      </section>
-
-      <section id="bubble" data-search>
-        <h2>Bubble</h2>
-        <p><code>Scene.Bubble</code> / <code>scene.bubble</code> 是纯运行时 overlay，适合做 NPC 头顶对话气泡、系统提示，以及接近 <code>DigitalHuman</code> 风格的三段式气泡。</p>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Bubble.Count</code></td><td><code>scene.bubble.count</code></td><td>当前气泡数量。</td></tr>
-          <tr><td><code>Scene.Bubble.Names</code></td><td><code>scene.bubble.names</code></td><td>当前气泡名称列表。</td></tr>
-          <tr><td><code>Scene.Bubble.VisibleNames</code></td><td><code>scene.bubble.visible_names</code></td><td>当前可见气泡名称列表。</td></tr>
-          <tr><td><code>Scene.Bubble.GetOrCreate(name)</code></td><td><code>scene.bubble.get_or_create(name)</code></td><td>获取或创建命名气泡。</td></tr>
-          <tr><td><code>Scene.Bubble.ShowText(name, text, headerText, footerText)</code></td><td><code>scene.bubble.show(name, text="", header_text="", footer_text="")</code></td><td>快速显示一条气泡。</td></tr>
-          <tr><td><code>Scene.Bubble.HideAll()</code></td><td><code>scene.bubble.hide_all()</code></td><td>隐藏全部气泡。</td></tr>
-          <tr><td><code>Scene.Bubble.Remove(name)</code></td><td><code>scene.bubble.remove(name)</code></td><td>删除指定气泡。</td></tr>
-          <tr><td><code>Scene.Bubble.Clear()</code></td><td><code>scene.bubble.clear()</code></td><td>删除全部气泡。</td></tr>
-        </table>
-        <table>
-          <tr><th>C# / 属性</th><th>Python / 方法</th><th>说明</th></tr>
-          <tr><td><code>HeaderText</code> / <code>Text</code> / <code>FooterText</code></td><td><code>set_header_text</code> / <code>set_text</code> / <code>set_footer_text</code></td><td>三段文本内容，适合“说话人 / 主内容 / 提示”。</td></tr>
-          <tr><td><code>AttachToEntity(...)</code></td><td><code>attach_to_entity(...)</code></td><td>把气泡挂到实体上；PMX 默认取模型顶部中心，更接近数字人气泡。</td></tr>
-          <tr><td><code>UseScreenSpace</code> / <code>SetScreenOffset</code></td><td><code>set_screen_position</code> / <code>set_screen_offset</code></td><td>用屏幕坐标做提示气泡。</td></tr>
-          <tr><td><code>UseWorldSpace</code> / <code>SetWorldOffset</code></td><td><code>set_world_position</code> / <code>set_world_offset</code></td><td>用世界坐标做锚点。</td></tr>
-          <tr><td><code>LayoutMode</code> / <code>Width</code> / <code>SetPadding</code> / <code>SetPivot</code></td><td><code>set_layout_mode</code> / <code>set_width</code> / <code>set_padding</code> / <code>set_pivot</code></td><td>控制气泡尺寸、边距、相对布局和锚点枢轴。</td></tr>
-          <tr><td><code>TextAlignment</code> / <code>FontSize</code> / <code>HeaderFontSize</code> / <code>FooterFontSize</code></td><td><code>set_text_alignment</code> / <code>set_font_size</code> / <code>set_header_font_size</code> / <code>set_footer_font_size</code></td><td>控制对齐方式和三段字号。</td></tr>
-          <tr><td><code>BackgroundColor</code> / <code>BorderColor</code></td><td><code>set_background_color</code> / <code>set_border_color</code></td><td>控制气泡背景和边框颜色。</td></tr>
-          <tr><td><code>TextColor</code> / <code>HeaderTextColor</code> / <code>FooterTextColor</code></td><td><code>set_text_color</code> / <code>set_header_text_color</code> / <code>set_footer_text_color</code></td><td>控制三段文字颜色。</td></tr>
-          <tr><td><code>Rounding</code> / <code>BorderThickness</code> / <code>DrawOrder</code></td><td><code>set_rounding</code> / <code>set_border_thickness</code> / <code>set_draw_order</code></td><td>控制圆角、边框粗细和绘制顺序。</td></tr>
-        </table>
-        <pre><code class="language-csharp">RuntimeDialogueBubble bubble = Scene.Bubble.GetOrCreate("shopkeeper");
-bubble.AttachToEntity("Shopkeeper", useModelTopAnchor: true);
-bubble.SetWorldOffset(0.0f, 0.18f, 0.0f);
-bubble.SetScreenOffset(0.0f, -18.0f);
-bubble.Width = 420.0f;
-bubble.FontSize = 22.0f;
-bubble.HeaderFontSize = 18.0f;
-bubble.FooterFontSize = 16.0f;
-bubble.TextAlignment = "left";
-bubble.BackgroundColor = new Vector4(0.08f, 0.10f, 0.16f, 0.92f);
-bubble.BorderColor = new Vector4(0.62f, 0.84f, 1.0f, 0.95f);
-bubble.SetContent(
-    "欢迎来到海边集市，今天的新货刚到。",
-    headerText: "商店老板",
-    footerText: "按 E 继续");
-bubble.Show();</code></pre>
-        <pre><code class="language-python">tip = scene.bubble.get_or_create("quest-tip")
-tip.set_layout_mode("relative")
-tip.set_screen_position(1180, 48, layout_mode="relative")
-tip.set_pivot(1.0, 0.0)
-tip.set_width(360)
-tip.set_padding(16, 12)
-tip.set_font_size(20)
-tip.set_header_font_size(16)
-tip.set_footer_font_size(15)
-tip.set_background_color(0.08, 0.11, 0.18, 0.92)
-tip.set_border_color(0.54, 0.80, 1.00, 0.95)
-tip.show(
-    text="去码头找渔夫，打听暴风雨前的异常声响。",
-    header_text="支线任务",
-    footer_text="任务日志已更新")
-scene.flush()</code></pre>
-        <p class="note">Python 里的 <code>scene.bubble.names</code> / <code>visible_names</code> 是当前脚本事件快照；如果你在同一事件里修改后想立刻刷新画面，记得调用 <code>scene.flush()</code>。</p>
-        <p class="note">完整的“按住录音 ASR - 可编辑文本框 - 点击发送 - 气泡流式回复 - 句子级顺序 Speak”联动示例请看同目录的 <code>script_api.md</code>，示例会同时串起 <code>Scene.Asr</code>、<code>Scene.Llm</code>、<code>Scene.Bubble</code> 和 <code>SpeakWithCallback(...)</code>。</p>
-      </section>
-
-      <section id="gui" data-search>
-        <h2>GUI</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.GetGuiControl(id)</code></td><td><code>scene.get_gui_control(id)</code></td><td>按 Id 或 Name 查找控件。</td></tr>
-          <tr><td><code>Text</code> / <code>Value</code></td><td><code>text</code> / <code>value</code></td><td>显示文本或文本框输入。</td></tr>
-          <tr><td><code>SelectedText</code> / <code>SelectionStart</code> / <code>SelectionEnd</code> / <code>CursorPosition</code></td><td><code>selected_text</code> / <code>selection_start</code> / <code>selection_end</code> / <code>cursor_position</code></td><td>文本框当前选区和光标信息。</td></tr>
-          <tr><td><code>SetPosition</code> / <code>SetSize</code></td><td><code>set_position</code> / <code>set_size</code></td><td>位置和尺寸。</td></tr>
-          <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
-          <tr><td><code>GuiEventName == "pressed"/"released"</code></td><td><code>event_name == "pressed"/"released"</code></td><td>按钮按下和松开事件，适合 push-to-talk。</td></tr>
-          <tr><td><code>SetChecked</code></td><td><code>set_checked</code></td><td>复选框。</td></tr>
-          <tr><td><code>SetProgress</code></td><td><code>set_progress</code></td><td>进度条。</td></tr>
-          <tr><td><code>SetItems</code> / <code>SetSelectedIndex</code></td><td><code>set_items</code> / <code>set_selected_index</code></td><td>下拉框。</td></tr>
-          <tr><td><code>ReplaceSelection(text)</code></td><td><code>replace_selection(text)</code></td><td>用文本替换当前选区；无选区时在当前光标位置插入。</td></tr>
-          <tr><td><code>SetLayoutMode</code> / <code>SetFontSize</code></td><td><code>set_layout_mode</code> / <code>set_font_size</code></td><td>布局和字体。</td></tr>
-          <tr><td><code>SetWordWrap</code> / <code>SetMultiline</code></td><td><code>set_word_wrap</code> / <code>set_multiline</code></td><td>换行和多行文本框。</td></tr>
-        </table>
-      </section>
-
-      <section id="sprite" data-search>
-        <h2>2D Sprite</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.GetSprite(id)</code></td><td><code>scene.get_sprite(id)</code></td><td>按 Id 或 Name 查找 Sprite。</td></tr>
-          <tr><td><code>SetPosition</code> / <code>SetSize</code></td><td><code>set_position</code> / <code>set_size</code></td><td>屏幕坐标和尺寸。</td></tr>
-          <tr><td><code>Texture</code> / <code>Path</code></td><td><code>set_texture</code></td><td>图片路径或 `rt:` 引用。</td></tr>
-          <tr><td><code>SetRenderTexture</code></td><td><code>set_render_texture</code></td><td>绑定 Render Texture。</td></tr>
-          <tr><td><code>Opacity</code></td><td><code>set_opacity</code></td><td>透明度。</td></tr>
-          <tr><td><code>Show</code> / <code>Hide</code></td><td><code>show</code> / <code>hide</code></td><td>显示或隐藏。</td></tr>
-        </table>
-      <table>
-        <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-        <tr><td><code>LayoutMode</code> / <code>SetLayoutMode</code></td><td><code>layout_mode</code> / <code>set_layout_mode</code></td><td><code>absolute</code> 或 <code>relative</code>。相对布局时位置和尺寸会按项目窗口参考分辨率缩放。</td></tr>
-        <tr><td><code>GetScreenRect()</code> / <code>ContainsPoint(x, y)</code> / <code>ContainsMouse(Input)</code></td><td><code>contains_point(x, y)</code> / <code>contains_mouse(input)</code></td><td>屏幕矩形与命中检测，已考虑相对/绝对布局和旋转。</td></tr>
-      </table>
-      <pre><code class="language-csharp">RuntimeSpriteControl? portrait = Scene.GetSprite("Portrait");
-if (portrait is not null)
-{
-    portrait.SetPosition(24, 420);
-    portrait.SetSize(160, 160);
-    portrait.SetLayoutMode("relative");
-    portrait.Opacity = 0.9f;
-    portrait.Texture = "assets/textures/portrait.png";
-    portrait.Show();
-
-    if (portrait.ContainsMouse(Input) && Input.IsMouseButtonDown("left"))
-    {
-        Console.WriteLine("Portrait clicked.");
-    }
-}</code></pre>
-      <pre><code class="language-python">portrait = scene.get_sprite("Portrait")
-if portrait is not None:
-    portrait.set_position(24, 420)
-    portrait.set_size(160, 160)
-    portrait.set_layout_mode("relative")
-    portrait.set_opacity(0.9)
-    portrait.set_texture("assets/textures/portrait.png")
-    portrait.show()
-
-    if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
-        print("Portrait clicked")</code></pre>
-      <p class="note"><code>relative</code> 模式下 Sprite 仍然使用同一组 <code>X / Y / Width / Height</code> 字段，只是会像 GUI 一样按项目窗口参考分辨率缩放，不额外引入第二套尺寸属性。</p>
-      <p class="note">如果在 GameEditor 里给某个 Sprite 配置了 <code>Target entity</code>，GamePlayer 会自动把它的 <code>entered</code>、<code>exited</code>、<code>pressed</code>、<code>released</code>、<code>clicked</code> 指针事件派发到目标实体脚本。</p>
-
-      </section>
-
-      <section id="window-runtime" data-search>
-        <h2>Window / Runtime</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Window.SetTitle</code></td><td><code>scene.window.set_title</code></td><td>设置窗口标题。</td></tr>
-          <tr><td><code>Scene.Window.SetSize</code></td><td><code>scene.window.set_size</code></td><td>设置窗口尺寸，最小 `320 x 240`。</td></tr>
-          <tr><td><code>SetFullscreen</code> / <code>SetResizable</code></td><td><code>set_fullscreen</code> / <code>set_resizable</code></td><td>全屏和可调整大小。</td></tr>
-          <tr><td><code>SetTimingMode</code></td><td><code>set_timing_mode</code></td><td>`time_synchronized` 或 `frame_rate_dependent`。</td></tr>
-          <tr><td><code>SetVisible</code> / <code>ToggleVisible</code></td><td><code>set_visible</code> / <code>toggle_visible</code></td><td>显示、隐藏或切换窗口显示状态，适合桌面精灵托盘菜单。</td></tr>
-          <tr><td><code>Scene.Window.Exit()</code> / <code>Quit()</code></td><td><code>scene.window.exit()</code> / <code>quit()</code></td><td>从脚本退出 GamePlayer。</td></tr>
-          <tr><td><code>Scene.Runtime.UseOpenCL</code></td><td><code>scene.runtime.use_opencl</code></td><td>是否请求 OpenCL。</td></tr>
-          <tr><td><code>Scene.Runtime.IsUsingOpenCL</code></td><td><code>scene.runtime.is_using_opencl</code></td><td>当前是否实际使用 OpenCL。</td></tr>
-          <tr><td><code>Scene.Runtime.ComputeBackend</code></td><td><code>scene.runtime.compute_backend</code></td><td>当前后端：`OpenCL` 或 `CPU`。</td></tr>
-          <tr><td><code>SetUseOpenCL</code></td><td><code>set_use_opencl</code></td><td>切换 OpenCL 偏好，失败回退 CPU。</td></tr>
-          <tr><td><code>ExecuteCommand</code></td><td><code>execute_command</code></td><td>执行系统命令并返回退出码、标准输出、标准错误、超时状态；默认不经过 shell。</td></tr>
-          <tr><td><code>ExecuteShellCommand</code></td><td><code>execute_shell_command</code></td><td>通过系统 shell 执行命令。Windows 使用 <code>cmd.exe /c</code>，Linux/macOS 使用 <code>/bin/sh -c</code>。</td></tr>
-        </table>
-        <p class="note">`UseOpenCL` 是偏好设置，实际后端以 `IsUsingOpenCL` 和 `ComputeBackend` 为准。</p>
-        <p class="note">系统命令返回 <code>ExitCode/exit_code</code>、<code>StandardOutput/stdout</code>、<code>StandardError/stderr</code>、<code>TimedOut/timed_out</code>、<code>Success/success</code>。脚本是受信任本地脚本，不是安全沙箱。</p>
-        <p class="note">桌面精灵托盘在 GameEditor 的 Window / Runtime 面板配置。菜单项支持 <code>none</code>、<code>toggle_visibility</code>、<code>exit</code> 内置动作，并可绑定脚本事件。Windows 使用原生系统托盘；Linux/macOS 当前安全降级为不创建托盘，但保留同一配置和脚本 API。</p>
-      </section>
-
-      <section id="camera" data-search>
-        <h2>Camera</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Position</code> / <code>Target</code></td><td><code>position</code> / <code>target</code></td><td>相机位置和目标点。</td></tr>
-          <tr><td><code>Forward</code> / <code>Up</code> / <code>Right</code></td><td><code>forward</code> / <code>up</code> / <code>right</code></td><td>相机方向向量。</td></tr>
-          <tr><td><code>ProjectionMode</code></td><td><code>projection_mode</code></td><td>`perspective` 或 `orthographic`。</td></tr>
-          <tr><td><code>Fov</code> / <code>OrthographicSize</code></td><td><code>fov</code> / <code>orthographic_size</code></td><td>投影参数。</td></tr>
-          <tr><td><code>SetLookAt</code></td><td><code>set_look_at</code></td><td>设置当前相机位置和目标。</td></tr>
-          <tr><td><code>SetMainCamera</code></td><td><code>set_main_camera</code></td><td>切换主相机。</td></tr>
-          <tr><td><code>SetCameraViewport</code></td><td><code>set_camera_viewport</code></td><td>窗口内相机 Viewport。</td></tr>
-          <tr><td><code>BindRenderTextureCamera</code></td><td><code>bind_render_texture_camera</code></td><td>绑定相机到 Render Texture。</td></tr>
-          <tr><td><code>UseThirdPersonMode</code> / <code>UseFpsMode</code></td><td><code>use_third_person_mode</code> / <code>use_fps_mode</code></td><td>跟随相机模式。</td></tr>
-          <tr><td><code>UseFreeFlyMode</code> / <code>UseEditorOrbitMode</code></td><td><code>use_free_fly_mode</code> / <code>use_editor_orbit_mode</code></td><td>自由飞行和编辑器轨道。</td></tr>
-          <tr><td><code>ScreenPointToRay</code> / <code>MousePointToRay</code></td><td><code>screen_point_to_ray</code> / <code>mouse_point_to_ray</code></td><td>屏幕坐标生成射线。</td></tr>
-          <tr><td><code>PickEntity</code> / <code>RaycastEntity</code></td><td>无场景级桥接</td><td>C# 场景级实体拾取。</td></tr>
-        </table>
-      </section>
-
-      <section id="debug" data-search>
-        <h2>Debug / Ray</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Debug.DrawRay</code></td><td><code>scene.debug.draw_ray</code></td><td>绘制调试射线。</td></tr>
-          <tr><td><code>Scene.Debug.DrawLine</code></td><td><code>scene.debug.draw_line</code></td><td>绘制调试线段。</td></tr>
-          <tr><td><code>RuntimeRay.GetPoint</code></td><td><code>ray.get_point</code></td><td>射线上取点。</td></tr>
-          <tr><td><code>TryIntersectPlaneY</code></td><td><code>intersect_plane_y</code></td><td>与水平面求交。</td></tr>
-          <tr><td><code>TryIntersectSphere</code></td><td><code>intersect_sphere</code></td><td>与球体求交。</td></tr>
-          <tr><td>无</td><td><code>intersect_capsule</code> / <code>intersect_box</code></td><td>Python 本地几何求交辅助。</td></tr>
-        </table>
-      </section>
-
-      <section id="save" data-search>
-        <h2>Save</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Save.SaveDirectory</code></td><td><code>scene.save.directory</code></td><td>存档目录。</td></tr>
-          <tr><td><code>WriteText</code> / <code>ReadText</code></td><td><code>write_text</code> / <code>read_text</code></td><td>文本存档。</td></tr>
-          <tr><td><code>WriteJson</code> / <code>ReadJson</code></td><td><code>write_json</code> / <code>read_json</code></td><td>JSON 存档。</td></tr>
-          <tr><td><code>Exists</code> / <code>Delete</code></td><td><code>exists</code> / <code>delete</code></td><td>检查和删除存档。</td></tr>
-          <tr><td><code>GetFullPath</code></td><td>无</td><td>C# 获取存档完整路径。</td></tr>
-        </table>
-      </section>
-
-      <section id="network" data-search>
-        <h2>Network</h2>
-        <p><code>Scene.Network</code> / <code>scene.network</code> 支持 HTTP/HTTPS、TCP 和 UDP，基于 .NET / Python 标准库，可在 Windows、Linux 和 macOS 使用。</p>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>HttpGetAsync(url, timeoutSeconds, headers)</code></td><td><code>http_get(url, timeout, headers)</code></td><td>发送 HTTP GET；URL 必须是绝对 <code>http://</code> 或 <code>https://</code>。</td></tr>
-          <tr><td><code>HttpPostTextAsync(url, text, contentType, ...)</code></td><td><code>http_post_text(url, text, content_type, ...)</code></td><td>发送文本 POST。</td></tr>
-          <tr><td><code>HttpPostJsonAsync(url, value, ...)</code></td><td><code>http_post_json(url, value, ...)</code></td><td>发送 JSON POST。</td></tr>
-          <tr><td><code>HttpSendAsync(method, url, body, ...)</code></td><td><code>http_send(method, url, body, ...)</code></td><td>自定义 HTTP 方法、请求体和 Content-Type。</td></tr>
-          <tr><td><code>TcpSendTextAsync(host, port, text, ...)</code></td><td><code>tcp_send_text(host, port, text, ...)</code></td><td>TCP 发送文本并读取一次响应。</td></tr>
-          <tr><td><code>TcpSendAsync(host, port, data, ...)</code></td><td><code>tcp_send(host, port, data, ...)</code></td><td>TCP 发送字节并读取一次响应；接收长度小于等于 0 时不等待响应。</td></tr>
-          <tr><td><code>TcpReceiveTextOnceAsync(port, ...)</code></td><td><code>tcp_receive_text_once(port, ...)</code></td><td>一次性 TCP 监听，接收一个连接后返回文本。</td></tr>
-          <tr><td><code>TcpReceiveOnceAsync(port, ...)</code></td><td><code>tcp_receive_once(port, ...)</code></td><td>一次性 TCP 监听，接收一个连接后返回字节。</td></tr>
-          <tr><td><code>UdpSendTextAsync(host, port, text, ...)</code></td><td><code>udp_send_text(host, port, text, ...)</code></td><td>UDP 发送文本；可选择等待一个回复包。</td></tr>
-          <tr><td><code>UdpSendAsync(host, port, data, ...)</code></td><td><code>udp_send(host, port, data, ...)</code></td><td>UDP 发送字节；<code>waitForResponse</code> / <code>wait_for_response</code> 控制是否等待回复。</td></tr>
-          <tr><td><code>UdpReceiveTextAsync(port, ...)</code></td><td><code>udp_receive_text(port, ...)</code></td><td>监听一个 UDP 数据包并返回文本。</td></tr>
-          <tr><td><code>UdpReceiveAsync(port, ...)</code></td><td><code>udp_receive(port, ...)</code></td><td>监听一个 UDP 数据包并返回字节。</td></tr>
-        </table>
-        <div class="grid">
-          <div class="card">
-            <h3>HTTP 返回</h3>
-            <p>C#：<code>RuntimeHttpResponse.StatusCode</code>、<code>IsSuccessStatusCode</code>、<code>ReasonPhrase</code>、<code>Body</code>、<code>Headers</code>、<code>GetHeader(name)</code>。</p>
-            <p>Python：字典字段 <code>status_code</code>、<code>is_success_status_code</code>、<code>reason_phrase</code>、<code>body</code>、<code>headers</code>。</p>
-          </div>
-          <div class="card">
-            <h3>TCP / UDP 返回</h3>
-            <p>C# 接收返回 <code>RuntimeTcpMessage</code> / <code>RuntimeUdpMessage</code>，包含 <code>Text</code>、<code>Data</code>、<code>RemoteHost</code>、<code>RemotePort</code>。</p>
-            <p>Python 接收返回字典字段 <code>text</code>、<code>data</code>、<code>remote_host</code>、<code>remote_port</code>。</p>
-          </div>
-        </div>
-        <pre><code class="language-csharp">RuntimeHttpResponse response = await Scene.Network.HttpGetAsync("https://example.com", timeoutSeconds: 10);
-Console.WriteLine(response.Body);
-
-string tcpReply = await Scene.Network.TcpSendTextAsync("127.0.0.1", 9000, "ping\n", timeoutSeconds: 3);
-await Scene.Network.UdpSendAsync("127.0.0.1", 9004, Encoding.UTF8.GetBytes("fire-and-forget"), waitForResponse: false);</code></pre>
-        <pre><code class="language-python">response = scene.network.http_get("https://example.com", timeout=10)
-print(response["body"])
-
-tcp_reply = scene.network.tcp_send_text("127.0.0.1", 9000, "ping\n", timeout=3)
-scene.network.udp_send("127.0.0.1", 9004, b"fire-and-forget", wait_for_response=False)</code></pre>
-        <ul>
-          <li>网络调用可能阻塞到超时，不建议在每帧 <code>update</code> 中执行长请求。</li>
-          <li>TCP 接收是一次性监听；UDP 可能丢包、乱序或没有响应。</li>
-          <li>监听端口可能被系统防火墙、杀毒软件或已有进程占用。</li>
-          <li>当前没有 WebSocket 封装。</li>
-        </ul>
-      </section>
-
-      <section id="asr" data-search>
-        <h2>ASR</h2>
-        <p><code>Scene.Asr</code> / <code>scene.asr</code> 用于本地麦克风录音和 ASR 识别，支持 <code>SherpaOnnx</code> 和 <code>Whisper</code>。</p>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Asr.Enabled</code></td><td><code>scene.asr.enabled</code></td><td>当前项目是否启用 ASR。</td></tr>
-          <tr><td><code>Provider</code> / <code>InputDeviceIndex</code></td><td><code>provider</code> / <code>input_device_index</code></td><td>当前 provider 与输入设备索引。</td></tr>
-          <tr><td><code>PartialResultIntervalSeconds</code></td><td><code>partial_result_interval_seconds</code></td><td>部分结果刷新间隔。</td></tr>
-          <tr><td><code>IsRecording</code></td><td><code>is_recording</code></td><td>当前是否正在录音识别。</td></tr>
-          <tr><td><code>StartStreamingRecognition(entity, ...)</code></td><td><code>start_streaming_recognition(...)</code></td><td>开始后台录音并推送部分识别结果。</td></tr>
-          <tr><td><code>StopStreamingRecognition(requestId)</code></td><td><code>stop_streaming_recognition(request_id)</code></td><td>停止当前流式识别并触发最终结果。</td></tr>
-        </table>
-        <pre><code class="language-csharp">if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "pressed")
-{
-    Scene.Asr.StartStreamingRecognition(
-        Entity,
-        requestId: "push_to_talk",
-        onPartialCallback: "asr_partial",
-        onCompletedCallback: "asr_completed",
-        onErrorCallback: "asr_error");
-}
-
-if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "released")
-{
-    Scene.Asr.StopStreamingRecognition("push_to_talk");
-}</code></pre>
-        <pre><code class="language-python">def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
-    if control_name == "RecordButton" and event_name == "pressed":
-        scene.asr.start_streaming_recognition(
-            request_id="push_to_talk",
-            on_partial="asr_partial",
-            on_completed="asr_completed",
-            on_error="asr_error")
-    if control_name == "RecordButton" and event_name == "released":
-        scene.asr.stop_streaming_recognition("push_to_talk")</code></pre>
-        <p class="note">完整的“按住录音 -> 流式 ASR -> 松开发给 LLM -> 句子级顺序 Speak”示例请看同目录 <code>script_api.md</code> 的 ASR 章节。</p>
-      </section>
-
-      <section id="llm" data-search>
-        <h2>LLM</h2>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.Llm.Enabled</code></td><td><code>scene.llm.enabled</code></td><td>项目是否启用 LLM。</td></tr>
-          <tr><td><code>Scene.Llm.Model</code></td><td><code>scene.llm.model</code></td><td>默认模型。</td></tr>
-          <tr><td><code>ChatAsync(text, ...)</code></td><td><code>chat(text, ...)</code></td><td>非流式完整回复。</td></tr>
-          <tr><td><code>StreamChatAsync(text, ...)</code></td><td><code>stream_chat(text, ...)</code></td><td>文本 prompt 流式回复。</td></tr>
-          <tr><td><code>StreamChatAsync(messages, ...)</code></td><td><code>stream_messages(messages, ...)</code></td><td>消息列表流式回复。</td></tr>
-          <tr><td><code>StartChat(...)</code></td><td><code>start_chat(...)</code></td><td>后台请求，通过脚本事件回调。</td></tr>
-          <tr><td><code>LlmText</code> / <code>LlmDelta</code> / <code>LlmError</code></td><td><code>event["accumulatedText"]</code> / <code>event["delta"]</code> / <code>event["error"]</code></td><td>后台回调数据。</td></tr>
-        </table>
-        <pre><code class="language-python">def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
-    if event_name == "clicked":
-        scene.llm.start_chat(
-            "写一句欢迎语",
-            on_delta="reply_delta",
-            on_completed="reply_done",
-            on_error="reply_error")
-
-def reply_delta(entity, scene, input, audio, event):
-    label = scene.get_gui_control("LLM Output")
-    if label:
-        label.set_value(event["accumulatedText"])</code></pre>
-      </section>
-
-      <section id="realtime-voice" data-search>
-        <h2>Realtime Voice</h2>
-        <p><code>Scene.RealtimeVoice</code> / <code>scene.realtime_voice</code> 用于调用 <code>Zhengyan.DigitalWife.Samples.RealtimeVoice</code> 服务，支持唤醒词监听、录音转写、流式语音回复和固定提示语 TTS。</p>
-        <table>
-          <tr><th>C#</th><th>Python</th><th>说明</th></tr>
-          <tr><td><code>Scene.RealtimeVoice.Enabled</code></td><td><code>scene.realtime_voice.enabled</code></td><td>项目是否启用 Realtime Voice。</td></tr>
-          <tr><td><code>BaseUrl</code> / <code>Model</code> / <code>Voice</code></td><td><code>base_url</code> / <code>model</code> / <code>voice</code></td><td>当前服务地址、默认模型和默认 voice。</td></tr>
-          <tr><td><code>WakeWordEnabled</code> / <code>WakeWords</code></td><td><code>wake_word_enabled</code> / <code>wake_words</code></td><td>当前唤醒词监听配置。</td></tr>
-          <tr><td><code>StartWakeWordMonitoring(entity, ...)</code></td><td><code>start_wake_word_monitoring(...)</code></td><td>后台监听配置的唤醒词组。</td></tr>
-          <tr><td><code>StopWakeWordMonitoring()</code></td><td><code>stop_wake_word_monitoring()</code></td><td>停止唤醒词监听。</td></tr>
-          <tr><td><code>StartTranscription(entity, ...)</code></td><td><code>start_transcription(...)</code></td><td>录音直到静音并转写；可配置超时。</td></tr>
-          <tr><td><code>StartResponse(entity, userText, ...)</code></td><td><code>start_response(user_text, ...)</code></td><td>发送用户文本到 Realtime 会话，流式播放远端音频。</td></tr>
-          <tr><td><code>StartVoiceTurn(entity, ...)</code></td><td><code>start_voice_turn(...)</code></td><td>录音、转写、发起回复的一体化后台流程；可配置等待超时。</td></tr>
-          <tr><td><code>StartSpeakText(entity, text, ...)</code></td><td><code>start_speak_text(text, ...)</code></td><td>调用 <code>/v1/audio/speech</code> 播放固定提示语。</td></tr>
-          <tr><td><code>ResetConversationAsync()</code></td><td><code>reset_conversation()</code></td><td>重置远端会话历史。</td></tr>
-          <tr><td><code>CancelRequest(requestId)</code> / <code>CancelAllRequests()</code></td><td><code>cancel_request(request_id)</code> / <code>cancel_all_requests()</code></td><td>取消指定请求或取消全部后台语音请求。</td></tr>
-        </table>
-        <pre><code class="language-csharp">const string StandMotion = "assets/motions/basic_stand.vmd";
-const string WaitMotion = "assets/motions/basic_wait.vmd";
-const float MotionBlendDurationSeconds = 0.35f;
-
-if (IsStart && Scene.RealtimeVoice.Enabled)
-{
-    Entity.ApplyMotion(StandMotion);
-    Entity.AddMotionLayer(WaitMotion, weight: 0.0f);
-    Entity.SetMotionLayerResetPhysicsOnLoop(WaitMotion, true);
-    Entity.LoopMotion = true;
-    Entity.PlayMotion();
-    Scene.RealtimeVoice.StartWakeWordMonitoring(Entity, onDetectedCallback: "wake_word_hit");
-}
-
-if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "wake_word_hit")
-{
-    Scene.RealtimeVoice.StopWakeWordMonitoring();
-    // In Update: blend WaitMotion layer weight from 0 -> 1 over MotionBlendDurationSeconds.
-    Scene.RealtimeVoice.StartVoiceTurn(
-        Entity,
-        timeoutSeconds: 30.0f,
-        onTranscriptionCompletedCallback: "voice_transcribed",
-        onDeltaCallback: "voice_delta",
-        onCompletedCallback: "voice_done",
-        onTimeoutCallback: "voice_timeout",
-        onErrorCallback: "voice_error");
-}</code></pre>
-        <pre><code class="language-python">STAND_MOTION = "assets/motions/basic_stand.vmd"
-WAIT_MOTION = "assets/motions/basic_wait.vmd"
-BLEND_DURATION_SECONDS = 0.35
-
-def start(entity, scene, input, audio):
-    if scene.realtime_voice.enabled:
-        entity.apply_motion(STAND_MOTION)
-        entity.add_motion_layer(WAIT_MOTION, weight=0.0)
-        entity.set_motion_layer_reset_physics_on_loop(WAIT_MOTION, True)
-        entity.set_loop_motion(True)
-        entity.play_motion()
-        scene.realtime_voice.start_wake_word_monitoring(
-            on_detected="wake_word_hit",
-            on_error="voice_error")
-
-def wake_word_hit(entity, scene, input, audio, event):
-    scene.realtime_voice.stop_wake_word_monitoring()
-    # In update(...): blend WAIT_MOTION layer weight from 0 -> 1 over BLEND_DURATION_SECONDS.
-    scene.realtime_voice.start_voice_turn(
-        timeout_seconds=30,
-        on_transcription_completed="voice_transcribed",
-        on_delta="voice_delta",
-        on_completed="voice_done",
-        on_timeout="voice_timeout",
-        on_error="voice_error")</code></pre>
-        <p class="note">示例假设项目里已有 <code>assets/motions/basic_stand.vmd</code> 和 <code>assets/motions/basic_wait.vmd</code>，并采用“基础 Stand 动作 + Wait 动作层权重渐变”的方式做平滑过渡。完整的权重混合状态机请看同目录的 <code>script_api.md</code>。回调事件字段包括 <code>requestId</code>、<code>eventName</code>、<code>text</code>、<code>delta</code>、<code>accumulatedText</code>、<code>isFinal</code>、<code>error</code>、<code>callbackName</code>、<code>wakeWord</code>、<code>recognizedText</code>。事件名新增 <code>timeout</code>。</p>
-      </section>
-
-      <section id="notes" data-search>
-        <h2>边界</h2>
-        <ul>
-          <li>Python 对象多数是事件开始时的快照，修改命令通常在函数返回后由 GamePlayer 执行；需要中途提交可用 <code>scene.flush()</code>。</li>
-          <li>C# 脚本每次事件都会重新执行同一个 `.csx` 文件，跨帧状态建议放在 <code>static</code> 类型中。</li>
-          <li>GUI 和 Sprite 坐标以窗口左上角为原点；`relative` 布局会按项目窗口基准分辨率缩放。</li>
-          <li>PMX 动作、Morph、骨骼、材质覆盖、TTS 口型和绑定关系只对 <code>pmx_model</code> 有意义。</li>
-          <li>OpenCL 会在不可用时回退 CPU；脚本应读取 <code>ComputeBackend</code> 判断实际后端。</li>
-          <li>Realtime Voice 的 <code>start_*</code> 是后台任务；不要在每帧 <code>update</code> 里重复触发，否则会持续创建并发请求。</li>
-          <li><code>start_transcription</code> / <code>start_voice_turn</code> 支持超时回调，适合实现“30s 未继续说话则回到唤醒词模式”的对话状态机。</li>
-        </ul>
+      <section class="content-card">
+        <div id="docView" class="doc-content"></div>
       </section>
     </main>
   </div>
 
   <script>
-    const input = document.getElementById("apiSearch");
-    const sections = [...document.querySelectorAll("[data-search]")];
-    input.addEventListener("input", () => {
-      const query = input.value.trim().toLowerCase();
-      for (const section of sections) {
-        section.classList.toggle("hidden", query !== "" && !section.textContent.toLowerCase().includes(query));
+    const docs = Array.isArray(window.API_DOCS) ? window.API_DOCS : [];
+    const searchInput = document.getElementById("searchInput");
+    const filtersEl = document.getElementById("filters");
+    const listEl = document.getElementById("docList");
+    const countEl = document.getElementById("resultCount");
+    const viewEl = document.getElementById("docView");
+    let activeId = docs[0]?.id || "";
+    let activeCategory = "全部";
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function stripFrontMatter(markdown) {
+      return String(markdown || "").replace(/^---[\s\S]*?---\s*/, "");
+    }
+
+    function inlineMarkdown(text) {
+      let html = escapeHtml(text);
+      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+      return html;
+    }
+
+    function parseTable(block) {
+      const rows = block.trim().split(/\n/).filter(Boolean);
+      if (rows.length < 2 || !rows[1].includes("---")) return null;
+      const cells = row => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(item => item.trim());
+      const headers = cells(rows[0]);
+      const body = rows.slice(2).map(cells);
+      return "<table><thead><tr>" + headers.map(item => `<th>${inlineMarkdown(item)}</th>`).join("") + "</tr></thead><tbody>" +
+        body.map(row => "<tr>" + row.map(item => `<td>${inlineMarkdown(item)}</td>`).join("") + "</tr>").join("") +
+        "</tbody></table>";
+    }
+
+    function markdownToHtml(markdown) {
+      const source = stripFrontMatter(markdown).replace(/\r\n?/g, "\n");
+      const chunks = [];
+      let cursor = 0;
+      const codeRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+      let match;
+      while ((match = codeRegex.exec(source))) {
+        chunks.push({ type: "markdown", text: source.slice(cursor, match.index) });
+        chunks.push({ type: "code", lang: match[1], text: match[2] });
+        cursor = match.index + match[0].length;
       }
+      chunks.push({ type: "markdown", text: source.slice(cursor) });
+
+      return chunks.map(chunk => {
+        if (chunk.type === "code") {
+          return `<pre><code class="language-${escapeHtml(chunk.lang)}">${escapeHtml(chunk.text.trimEnd())}</code></pre>`;
+        }
+
+        const lines = chunk.text.split("\n");
+        const parts = [];
+        let paragraph = [];
+        let list = [];
+        let table = [];
+
+        function flushParagraph() {
+          if (paragraph.length) {
+            parts.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+            paragraph = [];
+          }
+        }
+
+        function flushList() {
+          if (list.length) {
+            parts.push("<ul>" + list.map(item => `<li>${inlineMarkdown(item)}</li>`).join("") + "</ul>");
+            list = [];
+          }
+        }
+
+        function flushTable() {
+          if (table.length) {
+            const parsed = parseTable(table.join("\n"));
+            parts.push(parsed || `<p>${inlineMarkdown(table.join(" "))}</p>`);
+            table = [];
+          }
+        }
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            flushParagraph();
+            flushList();
+            flushTable();
+            continue;
+          }
+          if (/^\|.*\|$/.test(trimmed)) {
+            flushParagraph();
+            flushList();
+            table.push(trimmed);
+            continue;
+          }
+          flushTable();
+          const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+          if (heading) {
+            flushParagraph();
+            flushList();
+            const level = Math.min(heading[1].length, 3);
+            parts.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+            continue;
+          }
+          const bullet = /^[-*]\s+(.+)$/.exec(trimmed);
+          if (bullet) {
+            flushParagraph();
+            list.push(bullet[1]);
+            continue;
+          }
+          paragraph.push(trimmed);
+        }
+
+        flushParagraph();
+        flushList();
+        flushTable();
+        return parts.join("\n");
+      }).join("\n");
+    }
+
+    function docSearchText(doc) {
+      return [
+        doc.title,
+        doc.category,
+        doc.summary,
+        doc.csharpEntry,
+        doc.pythonEntry,
+        ...(doc.objects || []),
+        ...(doc.keywords || []),
+        doc.searchText,
+        doc.content
+      ].join(" ").toLowerCase();
+    }
+
+    function filteredDocs() {
+      const query = searchInput.value.trim().toLowerCase();
+      return docs.filter(doc => {
+        const categoryOk = activeCategory === "全部" || doc.category === activeCategory;
+        const queryOk = !query || docSearchText(doc).includes(query);
+        return categoryOk && queryOk;
+      });
+    }
+
+    function renderFilters() {
+      const categories = ["全部", ...Array.from(new Set(docs.map(doc => doc.category))).sort()];
+      filtersEl.innerHTML = categories.map(category =>
+        `<button class="chip ${category === activeCategory ? "active" : ""}" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>`
+      ).join("");
+      filtersEl.querySelectorAll("button").forEach(button => {
+        button.addEventListener("click", () => {
+          activeCategory = button.dataset.category || "全部";
+          render();
+        });
+      });
+    }
+
+    function renderList() {
+      const matches = filteredDocs();
+      countEl.textContent = `${matches.length} / ${docs.length} 个模块`;
+      if (!matches.some(doc => doc.id === activeId)) {
+        activeId = matches[0]?.id || docs[0]?.id || "";
+      }
+      listEl.innerHTML = matches.map(doc => `
+        <button class="doc-button ${doc.id === activeId ? "active" : ""}" data-id="${escapeHtml(doc.id)}">
+          <span class="doc-title">${escapeHtml(doc.title)}</span>
+          <span class="doc-summary">${escapeHtml(doc.summary)}</span>
+        </button>
+      `).join("") || '<div class="empty">没有匹配的 API 模块。</div>';
+      listEl.querySelectorAll("button").forEach(button => {
+        button.addEventListener("click", () => selectDoc(button.dataset.id));
+      });
+    }
+
+    async function loadMarkdown(doc) {
+      if (!doc) return "";
+      try {
+        if (location.protocol !== "file:") {
+          const response = await fetch(doc.file, { cache: "no-cache" });
+          if (response.ok) return await response.text();
+        }
+      } catch {
+        // Local file mode and strict browser policies fall back to the bundled snapshot.
+      }
+      return doc.content || "";
+    }
+
+    async function selectDoc(id) {
+      activeId = id;
+      renderList();
+      const doc = docs.find(item => item.id === activeId);
+      if (!doc) {
+        viewEl.innerHTML = '<div class="empty">没有可显示的文档。</div>';
+        return;
+      }
+      const markdown = await loadMarkdown(doc);
+      viewEl.innerHTML = `
+        <h1>${escapeHtml(doc.title)}</h1>
+        <p>${escapeHtml(doc.summary)}</p>
+        <div class="meta-grid">
+          <div class="meta-item"><div class="meta-label">分类</div><div class="meta-value">${escapeHtml(doc.category)}</div></div>
+          <div class="meta-item"><div class="meta-label">C# 入口</div><div class="meta-value"><code>${escapeHtml(doc.csharpEntry || "")}</code></div></div>
+          <div class="meta-item"><div class="meta-label">Python 入口</div><div class="meta-value"><code>${escapeHtml(doc.pythonEntry || "")}</code></div></div>
+          <div class="meta-item"><div class="meta-label">模块文件</div><div class="meta-value"><a href="${escapeHtml(doc.file)}">${escapeHtml(doc.file)}</a></div></div>
+        </div>
+        ${markdownToHtml(markdown)}
+      `;
+      history.replaceState(null, "", "#" + encodeURIComponent(activeId));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function render() {
+      renderFilters();
+      renderList();
+      selectDoc(activeId);
+    }
+
+    searchInput.addEventListener("input", () => {
+      const matches = filteredDocs();
+      activeId = matches[0]?.id || "";
+      renderList();
+      selectDoc(activeId);
     });
+
+    if (location.hash.length > 1) {
+      activeId = decodeURIComponent(location.hash.slice(1));
+    }
+
+    if (!docs.length) {
+      viewEl.innerHTML = '<div class="empty">没有加载到 api_docs/api_manifest.js。请确认该文件存在。</div>';
+    } else {
+      render();
+    }
   </script>
 </body>
 </html>

@@ -1,0 +1,557 @@
+[
+    {
+        "id":  "overview",
+        "title":  "总览",
+        "category":  "基础",
+        "file":  "api_docs/00-overview.md",
+        "summary":  "脚本层定位、运行时范围、资源路径建议和文档阅读入口。",
+        "objects":  [
+                        "CSharpScriptGlobals",
+                        "Python event functions"
+                    ],
+        "keywords":  [
+                         "overview",
+                         "script",
+                         "csx",
+                         "python"
+                     ],
+        "csharpEntry":  "Entity, Scene, Input, Audio",
+        "pythonEntry":  "start/update/gui_event/..."
+    },
+    {
+        "id":  "paths",
+        "title":  "路径规则",
+        "category":  "基础",
+        "file":  "api_docs/01-paths.md",
+        "summary":  "工程相对路径、project/app/rt 虚拟前缀和资源复制规则。",
+        "objects":  [
+                        "GameProjectPath"
+                    ],
+        "keywords":  [
+                         "path",
+                         "project:",
+                         "app:",
+                         "rt:",
+                         "assets"
+                     ],
+        "csharpEntry":  "GameProjectPath.ToAbsolute(...)",
+        "pythonEntry":  "project/app/rt path strings"
+    },
+    {
+        "id":  "script-types",
+        "title":  "脚本类型",
+        "category":  "基础",
+        "file":  "api_docs/02-script-types.md",
+        "summary":  "C# 与 Python 脚本运行环境、默认导入和快照模型。",
+        "objects":  [
+                        "C# .csx",
+                        "Python .py"
+                    ],
+        "keywords":  [
+                         "csx",
+                         "python",
+                         "imports",
+                         "runtime"
+                     ],
+        "csharpEntry":  ".csx globals",
+        "pythonEntry":  ".py event functions"
+    },
+    {
+        "id":  "system-api",
+        "title":  "基础系统 API",
+        "category":  "基础",
+        "file":  "api_docs/03-system-api.md",
+        "summary":  "基础语言能力、受信任脚本边界、常用标准库和示例。",
+        "objects":  [
+                        "System",
+                        "Python stdlib"
+                    ],
+        "keywords":  [
+                         "system",
+                         "stdlib",
+                         "regex",
+                         "json",
+                         "math"
+                     ],
+        "csharpEntry":  "string, Math, Regex, JsonSerializer, Task",
+        "pythonEntry":  "str, math, re, json, datetime"
+    },
+    {
+        "id":  "lifecycle",
+        "title":  "生命周期",
+        "category":  "事件",
+        "file":  "api_docs/04-lifecycle.md",
+        "summary":  "脚本事件派发、全局变量、Python 回调函数和跨帧状态。",
+        "objects":  [
+                        "CSharpScriptGlobals",
+                        "Python event functions"
+                    ],
+        "keywords":  [
+                         "lifecycle",
+                         "event",
+                         "IsStart",
+                         "IsUpdate",
+                         "tray_menu_event"
+                     ],
+        "csharpEntry":  "IsStart, IsUpdate, IsGuiEvent, IsTrayMenuEvent",
+        "pythonEntry":  "start, update, gui_event, tray_menu_event"
+    },
+    {
+        "id":  "entity",
+        "title":  "Entity API",
+        "category":  "对象",
+        "file":  "api_docs/05-entity.md",
+        "summary":  "实体属性、Transform、播放状态、碰撞、水面交互、材质和模型相关入口。",
+        "objects":  [
+                        "RuntimeEntity",
+                        "entity"
+                    ],
+        "keywords":  [
+                         "entity",
+                         "RuntimeEntity",
+                         "Transform",
+                         "PMX",
+                         "collider"
+                     ],
+        "csharpEntry":  "Entity / Scene.GetEntity(...)",
+        "pythonEntry":  "entity / scene.get_entity(...)"
+    },
+    {
+        "id":  "pmx",
+        "title":  "PMX 动作与材质",
+        "category":  "对象",
+        "file":  "api_docs/06-pmx.md",
+        "summary":  "PMX 动作层、Morph、骨骼、IK、材质贴图覆盖和示例。",
+        "objects":  [
+                        "RuntimeEntity PMX",
+                        "PmxNodeState"
+                    ],
+        "keywords":  [
+                         "pmx",
+                         "morph",
+                         "node",
+                         "material",
+                         "motion"
+                     ],
+        "csharpEntry":  "SetMorphWeight, SetNodeTranslate, ApplyMotionLayers",
+        "pythonEntry":  "set_morph_weight, set_node_translate, apply_motion_layers"
+    },
+    {
+        "id":  "water-particles",
+        "title":  "水面与粒子触水",
+        "category":  "对象",
+        "file":  "api_docs/07-water-particles.md",
+        "summary":  "粒子触水、水面波纹、交互开关和调试示例。",
+        "objects":  [
+                        "RuntimeEntity water_surface",
+                        "RuntimeEntity particle_system"
+                    ],
+        "keywords":  [
+                         "water",
+                         "particle",
+                         "ripple"
+                     ],
+        "csharpEntry":  "EnableWaterInteraction, AddWaterRipple",
+        "pythonEntry":  "set_water_interaction_enabled, add_water_ripple"
+    },
+    {
+        "id":  "tts",
+        "title":  "TTS / 人物说话",
+        "category":  "音频",
+        "file":  "api_docs/08-tts.md",
+        "summary":  "实体说话、TTS 参数、完成回调和人物语音示例。",
+        "objects":  [
+                        "RuntimeEntity",
+                        "RuntimeVoiceOptions"
+                    ],
+        "keywords":  [
+                         "tts",
+                         "speak",
+                         "voice"
+                     ],
+        "csharpEntry":  "Entity.Speak, SpeakWithCallback",
+        "pythonEntry":  "entity.speak"
+    },
+    {
+        "id":  "input",
+        "title":  "Input 输入",
+        "category":  "输入",
+        "file":  "api_docs/09-input.md",
+        "summary":  "键盘、鼠标、手柄、剪贴板和鼠标射线输入。",
+        "objects":  [
+                        "RuntimeInput",
+                        "input"
+                    ],
+        "keywords":  [
+                         "input",
+                         "keyboard",
+                         "mouse",
+                         "gamepad",
+                         "clipboard"
+                     ],
+        "csharpEntry":  "Input.IsKeyDown, Input.SetClipboardText",
+        "pythonEntry":  "input.is_key_down, input.set_clipboard_text"
+    },
+    {
+        "id":  "audio",
+        "title":  "Audio 音频 / 背景音乐",
+        "category":  "音频",
+        "file":  "api_docs/10-audio.md",
+        "summary":  "音频播放、暂停、停止、音量和循环控制。",
+        "objects":  [
+                        "RuntimeAudio",
+                        "audio"
+                    ],
+        "keywords":  [
+                         "audio",
+                         "bgm",
+                         "volume",
+                         "loop"
+                     ],
+        "csharpEntry":  "Audio.Play/Pause/Stop/SetVolume",
+        "pythonEntry":  "audio.play/pause/stop/set_volume"
+    },
+    {
+        "id":  "scene",
+        "title":  "Scene API",
+        "category":  "对象",
+        "file":  "api_docs/11-scene.md",
+        "summary":  "场景对象、实体/GUI/Sprite 查找、子系统入口和场景切换。",
+        "objects":  [
+                        "RuntimeScene",
+                        "scene"
+                    ],
+        "keywords":  [
+                         "scene",
+                         "RuntimeScene",
+                         "GetEntity",
+                         "LoadScene"
+                     ],
+        "csharpEntry":  "Scene.GetEntity/GetGuiControl/GetSprite",
+        "pythonEntry":  "scene.get_entity/get_gui_control/get_sprite"
+    },
+    {
+        "id":  "performance",
+        "title":  "Performance / FPS API",
+        "category":  "调试",
+        "file":  "api_docs/12-performance.md",
+        "summary":  "FPS、帧时间、运行时性能状态和显示示例。",
+        "objects":  [
+                        "RuntimePerformance",
+                        "scene.performance"
+                    ],
+        "keywords":  [
+                         "performance",
+                         "fps",
+                         "delta"
+                     ],
+        "csharpEntry":  "Scene.Performance.Fps",
+        "pythonEntry":  "scene.performance.fps"
+    },
+    {
+        "id":  "loading",
+        "title":  "场景加载入口脚本",
+        "category":  "事件",
+        "file":  "api_docs/13-loading-scripts.md",
+        "summary":  "场景加载脚本生命周期、进度事件和加载遮罩交互。",
+        "objects":  [
+                        "Loading scripts"
+                    ],
+        "keywords":  [
+                         "loading",
+                         "LoadingProgress",
+                         "loading_started"
+                     ],
+        "csharpEntry":  "IsLoadingEvent, LoadingProgress",
+        "pythonEntry":  "loading_started/progress/completed"
+    },
+    {
+        "id":  "dialogue-bubble",
+        "title":  "Dialogue Bubble API",
+        "category":  "GUI",
+        "file":  "api_docs/14-dialogue-bubble.md",
+        "summary":  "运行时对话气泡、屏幕/世界定位、样式和完整语音聊天示例。",
+        "objects":  [
+                        "RuntimeDialogueBubbleManager",
+                        "RuntimeDialogueBubble",
+                        "scene.bubble"
+                    ],
+        "keywords":  [
+                         "bubble",
+                         "dialogue",
+                         "overlay",
+                         "chat"
+                     ],
+        "csharpEntry":  "Scene.Bubble.GetOrCreate",
+        "pythonEntry":  "scene.bubble.get_or_create"
+    },
+    {
+        "id":  "gui",
+        "title":  "GUI API",
+        "category":  "GUI",
+        "file":  "api_docs/15-gui.md",
+        "summary":  "GUI 控件类型、属性、样式、文本选区、修改方法和事件。",
+        "objects":  [
+                        "RuntimeGuiControl",
+                        "GuiControlSettings"
+                    ],
+        "keywords":  [
+                         "gui",
+                         "button",
+                         "textbox",
+                         "SelectedText",
+                         "ReplaceSelection"
+                     ],
+        "csharpEntry":  "Scene.GetGuiControl, RuntimeGuiControl",
+        "pythonEntry":  "scene.get_gui_control"
+    },
+    {
+        "id":  "sprite",
+        "title":  "2D Sprite API",
+        "category":  "GUI",
+        "file":  "api_docs/16-sprite.md",
+        "summary":  "2D Sprite 属性、布局、贴图、Render Texture 引用和自动指针事件。",
+        "objects":  [
+                        "RuntimeSpriteControl",
+                        "SpriteSettings"
+                    ],
+        "keywords":  [
+                         "sprite",
+                         "2d",
+                         "texture",
+                         "render texture",
+                         "clicked"
+                     ],
+        "csharpEntry":  "Scene.GetSprite, RuntimeSpriteControl",
+        "pythonEntry":  "scene.get_sprite"
+    },
+    {
+        "id":  "window-runtime",
+        "title":  "Window / Runtime 设置",
+        "category":  "运行时",
+        "file":  "api_docs/17-window-runtime.md",
+        "summary":  "窗口尺寸、显示/隐藏、退出、OpenCL、系统命令和桌面精灵托盘。",
+        "objects":  [
+                        "RuntimeWindowControl",
+                        "RuntimeProjectControl",
+                        "RuntimeCommandResult"
+                    ],
+        "keywords":  [
+                         "window",
+                         "runtime",
+                         "exit",
+                         "ExecuteCommand",
+                         "tray"
+                     ],
+        "csharpEntry":  "Scene.Window, Scene.Runtime",
+        "pythonEntry":  "scene.window, scene.runtime"
+    },
+    {
+        "id":  "camera",
+        "title":  "Camera API",
+        "category":  "相机",
+        "file":  "api_docs/18-camera.md",
+        "summary":  "相机属性、控制模式、视口、Render Texture、屏幕射线和拾取。",
+        "objects":  [
+                        "RuntimeCamera",
+                        "RuntimeRay"
+                    ],
+        "keywords":  [
+                         "camera",
+                         "viewport",
+                         "ray",
+                         "look_at"
+                     ],
+        "csharpEntry":  "Scene.Camera",
+        "pythonEntry":  "scene.camera"
+    },
+    {
+        "id":  "ray-picking",
+        "title":  "射线与拾取",
+        "category":  "相机",
+        "file":  "api_docs/19-ray-picking.md",
+        "summary":  "射线生成、平面/球体/Collider 相交、场景拾取和 Debug.DrawRay。",
+        "objects":  [
+                        "RuntimeRay",
+                        "RuntimeRaycastHit"
+                    ],
+        "keywords":  [
+                         "ray",
+                         "picking",
+                         "raycast",
+                         "collider"
+                     ],
+        "csharpEntry":  "Scene.Camera.ScreenPointToRay, RaycastEntity",
+        "pythonEntry":  "scene.camera.screen_point_to_ray, entity.raycast"
+    },
+    {
+        "id":  "collision",
+        "title":  "Collision / Collider API",
+        "category":  "物理",
+        "file":  "api_docs/20-collision.md",
+        "summary":  "碰撞体创建、查询、射线检测、触发区和简单碰撞判断。",
+        "objects":  [
+                        "RuntimeCollider",
+                        "RuntimeRaycastHit"
+                    ],
+        "keywords":  [
+                         "collision",
+                         "collider",
+                         "capsule",
+                         "box"
+                     ],
+        "csharpEntry":  "Entity.AddCapsuleCollider/AddBoxCollider",
+        "pythonEntry":  "entity.add_capsule_collider/add_box_collider"
+    },
+    {
+        "id":  "render-texture",
+        "title":  "多相机与 Render Texture",
+        "category":  "渲染",
+        "file":  "api_docs/21-render-texture.md",
+        "summary":  "多相机、分屏、Render Texture、Sprite/材质引用运行时纹理。",
+        "objects":  [
+                        "RuntimeCamera",
+                        "RuntimeSpriteControl"
+                    ],
+        "keywords":  [
+                         "render texture",
+                         "multi camera",
+                         "viewport"
+                     ],
+        "csharpEntry":  "Scene.Camera.SetCameraRenderTexture",
+        "pythonEntry":  "scene.camera.set_camera_render_texture"
+    },
+    {
+        "id":  "save",
+        "title":  "Save 存档 API",
+        "category":  "存档",
+        "file":  "api_docs/22-save.md",
+        "summary":  "受限 saves 目录下的文本/JSON 存档读写和路径安全。",
+        "objects":  [
+                        "RuntimeSaveStore",
+                        "scene.save"
+                    ],
+        "keywords":  [
+                         "save",
+                         "json",
+                         "saves"
+                     ],
+        "csharpEntry":  "Scene.Save.WriteText/ReadText",
+        "pythonEntry":  "scene.save.write_text/read_text"
+    },
+    {
+        "id":  "network",
+        "title":  "Network 网络通信 API",
+        "category":  "网络",
+        "file":  "api_docs/23-network.md",
+        "summary":  "HTTP/HTTPS、TCP、UDP 网络通信 API、返回值和超时注意事项。",
+        "objects":  [
+                        "RuntimeNetwork",
+                        "RuntimeHttpResponse",
+                        "RuntimeTcpMessage",
+                        "RuntimeUdpMessage"
+                    ],
+        "keywords":  [
+                         "network",
+                         "http",
+                         "tcp",
+                         "udp"
+                     ],
+        "csharpEntry":  "Scene.Network.HttpGetAsync/TcpReceiveTextOnceAsync/UdpReceiveTextAsync",
+        "pythonEntry":  "scene.network.http_get/tcp_receive_text_once/udp_receive_text"
+    },
+    {
+        "id":  "asr",
+        "title":  "ASR API",
+        "category":  "语音",
+        "file":  "api_docs/24-asr.md",
+        "summary":  "ASR 流式识别、回调事件字段、按住录音和发送 LLM 示例。",
+        "objects":  [
+                        "RuntimeAsr",
+                        "RuntimeAsrScriptEvent",
+                        "scene.asr"
+                    ],
+        "keywords":  [
+                         "asr",
+                         "speech recognition",
+                         "start_streaming_recognition"
+                     ],
+        "csharpEntry":  "Scene.Asr.StartStreamingRecognition",
+        "pythonEntry":  "scene.asr.start_streaming_recognition"
+    },
+    {
+        "id":  "llm",
+        "title":  "LLM / OpenAI-compatible API",
+        "category":  "AI",
+        "file":  "api_docs/25-llm.md",
+        "summary":  "OpenAI-compatible LLM 完整请求、流式请求、后台回调和消息列表。",
+        "objects":  [
+                        "RuntimeLlm",
+                        "RuntimeLlmScriptEvent",
+                        "RuntimeLlmChatMessage"
+                    ],
+        "keywords":  [
+                         "llm",
+                         "openai",
+                         "chat",
+                         "stream"
+                     ],
+        "csharpEntry":  "Scene.Llm.ChatAsync/StreamChatAsync/StartChat",
+        "pythonEntry":  "scene.llm.chat/stream_chat/start_chat"
+    },
+    {
+        "id":  "realtime-voice",
+        "title":  "Realtime Voice API",
+        "category":  "语音",
+        "file":  "api_docs/26-realtime-voice.md",
+        "summary":  "实时语音唤醒、转写、响应、语音播放、后台回调和事件字段。",
+        "objects":  [
+                        "RuntimeRealtimeVoice",
+                        "RuntimeRealtimeVoiceScriptEvent",
+                        "scene.realtime_voice"
+                    ],
+        "keywords":  [
+                         "realtime voice",
+                         "wake word",
+                         "transcription",
+                         "speech"
+                     ],
+        "csharpEntry":  "Scene.RealtimeVoice.Start*",
+        "pythonEntry":  "scene.realtime_voice.start_*"
+    },
+    {
+        "id":  "recipes",
+        "title":  "常见脚本组合示例",
+        "category":  "示例",
+        "file":  "api_docs/27-recipes.md",
+        "summary":  "点击 GUI、拾取对象、下拉框切换动作等常见组合示例。",
+        "objects":  [
+                        "Recipes"
+                    ],
+        "keywords":  [
+                         "recipe",
+                         "example",
+                         "gui",
+                         "pick"
+                     ],
+        "csharpEntry":  "multiple APIs",
+        "pythonEntry":  "multiple APIs"
+    },
+    {
+        "id":  "notes",
+        "title":  "当前边界与注意事项",
+        "category":  "边界",
+        "file":  "api_docs/28-notes.md",
+        "summary":  "当前实现边界、脚本执行模型、平台差异和调试建议。",
+        "objects":  [
+                        "Limitations"
+                    ],
+        "keywords":  [
+                         "notes",
+                         "limits",
+                         "platform"
+                     ],
+        "csharpEntry":  "runtime limitations",
+        "pythonEntry":  "snapshot model"
+    }
+]

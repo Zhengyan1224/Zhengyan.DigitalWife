@@ -10,10 +10,48 @@ internal static unsafe class DesktopSpritePlatform
 {
     private const int RegionSampleStep = 4;
     private const byte RegionAlphaThreshold = 8;
+    private static readonly object LogLock = new();
+    private static readonly HashSet<string> LoggedMessages = [];
     private static readonly Dictionary<IntPtr, WindowsClickThroughState> WindowsClickThroughStates = [];
     private static readonly Dictionary<nint, X11ClickThroughState> X11ClickThroughStates = [];
     private static readonly Dictionary<IntPtr, MacClickThroughState> MacClickThroughStatesByView = [];
     private static readonly MacHitTestDelegate MacHitTestCallback = MacHitTest;
+    private static IntPtr _fallbackX11Display;
+    private static bool _glfwX11DisplayUnavailable;
+    private static bool _glfwX11WindowUnavailable;
+    private static bool _x11NativeUnavailable;
+
+    static DesktopSpritePlatform()
+    {
+        try
+        {
+            NativeLibrary.SetDllImportResolver(typeof(DesktopSpritePlatform).Assembly, ResolveNativeLibrary);
+        }
+        catch (InvalidOperationException)
+        {
+            // Another component already installed a resolver for this assembly.
+        }
+    }
+
+    public static void PreferX11ForDesktopSprite()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GLFW_PLATFORM")))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DISPLAY")))
+        {
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("GLFW_PLATFORM", "x11");
+    }
 
     public static void ApplyClickThrough(IWindow window, bool enabled)
     {
@@ -54,13 +92,6 @@ internal static unsafe class DesktopSpritePlatform
 
         if (OperatingSystem.IsLinux())
         {
-            string sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") ?? string.Empty;
-            if (sessionType.Equals("wayland", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("[DesktopSprite] Mouse click-through is not enabled on Wayland. X11 is required for Linux click-through.");
-                return;
-            }
-
             TryEnableX11ClickThrough(window, true);
         }
     }
@@ -90,11 +121,7 @@ internal static unsafe class DesktopSpritePlatform
 
         if (OperatingSystem.IsLinux())
         {
-            string sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") ?? string.Empty;
-            if (!sessionType.Equals("wayland", StringComparison.OrdinalIgnoreCase))
-            {
-                SyncX11ClickThroughRegion(window, gl, width, height);
-            }
+            SyncX11ClickThroughRegion(window, gl, width, height);
         }
     }
 
@@ -117,8 +144,7 @@ internal static unsafe class DesktopSpritePlatform
 
             if (OperatingSystem.IsLinux())
             {
-                IntPtr display = X11Native.GetX11Display();
-                if (display == IntPtr.Zero)
+                if (!TryGetX11Display(out IntPtr display, allowFallbackOpenDisplay: true, logFailure: false))
                 {
                     return false;
                 }
@@ -289,18 +315,8 @@ internal static unsafe class DesktopSpritePlatform
 
     private static void SyncX11ClickThroughRegion(IWindow window, GL gl, int width, int height)
     {
-        IntPtr glfwWindow = TryGetGlfwWindowPointer(window);
-        if (glfwWindow == IntPtr.Zero)
+        if (!TryGetX11Handles(window, out IntPtr display, out nint windowHandle, logFailure: true))
         {
-            Console.WriteLine("[DesktopSprite] Failed to locate GLFW window pointer on Linux.");
-            return;
-        }
-
-        IntPtr display = X11Native.GetX11Display();
-        nint windowHandle = X11Native.GetX11Window(glfwWindow);
-        if (display == IntPtr.Zero || windowHandle == 0)
-        {
-            Console.WriteLine("[DesktopSprite] Failed to get X11 display/window handles from GLFW.");
             return;
         }
 
@@ -315,6 +331,11 @@ internal static unsafe class DesktopSpritePlatform
         ReadFramebufferRgba(gl, state.FramebufferBytes, width, height);
 
         IntPtr region = BuildX11AlphaRegion(state.FramebufferBytes, width, height);
+        if (region == IntPtr.Zero)
+        {
+            return;
+        }
+
         X11Native.XShapeCombineRegion(display, windowHandle, X11Native.ShapeInput, 0, 0, region, X11Native.ShapeSet);
         X11Native.XDestroyRegion(region);
         X11Native.XFlush(display);
@@ -378,18 +399,8 @@ internal static unsafe class DesktopSpritePlatform
 
     private static void TryEnableX11ClickThrough(IWindow window, bool enabled)
     {
-        IntPtr glfwWindow = TryGetGlfwWindowPointer(window);
-        if (glfwWindow == IntPtr.Zero)
+        if (!TryGetX11Handles(window, out IntPtr display, out nint windowHandle, logFailure: enabled))
         {
-            Console.WriteLine("[DesktopSprite] Failed to locate GLFW window pointer on Linux.");
-            return;
-        }
-
-        IntPtr display = X11Native.GetX11Display();
-        nint windowHandle = X11Native.GetX11Window(glfwWindow);
-        if (display == IntPtr.Zero || windowHandle == 0)
-        {
-            Console.WriteLine("[DesktopSprite] Failed to get X11 display/window handles from GLFW.");
             return;
         }
 
@@ -399,9 +410,7 @@ internal static unsafe class DesktopSpritePlatform
         {
             state.LastWidth = 0;
             state.LastHeight = 0;
-            IntPtr fullRegion = X11Native.XCreateRegion();
-            X11Native.XShapeCombineRegion(display, windowHandle, X11Native.ShapeInput, 0, 0, fullRegion, X11Native.ShapeSet);
-            X11Native.XDestroyRegion(fullRegion);
+            X11Native.XShapeCombineMask(display, windowHandle, X11Native.ShapeInput, 0, 0, IntPtr.Zero, X11Native.ShapeSet);
         }
 
         X11Native.XFlush(display);
@@ -410,6 +419,243 @@ internal static unsafe class DesktopSpritePlatform
     private static IntPtr TryGetGlfwWindowPointer(IWindow window)
     {
         return TryFindGlfwWindowPointer(window, new HashSet<object>(ReferenceEqualityComparer.Instance), 0);
+    }
+
+    private static bool TryGetX11Handles(IWindow window, out IntPtr display, out nint windowHandle, bool logFailure)
+    {
+        display = IntPtr.Zero;
+        windowHandle = 0;
+
+        if (_x11NativeUnavailable || _glfwX11WindowUnavailable)
+        {
+            return false;
+        }
+
+        IntPtr glfwWindow = TryGetGlfwWindowPointer(window);
+        if (glfwWindow == IntPtr.Zero)
+        {
+            if (logFailure)
+            {
+                LogOnce("linux-glfw-window-missing", "[DesktopSprite] Failed to locate GLFW window pointer on Linux; Linux click-through is disabled for this window.");
+            }
+
+            return false;
+        }
+
+        try
+        {
+            windowHandle = X11Native.GetX11Window(glfwWindow);
+        }
+        catch (Exception ex) when (IsNativeBindingFailure(ex))
+        {
+            _glfwX11WindowUnavailable = true;
+            if (logFailure)
+            {
+                LogOnce("linux-x11-native-unavailable", $"[DesktopSprite] X11/GLFW native functions are unavailable: {ex.Message}");
+            }
+
+            return false;
+        }
+
+        if (!TryGetX11Display(out display, allowFallbackOpenDisplay: true, logFailure))
+        {
+            return false;
+        }
+
+        if (windowHandle == 0)
+        {
+            if (logFailure)
+            {
+                string sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") ?? string.Empty;
+                string displayName = Environment.GetEnvironmentVariable("DISPLAY") ?? string.Empty;
+                string waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") ?? string.Empty;
+                LogOnce(
+                    "linux-x11-window-missing",
+                    $"[DesktopSprite] GLFW did not expose an X11 window handle; Linux transparent click-through is disabled. session={sessionType}, DISPLAY={displayName}, WAYLAND_DISPLAY={waylandDisplay}. If this is a Wayland session, run under X11 or set GLFW_PLATFORM=x11 before starting GamePlayer.");
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryGetX11Display(out IntPtr display, bool allowFallbackOpenDisplay, bool logFailure)
+    {
+        display = IntPtr.Zero;
+        if (_x11NativeUnavailable)
+        {
+            return false;
+        }
+
+        if (!_glfwX11DisplayUnavailable)
+        {
+            try
+            {
+                display = X11Native.GetX11Display();
+            }
+            catch (Exception ex) when (IsNativeBindingFailure(ex))
+            {
+                _glfwX11DisplayUnavailable = true;
+                if (logFailure && !allowFallbackOpenDisplay)
+                {
+                    LogOnce("linux-x11-native-unavailable", $"[DesktopSprite] X11/GLFW native functions are unavailable: {ex.Message}");
+                }
+
+                display = IntPtr.Zero;
+            }
+        }
+
+        if (display != IntPtr.Zero)
+        {
+            return true;
+        }
+
+        if (!allowFallbackOpenDisplay)
+        {
+            if (logFailure)
+            {
+                LogOnce("linux-x11-display-missing", "[DesktopSprite] GLFW did not expose an X11 display handle.");
+            }
+
+            return false;
+        }
+
+        if (_fallbackX11Display != IntPtr.Zero)
+        {
+            display = _fallbackX11Display;
+            return true;
+        }
+
+        try
+        {
+            _fallbackX11Display = X11Native.XOpenDisplay(IntPtr.Zero);
+        }
+        catch (Exception ex) when (IsNativeBindingFailure(ex))
+        {
+            _x11NativeUnavailable = true;
+            if (logFailure)
+            {
+                LogOnce("linux-x11-native-unavailable", $"[DesktopSprite] X11 native functions are unavailable: {ex.Message}");
+            }
+
+            return false;
+        }
+
+        display = _fallbackX11Display;
+        if (display != IntPtr.Zero)
+        {
+            return true;
+        }
+
+        if (logFailure)
+        {
+            string displayName = Environment.GetEnvironmentVariable("DISPLAY") ?? string.Empty;
+            LogOnce("linux-x11-display-missing", $"[DesktopSprite] Failed to open X11 display; Linux click-through and global cursor fallback are disabled. DISPLAY={displayName}");
+        }
+
+        return false;
+    }
+
+    private static bool IsNativeBindingFailure(Exception ex)
+    {
+        return ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
+    }
+
+    private static void LogOnce(string key, string message)
+    {
+        lock (LogLock)
+        {
+            if (!LoggedMessages.Add(key))
+            {
+                return;
+            }
+        }
+
+        Console.WriteLine(message);
+    }
+
+    private static IntPtr ResolveNativeLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    {
+        _ = assembly;
+        _ = searchPath;
+
+        if (!IsGlfwLibraryName(libraryName))
+        {
+            return IntPtr.Zero;
+        }
+
+        foreach (string candidate in GetBundledGlfwCandidates())
+        {
+            if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out IntPtr handle))
+            {
+                return handle;
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private static bool IsGlfwLibraryName(string libraryName)
+    {
+        return libraryName.Equals("glfw3", StringComparison.OrdinalIgnoreCase)
+            || libraryName.Equals("glfw3.dll", StringComparison.OrdinalIgnoreCase)
+            || libraryName.Equals("libglfw.so.3", StringComparison.OrdinalIgnoreCase)
+            || libraryName.Equals("libglfw.3.dylib", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> GetBundledGlfwCandidates()
+    {
+        string fileName = OperatingSystem.IsWindows()
+            ? "glfw3.dll"
+            : OperatingSystem.IsMacOS() ? "libglfw.3.dylib" : "libglfw.so.3";
+
+        string baseDirectory = AppContext.BaseDirectory;
+        yield return Path.Combine(baseDirectory, fileName);
+
+        string? rid = GetNativeRuntimeIdentifier();
+        if (!string.IsNullOrWhiteSpace(rid))
+        {
+            yield return Path.Combine(baseDirectory, "runtimes", rid, "native", fileName);
+        }
+    }
+
+    private static string? GetNativeRuntimeIdentifier()
+    {
+        Architecture architecture = RuntimeInformation.ProcessArchitecture;
+        if (OperatingSystem.IsWindows())
+        {
+            return architecture switch
+            {
+                Architecture.X64 => "win-x64",
+                Architecture.X86 => "win-x86",
+                Architecture.Arm64 => "win-arm64",
+                _ => null
+            };
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return architecture switch
+            {
+                Architecture.X64 => "linux-x64",
+                Architecture.Arm64 => "linux-arm64",
+                Architecture.Arm => "linux-arm",
+                _ => null
+            };
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            return architecture switch
+            {
+                Architecture.X64 => "osx-x64",
+                Architecture.Arm64 => "osx-arm64",
+                _ => null
+            };
+        }
+
+        return null;
     }
 
     private static WindowsClickThroughState EnsureWindowsClickThroughState(IntPtr hwnd)
@@ -857,6 +1103,9 @@ internal static unsafe class DesktopSpritePlatform
         internal static extern nint XDefaultRootWindow(IntPtr display);
 
         [DllImport("libX11.so.6")]
+        internal static extern IntPtr XOpenDisplay(IntPtr displayName);
+
+        [DllImport("libX11.so.6")]
         internal static extern int XQueryPointer(
             IntPtr display,
             nint window,
@@ -867,6 +1116,9 @@ internal static unsafe class DesktopSpritePlatform
             out int winXReturn,
             out int winYReturn,
             out uint maskReturn);
+
+        [DllImport("libXext.so.6")]
+        internal static extern void XShapeCombineMask(IntPtr display, nint window, int destKind, int xOff, int yOff, IntPtr bitmap, int op);
     }
 
     private static class MacNative

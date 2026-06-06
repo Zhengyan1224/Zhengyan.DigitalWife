@@ -125,6 +125,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             options.TransparentFramebuffer = project.Window.DesktopSpriteMode;
             if (project.Window.DesktopSpriteMode)
             {
+                DesktopSpritePlatform.PreferX11ForDesktopSprite();
                 options.ClearColor = new Vector4(0.0f, 0.0f, 0.0f, 0.0f);
             }
         }
