@@ -418,7 +418,10 @@ internal static unsafe class DesktopSpritePlatform
 
     private static IntPtr TryGetGlfwWindowPointer(IWindow window)
     {
-        return TryFindGlfwWindowPointer(window, new HashSet<object>(ReferenceEqualityComparer.Instance), 0);
+        IntPtr handle = window.Handle;
+        return handle != IntPtr.Zero
+            ? handle
+            : TryFindGlfwWindowPointer(window, new HashSet<object>(ReferenceEqualityComparer.Instance), 0);
     }
 
     private static bool TryGetX11Handles(IWindow window, out IntPtr display, out nint windowHandle, bool logFailure)
@@ -471,10 +474,15 @@ internal static unsafe class DesktopSpritePlatform
                 string waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") ?? string.Empty;
                 LogOnce(
                     "linux-x11-window-missing",
-                    $"[DesktopSprite] GLFW did not expose an X11 window handle; Linux transparent click-through is disabled. session={sessionType}, DISPLAY={displayName}, WAYLAND_DISPLAY={waylandDisplay}. If this is a Wayland session, run under X11 or set GLFW_PLATFORM=x11 before starting GamePlayer.");
+                    $"[DesktopSprite] GLFW did not expose an X11 window handle; Linux transparent click-through is disabled. glfwWindow=0x{glfwWindow.ToInt64():X}, session={sessionType}, DISPLAY={displayName}, WAYLAND_DISPLAY={waylandDisplay}. If this is a Wayland session, run under X11 or set GLFW_PLATFORM=x11 before starting GamePlayer.");
             }
 
             return false;
+        }
+
+        if (logFailure)
+        {
+            LogOnce("linux-x11-handles-ready", $"[DesktopSprite] X11 click-through handles ready. glfwWindow=0x{glfwWindow.ToInt64():X}, x11Window=0x{windowHandle:X}.");
         }
 
         return true;
