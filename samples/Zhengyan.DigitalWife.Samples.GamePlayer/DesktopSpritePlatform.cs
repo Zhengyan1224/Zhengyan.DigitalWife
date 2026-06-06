@@ -17,6 +17,7 @@ internal static unsafe class DesktopSpritePlatform
     private static readonly Dictionary<IntPtr, MacClickThroughState> MacClickThroughStatesByView = [];
     private static readonly MacHitTestDelegate MacHitTestCallback = MacHitTest;
     private static IntPtr _fallbackX11Display;
+    private static nint _fallbackX11Window;
     private static bool _glfwX11DisplayUnavailable;
     private static bool _glfwX11WindowUnavailable;
     private static bool _x11NativeUnavailable;
@@ -429,7 +430,7 @@ internal static unsafe class DesktopSpritePlatform
         display = IntPtr.Zero;
         windowHandle = 0;
 
-        if (_x11NativeUnavailable || _glfwX11WindowUnavailable)
+        if (_x11NativeUnavailable)
         {
             return false;
         }
@@ -445,19 +446,22 @@ internal static unsafe class DesktopSpritePlatform
             return false;
         }
 
-        try
+        if (!_glfwX11WindowUnavailable)
         {
-            windowHandle = X11Native.GetX11Window(glfwWindow);
-        }
-        catch (Exception ex) when (IsNativeBindingFailure(ex))
-        {
-            _glfwX11WindowUnavailable = true;
-            if (logFailure)
+            try
             {
-                LogOnce("linux-x11-native-unavailable", $"[DesktopSprite] X11/GLFW native functions are unavailable: {ex.Message}");
+                windowHandle = X11Native.GetX11Window(glfwWindow);
             }
+            catch (Exception ex) when (IsNativeBindingFailure(ex))
+            {
+                _glfwX11WindowUnavailable = true;
+                if (logFailure)
+                {
+                    LogOnce("linux-x11-native-unavailable", $"[DesktopSprite] X11/GLFW native functions are unavailable: {ex.Message}");
+                }
 
-            return false;
+                windowHandle = 0;
+            }
         }
 
         if (!TryGetX11Display(out display, allowFallbackOpenDisplay: true, logFailure))
@@ -467,6 +471,18 @@ internal static unsafe class DesktopSpritePlatform
 
         if (windowHandle == 0)
         {
+            if (TryFindCurrentProcessX11Window(display, out nint fallbackWindow))
+            {
+                windowHandle = fallbackWindow;
+                _fallbackX11Window = fallbackWindow;
+                if (logFailure)
+                {
+                    LogOnce("linux-x11-window-fallback-ready", $"[DesktopSprite] X11 click-through fallback window found by process id. glfwWindow=0x{glfwWindow.ToInt64():X}, x11Window=0x{windowHandle:X}.");
+                }
+
+                return true;
+            }
+
             if (logFailure)
             {
                 string sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") ?? string.Empty;
@@ -486,6 +502,162 @@ internal static unsafe class DesktopSpritePlatform
         }
 
         return true;
+    }
+
+    private static bool TryFindCurrentProcessX11Window(IntPtr display, out nint windowHandle)
+    {
+        windowHandle = 0;
+        if (_fallbackX11Window != 0)
+        {
+            windowHandle = _fallbackX11Window;
+            return true;
+        }
+
+        try
+        {
+            nint root = X11Native.XDefaultRootWindow(display);
+            if (root == 0)
+            {
+                return false;
+            }
+
+            nint pidAtom = X11Native.XInternAtom(display, "_NET_WM_PID", true);
+            if (pidAtom == 0)
+            {
+                return false;
+            }
+
+            int currentProcessId = Environment.ProcessId;
+            return TryFindCurrentProcessTopLevelX11Window(display, root, pidAtom, currentProcessId, out windowHandle)
+                || TryFindCurrentProcessX11WindowRecursive(display, root, pidAtom, currentProcessId, 0, out windowHandle);
+        }
+        catch (Exception ex) when (IsNativeBindingFailure(ex))
+        {
+            _x11NativeUnavailable = true;
+            LogOnce("linux-x11-native-unavailable", $"[DesktopSprite] X11 native functions are unavailable: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool TryFindCurrentProcessX11WindowRecursive(
+        IntPtr display,
+        nint window,
+        nint pidAtom,
+        int currentProcessId,
+        int depth,
+        out nint match)
+    {
+        match = 0;
+        if (depth > 8)
+        {
+            return false;
+        }
+
+        if (TryGetX11WindowPid(display, window, pidAtom, out int pid) && pid == currentProcessId)
+        {
+            match = window;
+            return true;
+        }
+
+        if (X11Native.XQueryTree(display, window, out _, out _, out IntPtr children, out uint childCount) == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            for (uint i = 0; i < childCount; i++)
+            {
+                nint child = Marshal.ReadIntPtr(children, checked((int)(i * (uint)IntPtr.Size)));
+                if (TryFindCurrentProcessX11WindowRecursive(display, child, pidAtom, currentProcessId, depth + 1, out match))
+                {
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            if (children != IntPtr.Zero)
+            {
+                X11Native.XFree(children);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindCurrentProcessTopLevelX11Window(
+        IntPtr display,
+        nint root,
+        nint pidAtom,
+        int currentProcessId,
+        out nint match)
+    {
+        match = 0;
+        if (X11Native.XQueryTree(display, root, out _, out _, out IntPtr children, out uint childCount) == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            for (uint i = 0; i < childCount; i++)
+            {
+                nint child = Marshal.ReadIntPtr(children, checked((int)(i * (uint)IntPtr.Size)));
+                if (TryGetX11WindowPid(display, child, pidAtom, out int pid) && pid == currentProcessId)
+                {
+                    match = child;
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            if (children != IntPtr.Zero)
+            {
+                X11Native.XFree(children);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetX11WindowPid(IntPtr display, nint window, nint pidAtom, out int pid)
+    {
+        pid = 0;
+        int result = X11Native.XGetWindowProperty(
+            display,
+            window,
+            pidAtom,
+            0,
+            1,
+            false,
+            X11Native.AnyPropertyType,
+            out _,
+            out int actualFormat,
+            out ulong itemCount,
+            out _,
+            out IntPtr property);
+
+        if (result != X11Native.Success || property == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (actualFormat != 32 || itemCount == 0)
+            {
+                return false;
+            }
+
+            pid = Marshal.ReadInt32(property);
+            return pid > 0;
+        }
+        finally
+        {
+            X11Native.XFree(property);
+        }
     }
 
     private static bool TryGetX11Display(out IntPtr display, bool allowFallbackOpenDisplay, bool logFailure)
@@ -1083,6 +1255,8 @@ internal static unsafe class DesktopSpritePlatform
 
     private static class X11Native
     {
+        internal const int Success = 0;
+        internal const nint AnyPropertyType = 0;
         internal const int ShapeSet = 0;
         internal const int ShapeInput = 2;
 
@@ -1103,6 +1277,36 @@ internal static unsafe class DesktopSpritePlatform
 
         [DllImport("libX11.so.6")]
         internal static extern int XFlush(IntPtr display);
+
+        [DllImport("libX11.so.6")]
+        internal static extern nint XInternAtom(IntPtr display, string atomName, bool onlyIfExists);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XQueryTree(
+            IntPtr display,
+            nint window,
+            out nint rootReturn,
+            out nint parentReturn,
+            out IntPtr childrenReturn,
+            out uint childCountReturn);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XGetWindowProperty(
+            IntPtr display,
+            nint window,
+            nint property,
+            nint longOffset,
+            nint longLength,
+            bool delete,
+            nint requiredType,
+            out nint actualTypeReturn,
+            out int actualFormatReturn,
+            out ulong itemCountReturn,
+            out ulong bytesAfterReturn,
+            out IntPtr propertyReturn);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XFree(IntPtr data);
 
         [DllImport("libXext.so.6")]
         internal static extern void XShapeCombineRegion(IntPtr display, nint window, int destKind, int xOff, int yOff, IntPtr region, int op);
