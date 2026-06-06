@@ -38,6 +38,7 @@ internal sealed class DesktopSpriteTrayComponent(
         string fingerprint = BuildFingerprint(settings);
         if (_tray is not null && string.Equals(_fingerprint, fingerprint, StringComparison.Ordinal))
         {
+            _tray.Pump();
             return;
         }
 
@@ -54,10 +55,34 @@ internal sealed class DesktopSpriteTrayComponent(
             return;
         }
 
+        if (OperatingSystem.IsLinux())
+        {
+            _tray = LinuxGtkDesktopSpriteTray.TryCreate(
+                ResolveTrayIconPath(settings),
+                settings.DesktopSpriteTrayMenuItems ?? [],
+                _onMenuItemClicked);
+            if (_tray is not null)
+            {
+                return;
+            }
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            _tray = MacDesktopSpriteTray.TryCreate(
+                ResolveTrayIconPath(settings),
+                settings.DesktopSpriteTrayMenuItems ?? [],
+                _onMenuItemClicked);
+            if (_tray is not null)
+            {
+                return;
+            }
+        }
+
         if (!_unsupportedLogged)
         {
             _unsupportedLogged = true;
-            Console.WriteLine("[DesktopSprite] System tray is currently implemented only on Windows; Linux/macOS run with tray disabled.");
+            Console.WriteLine("[DesktopSprite] System tray is not available on this platform or required native libraries are missing.");
         }
     }
 
@@ -79,7 +104,8 @@ internal sealed class DesktopSpriteTrayComponent(
             return _resolveProjectPath(settings.IconPath);
         }
 
-        return Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.ico");
+        string defaultIcon = OperatingSystem.IsWindows() ? "logo.ico" : "logo.png";
+        return Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", defaultIcon);
     }
 
     private void DisposeTray()
@@ -111,6 +137,7 @@ internal sealed class DesktopSpriteTrayComponent(
 
     private interface IDesktopSpriteTray : IDisposable
     {
+        void Pump();
     }
 
     private sealed class WindowsDesktopSpriteTray : IDesktopSpriteTray
@@ -265,6 +292,10 @@ internal sealed class DesktopSpriteTrayComponent(
             {
                 DestroyWindow(_hwnd);
             }
+        }
+
+        public void Pump()
+        {
         }
 
         private bool AddIcon()
@@ -552,5 +583,741 @@ internal sealed class DesktopSpriteTrayComponent(
             int nReserved,
             IntPtr hWnd,
             IntPtr prcRect);
+    }
+
+    private sealed class LinuxGtkDesktopSpriteTray : IDesktopSpriteTray
+    {
+        private const int AppIndicatorCategoryApplicationStatus = 0;
+        private const int AppIndicatorStatusPassive = 0;
+        private const int AppIndicatorStatusActive = 1;
+
+        private static bool _missingLibrariesLogged;
+        private static bool _gtkInitFailedLogged;
+        private readonly List<DesktopSpriteTrayMenuItemSettings> _items;
+        private readonly List<ActivatedCallback> _callbacks = [];
+        private readonly Action<DesktopSpriteTrayMenuItemSettings> _onMenuItemClicked;
+        private readonly IntPtr _indicator;
+        private readonly IntPtr _menu;
+        private bool _disposed;
+
+        private LinuxGtkDesktopSpriteTray(
+            IntPtr indicator,
+            IntPtr menu,
+            IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
+            Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+        {
+            _indicator = indicator;
+            _menu = menu;
+            _items = items
+                .Where(item => !string.IsNullOrWhiteSpace(item.Text))
+                .Select(CloneMenuItem)
+                .ToList();
+            _onMenuItemClicked = onMenuItemClicked;
+        }
+
+        public static LinuxGtkDesktopSpriteTray? TryCreate(
+            string iconPath,
+            IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
+            Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                return null;
+            }
+
+            if (!LinuxTrayNative.TryLoad())
+            {
+                if (!_missingLibrariesLogged)
+                {
+                    _missingLibrariesLogged = true;
+                    Console.WriteLine("[DesktopSprite] Linux tray requires GTK3 and Ayatana/AppIndicator native libraries, for example: libgtk-3-0 and libayatana-appindicator3-1.");
+                }
+
+                return null;
+            }
+
+            int argc = 0;
+            IntPtr argv = IntPtr.Zero;
+            if (!LinuxTrayNative.InitializeGtk(ref argc, ref argv))
+            {
+                if (!_gtkInitFailedLogged)
+                {
+                    _gtkInitFailedLogged = true;
+                    Console.WriteLine("[DesktopSprite] Linux tray could not initialize GTK; system tray is disabled.");
+                }
+
+                return null;
+            }
+
+            string id = "zhengyan-digitalwife-" + Environment.ProcessId;
+            string iconNameOrPath = ResolveLinuxIcon(iconPath, out string iconThemePath, out string iconName);
+            if (!string.IsNullOrWhiteSpace(iconThemePath) && LinuxTrayNative.SupportsCustomIconPath)
+            {
+                iconNameOrPath = iconName;
+            }
+
+            IntPtr indicator = LinuxTrayNative.app_indicator_new(
+                id,
+                iconNameOrPath,
+                AppIndicatorCategoryApplicationStatus);
+            if (indicator == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(iconThemePath) && LinuxTrayNative.SupportsCustomIconPath)
+            {
+                LinuxTrayNative.app_indicator_set_icon_theme_path(indicator, iconThemePath);
+                LinuxTrayNative.app_indicator_set_icon_full(indicator, iconName, "Zhengyan.DigitalWife");
+            }
+
+            IntPtr menu = LinuxTrayNative.gtk_menu_new();
+            if (menu == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            LinuxGtkDesktopSpriteTray tray = new(indicator, menu, items, onMenuItemClicked);
+            tray.BuildMenu();
+            LinuxTrayNative.app_indicator_set_status(indicator, AppIndicatorStatusActive);
+            LinuxTrayNative.app_indicator_set_menu(indicator, menu);
+            return tray;
+        }
+
+        public void Pump()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            for (int i = 0; i < 64 && LinuxTrayNative.g_main_context_pending(IntPtr.Zero); i++)
+            {
+                LinuxTrayNative.g_main_context_iteration(IntPtr.Zero, false);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            if (_indicator != IntPtr.Zero)
+            {
+                LinuxTrayNative.app_indicator_set_status(_indicator, AppIndicatorStatusPassive);
+            }
+        }
+
+        private void BuildMenu()
+        {
+            for (int i = 0; i < _items.Count; i++)
+            {
+                int index = i;
+                DesktopSpriteTrayMenuItemSettings item = _items[i];
+                IntPtr menuItem = LinuxTrayNative.gtk_menu_item_new_with_label(item.Text);
+                if (menuItem == IntPtr.Zero)
+                {
+                    continue;
+                }
+
+                LinuxTrayNative.gtk_widget_set_sensitive(menuItem, item.Enabled);
+                ActivatedCallback callback = (_, _) => DispatchIndex(index);
+                _callbacks.Add(callback);
+                LinuxTrayNative.g_signal_connect_data(
+                    menuItem,
+                    "activate",
+                    Marshal.GetFunctionPointerForDelegate(callback),
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    0);
+                LinuxTrayNative.gtk_menu_shell_append(_menu, menuItem);
+                LinuxTrayNative.gtk_widget_show(menuItem);
+            }
+
+            LinuxTrayNative.gtk_widget_show(_menu);
+        }
+
+        private void DispatchIndex(int index)
+        {
+            if (index < 0 || index >= _items.Count)
+            {
+                return;
+            }
+
+            DesktopSpriteTrayMenuItemSettings item = _items[index];
+            if (item.Enabled)
+            {
+                _onMenuItemClicked(item);
+            }
+        }
+
+        private static string ResolveLinuxIcon(string iconPath, out string iconThemePath, out string iconName)
+        {
+            iconThemePath = string.Empty;
+            iconName = string.Empty;
+            if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
+            {
+                string fullPath = Path.GetFullPath(iconPath);
+                iconThemePath = Path.GetDirectoryName(fullPath) ?? string.Empty;
+                iconName = Path.GetFileNameWithoutExtension(fullPath);
+                return fullPath;
+            }
+
+            iconName = "application-x-executable";
+            return "application-x-executable";
+        }
+
+        private static DesktopSpriteTrayMenuItemSettings CloneMenuItem(DesktopSpriteTrayMenuItemSettings item)
+        {
+            return new DesktopSpriteTrayMenuItemSettings
+            {
+                Id = string.IsNullOrWhiteSpace(item.Id) ? Guid.NewGuid().ToString("N") : item.Id,
+                Text = string.IsNullOrWhiteSpace(item.Text) ? "Menu Item" : item.Text,
+                Enabled = item.Enabled,
+                BuiltInAction = NormalizeBuiltInAction(item.BuiltInAction),
+                EventName = item.EventName ?? string.Empty
+            };
+        }
+
+        private static string NormalizeBuiltInAction(string value)
+        {
+            string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+            return normalized switch
+            {
+                "toggle_visibility" or "toggle" or "show_hide" or "showhide" => "toggle_visibility",
+                "exit" or "quit" => "exit",
+                _ => "none"
+            };
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void ActivatedCallback(IntPtr widget, IntPtr userData);
+
+        private static class LinuxTrayNative
+        {
+            private const int RtldLazy = 1;
+            private static bool _loaded;
+            private static bool _loadAttempted;
+            private static bool _gtkInitialized;
+            private static AppIndicatorNewDelegate? _appIndicatorNew;
+            private static AppIndicatorSetStatusDelegate? _appIndicatorSetStatus;
+            private static AppIndicatorSetMenuDelegate? _appIndicatorSetMenu;
+            private static AppIndicatorSetIconThemePathDelegate? _appIndicatorSetIconThemePath;
+            private static AppIndicatorSetIconFullDelegate? _appIndicatorSetIconFull;
+
+            public static bool SupportsCustomIconPath => _appIndicatorSetIconThemePath is not null && _appIndicatorSetIconFull is not null;
+
+            public static bool TryLoad()
+            {
+                if (_loadAttempted)
+                {
+                    return _loaded;
+                }
+
+                _loadAttempted = true;
+                _loaded = TryLoadLibrary("libgtk-3.so.0", out _)
+                    && TryLoadAppIndicator();
+                return _loaded;
+            }
+
+            public static bool InitializeGtk(ref int argc, ref IntPtr argv)
+            {
+                if (_gtkInitialized)
+                {
+                    return true;
+                }
+
+                _gtkInitialized = gtk_init_check(ref argc, ref argv);
+                return _gtkInitialized;
+            }
+
+            internal static IntPtr app_indicator_new(string id, string iconName, int category)
+            {
+                return _appIndicatorNew?.Invoke(id, iconName, category) ?? IntPtr.Zero;
+            }
+
+            internal static void app_indicator_set_status(IntPtr indicator, int status)
+            {
+                _appIndicatorSetStatus?.Invoke(indicator, status);
+            }
+
+            internal static void app_indicator_set_menu(IntPtr indicator, IntPtr menu)
+            {
+                _appIndicatorSetMenu?.Invoke(indicator, menu);
+            }
+
+            internal static void app_indicator_set_icon_theme_path(IntPtr indicator, string iconThemePath)
+            {
+                _appIndicatorSetIconThemePath?.Invoke(indicator, iconThemePath);
+            }
+
+            internal static void app_indicator_set_icon_full(IntPtr indicator, string iconName, string iconDescription)
+            {
+                _appIndicatorSetIconFull?.Invoke(indicator, iconName, iconDescription);
+            }
+
+            private static bool TryLoadAppIndicator()
+            {
+                foreach (string libraryName in new[] { "libayatana-appindicator3.so.1", "libappindicator3.so.1" })
+                {
+                    if (TryLoadLibrary(libraryName, out IntPtr library) && TryBindAppIndicator(library))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            private static bool TryBindAppIndicator(IntPtr library)
+            {
+                try
+                {
+                    _appIndicatorNew = GetRequiredDelegate<AppIndicatorNewDelegate>(library, "app_indicator_new");
+                    _appIndicatorSetStatus = GetRequiredDelegate<AppIndicatorSetStatusDelegate>(library, "app_indicator_set_status");
+                    _appIndicatorSetMenu = GetRequiredDelegate<AppIndicatorSetMenuDelegate>(library, "app_indicator_set_menu");
+                    _appIndicatorSetIconThemePath = TryGetDelegate<AppIndicatorSetIconThemePathDelegate>(library, "app_indicator_set_icon_theme_path");
+                    _appIndicatorSetIconFull = TryGetDelegate<AppIndicatorSetIconFullDelegate>(library, "app_indicator_set_icon_full");
+                    return true;
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    _appIndicatorNew = null;
+                    _appIndicatorSetStatus = null;
+                    _appIndicatorSetMenu = null;
+                    _appIndicatorSetIconThemePath = null;
+                    _appIndicatorSetIconFull = null;
+                    return false;
+                }
+            }
+
+            private static bool TryLoadLibrary(string name, out IntPtr handle)
+            {
+                if (NativeLibrary.TryLoad(name, out handle))
+                {
+                    return true;
+                }
+
+                handle = dlopen(name, RtldLazy);
+                return handle != IntPtr.Zero;
+            }
+
+            private static T GetRequiredDelegate<T>(IntPtr library, string symbol)
+                where T : Delegate
+            {
+                if (TryGetSymbol(library, symbol, out IntPtr address))
+                {
+                    return Marshal.GetDelegateForFunctionPointer<T>(address);
+                }
+
+                throw new EntryPointNotFoundException(symbol);
+            }
+
+            private static T? TryGetDelegate<T>(IntPtr library, string symbol)
+                where T : Delegate
+            {
+                return TryGetSymbol(library, symbol, out IntPtr address)
+                    ? Marshal.GetDelegateForFunctionPointer<T>(address)
+                    : null;
+            }
+
+            private static bool TryGetSymbol(IntPtr library, string symbol, out IntPtr address)
+            {
+                if (NativeLibrary.TryGetExport(library, symbol, out address))
+                {
+                    return true;
+                }
+
+                address = dlsym(library, symbol);
+                return address != IntPtr.Zero;
+            }
+
+            [DllImport("libdl.so.2", CallingConvention = CallingConvention.Cdecl)]
+            private static extern IntPtr dlopen(string fileName, int flags);
+
+            [DllImport("libdl.so.2", CallingConvention = CallingConvention.Cdecl)]
+            private static extern IntPtr dlsym(IntPtr handle, string symbol);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern bool gtk_init_check(ref int argc, ref IntPtr argv);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern IntPtr gtk_menu_new();
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern IntPtr gtk_menu_item_new_with_label(string label);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_menu_shell_append(IntPtr menuShell, IntPtr child);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_widget_show(IntPtr widget);
+
+            [DllImport("libgtk-3.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern void gtk_widget_set_sensitive(IntPtr widget, bool sensitive);
+
+            [DllImport("libglib-2.0.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern bool g_main_context_pending(IntPtr context);
+
+            [DllImport("libglib-2.0.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern bool g_main_context_iteration(IntPtr context, bool mayBlock);
+
+            [DllImport("libgobject-2.0.so.0", CallingConvention = CallingConvention.Cdecl)]
+            internal static extern nint g_signal_connect_data(
+                IntPtr instance,
+                string detailedSignal,
+                IntPtr cHandler,
+                IntPtr data,
+                IntPtr destroyData,
+                int connectFlags);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate IntPtr AppIndicatorNewDelegate(string id, string iconName, int category);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate void AppIndicatorSetStatusDelegate(IntPtr indicator, int status);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate void AppIndicatorSetMenuDelegate(IntPtr indicator, IntPtr menu);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate void AppIndicatorSetIconThemePathDelegate(IntPtr indicator, string iconThemePath);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate void AppIndicatorSetIconFullDelegate(IntPtr indicator, string iconName, string iconDescription);
+        }
+    }
+
+    private sealed class MacDesktopSpriteTray : IDesktopSpriteTray
+    {
+        private readonly List<DesktopSpriteTrayMenuItemSettings> _items;
+        private readonly Action<DesktopSpriteTrayMenuItemSettings> _onMenuItemClicked;
+        private readonly IntPtr _statusItem;
+        private readonly IntPtr _target;
+        private readonly IntPtr _menu;
+        private bool _disposed;
+
+        private MacDesktopSpriteTray(
+            IntPtr statusItem,
+            IntPtr target,
+            IntPtr menu,
+            IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
+            Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+        {
+            _statusItem = statusItem;
+            _target = target;
+            _menu = menu;
+            _items = items
+                .Where(item => !string.IsNullOrWhiteSpace(item.Text))
+                .Select(CloneMenuItem)
+                .ToList();
+            _onMenuItemClicked = onMenuItemClicked;
+        }
+
+        public static MacDesktopSpriteTray? TryCreate(
+            string iconPath,
+            IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
+            Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+        {
+            if (!OperatingSystem.IsMacOS())
+            {
+                return null;
+            }
+
+            if (!MacNative.TryLoadFrameworks())
+            {
+                return null;
+            }
+
+            IntPtr appKit = MacNative.objc_getClass("NSApplication");
+            if (appKit != IntPtr.Zero)
+            {
+                IntPtr sharedApp = MacNative.objc_msgSend(appKit, MacNative.sel_registerName("sharedApplication"));
+                if (sharedApp != IntPtr.Zero)
+                {
+                    MacNative.objc_msgSend_nint(sharedApp, MacNative.sel_registerName("setActivationPolicy:"), 1);
+                }
+            }
+
+            IntPtr statusBarClass = MacNative.objc_getClass("NSStatusBar");
+            IntPtr systemStatusBar = MacNative.objc_msgSend(statusBarClass, MacNative.sel_registerName("systemStatusBar"));
+            IntPtr statusItem = MacNative.objc_msgSend_Double(systemStatusBar, MacNative.sel_registerName("statusItemWithLength:"), -1.0);
+            if (statusItem == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            IntPtr menuClass = MacNative.objc_getClass("NSMenu");
+            IntPtr menu = MacNative.objc_msgSend(MacNative.objc_msgSend(menuClass, MacNative.sel_registerName("alloc")), MacNative.sel_registerName("init"));
+            IntPtr target = MacTrayTarget.EnsureTarget(onMenuItemClicked);
+            if (target == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            MacDesktopSpriteTray tray = new(statusItem, target, menu, items, onMenuItemClicked);
+            tray.BuildMenu();
+            tray.ConfigureStatusItem(iconPath);
+            MacNative.objc_msgSend_IntPtr(statusItem, MacNative.sel_registerName("setMenu:"), menu);
+            return tray;
+        }
+
+        public void Pump()
+        {
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            MacTrayTarget.UnregisterTray(this);
+            IntPtr statusBarClass = MacNative.objc_getClass("NSStatusBar");
+            IntPtr systemStatusBar = MacNative.objc_msgSend(statusBarClass, MacNative.sel_registerName("systemStatusBar"));
+            if (systemStatusBar != IntPtr.Zero && _statusItem != IntPtr.Zero)
+            {
+                MacNative.objc_msgSend_IntPtr(systemStatusBar, MacNative.sel_registerName("removeStatusItem:"), _statusItem);
+            }
+        }
+
+        private void BuildMenu()
+        {
+            IntPtr menuItemClass = MacNative.objc_getClass("NSMenuItem");
+            IntPtr action = MacNative.sel_registerName("desktopSpriteTrayMenuItem:");
+            for (int i = 0; i < _items.Count; i++)
+            {
+                DesktopSpriteTrayMenuItemSettings item = _items[i];
+                IntPtr title = MacNative.CreateNSString(item.Text);
+                IntPtr menuItem = MacNative.objc_msgSend_IntPtr_IntPtr_IntPtr(
+                    MacNative.objc_msgSend(menuItemClass, MacNative.sel_registerName("alloc")),
+                    MacNative.sel_registerName("initWithTitle:action:keyEquivalent:"),
+                    title,
+                    action,
+                    MacNative.CreateNSString(string.Empty));
+                if (menuItem == IntPtr.Zero)
+                {
+                    continue;
+                }
+
+                MacTrayTarget.RegisterMenuItem(menuItem, this, i);
+                MacNative.objc_msgSend_IntPtr(menuItem, MacNative.sel_registerName("setTarget:"), _target);
+                MacNative.objc_msgSend_bool(menuItem, MacNative.sel_registerName("setEnabled:"), item.Enabled);
+                MacNative.objc_msgSend_IntPtr(_menu, MacNative.sel_registerName("addItem:"), menuItem);
+            }
+        }
+
+        private void ConfigureStatusItem(string iconPath)
+        {
+            IntPtr button = MacNative.objc_msgSend(_statusItem, MacNative.sel_registerName("button"));
+            if (button == IntPtr.Zero)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
+            {
+                IntPtr imageClass = MacNative.objc_getClass("NSImage");
+                IntPtr image = MacNative.objc_msgSend_ReturnIntPtr_IntPtr(
+                    MacNative.objc_msgSend(imageClass, MacNative.sel_registerName("alloc")),
+                    MacNative.sel_registerName("initWithContentsOfFile:"),
+                    MacNative.CreateNSString(Path.GetFullPath(iconPath)));
+                if (image != IntPtr.Zero)
+                {
+                    MacNative.objc_msgSend_bool(image, MacNative.sel_registerName("setTemplate:"), true);
+                    MacNative.objc_msgSend_IntPtr(button, MacNative.sel_registerName("setImage:"), image);
+                    return;
+                }
+            }
+
+            MacNative.objc_msgSend_IntPtr(button, MacNative.sel_registerName("setTitle:"), MacNative.CreateNSString("DW"));
+        }
+
+        private void DispatchIndex(int index)
+        {
+            if (index < 0 || index >= _items.Count)
+            {
+                return;
+            }
+
+            DesktopSpriteTrayMenuItemSettings item = _items[index];
+            if (item.Enabled)
+            {
+                _onMenuItemClicked(item);
+            }
+        }
+
+        private static DesktopSpriteTrayMenuItemSettings CloneMenuItem(DesktopSpriteTrayMenuItemSettings item)
+        {
+            return new DesktopSpriteTrayMenuItemSettings
+            {
+                Id = string.IsNullOrWhiteSpace(item.Id) ? Guid.NewGuid().ToString("N") : item.Id,
+                Text = string.IsNullOrWhiteSpace(item.Text) ? "Menu Item" : item.Text,
+                Enabled = item.Enabled,
+                BuiltInAction = NormalizeBuiltInAction(item.BuiltInAction),
+                EventName = item.EventName ?? string.Empty
+            };
+        }
+
+        private static string NormalizeBuiltInAction(string value)
+        {
+            string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+            return normalized switch
+            {
+                "toggle_visibility" or "toggle" or "show_hide" or "showhide" => "toggle_visibility",
+                "exit" or "quit" => "exit",
+                _ => "none"
+            };
+        }
+
+        private sealed class MacTrayTarget
+        {
+            private static readonly object Sync = new();
+            private static readonly Dictionary<IntPtr, (MacDesktopSpriteTray Tray, int Index)> MenuItems = [];
+            private static readonly TrayMenuActionDelegate Callback = OnMenuItemSelected;
+            private static IntPtr _target;
+
+            public static IntPtr EnsureTarget(Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
+            {
+                _ = onMenuItemClicked;
+                lock (Sync)
+                {
+                    if (_target != IntPtr.Zero)
+                    {
+                        return _target;
+                    }
+
+                    IntPtr nsObject = MacNative.objc_getClass("NSObject");
+                    IntPtr cls = MacNative.objc_lookUpClass("ZhengyanDigitalWifeTrayTarget");
+                    if (cls == IntPtr.Zero)
+                    {
+                        cls = MacNative.objc_allocateClassPair(nsObject, "ZhengyanDigitalWifeTrayTarget", 0);
+                        if (cls == IntPtr.Zero)
+                        {
+                            return IntPtr.Zero;
+                        }
+
+                        IntPtr selector = MacNative.sel_registerName("desktopSpriteTrayMenuItem:");
+                        MacNative.class_addMethod(cls, selector, Marshal.GetFunctionPointerForDelegate(Callback), "v@:@");
+                        MacNative.objc_registerClassPair(cls);
+                    }
+
+                    _target = MacNative.objc_msgSend(MacNative.objc_msgSend(cls, MacNative.sel_registerName("alloc")), MacNative.sel_registerName("init"));
+                    return _target;
+                }
+            }
+
+            public static void RegisterMenuItem(IntPtr menuItem, MacDesktopSpriteTray tray, int index)
+            {
+                lock (Sync)
+                {
+                    MenuItems[menuItem] = (tray, index);
+                }
+            }
+
+            public static void UnregisterTray(MacDesktopSpriteTray tray)
+            {
+                lock (Sync)
+                {
+                    foreach (IntPtr menuItem in MenuItems
+                        .Where(pair => ReferenceEquals(pair.Value.Tray, tray))
+                        .Select(pair => pair.Key)
+                        .ToArray())
+                    {
+                        MenuItems.Remove(menuItem);
+                    }
+                }
+            }
+
+            private static void OnMenuItemSelected(IntPtr self, IntPtr selector, IntPtr sender)
+            {
+                _ = self;
+                _ = selector;
+                (MacDesktopSpriteTray Tray, int Index) item;
+                lock (Sync)
+                {
+                    if (!MenuItems.TryGetValue(sender, out item))
+                    {
+                        return;
+                    }
+                }
+
+                item.Tray.DispatchIndex(item.Index);
+            }
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate void TrayMenuActionDelegate(IntPtr self, IntPtr selector, IntPtr sender);
+        }
+
+        private static class MacNative
+        {
+            internal static bool TryLoadFrameworks()
+            {
+                return NativeLibrary.TryLoad("/System/Library/Frameworks/Foundation.framework/Foundation", out _)
+                    && NativeLibrary.TryLoad("/System/Library/Frameworks/AppKit.framework/AppKit", out _);
+            }
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "sel_registerName")]
+            internal static extern IntPtr sel_registerName(string selectorName);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_getClass")]
+            internal static extern IntPtr objc_getClass(string className);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_lookUpClass")]
+            internal static extern IntPtr objc_lookUpClass(string className);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_allocateClassPair")]
+            internal static extern IntPtr objc_allocateClassPair(IntPtr superclass, string name, nuint extraBytes);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_registerClassPair")]
+            internal static extern void objc_registerClassPair(IntPtr cls);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "class_addMethod")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool class_addMethod(IntPtr cls, IntPtr name, IntPtr imp, string types);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern IntPtr objc_msgSend(IntPtr receiver, IntPtr selector);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern void objc_msgSend_bool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool value);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern void objc_msgSend_nint(IntPtr receiver, IntPtr selector, nint value);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern void objc_msgSend_IntPtr(IntPtr receiver, IntPtr selector, IntPtr value);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern IntPtr objc_msgSend_ReturnIntPtr_IntPtr(IntPtr receiver, IntPtr selector, IntPtr value);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern IntPtr objc_msgSend_Double(IntPtr receiver, IntPtr selector, double value);
+
+            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+            internal static extern IntPtr objc_msgSend_IntPtr_IntPtr_IntPtr(IntPtr receiver, IntPtr selector, IntPtr arg1, IntPtr arg2, IntPtr arg3);
+
+            internal static IntPtr CreateNSString(string value)
+            {
+                IntPtr nsString = objc_getClass("NSString");
+                IntPtr utf8 = Marshal.StringToHGlobalAnsi(value ?? string.Empty);
+                try
+                {
+                    return objc_msgSend_ReturnIntPtr_IntPtr(
+                        nsString,
+                        sel_registerName("stringWithUTF8String:"),
+                        utf8);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(utf8);
+                }
+            }
+        }
     }
 }

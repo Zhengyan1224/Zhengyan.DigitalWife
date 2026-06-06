@@ -103,10 +103,11 @@ Runtime 设置：
 
 桌面精灵托盘：
 
-- GameEditor 的 Window / Runtime 面板在开启 Desktop sprite mode 后可启用系统托盘、设置 Windows `.ico` 图标、编辑右键菜单项。
+- GameEditor 的 Window / Runtime 面板在开启 Desktop sprite mode 后可启用系统托盘、设置托盘图标、编辑右键菜单项。
 - 菜单项字段包括 `Id`、显示文本、内置动作和脚本事件名。内置动作当前支持 `none`、`toggle_visibility`、`exit`。
 - 点击菜单项会触发 C# 的 `IsTrayMenuEvent`，并传入 `TrayMenuItemId`、`TrayMenuItemText`、`TrayMenuEventName`；Python 会优先调用同名 `Script event` 函数，否则调用 `tray_menu_event(...)`。
-- 当前 Windows 使用原生系统托盘实现。Linux/macOS 保留同一配置和脚本 API，但运行时会安全降级为不创建托盘；后续可按桌面环境补原生托盘实现。
+- Windows 使用原生系统托盘实现，建议使用 `.ico` 图标；Linux 使用 GTK3 + Ayatana/AppIndicator 或 libappindicator，建议使用 `.png` 图标；macOS 使用原生菜单栏 `NSStatusItem`，建议使用 `.png` 图标。
+- Linux 需要桌面环境提供托盘/StatusNotifier 区域，并安装 GTK3 与 AppIndicator 运行库；例如 Debian/Kali 系可以安装 `libgtk-3-0` 与 `libayatana-appindicator3-1`。缺少运行库或桌面环境不显示托盘区域时，GamePlayer 会安全降级为不创建托盘。
 
 `TimingMode` 可用值：
 
