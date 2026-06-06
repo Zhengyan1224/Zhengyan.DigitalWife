@@ -337,6 +337,7 @@ internal static unsafe class DesktopSpritePlatform
             return;
         }
 
+        X11Native.XShapeCombineRegion(display, windowHandle, X11Native.ShapeBounding, 0, 0, region, X11Native.ShapeSet);
         X11Native.XShapeCombineRegion(display, windowHandle, X11Native.ShapeInput, 0, 0, region, X11Native.ShapeSet);
         X11Native.XDestroyRegion(region);
         X11Native.XFlush(display);
@@ -411,6 +412,7 @@ internal static unsafe class DesktopSpritePlatform
         {
             state.LastWidth = 0;
             state.LastHeight = 0;
+            X11Native.XShapeCombineMask(display, windowHandle, X11Native.ShapeBounding, 0, 0, IntPtr.Zero, X11Native.ShapeSet);
             X11Native.XShapeCombineMask(display, windowHandle, X11Native.ShapeInput, 0, 0, IntPtr.Zero, X11Native.ShapeSet);
         }
 
@@ -1258,6 +1260,7 @@ internal static unsafe class DesktopSpritePlatform
         internal const int Success = 0;
         internal const nint AnyPropertyType = 0;
         internal const int ShapeSet = 0;
+        internal const int ShapeBounding = 0;
         internal const int ShapeInput = 2;
 
         [DllImport("libglfw.so.3", EntryPoint = "glfwGetX11Display", CallingConvention = CallingConvention.Cdecl)]
