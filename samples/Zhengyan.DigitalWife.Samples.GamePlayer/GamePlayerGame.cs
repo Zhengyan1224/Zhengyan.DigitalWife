@@ -176,12 +176,14 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _guiOverlay = AddComponent(new RuntimeGuiOverlayComponent(
             () => Project.Scene.GuiControls,
+            () => Project.Scene.ContextMenus,
             () => Project.Scene.Sprites,
             () => _runtimeScene,
             _camera,
             () => Project.Window,
             ResolveProjectPath,
-            DispatchGuiEvent)
+            DispatchGuiEvent,
+            DispatchContextMenuEvent)
         {
             RuntimeTextureProvider = _renderTextureManager,
             DrawOrder = int.MaxValue - 10,
@@ -1417,6 +1419,50 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    private void DispatchContextMenuEvent(ContextMenuSettings menu, ContextMenuItemSettings item)
+    {
+        string eventName = string.IsNullOrWhiteSpace(item.EventName) ? "context_menu_clicked" : item.EventName;
+        if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
+        {
+            Console.Error.WriteLine($"Context menu event '{eventName}' ignored because runtime scene/input/audio is not ready.");
+            return;
+        }
+
+        RuntimeEntity? target = ResolveContextMenuEventTarget(menu, eventName);
+        if (target is null)
+        {
+            Console.Error.WriteLine($"Context menu event '{eventName}' from '{menu.Name}' has no target entity and no script target fallback.");
+            return;
+        }
+
+        bool dispatched = false;
+        foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, _) in _scriptTargets.ToArray())
+        {
+            if (!ReferenceEquals(entity, target))
+            {
+                continue;
+            }
+
+            foreach (IScriptInstance script in scripts)
+            {
+                try
+                {
+                    script.GuiEvent(entity, _runtimeScene, _runtimeInput, _runtimeAudio, menu.Id, menu.Name, eventName);
+                    dispatched = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Script context menu event failed for entity '{entity.Name}': {ex.Message}");
+                }
+            }
+        }
+
+        if (!dispatched)
+        {
+            Console.Error.WriteLine($"Context menu event '{eventName}' from '{menu.Name}' found target '{target.Name}', but no script handled it.");
+        }
+    }
+
     private void UpdateSpritePointerEvents()
     {
         if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
@@ -1570,6 +1616,76 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             .Where(target => target.Scripts.Count > 0)
             .Select(target => target.Entity)
             .FirstOrDefault();
+    }
+
+    private RuntimeEntity? ResolveContextMenuEventTarget(ContextMenuSettings menu, string eventName)
+    {
+        if (_runtimeScene is null)
+        {
+            return null;
+        }
+
+        string targetType = NormalizeContextMenuTargetType(menu.TargetType);
+        if (!string.IsNullOrWhiteSpace(menu.TargetId))
+        {
+            RuntimeEntity? configuredTarget = targetType switch
+            {
+                "entity" => _runtimeScene.GetEntity(menu.TargetId),
+                "gui_control" => ResolveGuiControlContextMenuTarget(menu.TargetId),
+                "sprite" => ResolveSpriteContextMenuTarget(menu.TargetId),
+                _ => null
+            };
+
+            if (configuredTarget is not null)
+            {
+                return configuredTarget;
+            }
+
+            Console.Error.WriteLine($"Context menu event '{eventName}' from '{menu.Name}' has missing or unscripted target '{menu.TargetId}'. Falling back to a scripted PMX entity.");
+        }
+
+        RuntimeEntity? scriptedPmx = SelectBestScriptedPmxTarget();
+        if (scriptedPmx is not null)
+        {
+            return scriptedPmx;
+        }
+
+        return _scriptTargets
+            .Where(target => target.Scripts.Count > 0)
+            .Select(target => target.Entity)
+            .FirstOrDefault();
+    }
+
+    private RuntimeEntity? ResolveGuiControlContextMenuTarget(string controlIdOrName)
+    {
+        GuiControlSettings? control = Project.Scene.GuiControls.FirstOrDefault(item =>
+            string.Equals(item.Id, controlIdOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, controlIdOrName, StringComparison.OrdinalIgnoreCase));
+        return control is null || string.IsNullOrWhiteSpace(control.TargetEntity)
+            ? null
+            : _runtimeScene?.GetEntity(control.TargetEntity);
+    }
+
+    private RuntimeEntity? ResolveSpriteContextMenuTarget(string spriteIdOrName)
+    {
+        SpriteSettings? sprite = Project.Scene.Sprites.FirstOrDefault(item =>
+            string.Equals(item.Id, spriteIdOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, spriteIdOrName, StringComparison.OrdinalIgnoreCase));
+        return sprite is null || string.IsNullOrWhiteSpace(sprite.TargetEntity)
+            ? null
+            : _runtimeScene?.GetEntity(sprite.TargetEntity);
+    }
+
+    private static string NormalizeContextMenuTargetType(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+        return normalized switch
+        {
+            "gui" or "control" or "gui_control" or "gui_controls" => "gui_control",
+            "sprite" or "2d_sprite" or "2d" => "sprite",
+            "rigidbody" or "rigid_body" or "collider" or "entity" or "object" => "entity",
+            _ => "window"
+        };
     }
 
     private RuntimeEntity? SelectBestScriptedPmxTarget()

@@ -5,12 +5,16 @@ category: GUI
 objects:
   - RuntimeGuiControl
   - GuiControlSettings
+  - ContextMenuSettings
+  - ContextMenuItemSettings
 keywords:
   - gui
   - button
   - textbox
   - SelectedText
   - ReplaceSelection
+  - context menu
+  - right click
 ---
 
 # GUI API
@@ -21,7 +25,7 @@ keywords:
 | --- | --- |
 | 模块 | GUI API |
 | 分类 | GUI |
-| 主要对象 | ``RuntimeGuiControl``, ``GuiControlSettings`` |
+| 主要对象 | ``RuntimeGuiControl``, ``GuiControlSettings``, ``ContextMenuSettings``, ``ContextMenuItemSettings`` |
 | C# 入口 | `Scene.GetGuiControl, RuntimeGuiControl` |
 | Python 入口 | `scene.get_gui_control` |
 | 说明 | GUI 控件类型、属性、样式、文本选区、修改方法和事件。 |
@@ -208,3 +212,78 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
 文本框还会暴露 `SelectedText` / `SelectionStart` / `SelectionEnd` / `CursorPosition`。可以配合 `Input.SetClipboardText(...)` / `input.set_clipboard_text(...)` 实现脚本级复制；用 `ReplaceSelection(...)` / `replace_selection(...)` 可以按当前选区或光标位置做粘贴。
 
 样式配置在 GameEditor 中编辑，包括背景色、悬停色、按下色、文字色、边框色、边框宽度、圆角、水平对齐、垂直对齐。
+
+### 右键菜单
+
+GameEditor 的 GUI Controls 面板中可以添加 `Context Menus`。右键菜单不需要脚本侧创建，它由场景配置驱动，GamePlayer 在用户右键点击命中的目标时弹出菜单。
+
+右键菜单配置：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Id` | 菜单 Id。点击菜单项时会作为 `GuiControlId` 传给脚本。 |
+| `Name` | 菜单名称。点击菜单项时会作为 `GuiControlName` 传给脚本。 |
+| `Enabled` | 是否启用该菜单。 |
+| `Target type` | `window`、`gui_control`、`sprite`、`entity`。 |
+| `Target` | 绑定对象。为空或 `window` 时表示整个窗口。 |
+| `Target collider` | 仅 `entity` 有效；为空时命中该实体任意 Collider 都会弹出菜单。 |
+| `Layout mode` | `absolute` 或 `relative`，用于菜单宽度、内边距、字体大小等缩放。 |
+| `Width` | 菜单宽度。 |
+| `Item height` | 菜单项高度。 |
+| `Padding X` / `Padding Y` | 菜单内边距。 |
+| `Style` | 背景色、悬停色、按下色、文字色、边框、圆角、字体大小等，和普通 GUI 控件样式一致。 |
+| `Items` | 菜单项列表。每个菜单项有 `Id`、`Text`、`Enabled`、`Script event`。 |
+
+目标命中规则：
+
+| Target type | 命中方式 |
+| --- | --- |
+| `window` | 右击窗口任意位置弹出。桌面精灵点击穿透模式下，透明区域不会把鼠标事件交给 GamePlayer，因此透明区域不会弹出。 |
+| `gui_control` | 右击指定 GUI 控件矩形范围。 |
+| `sprite` | 右击指定 2D Sprite 的旋转矩形范围。 |
+| `entity` | 用相机射线检测实体 Collider；如果配置了 `Target collider`，还会限制具体 Collider。 |
+
+右键菜单项点击会复用 GUI 事件通道：
+
+| 脚本字段 | 值 |
+| --- | --- |
+| `IsGuiEvent` | `true` |
+| `GuiControlId` | 右键菜单 `Id` |
+| `GuiControlName` | 右键菜单 `Name` |
+| `GuiEventName` | 菜单项 `Script event` |
+
+事件目标：
+
+- 绑定 `entity` 时，事件发送给该实体脚本。
+- 绑定 `gui_control` 时，优先发送给该 GUI 控件的 `Target entity`。
+- 绑定 `sprite` 时，优先发送给该 Sprite 的 `Target entity`。
+- 绑定为空或 `window` 时，使用普通 GUI 事件的默认脚本目标回退规则。
+
+C# 示例：
+
+```csharp
+if (IsGuiEvent && GuiControlName == "Character Menu")
+{
+    if (GuiEventName == "say_hello")
+    {
+        Entity.Speak("你好");
+    }
+    else if (GuiEventName == "hide_character")
+    {
+        Entity.Hide();
+    }
+}
+```
+
+Python 示例：
+
+```python
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if control_name != "Character Menu":
+        return
+
+    if event_name == "say_hello":
+        entity.speak("你好")
+    elif event_name == "hide_character":
+        entity.hide()
+```

@@ -10,24 +10,32 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 
 internal sealed class RuntimeGuiOverlayComponent(
     Func<IReadOnlyList<GuiControlSettings>> getControls,
+    Func<IReadOnlyList<ContextMenuSettings>> getContextMenus,
     Func<IReadOnlyList<SpriteSettings>> getSprites,
     Func<RuntimeScene?> getScene,
     OrbitCamera camera,
     Func<GameWindowSettings> getWindowSettings,
     Func<string, string> resolvePath,
-    Action<GuiControlSettings, string> dispatchEvent) : DrawableGameComponent
+    Action<GuiControlSettings, string> dispatchEvent,
+    Action<ContextMenuSettings, ContextMenuItemSettings> dispatchContextMenuEvent) : DrawableGameComponent
 {
     private const float BaseFontSize = 18.0f;
 
     private readonly Func<IReadOnlyList<GuiControlSettings>> _getControls = getControls;
+    private readonly Func<IReadOnlyList<ContextMenuSettings>> _getContextMenus = getContextMenus;
     private readonly Func<IReadOnlyList<SpriteSettings>> _getSprites = getSprites;
     private readonly Func<RuntimeScene?> _getScene = getScene;
     private readonly OrbitCamera _camera = camera;
     private readonly Func<GameWindowSettings> _getWindowSettings = getWindowSettings;
     private readonly Func<string, string> _resolvePath = resolvePath;
     private readonly Action<GuiControlSettings, string> _dispatchEvent = dispatchEvent;
+    private readonly Action<ContextMenuSettings, ContextMenuItemSettings> _dispatchContextMenuEvent = dispatchContextMenuEvent;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private ImGuiController? _controller;
+    private string _openContextMenuId = string.Empty;
+    private Vector2 _contextMenuPopupPosition;
+    private Vector2 _contextMenuRightPressPosition;
+    private bool _contextMenuRightPressActive;
 
     public IRuntimeTextureProvider? RuntimeTextureProvider { get; set; }
 
@@ -79,6 +87,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             DrawControl(control);
         }
 
+        HandleContextMenus();
         _controller.Render();
     }
 
@@ -527,6 +536,314 @@ internal sealed class RuntimeGuiOverlayComponent(
         ImGui.PopStyleColor(15);
         ImGui.PopStyleVar(8);
         ImGui.End();
+    }
+
+    private void HandleContextMenus()
+    {
+        if (Game is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<ContextMenuSettings>? menus = _getContextMenus();
+        if (menus is null || menus.Count == 0)
+        {
+            return;
+        }
+
+        Vector2 mousePosition = ImGui.GetMousePos();
+        if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            _contextMenuRightPressPosition = mousePosition;
+            _contextMenuRightPressActive = true;
+        }
+
+        if (_contextMenuRightPressActive && ImGui.IsMouseReleased(ImGuiMouseButton.Right))
+        {
+            _contextMenuRightPressActive = false;
+            if (Vector2.DistanceSquared(_contextMenuRightPressPosition, mousePosition) <= 64.0f)
+            {
+                ContextMenuSettings? menu = ResolveContextMenuAt(mousePosition);
+                if (menu is not null)
+                {
+                    _openContextMenuId = menu.Id;
+                    _contextMenuPopupPosition = mousePosition;
+                    ImGui.OpenPopup(GetContextMenuPopupId(menu));
+                }
+            }
+        }
+
+        foreach (ContextMenuSettings menu in menus)
+        {
+            DrawContextMenuPopup(menu);
+        }
+    }
+
+    private ContextMenuSettings? ResolveContextMenuAt(Vector2 mousePosition)
+    {
+        IReadOnlyList<ContextMenuSettings>? menus = _getContextMenus();
+        if (menus is null)
+        {
+            return null;
+        }
+
+        for (int i = menus.Count - 1; i >= 0; i--)
+        {
+            ContextMenuSettings menu = menus[i];
+            if (!menu.Enabled || menu.Items is null || !menu.Items.Any(item => item.Enabled))
+            {
+                continue;
+            }
+
+            if (IsContextMenuTargetHit(menu, mousePosition))
+            {
+                return menu;
+            }
+        }
+
+        return null;
+    }
+
+    private bool IsContextMenuTargetHit(ContextMenuSettings menu, Vector2 mousePosition)
+    {
+        string targetType = NormalizeContextMenuTargetType(menu.TargetType);
+        if (targetType == "window" || string.IsNullOrWhiteSpace(menu.TargetId))
+        {
+            return IsPointInsideWindow(mousePosition);
+        }
+
+        return targetType switch
+        {
+            "gui_control" => IsGuiControlHit(menu.TargetId, mousePosition),
+            "sprite" => IsSpriteHit(menu.TargetId, mousePosition),
+            "entity" => IsEntityHit(menu, mousePosition),
+            _ => IsPointInsideWindow(mousePosition)
+        };
+    }
+
+    private bool IsPointInsideWindow(Vector2 point)
+    {
+        if (Game is null)
+        {
+            return false;
+        }
+
+        return point.X >= 0.0f
+            && point.Y >= 0.0f
+            && point.X <= Game.Window.Size.X
+            && point.Y <= Game.Window.Size.Y;
+    }
+
+    private bool IsGuiControlHit(string targetId, Vector2 mousePosition)
+    {
+        GuiControlSettings? control = _getControls().FirstOrDefault(item =>
+            item.Visible
+            && (string.Equals(item.Id, targetId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Name, targetId, StringComparison.OrdinalIgnoreCase)));
+        if (control is null)
+        {
+            return false;
+        }
+
+        LayoutRect rect = ResolveGuiRect(control);
+        return mousePosition.X >= rect.X
+            && mousePosition.Y >= rect.Y
+            && mousePosition.X <= rect.X + rect.Width
+            && mousePosition.Y <= rect.Y + rect.Height;
+    }
+
+    private bool IsSpriteHit(string targetId, Vector2 mousePosition)
+    {
+        if (Game is null)
+        {
+            return false;
+        }
+
+        SpriteSettings? sprite = _getSprites().FirstOrDefault(item =>
+            string.Equals(item.Id, targetId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, targetId, StringComparison.OrdinalIgnoreCase));
+        if (sprite is null)
+        {
+            return false;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        return SpriteLayoutResolver.ContainsPoint(
+            sprite,
+            mousePosition.X,
+            mousePosition.Y,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+    }
+
+    private bool IsEntityHit(ContextMenuSettings menu, Vector2 mousePosition)
+    {
+        RuntimeScene? scene = _getScene();
+        if (scene is null)
+        {
+            return false;
+        }
+
+        RuntimeEntity? target = scene.GetEntity(menu.TargetId);
+        if (target is null)
+        {
+            return false;
+        }
+
+        RuntimeRay ray = scene.Camera.ScreenPointToRay(mousePosition.X, mousePosition.Y);
+        if (!scene.Camera.RaycastEntity(ray, out RuntimeRaycastHit hit))
+        {
+            return false;
+        }
+
+        if (!ReferenceEquals(hit.Entity, target))
+        {
+            return false;
+        }
+
+        return string.IsNullOrWhiteSpace(menu.TargetCollider)
+            || string.Equals(hit.ColliderId, menu.TargetCollider, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(hit.ColliderName, menu.TargetCollider, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void DrawContextMenuPopup(ContextMenuSettings menu)
+    {
+        string popupId = GetContextMenuPopupId(menu);
+        if (string.Equals(_openContextMenuId, menu.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            ImGui.SetNextWindowPos(_contextMenuPopupPosition, ImGuiCond.Appearing);
+        }
+
+        PushContextMenuStyle(menu);
+        if (ImGui.BeginPopup(popupId, ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoMove))
+        {
+            ImGui.SetWindowFontScale(ResolveContextMenuFontScale(menu));
+
+            float width = ResolveContextMenuDimension(menu.LayoutMode, menu.Width);
+            float itemHeight = Math.Max(ResolveContextMenuScalar(menu.LayoutMode, menu.ItemHeight), 12.0f);
+            foreach (ContextMenuItemSettings item in menu.Items ?? [])
+            {
+                string text = string.IsNullOrWhiteSpace(item.Text) ? "Menu Item" : item.Text;
+                if (!item.Enabled)
+                {
+                    ImGui.BeginDisabled();
+                }
+
+                bool clicked = ImGui.Selectable($"{text}##{menu.Id}:{item.Id}", false, ImGuiSelectableFlags.None, new Vector2(Math.Max(width, 48.0f), itemHeight));
+                if (!item.Enabled)
+                {
+                    ImGui.EndDisabled();
+                }
+
+                if (clicked && item.Enabled)
+                {
+                    _dispatchContextMenuEvent(menu, item);
+                    ImGui.CloseCurrentPopup();
+                }
+            }
+
+            ImGui.SetWindowFontScale(1.0f);
+            ImGui.EndPopup();
+        }
+
+        PopContextMenuStyle();
+    }
+
+    private void PushContextMenuStyle(ContextMenuSettings menu)
+    {
+        GuiControlStyleSettings style = menu.Style;
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(
+            Math.Max(ResolveContextMenuScalar(menu.LayoutMode, menu.PaddingX), 0.0f),
+            Math.Max(ResolveContextMenuScalar(menu.LayoutMode, menu.PaddingY), 0.0f)));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.PopupRounding, Math.Max(ResolveContextMenuScalar(menu.LayoutMode, style.Rounding), 0.0f));
+        ImGui.PushStyleVar(ImGuiStyleVar.PopupBorderSize, Math.Max(ResolveContextMenuScalar(menu.LayoutMode, style.BorderThickness), 0.0f));
+        ImGui.PushStyleColor(ImGuiCol.PopupBg, style.BackgroundColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.Text, style.TextColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.Border, style.BorderColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.Header, style.BackgroundColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, style.HoverColor.ToVector4());
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, style.ActiveColor.ToVector4());
+    }
+
+    private static void PopContextMenuStyle()
+    {
+        ImGui.PopStyleColor(6);
+        ImGui.PopStyleVar(4);
+    }
+
+    private float ResolveContextMenuFontScale(ContextMenuSettings menu)
+    {
+        if (Game is null)
+        {
+            return 1.0f;
+        }
+
+        float fontSize = Math.Clamp(menu.Style.FontSize <= 0.0f ? 18.0f : menu.Style.FontSize, 8.0f, 96.0f);
+        GameWindowSettings window = _getWindowSettings();
+        float resolved = LayoutResolver.ResolveFontSize(
+            menu.LayoutMode,
+            fontSize,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+        return resolved / BaseFontSize;
+    }
+
+    private float ResolveContextMenuDimension(string layoutMode, float value)
+    {
+        if (Game is null)
+        {
+            return value;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        LayoutRect rect = LayoutResolver.Resolve(
+            layoutMode,
+            0.0f,
+            0.0f,
+            value,
+            value,
+            Game.Window.Size.X,
+            Game.Window.Size.Y,
+            window.Width,
+            window.Height);
+        return rect.Width;
+    }
+
+    private float ResolveContextMenuScalar(string layoutMode, float value)
+    {
+        if (Game is null || !LayoutResolver.IsRelative(layoutMode))
+        {
+            return value;
+        }
+
+        GameWindowSettings window = _getWindowSettings();
+        float safeReferenceWidth = Math.Max(window.Width, 1.0f);
+        float safeReferenceHeight = Math.Max(window.Height, 1.0f);
+        float scaleX = Math.Max(Game.Window.Size.X, 1.0f) / safeReferenceWidth;
+        float scaleY = Math.Max(Game.Window.Size.Y, 1.0f) / safeReferenceHeight;
+        return value * MathF.Min(scaleX, scaleY);
+    }
+
+    private static string GetContextMenuPopupId(ContextMenuSettings menu)
+    {
+        return $"ContextMenuPopup##{menu.Id}";
+    }
+
+    private static string NormalizeContextMenuTargetType(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+        return normalized switch
+        {
+            "gui" or "control" or "gui_control" or "gui_controls" => "gui_control",
+            "sprite" or "2d_sprite" or "2d" => "sprite",
+            "rigidbody" or "rigid_body" or "collider" or "entity" or "object" => "entity",
+            _ => "window"
+        };
     }
 
     private LayoutRect ResolveGuiRect(GuiControlSettings control)

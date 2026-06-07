@@ -379,6 +379,8 @@ public sealed class GameProjectScene
 
     public List<GuiControlSettings> GuiControls { get; set; } = [];
 
+    public List<ContextMenuSettings> ContextMenus { get; set; } = [];
+
     public List<SpriteSettings> Sprites { get; set; } = [];
 
     public List<GameEntity> Entities { get; set; } = [];
@@ -613,6 +615,60 @@ public sealed class GuiControlSettings
     public int SelectionEnd { get; set; }
 
     public GuiControlStyleSettings Style { get; set; } = new();
+}
+
+public sealed class ContextMenuSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = "Context Menu";
+
+    public bool Enabled { get; set; } = true;
+
+    public string TargetType { get; set; } = "window";
+
+    public string TargetId { get; set; } = string.Empty;
+
+    public string TargetCollider { get; set; } = string.Empty;
+
+    public string LayoutMode { get; set; } = "absolute";
+
+    public float Width { get; set; } = 180.0f;
+
+    public float ItemHeight { get; set; } = 28.0f;
+
+    public float PaddingX { get; set; } = 8.0f;
+
+    public float PaddingY { get; set; } = 6.0f;
+
+    public GuiControlStyleSettings Style { get; set; } = new()
+    {
+        BackgroundColor = new Vector4Dto(0.06f, 0.08f, 0.11f, 0.96f),
+        HoverColor = new Vector4Dto(0.18f, 0.36f, 0.58f, 0.96f),
+        ActiveColor = new Vector4Dto(0.12f, 0.27f, 0.45f, 1.0f),
+        BorderColor = new Vector4Dto(0.34f, 0.52f, 0.70f, 0.90f),
+        Rounding = 8.0f
+    };
+
+    public List<ContextMenuItemSettings> Items { get; set; } =
+    [
+        new ContextMenuItemSettings
+        {
+            Text = "Menu Item",
+            EventName = "context_menu_clicked"
+        }
+    ];
+}
+
+public sealed class ContextMenuItemSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Text { get; set; } = "Menu Item";
+
+    public bool Enabled { get; set; } = true;
+
+    public string EventName { get; set; } = "context_menu_clicked";
 }
 
 public sealed class SpriteSettings

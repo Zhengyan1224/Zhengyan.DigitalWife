@@ -290,17 +290,21 @@
         "title":  "GUI API",
         "category":  "GUI",
         "file":  "api_docs/15-gui.md",
-        "summary":  "GUI 控件类型、属性、样式、文本选区、修改方法和事件。",
+        "summary":  "GUI 控件类型、属性、样式、文本选区、右键菜单、修改方法和事件。",
         "objects":  [
                         "RuntimeGuiControl",
-                        "GuiControlSettings"
+                        "GuiControlSettings",
+                        "ContextMenuSettings",
+                        "ContextMenuItemSettings"
                     ],
         "keywords":  [
                          "gui",
                          "button",
                          "textbox",
                          "SelectedText",
-                         "ReplaceSelection"
+                         "ReplaceSelection",
+                         "context menu",
+                         "right click"
                      ],
         "csharpEntry":  "Scene.GetGuiControl, RuntimeGuiControl",
         "pythonEntry":  "scene.get_gui_control"
