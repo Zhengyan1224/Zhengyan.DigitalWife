@@ -12,12 +12,29 @@ public readonly record struct RuntimeCapsule(Vector3 Start, Vector3 End, float R
 
 public readonly record struct RuntimeBox(Vector3 Center, Vector3 AxisX, Vector3 AxisY, Vector3 AxisZ, Vector3 HalfExtents);
 
+public readonly record struct RuntimeMeshTriangle(Vector3 A, Vector3 B, Vector3 C)
+{
+    public Vector3 Center => (A + B + C) / 3.0f;
+
+    public Vector3 Normal => SafeNormalize(Vector3.Cross(B - A, C - A), Vector3.UnitY);
+
+    private static Vector3 SafeNormalize(Vector3 value, Vector3 fallback)
+    {
+        return value.LengthSquared() <= 0.000001f ? fallback : Vector3.Normalize(value);
+    }
+}
+
+public readonly record struct RuntimeMeshCollider(IReadOnlyList<RuntimeMeshTriangle> Triangles);
+
 public readonly record struct RuntimeCollider(
     string Id,
     string Name,
     string Shape,
     RuntimeCapsule Capsule,
-    RuntimeBox Box);
+    RuntimeBox Box,
+    RuntimeMeshCollider Mesh,
+    bool Walkable,
+    float MaxSlopeDegrees);
 
 public static class RuntimePhysics
 {
@@ -27,6 +44,25 @@ public static class RuntimePhysics
         {
             if (!settings.Enabled)
             {
+                continue;
+            }
+
+            string shape = NormalizeShape(settings.Shape);
+            if (shape == "mesh")
+            {
+                if (entity.TryCreateMeshCollider(settings, out RuntimeMeshCollider mesh))
+                {
+                    yield return new RuntimeCollider(
+                        settings.Id,
+                        settings.Name,
+                        "mesh",
+                        default,
+                        default,
+                        mesh,
+                        settings.Walkable,
+                        Math.Clamp(settings.MaxSlopeDegrees, 0.0f, 89.9f));
+                }
+
                 continue;
             }
 
@@ -42,7 +78,10 @@ public static class RuntimePhysics
                         geometry.Box.AxisX,
                         geometry.Box.AxisY,
                         geometry.Box.AxisZ,
-                        geometry.Box.HalfExtents))
+                        geometry.Box.HalfExtents),
+                    default,
+                    settings.Walkable,
+                    Math.Clamp(settings.MaxSlopeDegrees, 0.0f, 89.9f))
                 : new RuntimeCollider(
                     geometry.Id,
                     geometry.Name,
@@ -51,7 +90,10 @@ public static class RuntimePhysics
                         geometry.Capsule.Start,
                         geometry.Capsule.End,
                         geometry.Capsule.Radius),
-                    default);
+                    default,
+                    default,
+                    settings.Walkable,
+                    Math.Clamp(settings.MaxSlopeDegrees, 0.0f, 89.9f));
         }
     }
 
@@ -70,6 +112,11 @@ public static class RuntimePhysics
 
     public static bool TryRaycastCollider(RuntimeRay ray, RuntimeCollider collider, out float distance, out Vector3 point)
     {
+        if (collider.Shape == "mesh")
+        {
+            return TryRaycastMesh(ray, collider.Mesh, out distance, out point);
+        }
+
         return CollisionGeometry.TryRaycastCollider(
             ray.Origin,
             ray.Direction,
@@ -127,8 +174,18 @@ public static class RuntimePhysics
     {
         foreach (RuntimeCollider leftCollider in CreateColliders(left))
         {
+            if (leftCollider.Shape == "mesh")
+            {
+                continue;
+            }
+
             foreach (RuntimeCollider rightCollider in CreateColliders(right))
             {
+                if (rightCollider.Shape == "mesh")
+                {
+                    continue;
+                }
+
                 if (CollisionGeometry.CheckColliderCollision(ToGeometry(leftCollider), ToGeometry(rightCollider)))
                 {
                     return true;
@@ -146,8 +203,18 @@ public static class RuntimePhysics
 
         foreach (RuntimeCollider leftCollider in CreateColliders(left))
         {
+            if (leftCollider.Shape == "mesh")
+            {
+                continue;
+            }
+
             foreach (RuntimeCollider rightCollider in CreateColliders(right))
             {
+                if (rightCollider.Shape == "mesh")
+                {
+                    continue;
+                }
+
                 hasCollider = true;
                 bestDistance = MathF.Min(bestDistance, CollisionGeometry.DistanceBetweenColliders(ToGeometry(leftCollider), ToGeometry(rightCollider)));
             }
@@ -156,6 +223,34 @@ public static class RuntimePhysics
         return hasCollider
             ? bestDistance
             : Vector3.Distance(left.Position, right.Position);
+    }
+
+    public static bool TryRaycastMesh(RuntimeRay ray, RuntimeMeshCollider mesh, out float distance, out Vector3 point)
+    {
+        distance = 0.0f;
+        point = default;
+        Vector3 direction = SafeNormalize(ray.Direction, -Vector3.UnitZ);
+        float bestDistance = float.MaxValue;
+        Vector3 bestPoint = default;
+
+        foreach (RuntimeMeshTriangle triangle in mesh.Triangles)
+        {
+            if (TryRaycastTriangle(ray.Origin, direction, triangle, out float hitDistance)
+                && hitDistance < bestDistance)
+            {
+                bestDistance = hitDistance;
+                bestPoint = ray.Origin + (direction * hitDistance);
+            }
+        }
+
+        if (bestDistance == float.MaxValue)
+        {
+            return false;
+        }
+
+        distance = bestDistance;
+        point = bestPoint;
+        return true;
     }
 
     private static ColliderGeometry ToGeometry(RuntimeCollider collider)
@@ -181,5 +276,52 @@ public static class RuntimePhysics
                     collider.Capsule.End,
                     collider.Capsule.Radius),
                 default);
+    }
+
+    private static bool TryRaycastTriangle(Vector3 origin, Vector3 direction, RuntimeMeshTriangle triangle, out float distance)
+    {
+        const float epsilon = 0.000001f;
+        distance = 0.0f;
+        Vector3 edge1 = triangle.B - triangle.A;
+        Vector3 edge2 = triangle.C - triangle.A;
+        Vector3 pVector = Vector3.Cross(direction, edge2);
+        float determinant = Vector3.Dot(edge1, pVector);
+        if (MathF.Abs(determinant) < epsilon)
+        {
+            return false;
+        }
+
+        float inverseDeterminant = 1.0f / determinant;
+        Vector3 tVector = origin - triangle.A;
+        float u = Vector3.Dot(tVector, pVector) * inverseDeterminant;
+        if (u < 0.0f || u > 1.0f)
+        {
+            return false;
+        }
+
+        Vector3 qVector = Vector3.Cross(tVector, edge1);
+        float v = Vector3.Dot(direction, qVector) * inverseDeterminant;
+        if (v < 0.0f || u + v > 1.0f)
+        {
+            return false;
+        }
+
+        distance = Vector3.Dot(edge2, qVector) * inverseDeterminant;
+        return distance >= 0.0f;
+    }
+
+    private static Vector3 SafeNormalize(Vector3 value, Vector3 fallback)
+    {
+        return value.LengthSquared() <= 0.000001f ? fallback : Vector3.Normalize(value);
+    }
+
+    private static string NormalizeShape(string shape)
+    {
+        return (shape ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "box" => "box",
+            "mesh" => "mesh",
+            _ => "capsule"
+        };
     }
 }

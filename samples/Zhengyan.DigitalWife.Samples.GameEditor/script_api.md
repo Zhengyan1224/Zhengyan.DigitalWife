@@ -28,7 +28,9 @@
 | Window / Runtime 设置 | 运行时 | ``RuntimeWindowControl``, ``RuntimeProjectControl``, ``RuntimeCommandResult`` | [api_docs/17-window-runtime.md](./api_docs/17-window-runtime.md) |
 | Camera API | 相机 | ``RuntimeCamera``, ``RuntimeRay`` | [api_docs/18-camera.md](./api_docs/18-camera.md) |
 | 射线与拾取 | 相机 | ``RuntimeRay``, ``RuntimeRaycastHit`` | [api_docs/19-ray-picking.md](./api_docs/19-ray-picking.md) |
-| Collision / Collider API | 物理 | ``RuntimeCollider``, ``RuntimeRaycastHit`` | [api_docs/20-collision.md](./api_docs/20-collision.md) |
+| Physics / Grounding API | 物理 | ``RuntimeScenePhysics``, ``RuntimeRaycastHit``, ``scene.physics`` | [api_docs/21-physics-grounding.md](./api_docs/21-physics-grounding.md) |
+| Collision / Collider API | 物理 | ``RuntimeCollider``, ``RuntimeRaycastHit``, ``MeshCollider`` | [api_docs/20-collision.md](./api_docs/20-collision.md) |
+| NavMesh API | 物理 | ``RuntimeSceneNavigation``, ``RuntimeNavigationPath`` | [api_docs/29-navmesh.md](./api_docs/29-navmesh.md) |
 | 多相机与 Render Texture | 渲染 | ``RuntimeCamera``, ``RuntimeSpriteControl`` | [api_docs/21-render-texture.md](./api_docs/21-render-texture.md) |
 | Save 存档 API | 存档 | ``RuntimeSaveStore``, ``scene.save`` | [api_docs/22-save.md](./api_docs/22-save.md) |
 | Network 网络通信 API | 网络 | ``RuntimeNetwork``, ``RuntimeHttpResponse``, ``RuntimeTcpMessage``, ``RuntimeUdpMessage`` | [api_docs/23-network.md](./api_docs/23-network.md) |

@@ -120,6 +120,11 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
                     continue;
                 }
 
+                if (string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 if (string.Equals(collider.Shape, "box", StringComparison.OrdinalIgnoreCase))
                 {
                     BoxGeometry box = CollisionGeometry.CreateBox(collider, position, rotation, scale);

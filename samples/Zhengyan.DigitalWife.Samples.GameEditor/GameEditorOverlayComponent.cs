@@ -3611,6 +3611,21 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplySelectedEntityToRuntime();
         }
 
+        ImGui.SameLine();
+        if (ImGui.Button("Add Mesh Collider"))
+        {
+            entity.Colliders.Add(new ColliderSettings
+            {
+                Name = $"Mesh Collider {entity.Colliders.Count + 1}",
+                Shape = "mesh",
+                Position = Vector3Dto.Zero,
+                Size = Vector3Dto.One,
+                Walkable = true,
+                MaxSlopeDegrees = 55.0f
+            });
+            _editorGame.ApplySelectedEntityToRuntime();
+        }
+
         int removeIndex = -1;
         for (int i = 0; i < entity.Colliders.Count; i++)
         {
@@ -3623,14 +3638,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             {
                 bool enabled = collider.Enabled;
                 string name = collider.Name;
-                string shape = NormalizeChoice(collider.Shape, "capsule", ["capsule", "box"]);
+                string shape = NormalizeChoice(collider.Shape, "capsule", ["capsule", "box", "mesh"]);
                 Vector3 position = collider.Position.ToVector3();
                 Vector3 rotation = collider.RotationDegrees.ToVector3();
                 bool changed = false;
 
                 changed |= ImGui.Checkbox("Enabled", ref enabled);
                 changed |= DrawTextInputWithPaste("Name", ref name, 256, "colliderName");
-                changed |= DrawStringCombo("Shape", ref shape, ["capsule", "box"]);
+                changed |= DrawStringCombo("Shape", ref shape, ["capsule", "box", "mesh"]);
                 changed |= ImGui.DragFloat3("Local position", ref position, 0.02f);
                 changed |= ImGui.DragFloat3("Local rotation", ref rotation, 0.5f);
 
@@ -3644,6 +3659,24 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                             Math.Max(0.001f, size.X),
                             Math.Max(0.001f, size.Y),
                             Math.Max(0.001f, size.Z));
+                    }
+                }
+                else if (shape == "mesh")
+                {
+                    Vector3 size = collider.Size.ToVector3();
+                    bool walkable = collider.Walkable;
+                    float maxSlopeDegrees = collider.MaxSlopeDegrees;
+                    changed |= ImGui.DragFloat3("Local mesh scale", ref size, 0.02f, 0.001f, 10000.0f);
+                    changed |= ImGui.Checkbox("Walkable for NavMesh", ref walkable);
+                    changed |= ImGui.SliderFloat("Max slope degrees", ref maxSlopeDegrees, 0.0f, 89.9f);
+                    if (changed)
+                    {
+                        collider.Size = new Vector3Dto(
+                            Math.Max(0.001f, size.X),
+                            Math.Max(0.001f, size.Y),
+                            Math.Max(0.001f, size.Z));
+                        collider.Walkable = walkable;
+                        collider.MaxSlopeDegrees = Math.Clamp(maxSlopeDegrees, 0.0f, 89.9f);
                     }
                 }
                 else
@@ -3666,7 +3699,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 {
                     collider.Enabled = enabled;
                     collider.Name = string.IsNullOrWhiteSpace(name) ? $"Collider {i + 1}" : name;
-                    collider.Shape = NormalizeChoice(shape, "capsule", ["capsule", "box"]);
+                    collider.Shape = NormalizeChoice(shape, "capsule", ["capsule", "box", "mesh"]);
                     collider.Position = Vector3Dto.FromVector3(position);
                     collider.RotationDegrees = Vector3Dto.FromVector3(rotation);
                     _editorGame.ApplySelectedEntityToRuntime();
@@ -3689,7 +3722,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplySelectedEntityToRuntime();
         }
 
-        ImGui.TextWrapped("Colliders are local to the entity. Moving or rotating the entity moves all attached colliders while preserving their local offsets.");
+        ImGui.TextWrapped("Colliders are local to the entity. Mesh Collider uses the entity mesh triangles for raycast, ground sampling and NavMesh baking.");
     }
 
     private void DrawRelationInspector(GameEntity entity)

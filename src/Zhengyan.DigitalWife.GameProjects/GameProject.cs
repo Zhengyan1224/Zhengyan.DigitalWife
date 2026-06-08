@@ -770,6 +770,10 @@ public sealed class ColliderSettings
     public float Height { get; set; } = 2.0f;
 
     public string Axis { get; set; } = "y";
+
+    public bool Walkable { get; set; }
+
+    public float MaxSlopeDegrees { get; set; } = 55.0f;
 }
 
 public sealed class MotionLayerSettings

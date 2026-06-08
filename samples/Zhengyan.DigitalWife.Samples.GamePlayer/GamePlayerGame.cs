@@ -535,6 +535,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 new RuntimeWindowControl(this, Project.Window),
                 new RuntimeProjectControl(this),
                 new RuntimeCamera(_camera, cameraController, () => _entitiesById.Values, Project.Scene, _renderTextureManager),
+                new RuntimeScenePhysics(() => _entitiesById.Values),
+                new RuntimeSceneNavigation(() => _entitiesById.Values),
                 new RuntimeDebug(debugDraw),
                 new RuntimeSaveStore(_projectDirectory),
                 runtimeLlm,
@@ -2013,6 +2015,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
                 foreach (RuntimeCollider collider in RuntimePhysics.CreateColliders(entity))
                 {
+                    if (collider.Shape == "mesh")
+                    {
+                        continue;
+                    }
+
                     Vector3 center = collider.Shape == "box" ? collider.Box.Center : collider.Capsule.Center;
                     float radius = collider.Shape == "box"
                         ? collider.Box.HalfExtents.Length()

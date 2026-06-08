@@ -2044,6 +2044,11 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         center = default;
         radius = 0.0f;
+        if (string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         Vector3 position = entity.Transform.Position.ToVector3();
         Quaternion rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
         Vector3 scale = entity.Transform.Scale.ToVector3();

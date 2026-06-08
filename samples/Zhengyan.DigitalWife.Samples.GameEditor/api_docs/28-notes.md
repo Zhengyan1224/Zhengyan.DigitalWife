@@ -33,3 +33,5 @@ keywords:
 - 轻量 Collider 用于拾取、触发和简单碰撞判断，不是完整物理模拟。
 - PMX 动作、PMX 材质贴图覆盖、TTS 口型、PMX 绑定关系只对 `pmx_model` 有效。
 - 如果脚本绑定到 GUI 控件的目标实体为空，GUI 事件不会有实体脚本接收；建议在 GameEditor 里为控件设置 `Target entity`。
+- `Scene.Physics.SampleGround(...)` 基于实体 Collider 做地面采样，C# 侧支持 box / capsule / mesh；Python 快照层当前仍只支持 box / capsule。
+- `Scene.Navigation` 是轻量 NavMesh 三角图，不是完整 Recast/Unity 风格烘焙；它不会处理角色半径膨胀、动态障碍或自动避障。

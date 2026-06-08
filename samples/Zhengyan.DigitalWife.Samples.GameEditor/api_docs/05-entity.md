@@ -79,6 +79,7 @@ Entity.SetScale(0.2f, 0.2f, 0.2f);
 Entity.RotateX(10);
 Entity.RotateY(90);
 Entity.RotateZ(5);
+Entity.LookAt(0.0f, Entity.Position.Y, -1.0f);
 Entity.Visible = true;
 Entity.IsPlaying = true;
 Entity.PlaybackSpeed = 1.2f;

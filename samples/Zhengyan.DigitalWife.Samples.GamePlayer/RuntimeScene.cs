@@ -10,6 +10,8 @@ public sealed class RuntimeScene
     private readonly RuntimeWindowControl _window;
     private readonly RuntimeProjectControl _runtime;
     private readonly RuntimeCamera _camera;
+    private readonly RuntimeScenePhysics _physics;
+    private readonly RuntimeSceneNavigation _navigation;
     private readonly RuntimeDebug _debug;
     private readonly RuntimeSaveStore _save;
     private readonly RuntimeLlm _llm;
@@ -28,6 +30,8 @@ public sealed class RuntimeScene
         RuntimeWindowControl window,
         RuntimeProjectControl runtime,
         RuntimeCamera camera,
+        RuntimeScenePhysics physics,
+        RuntimeSceneNavigation navigation,
         RuntimeDebug debug,
         RuntimeSaveStore save,
         RuntimeLlm llm,
@@ -45,6 +49,8 @@ public sealed class RuntimeScene
         _window = window;
         _runtime = runtime;
         _camera = camera;
+        _physics = physics;
+        _navigation = navigation;
         _debug = debug;
         _save = save;
         _llm = llm;
@@ -70,6 +76,10 @@ public sealed class RuntimeScene
     public RuntimeProjectControl Runtime => _runtime;
 
     public RuntimeCamera Camera => _camera;
+
+    public RuntimeScenePhysics Physics => _physics;
+
+    public RuntimeSceneNavigation Navigation => _navigation;
 
     public RuntimeDebug Debug => _debug;
 

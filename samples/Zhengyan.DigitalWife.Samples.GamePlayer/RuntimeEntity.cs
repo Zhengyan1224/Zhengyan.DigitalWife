@@ -1,5 +1,6 @@
 using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
@@ -15,6 +16,7 @@ public sealed class RuntimeEntity
     private readonly WaterSurfaceComponent? _water;
     private readonly TexturedPlaneComponent? _plane;
     private readonly Func<string, string> _resolvePath;
+    private readonly Dictionary<string, MeshColliderCache> _meshColliderCache = [];
     private RuntimeScene? _scene;
     private RuntimeVoice? _voice;
     private RelationTransformUpdater? _relationUpdater;
@@ -583,6 +585,25 @@ public sealed class RuntimeEntity
         Rotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, ToRadians(degrees)) * Rotation);
     }
 
+    public void LookAt(float targetX, float targetY, float targetZ)
+    {
+        LookAt(new Vector3(targetX, targetY, targetZ));
+    }
+
+    public void LookAt(Vector3 target)
+    {
+        Vector3 direction = target - Position;
+        direction.Y = 0.0f;
+        if (direction.LengthSquared() <= 0.000001f)
+        {
+            return;
+        }
+
+        direction = Vector3.Normalize(direction);
+        float yaw = MathF.Atan2(direction.X, direction.Z);
+        Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, yaw);
+    }
+
     public void SetCapsuleCollider(float radius, float height, float centerX = 0.0f, float centerY = 1.0f, float centerZ = 0.0f, string axis = "y")
     {
         _definition.Collision.Enabled = false;
@@ -629,6 +650,39 @@ public sealed class RuntimeEntity
             Position = new Vector3Dto(centerX, centerY, centerZ),
             RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ),
             Size = new Vector3Dto(Math.Max(0.001f, sizeX), Math.Max(0.001f, sizeY), Math.Max(0.001f, sizeZ))
+        };
+        _definition.Colliders.Add(collider);
+        _definition.Collision.Enabled = false;
+        return collider.Id;
+    }
+
+    public string AddMeshCollider(
+        string name,
+        bool walkable = true,
+        float maxSlopeDegrees = 55.0f,
+        float offsetX = 0.0f,
+        float offsetY = 0.0f,
+        float offsetZ = 0.0f,
+        float scaleX = 1.0f,
+        float scaleY = 1.0f,
+        float scaleZ = 1.0f,
+        float rotationX = 0.0f,
+        float rotationY = 0.0f,
+        float rotationZ = 0.0f)
+    {
+        ColliderSettings collider = new()
+        {
+            Name = string.IsNullOrWhiteSpace(name) ? "Mesh Collider" : name,
+            Enabled = true,
+            Shape = "mesh",
+            Position = new Vector3Dto(offsetX, offsetY, offsetZ),
+            RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ),
+            Size = new Vector3Dto(
+                Math.Max(0.001f, MathF.Abs(scaleX)),
+                Math.Max(0.001f, MathF.Abs(scaleY)),
+                Math.Max(0.001f, MathF.Abs(scaleZ))),
+            Walkable = walkable,
+            MaxSlopeDegrees = Math.Clamp(maxSlopeDegrees, 0.0f, 89.9f)
         };
         _definition.Colliders.Add(collider);
         _definition.Collision.Enabled = false;
@@ -1284,6 +1338,72 @@ public sealed class RuntimeEntity
         return true;
     }
 
+    internal unsafe bool TryCreateMeshCollider(ColliderSettings collider, out RuntimeMeshCollider mesh)
+    {
+        MeshColliderSignature signature = CreateMeshColliderSignature(collider);
+        string cacheKey = string.IsNullOrWhiteSpace(collider.Id) ? collider.Name : collider.Id;
+        if (_meshColliderCache.TryGetValue(cacheKey, out MeshColliderCache? cached)
+            && cached.Signature.Equals(signature))
+        {
+            mesh = cached.Mesh;
+            return mesh.Triangles.Count > 0;
+        }
+
+        List<RuntimeMeshTriangle> triangles = [];
+        Matrix4x4 colliderLocal = CreateColliderLocalMatrix(collider);
+
+        if (_model?.Model is MMDModel model && _model.IsLoaded)
+        {
+            Matrix4x4 world = colliderLocal * _model.World;
+            int vertexCount = model.GetVertexCount();
+            int indexCount = model.GetIndexCount();
+            Vector3* positions = model.GetPositions();
+            uint* indices = model.GetIndices();
+            if (positions is not null && indices is not null && vertexCount > 0 && indexCount >= 3)
+            {
+                for (int i = 0; i + 2 < indexCount; i += 3)
+                {
+                    uint rawIndexA = indices[i];
+                    uint rawIndexB = indices[i + 1];
+                    uint rawIndexC = indices[i + 2];
+                    if (rawIndexA >= vertexCount || rawIndexB >= vertexCount || rawIndexC >= vertexCount)
+                    {
+                        continue;
+                    }
+
+                    int indexA = (int)rawIndexA;
+                    int indexB = (int)rawIndexB;
+                    int indexC = (int)rawIndexC;
+                    AddTriangle(
+                        triangles,
+                        Vector3.Transform(positions[indexA], world),
+                        Vector3.Transform(positions[indexB], world),
+                        Vector3.Transform(positions[indexC], world));
+                }
+            }
+        }
+        else if (_plane is not null)
+        {
+            Matrix4x4 world = colliderLocal * Matrix4x4.CreateScale(
+                    _plane.Width * _plane.Scale.X,
+                    _plane.Height * _plane.Scale.Y,
+                    _plane.Scale.Z)
+                * Matrix4x4.CreateFromQuaternion(_plane.Rotation)
+                * Matrix4x4.CreateTranslation(_plane.Position);
+
+            Vector3 a = Vector3.Transform(new Vector3(-0.5f, -0.5f, 0.0f), world);
+            Vector3 b = Vector3.Transform(new Vector3(0.5f, -0.5f, 0.0f), world);
+            Vector3 c = Vector3.Transform(new Vector3(-0.5f, 0.5f, 0.0f), world);
+            Vector3 d = Vector3.Transform(new Vector3(0.5f, 0.5f, 0.0f), world);
+            AddTriangle(triangles, a, b, c);
+            AddTriangle(triangles, c, b, d);
+        }
+
+        mesh = new RuntimeMeshCollider(triangles);
+        _meshColliderCache[cacheKey] = new MeshColliderCache(signature, mesh);
+        return triangles.Count > 0;
+    }
+
     internal void SyncFromModel()
     {
         if (_model is not null)
@@ -1330,6 +1450,53 @@ public sealed class RuntimeEntity
     }
 
     private static float ToRadians(float degrees) => degrees * MathF.PI / 180.0f;
+
+    private MeshColliderSignature CreateMeshColliderSignature(ColliderSettings collider)
+    {
+        return new MeshColliderSignature(
+            Position,
+            Rotation,
+            Scale,
+            collider.Position.ToVector3(),
+            collider.RotationDegrees.ToVector3(),
+            collider.Size.ToVector3(),
+            _plane?.Width ?? 0.0f,
+            _plane?.Height ?? 0.0f);
+    }
+
+    private static Matrix4x4 CreateColliderLocalMatrix(ColliderSettings collider)
+    {
+        Vector3 scale = collider.Size.ToVector3();
+        scale = new Vector3(
+            MathF.Abs(scale.X) <= 0.000001f ? 1.0f : scale.X,
+            MathF.Abs(scale.Y) <= 0.000001f ? 1.0f : scale.Y,
+            MathF.Abs(scale.Z) <= 0.000001f ? 1.0f : scale.Z);
+        return Matrix4x4.CreateScale(scale)
+            * Matrix4x4.CreateFromQuaternion(ToQuaternion(collider.RotationDegrees.ToVector3()))
+            * Matrix4x4.CreateTranslation(collider.Position.ToVector3());
+    }
+
+    private static void AddTriangle(List<RuntimeMeshTriangle> triangles, Vector3 a, Vector3 b, Vector3 c)
+    {
+        if (Vector3.Cross(b - a, c - a).LengthSquared() <= 0.00000001f)
+        {
+            return;
+        }
+
+        triangles.Add(new RuntimeMeshTriangle(a, b, c));
+    }
+
+    private sealed record MeshColliderCache(MeshColliderSignature Signature, RuntimeMeshCollider Mesh);
+
+    private readonly record struct MeshColliderSignature(
+        Vector3 EntityPosition,
+        Quaternion EntityRotation,
+        Vector3 EntityScale,
+        Vector3 ColliderPosition,
+        Vector3 ColliderRotationDegrees,
+        Vector3 ColliderScale,
+        float PlaneWidth,
+        float PlaneHeight);
 
     private ColliderSettings GetPrimaryCollider()
     {

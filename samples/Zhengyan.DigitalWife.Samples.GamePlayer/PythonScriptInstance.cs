@@ -814,6 +814,25 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            "rotationZ": rotation_z
                        })
 
+                   def add_mesh_collider(self, name="Mesh Collider", walkable=True, max_slope_degrees=55.0, offset_x=0.0, offset_y=0.0, offset_z=0.0, scale_x=1.0, scale_y=1.0, scale_z=1.0, rotation_x=0.0, rotation_y=0.0, rotation_z=0.0):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "add_mesh_collider",
+                           "name": name,
+                           "flag": bool(walkable),
+                           "value": max_slope_degrees,
+                           "offsetX": offset_x,
+                           "offsetY": offset_y,
+                           "offsetZ": offset_z,
+                           "sizeX": scale_x,
+                           "sizeY": scale_y,
+                           "sizeZ": scale_z,
+                           "rotationX": rotation_x,
+                           "rotationY": rotation_y,
+                           "rotationZ": rotation_z
+                       })
+
                    def remove_collider(self, id_or_name):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "remove_collider", "name": id_or_name})
 
@@ -921,6 +940,56 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            return self.intersect_box(collider)
                        return self.intersect_capsule(collider)
 
+               class Physics:
+                   def __init__(self, scene):
+                       self._scene = scene
+
+                   def raycast(self, ray, max_distance=None, ignore_entity=None, entity_type=None):
+                       best = None
+                       safe_max_distance = float(max_distance) if max_distance is not None and float(max_distance) > 0.0 else 1.0e30
+                       ignored_id = ""
+                       ignored_name = ""
+                       if ignore_entity is not None:
+                           if hasattr(ignore_entity, "id"):
+                               ignored_id = ignore_entity.id
+                               ignored_name = ignore_entity.name
+                           else:
+                               ignored_id = str(ignore_entity)
+                               ignored_name = str(ignore_entity)
+
+                       normalized_type = normalize_type(entity_type)
+                       for item in self._scene._entities:
+                           candidate = Entity(item, self._scene._commands)
+                           if ignored_id and (candidate.id == ignored_id or candidate.name == ignored_name):
+                               continue
+                           if normalized_type and normalize_type(candidate.type) != normalized_type:
+                               continue
+
+                           for collider in make_colliders(candidate):
+                               hit = ray.intersect_collider(collider)
+                               if hit is None:
+                                   continue
+                               distance = hit["distance"]
+                               if distance > safe_max_distance:
+                                   continue
+                               if best is None or distance < best["distance"]:
+                                   best = {
+                                       "entity": candidate,
+                                       "entityId": candidate.id,
+                                       "entityName": candidate.name,
+                                       "entityType": candidate.type,
+                                       "colliderId": collider.get("id", ""),
+                                       "colliderName": collider.get("name", ""),
+                                       "colliderShape": collider.get("shape", ""),
+                                       "distance": distance,
+                                       "point": hit["point"]
+                                   }
+                       return best
+
+                   def sample_ground(self, x, z, origin_y=1000.0, max_distance=2000.0, ignore_entity=None, entity_type=None):
+                       ray = Ray([float(x), float(origin_y), float(z)], [0.0, -1.0, 0.0])
+                       return self.raycast(ray, max_distance=max_distance, ignore_entity=ignore_entity, entity_type=entity_type)
+
                def dot(a, b):
                    return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
 
@@ -941,6 +1010,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    if value_len <= 0.000001:
                        return fallback or [0, 1, 0]
                    return [a[0] / value_len, a[1] / value_len, a[2] / value_len]
+
+               def normalize_type(value):
+                   return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
 
                def transform_point(local, position, rotation, scale):
                    return add(rotate_vector([local[0] * scale[0], local[1] * scale[1], local[2] * scale[2]], rotation), position)
@@ -997,6 +1069,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        shape = str(collider.get("shape", "capsule")).lower()
                        if shape == "box":
                            result.append(make_box(entity, collider))
+                       elif shape == "mesh":
+                           continue
                        else:
                            result.append(make_capsule(entity, collider))
                    return [item for item in result if item is not None]
@@ -1402,6 +1476,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.window = Window(data.get("window", {}), commands)
                        self.runtime = Runtime(data.get("runtime", {}), commands)
                        self.camera = Camera(data.get("camera", {}), commands)
+                       self.physics = Physics(self)
                        self.debug = Debug(commands)
                        self.save = SaveStore()
                        self.network = Network()
@@ -3609,6 +3684,21 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     (float)(command.RotationY ?? 0.0),
                     (float)(command.RotationZ ?? 0.0));
                 break;
+            case "add_mesh_collider":
+                entity.AddMeshCollider(
+                    command.Name ?? "Mesh Collider",
+                    command.Flag ?? true,
+                    (float)(command.Value ?? 55.0),
+                    (float)(command.OffsetX ?? 0.0),
+                    (float)(command.OffsetY ?? 0.0),
+                    (float)(command.OffsetZ ?? 0.0),
+                    (float)(command.SizeX ?? 1.0),
+                    (float)(command.SizeY ?? 1.0),
+                    (float)(command.SizeZ ?? 1.0),
+                    (float)(command.RotationX ?? 0.0),
+                    (float)(command.RotationY ?? 0.0),
+                    (float)(command.RotationZ ?? 0.0));
+                break;
             case "remove_collider" when !string.IsNullOrWhiteSpace(command.Name):
                 entity.RemoveCollider(command.Name);
                 break;
@@ -4095,6 +4185,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string Axis { get; set; } = "y";
 
+        public bool Walkable { get; set; }
+
+        public float MaxSlopeDegrees { get; set; }
+
         public static PythonCollider FromSettings(ColliderSettings collider)
         {
             return new PythonCollider
@@ -4109,7 +4203,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Size = [collider.Size.X, collider.Size.Y, collider.Size.Z],
                 Radius = collider.Radius,
                 Height = collider.Height,
-                Axis = collider.Axis
+                Axis = collider.Axis,
+                Walkable = collider.Walkable,
+                MaxSlopeDegrees = collider.MaxSlopeDegrees
             };
         }
     }

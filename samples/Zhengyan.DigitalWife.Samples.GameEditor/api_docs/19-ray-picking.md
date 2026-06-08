@@ -80,6 +80,23 @@ Python `Ray` 方法：
 | `intersect_box(box)` | 与盒体求交，返回命中信息或 `None`。 |
 | `intersect_collider(collider)` | 按 Collider 形状自动求交。 |
 
+场景级射线检测：
+
+```csharp
+RuntimeRay ray = Scene.Camera.MousePointToRay(Input);
+if (Scene.Physics.Raycast(ray, out RuntimeRaycastHit sceneHit, maxDistance: 100.0f))
+{
+    Console.WriteLine($"scene hit {sceneHit.Entity.Name}");
+}
+```
+
+```python
+ray = scene.camera.mouse_point_to_ray(input)
+scene_hit = scene.physics.raycast(ray, max_distance=100.0)
+if scene_hit is not None:
+    print("scene hit", scene_hit["entityName"])
+```
+
 射线检测规则：
 
 - 优先检测实体显式绑定的 Collider，返回最近命中。
@@ -87,7 +104,7 @@ Python `Ray` 方法：
 - `water_surface`、`particle_system`、`empty_object`、`textured_plane` 如果需要被射线命中，应在编辑器中添加 Collider。
 - 当前不会对 PMX 三角面做逐面相交检测。
 - C# 提供 `Scene.Camera.RaycastEntity(...)` 做场景级拾取。
-- Python 当前没有场景级 `scene.camera.raycast_entity(...)` 桥接方法；Python 可以用 `entity.raycast(ray)` 检测当前实体，或对已知实体调用 `scene.get_entity(name)` 后逐个检测。
+- C# / Python 均可使用 `Scene.Physics.Raycast(...)` / `scene.physics.raycast(...)` 做场景级 Collider 检测；贴地移动请优先看 `Physics / Grounding API`。
 
 射线调试绘制：
 
