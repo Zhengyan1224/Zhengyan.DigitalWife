@@ -126,6 +126,44 @@ if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_error")
 }
 ```
 
+如果不想用 `Reply` 文本框，而是把回复显示到角色头顶的对话气泡，可以把上面 `voice_delta` / `voice_done` 里的 `Reply.SetValue(...)` 替换成下面的写法。`Scene.Bubble` 只负责显示文字，不会再次触发 TTS，因此不会造成重复播放语音。
+
+```csharp
+static class RealtimeVoiceBubbleState
+{
+    public static string LastAssistantReply = string.Empty;
+}
+
+void ShowRealtimeVoiceBubble(string text)
+{
+    RuntimeDialogueBubble bubble = Scene.Bubble.GetOrCreate("realtime-voice-reply");
+    bubble.AttachToEntity(Entity.Id, useModelTopAnchor: true);
+    bubble.SetWorldOffset(0.0f, 0.20f, 0.0f);
+    bubble.SetScreenOffset(0.0f, -16.0f);
+    bubble.Width = 440.0f;
+    bubble.TextAlignment = "left";
+    bubble.FontSize = 20.0f;
+    bubble.SetContent(text, headerText: "AI", footerText: "Realtime Voice");
+    bubble.Show();
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_delta")
+{
+    RealtimeVoiceBubbleState.LastAssistantReply = RealtimeVoiceAccumulatedText;
+    ShowRealtimeVoiceBubble(RealtimeVoiceBubbleState.LastAssistantReply);
+}
+
+if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_done")
+{
+    string finalReply = string.IsNullOrWhiteSpace(RealtimeVoiceBubbleState.LastAssistantReply)
+        ? RealtimeVoiceText
+        : RealtimeVoiceBubbleState.LastAssistantReply;
+
+    ShowRealtimeVoiceBubble(finalReply);
+    RealtimeVoiceBubbleState.LastAssistantReply = string.Empty;
+}
+```
+
 完整的“唤醒词 -> 远端转写/对话 -> TTS 播放 -> 30s 内继续对话，超时后回到待机”脚本示例：
 
 说明：
@@ -581,6 +619,37 @@ def voice_timeout(entity, scene, input, audio, event):
 def voice_error(entity, scene, input, audio, event):
     end_conversation_and_return_to_stand(entity, scene, "语音出错，重新等待唤醒")
     print("Realtime Voice error:", event["error"])
+```
+
+Python 如果要用对话气泡显示 Realtime Voice 回复，可以把 `voice_delta` / `voice_done` 中更新 `Reply` 文本框的几行替换为下面的显示层逻辑。注意：如果你是在完整状态机示例里改，原来的 `set_wait_state(...)`、`begin_waiting_for_user_speech(...)` 等流程控制代码仍要保留。`scene.bubble` 只显示文字，不会重复调用 TTS。
+
+```python
+bubble_voice_state = {
+    "last_assistant_reply": ""
+}
+
+def show_realtime_voice_bubble(entity, scene, text):
+    bubble = scene.bubble.get_or_create("realtime-voice-reply")
+    bubble.attach_to_entity(entity.id, use_model_top_anchor=True)
+    bubble.set_world_offset(0.0, 0.20, 0.0)
+    bubble.set_screen_offset(0.0, -16.0)
+    bubble.set_width(440)
+    bubble.set_text_alignment("left")
+    bubble.set_font_size(20)
+    bubble.show(
+        text=text,
+        header_text="AI",
+        footer_text="Realtime Voice")
+    scene.flush()
+
+def voice_delta(entity, scene, input, audio, event):
+    bubble_voice_state["last_assistant_reply"] = event["accumulatedText"]
+    show_realtime_voice_bubble(entity, scene, bubble_voice_state["last_assistant_reply"])
+
+def voice_done(entity, scene, input, audio, event):
+    final_reply = bubble_voice_state["last_assistant_reply"] or event["text"]
+    show_realtime_voice_bubble(entity, scene, final_reply)
+    bubble_voice_state["last_assistant_reply"] = ""
 ```
 
 Python 通用回调事件字典字段包括：
