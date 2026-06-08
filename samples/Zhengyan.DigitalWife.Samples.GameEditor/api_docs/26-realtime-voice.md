@@ -142,6 +142,7 @@ static class VoiceState
     public static bool WakeWordMonitorStarted;
     public static bool WaitingForUserSpeech;
     public static string PendingTurnRequestId = string.Empty;
+    public static string LastAssistantReply = string.Empty;
     public static DateTimeOffset WaitTurnExpiresAtUtc = DateTimeOffset.MinValue;
     public static bool MotionBlendReady;
     public static float WaitLayerWeight;
@@ -329,7 +330,8 @@ if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_transcribed")
 if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_delta")
 {
     SetWaitState();
-    Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceAccumulatedText);
+    VoiceState.LastAssistantReply = RealtimeVoiceAccumulatedText;
+    Scene.GetGuiControl("Reply")?.SetValue(VoiceState.LastAssistantReply);
     Scene.GetGuiControl("Status")?.SetValue("正在说话");
 }
 
@@ -337,7 +339,11 @@ if (IsRealtimeVoiceEvent && RealtimeVoiceCallbackName == "voice_done")
 {
     SetWaitState();
     VoiceState.PendingTurnRequestId = string.Empty;
-    Scene.GetGuiControl("Reply")?.SetValue(RealtimeVoiceText);
+    string finalReply = string.IsNullOrWhiteSpace(VoiceState.LastAssistantReply)
+        ? RealtimeVoiceText
+        : VoiceState.LastAssistantReply;
+    Scene.GetGuiControl("Reply")?.SetValue(finalReply);
+    VoiceState.LastAssistantReply = string.Empty;
     BeginWaitingForUserSpeech();
 }
 
@@ -414,6 +420,7 @@ state = {
     "in_conversation": False,
     "waiting_for_user_speech": False,
     "pending_turn_request_id": "",
+    "last_assistant_reply": "",
     "wake_word_monitor_started": False,
     "wait_turn_expires_at": None,
     "motion_blend_ready": False,
@@ -553,16 +560,19 @@ def voice_transcribed(entity, scene, input, audio, event):
 
 def voice_delta(entity, scene, input, audio, event):
     set_wait_state(entity)
+    state["last_assistant_reply"] = event["accumulatedText"]
     reply = scene.get_gui_control("Reply")
     if reply:
-        reply.set_value(event["accumulatedText"])
+        reply.set_value(state["last_assistant_reply"])
 
 def voice_done(entity, scene, input, audio, event):
     set_wait_state(entity)
     state["pending_turn_request_id"] = ""
     reply = scene.get_gui_control("Reply")
     if reply:
-        reply.set_value(event["text"])
+        final_reply = state["last_assistant_reply"] or event["text"]
+        reply.set_value(final_reply)
+    state["last_assistant_reply"] = ""
     begin_waiting_for_user_speech(entity, scene)
 
 def voice_timeout(entity, scene, input, audio, event):

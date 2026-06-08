@@ -106,6 +106,13 @@ public sealed class RealtimeVoiceClient : IAsyncDisposable, IDisposable
         }
     }
 
+    public async Task DeleteConversationItemAsync(string itemId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
+        await EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        await _client.DeleteConversationItemAsync(itemId, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task ResetConversationAsync(CancellationToken cancellationToken = default)
     {
         await EnsureReadyAsync(cancellationToken).ConfigureAwait(false);

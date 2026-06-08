@@ -30,6 +30,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
     private readonly Dictionary<string, SpeechTransformUpdater> _speechUpdaters = new(StringComparer.OrdinalIgnoreCase);
     private RealtimeVoiceClient? _client;
     private CancellationTokenSource? _wakeWordMonitorCts;
+    private PendingRealtimeUserItem? _pendingTranscribedUserItem;
     private SpeechDictionarySet? _dictionaries;
     private bool _disposed;
 
@@ -204,7 +205,13 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         string resolvedRequestId = ResolveRequestId(requestId);
         TrackRequest(async cts =>
         {
-            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeUntilTextAsync(timeoutSeconds, cts.Token).ConfigureAwait(false);
+            RealtimeVoiceClient client = GetClient(cts.Token);
+            await DeletePendingTranscribedUserItemBestEffortAsync(client, cts.Token).ConfigureAwait(false);
+
+            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeUntilTextAsync(
+                timeoutSeconds,
+                false,
+                cts.Token).ConfigureAwait(false);
             if (capture.TimedOut)
             {
                 DispatchEvent(
@@ -224,6 +231,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             }
 
             OpenAiRealtimeTranscriptionResult? result = capture.Result;
+            RememberPendingTranscribedUserItem(result);
             DispatchEvent(
                 callbackTarget,
                 new RuntimeRealtimeVoiceScriptEvent(
@@ -282,7 +290,13 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         string resolvedRequestId = ResolveRequestId(requestId);
         TrackRequest(async cts =>
         {
-            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync(timeoutSeconds, cts.Token).ConfigureAwait(false);
+            RealtimeVoiceClient client = GetClient(cts.Token);
+            await DeletePendingTranscribedUserItemBestEffortAsync(client, cts.Token).ConfigureAwait(false);
+
+            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync(
+                timeoutSeconds,
+                false,
+                cts.Token).ConfigureAwait(false);
             if (capture.TimedOut)
             {
                 DispatchEvent(
@@ -319,6 +333,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
             if (string.IsNullOrWhiteSpace(userText))
             {
+                await DeleteConversationItemBestEffortAsync(client, result?.ItemId, cts.Token).ConfigureAwait(false);
                 DispatchEvent(
                     callbackTarget,
                     new RuntimeRealtimeVoiceScriptEvent(
@@ -335,7 +350,14 @@ public sealed class RuntimeRealtimeVoice : IDisposable
                 return;
             }
 
-            await RunResponseAsync(callbackTarget, userText, resolvedRequestId, onDeltaCallback, onCompletedCallback, cts.Token).ConfigureAwait(false);
+            await RunResponseAsync(
+                callbackTarget,
+                userText,
+                resolvedRequestId,
+                onDeltaCallback,
+                onCompletedCallback,
+                cts.Token,
+                result?.ItemId).ConfigureAwait(false);
         }, callbackTarget, resolvedRequestId, onErrorCallback);
         return resolvedRequestId;
     }
@@ -431,6 +453,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
     public Task ResetConversationAsync(CancellationToken cancellationToken = default)
     {
         EnsureEnabled();
+        ClearPendingTranscribedUserItem();
         return GetClient(cancellationToken).ResetConversationAsync(cancellationToken);
     }
 
@@ -442,6 +465,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         {
             requests = _activeRequests.Values.ToArray();
             _activeRequests.Clear();
+            _pendingTranscribedUserItem = null;
         }
 
         foreach (CancellationTokenSource request in requests)
@@ -483,16 +507,35 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         string requestId,
         string? onDeltaCallback,
         string? onCompletedCallback,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? existingUserItemId = null)
     {
         RealtimeVoiceClient client = GetClient(cancellationToken);
-        await client.CreateUserTextConversationItemAsync(userText, cancellationToken).ConfigureAwait(false);
+        PendingRealtimeUserItem? pending = null;
+        PendingRealtimeUserItem? stale = null;
+        if (string.IsNullOrWhiteSpace(existingUserItemId))
+        {
+            pending = ConsumePendingTranscribedUserItem(userText, out stale);
+            existingUserItemId = pending?.ItemId;
+        }
+
+        if (string.IsNullOrWhiteSpace(existingUserItemId))
+        {
+            await DeleteConversationItemBestEffortAsync(client, stale?.ItemId, cancellationToken).ConfigureAwait(false);
+            await client.CreateUserTextConversationItemAsync(userText, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await DeleteConversationItemBestEffortAsync(client, stale?.ItemId, cancellationToken).ConfigureAwait(false);
+        }
 
         string accumulatedText = string.Empty;
+        string finalText = string.Empty;
         Channel<AudioChunk> audioChannel = Channel.CreateUnbounded<AudioChunk>();
         Task? playbackTask = null;
         bool lipSyncLoopStarted = false;
         int lastLipSyncLength = 0;
+        bool completed = false;
 
         try
         {
@@ -546,22 +589,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
                 if (update.IsCompleted)
                 {
-                    string finalText = string.IsNullOrWhiteSpace(update.FinalAssistantText)
+                    finalText = string.IsNullOrWhiteSpace(update.FinalAssistantText)
                         ? accumulatedText.Trim()
                         : update.FinalAssistantText.Trim();
-                    DispatchEvent(
-                        callbackTarget,
-                        new RuntimeRealtimeVoiceScriptEvent(
-                            requestId,
-                            "completed",
-                            finalText,
-                            string.Empty,
-                            finalText,
-                            true,
-                            string.Empty,
-                            onCompletedCallback ?? string.Empty,
-                            string.Empty,
-                            userText));
+                    completed = true;
                     break;
                 }
             }
@@ -579,6 +610,111 @@ public sealed class RuntimeRealtimeVoice : IDisposable
                 await StopLipSyncAsync(callbackTarget).ConfigureAwait(false);
             }
         }
+
+        if (completed)
+        {
+            DispatchEvent(
+                callbackTarget,
+                new RuntimeRealtimeVoiceScriptEvent(
+                    requestId,
+                    "completed",
+                    finalText,
+                    string.Empty,
+                    finalText,
+                    true,
+                    string.Empty,
+                    onCompletedCallback ?? string.Empty,
+                    string.Empty,
+                    userText));
+        }
+    }
+
+    private void RememberPendingTranscribedUserItem(OpenAiRealtimeTranscriptionResult? result)
+    {
+        PendingRealtimeUserItem? pending = null;
+        if (!string.IsNullOrWhiteSpace(result?.ItemId) && !string.IsNullOrWhiteSpace(result.Text))
+        {
+            pending = new PendingRealtimeUserItem(result.ItemId, result.Text.Trim());
+        }
+
+        lock (_sync)
+        {
+            _pendingTranscribedUserItem = pending;
+        }
+    }
+
+    private PendingRealtimeUserItem? ConsumePendingTranscribedUserItem(string userText, out PendingRealtimeUserItem? stale)
+    {
+        lock (_sync)
+        {
+            PendingRealtimeUserItem? pending = _pendingTranscribedUserItem;
+            _pendingTranscribedUserItem = null;
+            if (pending is null)
+            {
+                stale = null;
+                return null;
+            }
+
+            if (string.Equals(NormalizeRealtimeUserText(pending.Value.Text), NormalizeRealtimeUserText(userText), StringComparison.Ordinal))
+            {
+                stale = null;
+                return pending;
+            }
+
+            stale = pending;
+            return null;
+        }
+    }
+
+    private void ClearPendingTranscribedUserItem()
+    {
+        lock (_sync)
+        {
+            _pendingTranscribedUserItem = null;
+        }
+    }
+
+    private async Task DeletePendingTranscribedUserItemBestEffortAsync(
+        RealtimeVoiceClient client,
+        CancellationToken cancellationToken)
+    {
+        PendingRealtimeUserItem? stale;
+        lock (_sync)
+        {
+            stale = _pendingTranscribedUserItem;
+            _pendingTranscribedUserItem = null;
+        }
+
+        await DeleteConversationItemBestEffortAsync(client, stale?.ItemId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task DeleteConversationItemBestEffortAsync(
+        RealtimeVoiceClient client,
+        string? itemId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(itemId))
+        {
+            return;
+        }
+
+        try
+        {
+            await client.DeleteConversationItemAsync(itemId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Some Realtime-compatible servers may not retain/delete synthetic items reliably.
+        }
+    }
+
+    private static string NormalizeRealtimeUserText(string? value)
+    {
+        return (value ?? string.Empty).Trim();
     }
 
     private void TrackRequest(
@@ -630,7 +766,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         });
     }
 
-    private async Task<RealtimeVoiceCaptureResult> CaptureAndTranscribeAsync(float? timeoutSeconds, CancellationToken cancellationToken)
+    private async Task<RealtimeVoiceCaptureResult> CaptureAndTranscribeAsync(
+        float? timeoutSeconds,
+        bool deleteConversationItem,
+        CancellationToken cancellationToken)
     {
         using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeoutSeconds is > 0.0f)
@@ -655,15 +794,27 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             return new RealtimeVoiceCaptureResult(null, TimedOut: timedOut);
         }
 
-        OpenAiRealtimeTranscriptionResult result = await GetClient(cancellationToken).TranscribeAsync(audio, deleteConversationItem: true, cancellationToken).ConfigureAwait(false);
+        OpenAiRealtimeTranscriptionResult result = await GetClient(cancellationToken).TranscribeAsync(audio, deleteConversationItem, cancellationToken).ConfigureAwait(false);
         return new RealtimeVoiceCaptureResult(result, TimedOut: false);
     }
 
-    private async Task<RealtimeVoiceCaptureResult> CaptureAndTranscribeUntilTextAsync(float? timeoutSeconds, CancellationToken cancellationToken)
+    private async Task<RealtimeVoiceCaptureResult> CaptureAndTranscribeUntilTextAsync(
+        float? timeoutSeconds,
+        bool deleteConversationItem,
+        CancellationToken cancellationToken)
     {
         if (timeoutSeconds is not > 0.0f)
         {
-            return await CaptureAndTranscribeAsync(timeoutSeconds, cancellationToken).ConfigureAwait(false);
+            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync(
+                timeoutSeconds,
+                deleteConversationItem,
+                cancellationToken).ConfigureAwait(false);
+            if (!deleteConversationItem && string.IsNullOrWhiteSpace(capture.Result?.Text))
+            {
+                await DeleteConversationItemBestEffortAsync(GetClient(cancellationToken), capture.Result?.ItemId, cancellationToken).ConfigureAwait(false);
+            }
+
+            return capture;
         }
 
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds.Value);
@@ -675,7 +826,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
                 return new RealtimeVoiceCaptureResult(null, TimedOut: true);
             }
 
-            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync((float)remainingSeconds, cancellationToken).ConfigureAwait(false);
+            RealtimeVoiceCaptureResult capture = await CaptureAndTranscribeAsync(
+                (float)remainingSeconds,
+                deleteConversationItem,
+                cancellationToken).ConfigureAwait(false);
             if (capture.TimedOut)
             {
                 return capture;
@@ -684,6 +838,11 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             if (!string.IsNullOrWhiteSpace(capture.Result?.Text))
             {
                 return capture;
+            }
+
+            if (!deleteConversationItem)
+            {
+                await DeleteConversationItemBestEffortAsync(GetClient(cancellationToken), capture.Result?.ItemId, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1150,6 +1309,8 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
         return appRelative;
     }
+
+    private readonly record struct PendingRealtimeUserItem(string ItemId, string Text);
 
     private readonly record struct RealtimeVoiceCaptureResult(OpenAiRealtimeTranscriptionResult? Result, bool TimedOut);
 }

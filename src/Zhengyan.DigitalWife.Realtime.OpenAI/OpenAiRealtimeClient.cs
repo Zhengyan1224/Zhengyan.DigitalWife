@@ -222,6 +222,11 @@ public sealed class OpenAiRealtimeClient : IAsyncDisposable, IDisposable
                     break;
 
                 case "response.output_audio_transcript.delta":
+                    if (!audioTranscriptSeen && transcriptBuilder.Length > 0)
+                    {
+                        transcriptBuilder.Clear();
+                    }
+
                     audioTranscriptSeen = true;
                     if (!string.IsNullOrEmpty(serverEvent.Delta))
                     {
