@@ -48,4 +48,4 @@
 
 ## 更新提示
 
-如果后续修改了某个模块文档，需要同步更新 `api_docs/api_manifest.js`，否则 `script_api.html` 的离线快照不会包含最新内容。
+如果后续修改了某个模块文档，需要运行 `python api_docs/build_manifest.py` 同步更新 `api_docs/api_manifest.json` 和 `api_docs/api_manifest.js`，否则 `script_api.html` 的离线快照不会包含最新内容。
