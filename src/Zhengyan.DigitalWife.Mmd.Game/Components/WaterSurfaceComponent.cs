@@ -6,7 +6,7 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Components;
 
 public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 {
-    private const int MaxRipples = 24;
+    private const int MaxRipples = 48;
     private static readonly string[] DefaultNormalMapFileNames =
     [
         "Ocean0_N.dds",
@@ -45,6 +45,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private int _uniformNormalTex2 = -1;
     private int _uniformSkyTex = -1;
     private int _uniformSkyReflectionStrength = -1;
+    private int _uniformMirrorReflectionEnabled = -1;
     private int _uniformRippleCenters = -1;
     private int _uniformRippleTimes = -1;
     private int _uniformRippleRadii = -1;
@@ -117,6 +118,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         set => _skyReflectionStrength = Math.Clamp(value, 0.0f, 1.0f);
     }
 
+    public bool MirrorReflectionEnabled { get; set; } = true;
+
     public float RippleLifetimeSeconds { get; set; } = 1.8f;
 
     public float RippleWaveSpeed { get; set; } = 18.0f;
@@ -125,34 +128,40 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 
     public float RippleNormalStrength { get; set; } = 0.30f;
 
-    public void AddRipple(Vector3 worldPosition, float radius = 0.8f, float strength = 0.8f)
+    public void AddRipple(Vector3 worldPosition, float radius = 0.8f, float strength = 0.8f, float mergeDistance = -1.0f)
     {
-        float mergeDistance = MathF.Max(radius * 1.25f, 0.45f);
-        int nearestIndex = -1;
-        float nearestDistanceSquared = float.MaxValue;
-        for (int i = 0; i < _ripples.Length; i++)
+        float effectiveMergeDistance = mergeDistance < 0.0f
+            ? MathF.Max(radius * 1.25f, 0.45f)
+            : mergeDistance;
+
+        if (effectiveMergeDistance > 0.0001f)
         {
-            if (!_ripples[i].Active)
+            int nearestIndex = -1;
+            float nearestDistanceSquared = float.MaxValue;
+            for (int i = 0; i < _ripples.Length; i++)
             {
-                continue;
+                if (!_ripples[i].Active)
+                {
+                    continue;
+                }
+
+                float distanceSquared = Vector3.DistanceSquared(_ripples[i].Center, worldPosition);
+                if (distanceSquared <= effectiveMergeDistance * effectiveMergeDistance && distanceSquared < nearestDistanceSquared)
+                {
+                    nearestDistanceSquared = distanceSquared;
+                    nearestIndex = i;
+                }
             }
 
-            float distanceSquared = Vector3.DistanceSquared(_ripples[i].Center, worldPosition);
-            if (distanceSquared <= mergeDistance * mergeDistance && distanceSquared < nearestDistanceSquared)
+            if (nearestIndex >= 0)
             {
-                nearestDistanceSquared = distanceSquared;
-                nearestIndex = i;
+                ref RippleState ripple = ref _ripples[nearestIndex];
+                ripple.Center = Vector3.Lerp(ripple.Center, worldPosition, 0.5f);
+                ripple.Age = 0.0f;
+                ripple.Radius = MathF.Max(ripple.Radius, MathF.Max(0.001f, radius));
+                ripple.Strength = Math.Clamp(MathF.Max(ripple.Strength * 0.8f, strength), 0.0f, 4.0f);
+                return;
             }
-        }
-
-        if (nearestIndex >= 0)
-        {
-            ref RippleState ripple = ref _ripples[nearestIndex];
-            ripple.Center = Vector3.Lerp(ripple.Center, worldPosition, 0.5f);
-            ripple.Age = 0.0f;
-            ripple.Radius = MathF.Max(ripple.Radius, MathF.Max(0.001f, radius));
-            ripple.Strength = Math.Clamp(MathF.Max(ripple.Strength * 0.8f, strength), 0.0f, 4.0f);
-            return;
         }
 
         int targetIndex = 0;
@@ -227,6 +236,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _uniformNormalTex2 = gl.GetUniformLocation(_program, "u_NormalTex2");
         _uniformSkyTex = gl.GetUniformLocation(_program, "u_SkyTex");
         _uniformSkyReflectionStrength = gl.GetUniformLocation(_program, "u_SkyReflectionStrength");
+        _uniformMirrorReflectionEnabled = gl.GetUniformLocation(_program, "u_MirrorReflectionEnabled");
         _uniformRippleCenters = gl.GetUniformLocation(_program, "u_RippleCenters");
         _uniformRippleTimes = gl.GetUniformLocation(_program, "u_RippleTimes");
         _uniformRippleRadii = gl.GetUniformLocation(_program, "u_RippleRadii");
@@ -298,6 +308,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.SetUniform(_uniformNormalTex2, 1);
         gl.SetUniform(_uniformSkyTex, 2);
         gl.SetUniform(_uniformSkyReflectionStrength, _skyReflectionStrength);
+        gl.Uniform1(_uniformMirrorReflectionEnabled, MirrorReflectionEnabled ? 1.0f : 0.0f);
         gl.SetUniform(_uniformRippleLifetime, Math.Max(0.05f, RippleLifetimeSeconds));
         gl.SetUniform(_uniformRippleWaveSpeed, RippleWaveSpeed);
         gl.SetUniform(_uniformRippleFrequency, RippleFrequency);
@@ -528,7 +539,7 @@ void main()
 
 precision highp float;
 
-#define MAX_RIPPLES 8
+#define MAX_RIPPLES 48
 
 in vec2 vs_Uv;
 in vec3 vs_WorldPos;
@@ -543,6 +554,7 @@ uniform float u_Alpha;
 uniform vec3 u_DeepColor;
 uniform vec3 u_ReflectionTint;
 uniform float u_SkyReflectionStrength;
+uniform float u_MirrorReflectionEnabled;
 uniform vec3 u_RippleCenters[MAX_RIPPLES];
 uniform float u_RippleTimes[MAX_RIPPLES];
 uniform float u_RippleRadii[MAX_RIPPLES];
@@ -599,8 +611,10 @@ void main()
     float fresnel = pow(1.0 - max(dot(normalize(u_EyePos - vs_WorldPos), normal), 0.0), 5.0);
     vec3 gradientReflection = mix(u_DeepColor * 0.72, u_ReflectionTint, horizon);
     vec3 skyColor = texture(u_SkyTex, DirectionToEquirectUv(reflected)).rgb;
-    vec3 reflection = mix(gradientReflection, skyColor, clamp(u_SkyReflectionStrength, 0.0, 1.0));
-    vec3 color = mix(u_DeepColor, reflection, clamp(0.35 + fresnel * 0.65, 0.0, 1.0));
+    float mirrorEnabled = clamp(u_MirrorReflectionEnabled, 0.0, 1.0);
+    vec3 reflection = mix(gradientReflection, skyColor, clamp(u_SkyReflectionStrength, 0.0, 1.0) * mirrorEnabled);
+    float reflectionWeight = mix(0.18, clamp(0.35 + fresnel * 0.65, 0.0, 1.0), mirrorEnabled);
+    vec3 color = mix(u_DeepColor, reflection, reflectionWeight);
     color += vec3(0.22, 0.25, 0.28) * clamp(rippleHighlight, 0.0, 1.0);
     color = clamp(color, 0.0, 1.0);
 

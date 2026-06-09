@@ -23,6 +23,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private string _motionPath = string.Empty;
     private string _spritePath = string.Empty;
     private string _newSceneName = "New Scene";
+    private string _packageOutputPath = string.Empty;
+    private string _packagePassword = string.Empty;
+    private bool _packageEncrypt;
+    private bool _packageSplit;
+    private int _packageSplitPartSizeMb = 512;
+    private bool _packageIncludeSaves;
     private int _selectedMotionAssetIndex;
     private string _particlePreset = "sakura";
     private bool _copyAssets = true;
@@ -638,9 +644,81 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         DrawVoiceSettings(project.Voice);
         DrawAsrSettings(project.Asr);
         DrawRealtimeVoiceSettings(project.RealtimeVoice);
+        DrawPackageExportSettings();
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
         ImGui.PopID();
+    }
+
+    private void DrawPackageExportSettings()
+    {
+        if (!ImGui.CollapsingHeader("Package / Publish", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        ImGui.PushID("packageExport");
+        if (string.IsNullOrWhiteSpace(_packageOutputPath))
+        {
+            _packageOutputPath = BuildDefaultPackageOutputPath();
+        }
+
+        DrawPathInput("Output package", ref _packageOutputPath, 1024, "packageOutput");
+        ImGui.Checkbox("Encrypt package", ref _packageEncrypt);
+        if (_packageEncrypt)
+        {
+            _ = DrawTextInputWithPaste("Password", ref _packagePassword, 256, "packagePassword");
+        }
+
+        ImGui.Checkbox("Split package", ref _packageSplit);
+        if (_packageSplit)
+        {
+            ImGui.DragInt("Part size MB", ref _packageSplitPartSizeMb, 1.0f, 1, 102400);
+            _packageSplitPartSizeMb = Math.Clamp(_packageSplitPartSizeMb, 1, 102400);
+        }
+
+        ImGui.Checkbox("Include saves", ref _packageIncludeSaves);
+        if (ImGui.Button("Export Package"))
+        {
+            try
+            {
+                long splitBytes = _packageSplit
+                    ? Math.Max(1L, _packageSplitPartSizeMb) * 1024L * 1024L
+                    : 0L;
+                string? password = _packageEncrypt ? _packagePassword : null;
+                _ = _editorGame.ExportProjectPackage(
+                    _packageOutputPath,
+                    password,
+                    splitBytes,
+                    _packageIncludeSaves);
+            }
+            catch (Exception ex)
+            {
+                _editorGame.UpdateStatus($"Export package failed: {ex.Message}");
+            }
+        }
+
+        ImGui.TextWrapped("GamePlayer can load either the development project directory or the exported .dwgame package. Split packages are written as .dwgame.001, .dwgame.002, ... and GamePlayer can start from the .dwgame path or the first .001 part. Encryption prevents casual editing, but the password must still be provided at runtime.");
+        ImGui.PopID();
+    }
+
+    private string BuildDefaultPackageOutputPath()
+    {
+        string projectName = ToSafeFileStem(_editorGame.Project.Name);
+        string parent = Directory.GetParent(_editorGame.ProjectDirectory)?.FullName ?? _editorGame.ProjectDirectory;
+        return Path.Combine(parent, $"{projectName}{GameProjectPackage.PackageExtension}");
+    }
+
+    private static string ToSafeFileStem(string value)
+    {
+        string stem = string.IsNullOrWhiteSpace(value) ? "Game" : value.Trim();
+        foreach (char ch in Path.GetInvalidFileNameChars())
+        {
+            stem = stem.Replace(ch, '_');
+        }
+
+        stem = stem.Replace(' ', '_');
+        return string.IsNullOrWhiteSpace(stem) ? "Game" : stem;
     }
 
     private void DrawScenesPanel()
@@ -3797,12 +3875,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector3 deepColor = water.DeepColor.ToVector3();
         Vector3 reflectionTint = water.ReflectionTint.ToVector3();
         float skyReflectionStrength = water.SkyReflectionStrength;
+        bool mirrorReflectionEnabled = water.MirrorReflectionEnabled;
 
         changed |= ImGui.DragFloat("Water size", ref size, 0.5f, 0.1f, 10000.0f);
         changed |= ImGui.SliderFloat("Water alpha", ref alpha, 0.0f, 1.0f);
         changed |= ImGui.DragFloat("Wave speed", ref animationSpeed, 0.001f, 0.0f, 10.0f, "%.3f");
         changed |= ImGui.DragFloat("Normal tiling", ref normalTiling, 0.5f, 0.001f, 10000.0f);
         changed |= ImGui.ColorEdit3("Deep color", ref deepColor);
+        changed |= ImGui.Checkbox("Mirror reflection", ref mirrorReflectionEnabled);
         changed |= ImGui.ColorEdit3("Reflection tint", ref reflectionTint);
         changed |= ImGui.SliderFloat("Sky reflection", ref skyReflectionStrength, 0.0f, 1.0f);
         bool enableInteraction = water.EnableInteraction;
@@ -3869,6 +3949,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.DeepColor = Vector3Dto.FromVector3(deepColor);
             water.ReflectionTint = Vector3Dto.FromVector3(reflectionTint);
             water.SkyReflectionStrength = Math.Clamp(skyReflectionStrength, 0.0f, 1.0f);
+            water.MirrorReflectionEnabled = mirrorReflectionEnabled;
             water.EnableInteraction = enableInteraction;
             water.InteractionRadius = Math.Max(0.001f, interactionRadius);
             water.InteractionStrength = Math.Clamp(interactionStrength, 0.0f, 4.0f);

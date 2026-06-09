@@ -24,6 +24,12 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.Di
 
 不传 `<project-directory>` 时，`GamePlayer` 会读取默认 DemoGame 目录。
 
+也可以在 `Project -> Package / Publish` 中把工程目录导出为 `.dwgame` 发布包，然后让 `GamePlayer` 直接加载包文件：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- <game-package.dwgame>
+```
+
 如果正式使用时不希望显示控制台窗口，见 [GamePlayer README](../Zhengyan.DigitalWife.Samples.GamePlayer/README.md#隐藏控制台--无终端启动)。
 
 ## 工程结构
@@ -55,6 +61,34 @@ DemoGame/
 4. 在 `Assets` 面板导入 PMX、WAV/OGG、VMD、图片，或添加空对象、粒子、水面、3D 贴图矩形面。
 5. 在 `Hierarchy` 选择实体，在 `Inspector` 编辑 Transform、脚本、碰撞体和类型专属设置。
 6. 保存后用 `GamePlayer` 运行工程目录。
+
+## 打包发布
+
+开发阶段建议继续使用工程目录形式，便于直接修改 `game.project.json`、场景、资源和脚本。发布阶段可以在 `Project -> Package / Publish` 中导出 `.dwgame` 包，降低用户直接修改资源和脚本的概率。
+
+导出选项：
+
+- `Output package`：输出包路径。未写扩展名时会自动补 `.dwgame`。
+- `Encrypt package`：启用 AES-GCM 加密。加密后运行时必须提供相同密码。
+- `Split package`：按指定大小把包切分为 `.dwgame.001`、`.dwgame.002`、`.dwgame.003` 等分包。
+- `Include saves`：是否把工程目录下的 `saves/` 一起打进包。通常正式发布不建议勾选。
+
+加载命令：
+
+```powershell
+# 加载未加密包
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame
+
+# 加载加密包
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame --package-password "your-password"
+
+# 加载分包，可以传 .dwgame 或第一个 .001 分包
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame.001
+```
+
+包加载时，`GamePlayer` 会复用原有工程目录加载流程，因此现有 PMX、音频、脚本、TTS、天空盒、图标等工程相对路径不需要改变。未加密 `.dwgame` 首次启动会解包到用户本地包缓存目录，后续启动会按包文件 hash 直接复用缓存，避免每次重复解包；加密包为了避免明文资源长期留在磁盘上，仍会解包到运行时临时目录并在退出时尝试清理。脚本存档不会写进解包目录，而是写入用户数据目录。
+
+注意：加密可以防止普通用户直接解包和修改内容，但不能作为绝对安全边界。运行器本身必须能解密资源，所以密码或密钥最终仍要在运行环境中提供。
 
 ## Scenes 面板
 
@@ -147,7 +181,9 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 - 普通实体：依赖 `Colliders[]`，按碰撞体近似包围范围检测是否接触水面区域。
 - 粒子系统：开启 `Enable water interaction` 后，按每个活跃粒子的当前位置和当前显示尺寸做近似球检测；如果 `Kill particle on water contact` 开启，入水粒子会立即消失，否则会继续穿过水面。
 
-水面实体自己的 `Particle ripple min interval` 和 `Particle ripple merge distance` 用来控制粒子触水时的波纹密度，避免雨、瀑布这类高密度粒子把水面刷满。这个效果是视觉交互，不是完整流体模拟，也不会产生浮力或真实物理反馈。
+水面实体自己的 `Particle ripple min interval` 和 `Particle ripple merge distance` 用来控制粒子触水时的波纹密度，避免雨、瀑布这类高密度粒子把水面刷满。`Particle ripple merge distance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并成同一个波纹区域。水面 shader 当前最多同时显示 48 个活动波纹。这个效果是视觉交互，不是完整流体模拟，也不会产生浮力或真实物理反馈。
+
+`Mirror reflection` 控制水面是否启用镜面反射观感。开启时水面会按视线和法线采样天空反射并叠加 Fresnel，高光更明显；关闭时水面会退回更偏普通水色/环境渐变的渲染。脚本层可通过水面实体的 `MirrorReflectionEnabled` 或 Python 的 `set_mirror_reflection_enabled(...)` 在运行时切换。
 
 推荐参数模板：
 
@@ -161,7 +197,7 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
   - 粒子：`Enable water interaction = true`，`Kill particle on water contact = false`
   - 水面：`Particle ripple min interval = 0.08 - 0.2`，`Particle ripple merge distance = 0.2 - 0.5`
 
-经验上，`Particle ripple min interval` 越小，单位时间波纹越密；`Particle ripple merge distance` 越大，相邻粒子越容易被合并成同一个波纹区域。
+经验上，`Particle ripple min interval` 越小，单位时间波纹越密；`Particle ripple merge distance` 越大，相邻粒子越容易被合并成同一个波纹区域。如果你希望雨点/水花更密集，优先降低这两个值；如果 GPU 压力或画面太乱，再提高它们。
 
 `GameEditor` 的水面 Inspector 里提供了 `Rain Preset`、`Waterfall Preset`、`Fountain Preset` 三个快捷按钮，会直接填入一组适中的粒子波纹参数，便于快速起步再微调。
 

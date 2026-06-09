@@ -342,6 +342,30 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             : $"Saved project: {projectPath}\n{resourceImport.Message}\n{validation.Message}{relationMessage}{guiTargetMessage}");
     }
 
+    public GameProjectPackageBuildResult ExportProjectPackage(
+        string outputPath,
+        string? password = null,
+        long splitPartSizeBytes = 0,
+        bool includeSaves = false)
+    {
+        SaveProject();
+        GameProjectPackageBuildResult result = GameProjectPackage.Create(
+            ProjectDirectory,
+            new GameProjectPackageBuildOptions
+            {
+                OutputPath = outputPath,
+                Password = password,
+                SplitPartSizeBytes = splitPartSizeBytes,
+                IncludeSaves = includeSaves
+            });
+
+        string outputSummary = result.Split
+            ? $"{result.PartPaths.Count} part(s), first: {result.PartPaths[0]}"
+            : result.OutputPath;
+        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nTotal bytes: {result.TotalBytes:N0}");
+        return result;
+    }
+
     public void CreateScene(string sceneName)
     {
         string normalizedName = string.IsNullOrWhiteSpace(sceneName) ? "New Scene" : sceneName.Trim();
@@ -1885,6 +1909,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.DeepColor = entity.Water.DeepColor.ToVector3();
         component.ReflectionTint = entity.Water.ReflectionTint.ToVector3();
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
+        component.MirrorReflectionEnabled = entity.Water.MirrorReflectionEnabled;
         component.RippleLifetimeSeconds = Math.Max(0.05f, entity.Water.RippleLifetimeSeconds);
         component.RippleWaveSpeed = entity.Water.RippleWaveSpeed;
         component.RippleFrequency = Math.Max(0.0f, entity.Water.RippleFrequency);
@@ -2013,12 +2038,16 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 continue;
             }
 
-            string rippleKey = BuildParticleRippleKey(waterEntity, particleObject.Entity, sample.Position, waterEntity.Water.ParticleRippleMergeDistance);
+            string rippleKey = BuildParticleRippleKey(waterEntity, particleObject.Entity, sample, waterEntity.Water.ParticleRippleMergeDistance);
             double minInterval = Math.Max(0.0, waterEntity.Water.ParticleRippleMinIntervalSeconds);
             if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= minInterval)
             {
                 _waterRippleTimes[rippleKey] = now;
-                waterObject.Component.AddRipple(new Vector3(sample.Position.X, waterY, sample.Position.Z), waterEntity.Water.InteractionRadius, waterEntity.Water.InteractionStrength);
+                waterObject.Component.AddRipple(
+                    new Vector3(sample.Position.X, waterY, sample.Position.Z),
+                    waterEntity.Water.InteractionRadius,
+                    waterEntity.Water.InteractionStrength,
+                    waterEntity.Water.ParticleRippleMergeDistance);
             }
 
             if (particleObject.Entity.Particle.KillOnWaterContact)
@@ -2028,15 +2057,15 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
-    private static string BuildParticleRippleKey(GameEntity waterEntity, GameEntity particleEntity, Vector3 position, float mergeDistance)
+    private static string BuildParticleRippleKey(GameEntity waterEntity, GameEntity particleEntity, ParticleCollisionSample sample, float mergeDistance)
     {
         if (mergeDistance <= 0.0001f)
         {
-            return $"{waterEntity.Id}:{particleEntity.Id}:particle";
+            return $"{waterEntity.Id}:{particleEntity.Id}:particle:{sample.Index}";
         }
 
-        int cellX = (int)MathF.Floor(position.X / mergeDistance);
-        int cellZ = (int)MathF.Floor(position.Z / mergeDistance);
+        int cellX = (int)MathF.Floor(sample.Position.X / mergeDistance);
+        int cellZ = (int)MathF.Floor(sample.Position.Z / mergeDistance);
         return $"{waterEntity.Id}:{particleEntity.Id}:particle:{cellX}:{cellZ}";
     }
 

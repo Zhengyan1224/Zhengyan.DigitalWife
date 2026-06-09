@@ -801,6 +801,8 @@ public sealed class WaterSurfaceSettings
 
     public float SkyReflectionStrength { get; set; } = 0.85f;
 
+    public bool MirrorReflectionEnabled { get; set; } = true;
+
     public bool EnableInteraction { get; set; }
 
     public float InteractionRadius { get; set; } = 0.8f;

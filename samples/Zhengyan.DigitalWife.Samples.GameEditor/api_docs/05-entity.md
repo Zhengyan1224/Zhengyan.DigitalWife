@@ -62,6 +62,7 @@ keywords:
 | `WaterInteractionStrength` | `water_interaction_strength` | 水面波纹强度。Python 用 `set_water_interaction_strength` 修改。 |
 | `ParticleRippleMinIntervalSeconds` | `particle_ripple_min_interval_seconds` | 同一区域粒子触水的最小波纹间隔。Python 用 `set_particle_ripple_min_interval_seconds` 修改。 |
 | `ParticleRippleMergeDistance` | `particle_ripple_merge_distance` | 粒子触水波纹的空间合并距离。Python 用 `set_particle_ripple_merge_distance` 修改。 |
+| `MirrorReflectionEnabled` | `mirror_reflection_enabled` | 水面是否启用镜面反射观感。Python 用 `set_mirror_reflection_enabled` 修改。 |
 | `RippleLifetimeSeconds` | 无 | 水面单个波纹的持续时间。 |
 | `RippleWaveSpeed` | 无 | 水面波纹传播速度。 |
 | `RippleFrequency` | 无 | 水面波纹频率。 |
@@ -94,6 +95,7 @@ Entity.WaterInteractionRadius = 1.0f;
 Entity.WaterInteractionStrength = 0.9f;
 Entity.ParticleRippleMinIntervalSeconds = 0.08f;
 Entity.ParticleRippleMergeDistance = 0.5f;
+Entity.MirrorReflectionEnabled = true;
 Entity.RippleLifetimeSeconds = 2.8f;
 Entity.RippleWaveSpeed = 12.0f;
 Entity.RippleFrequency = 16.0f;
@@ -122,6 +124,7 @@ entity.set_water_interaction_radius(1.0)
 entity.set_water_interaction_strength(0.9)
 entity.set_particle_ripple_min_interval_seconds(0.08)
 entity.set_particle_ripple_merge_distance(0.5)
+entity.set_mirror_reflection_enabled(True)
 entity.set_draw_shadow_in_main_pass(False)
 ```
 
@@ -141,6 +144,7 @@ C# 额外可读/可写属性：
 | `WaterInteractionStrength` | 水面波纹强度。 |
 | `ParticleRippleMinIntervalSeconds` | 同一区域粒子触水的最小波纹间隔。 |
 | `ParticleRippleMergeDistance` | 粒子触水波纹的空间合并距离。 |
+| `MirrorReflectionEnabled` | 水面是否启用镜面反射观感。 |
 | `RippleLifetimeSeconds` | 水面单个波纹的持续时间。 |
 | `RippleWaveSpeed` | 水面波纹传播速度。 |
 | `RippleFrequency` | 水面波纹频率。 |

@@ -9,19 +9,78 @@ internal static class Program
             return Zhengyan.DigitalWife.Mmd.Kernel.ProbeCurrentProcessUnsafe() ? 0 : 2;
         }
 
-        string projectDirectory = args.Length > 0 && !string.IsNullOrWhiteSpace(args[0])
-            ? Path.GetFullPath(args[0].Trim().Trim('"'))
+        string? packagePassword = ReadOptionValue(args, "--package-password");
+        string inputPath = ReadProjectInputPath(args);
+
+        string projectInput = !string.IsNullOrWhiteSpace(inputPath)
+            ? Path.GetFullPath(inputPath.Trim().Trim('"'))
             : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "GameEditorProjects", "DemoGame"));
 
-        if (!Directory.Exists(projectDirectory))
+        Zhengyan.DigitalWife.GameProjects.GameProjectPackageSession projectSession;
+        try
         {
-            Console.Error.WriteLine($"Project directory not found: {projectDirectory}");
-            Console.Error.WriteLine("Usage: dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer -- <project-directory>");
+            projectSession = Zhengyan.DigitalWife.GameProjects.GameProjectPackage.OpenOrExtract(
+                projectInput,
+                new Zhengyan.DigitalWife.GameProjects.GameProjectPackageOpenOptions
+                {
+                    Password = packagePassword
+                });
+        }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException or InvalidDataException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
+        {
+            Console.Error.WriteLine($"Failed to load game project: {ex.Message}");
+            Console.Error.WriteLine("Usage: dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer -- <project-directory-or-package> [--package-password <password>]");
             return 1;
         }
 
-        using GamePlayerGame game = new(projectDirectory);
+        using GamePlayerGame game = new(projectSession);
         game.Run();
         return 0;
+    }
+
+    private static string? ReadOptionValue(string[] args, string optionName)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (string.Equals(arg, optionName, StringComparison.OrdinalIgnoreCase))
+            {
+                return i + 1 < args.Length ? args[i + 1] : string.Empty;
+            }
+
+            string prefix = optionName + "=";
+            if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return arg[prefix.Length..];
+            }
+        }
+
+        return null;
+    }
+
+    private static string ReadProjectInputPath(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                if (!arg.Contains('=') && IsOptionWithValue(arg) && i + 1 < args.Length)
+                {
+                    i++;
+                }
+
+                continue;
+            }
+
+            return arg;
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsOptionWithValue(string optionName)
+    {
+        return string.Equals(optionName, "--package-password", StringComparison.OrdinalIgnoreCase);
     }
 }

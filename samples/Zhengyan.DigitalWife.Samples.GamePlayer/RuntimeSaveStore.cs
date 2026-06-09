@@ -11,9 +11,9 @@ public sealed class RuntimeSaveStore
 
     private readonly string _saveDirectory;
 
-    internal RuntimeSaveStore(string projectDirectory)
+    internal RuntimeSaveStore(string saveDirectory)
     {
-        _saveDirectory = Path.Combine(projectDirectory, "saves");
+        _saveDirectory = Path.GetFullPath(saveDirectory);
         Directory.CreateDirectory(_saveDirectory);
     }
 

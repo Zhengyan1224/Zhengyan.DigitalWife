@@ -37,6 +37,7 @@ keywords:
   - `WaterInteractionStrength`
   - `ParticleRippleMinIntervalSeconds`
   - `ParticleRippleMergeDistance`
+  - `MirrorReflectionEnabled`
   - `RippleLifetimeSeconds`
   - `RippleWaveSpeed`
   - `RippleFrequency`
@@ -60,6 +61,7 @@ if (rain is not null && pond is not null)
     pond.WaterInteractionStrength = 0.75f;
     pond.ParticleRippleMinIntervalSeconds = 0.08f;
     pond.ParticleRippleMergeDistance = 0.45f;
+    pond.MirrorReflectionEnabled = true;
     pond.RippleLifetimeSeconds = 2.8f;
     pond.RippleWaveSpeed = 12.0f;
     pond.RippleFrequency = 16.0f;
@@ -82,6 +84,7 @@ if rain is not None and pond is not None:
     pond.set_water_interaction_strength(0.75)
     pond.set_particle_ripple_min_interval_seconds(0.08)
     pond.set_particle_ripple_merge_distance(0.45)
+    pond.set_mirror_reflection_enabled(True)
     pond.set_ripple_lifetime_seconds(2.8)
     pond.set_ripple_wave_speed(12.0)
     pond.set_ripple_frequency(16.0)
@@ -93,6 +96,9 @@ if rain is not None and pond is not None:
 - 雨：`ParticleRippleMinIntervalSeconds` 取 `0.05 - 0.12`，`ParticleRippleMergeDistance` 取 `0.3 - 0.6`。
 - 瀑布：`ParticleRippleMinIntervalSeconds` 取 `0.02 - 0.08`，`ParticleRippleMergeDistance` 取 `0.6 - 1.2`。
 - 平静水面的小粒子点缀：`KillOnWaterContact = false`，让粒子穿过水面但仍留下波纹。
+- `ParticleRippleMergeDistance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并成同一个波纹区域。
+- 水面 shader 当前最多同时显示 48 个活动波纹；超过后会替换最旧的波纹。
+- `MirrorReflectionEnabled` / `set_mirror_reflection_enabled` 用于切换水面的镜面反射观感。开启时使用天空反射和 Fresnel，高光更明显；关闭时水面更接近普通水色/环境渐变。
 
 C# 额外动作查询：
 

@@ -412,6 +412,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.water_interaction_strength = float(data.get("waterInteractionStrength", 0.0))
                        self.particle_ripple_min_interval_seconds = float(data.get("particleRippleMinIntervalSeconds", 0.0))
                        self.particle_ripple_merge_distance = float(data.get("particleRippleMergeDistance", 0.0))
+                       self.mirror_reflection_enabled = bool(data.get("mirrorReflectionEnabled", False))
                        self.ripple_lifetime_seconds = float(data.get("rippleLifetimeSeconds", 0.0))
                        self.ripple_wave_speed = float(data.get("rippleWaveSpeed", 0.0))
                        self.ripple_frequency = float(data.get("rippleFrequency", 0.0))
@@ -477,6 +478,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_particle_ripple_merge_distance(self, value):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_particle_ripple_merge_distance", "value": value})
+
+                   def set_mirror_reflection_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_mirror_reflection_enabled", "flag": bool(enabled)})
 
                    def set_ripple_lifetime_seconds(self, value):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_lifetime_seconds", "value": value})
@@ -3476,6 +3480,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_particle_ripple_merge_distance" when command.Value.HasValue:
                 entity.ParticleRippleMergeDistance = (float)command.Value.Value;
                 break;
+            case "set_mirror_reflection_enabled" when command.Flag.HasValue:
+                entity.MirrorReflectionEnabled = command.Flag.Value;
+                break;
             case "set_ripple_lifetime_seconds" when command.Value.HasValue:
                 entity.RippleLifetimeSeconds = (float)command.Value.Value;
                 break;
@@ -4080,6 +4087,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float ParticleRippleMergeDistance { get; set; }
 
+        public bool MirrorReflectionEnabled { get; set; }
+
         public float RippleLifetimeSeconds { get; set; }
 
         public float RippleWaveSpeed { get; set; }
@@ -4119,6 +4128,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 WaterInteractionStrength = entity.WaterInteractionStrength,
                 ParticleRippleMinIntervalSeconds = entity.ParticleRippleMinIntervalSeconds,
                 ParticleRippleMergeDistance = entity.ParticleRippleMergeDistance,
+                MirrorReflectionEnabled = entity.MirrorReflectionEnabled,
                 RippleLifetimeSeconds = entity.RippleLifetimeSeconds,
                 RippleWaveSpeed = entity.RippleWaveSpeed,
                 RippleFrequency = entity.RippleFrequency,

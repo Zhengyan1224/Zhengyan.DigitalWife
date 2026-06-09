@@ -1,6 +1,6 @@
 # Zhengyan.DigitalWife.Samples.GamePlayer
 
-`GamePlayer` 是 `GameEditor` 的配套运行器。它读取工程目录，加载场景、PMX、VMD 动作层、粒子、水面、音频、GUI 控件和脚本。
+`GamePlayer` 是 `GameEditor` 的配套运行器。它可以读取开发期工程目录，也可以读取发布期 `.dwgame` 游戏包，加载场景、PMX、VMD 动作层、粒子、水面、音频、GUI 控件和脚本。
 
 ## 启动
 
@@ -13,6 +13,33 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.Di
 ```text
 bin/Debug/net10.0/GameEditorProjects/DemoGame
 ```
+
+也可以直接加载 GameEditor 导出的 `.dwgame` 包：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame
+```
+
+加密包需要提供密码：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame --package-password "your-password"
+```
+
+也可以用环境变量提供密码，避免密码出现在命令历史中：
+
+```powershell
+$env:DW_GAME_PACKAGE_PASSWORD = "your-password"
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame
+```
+
+分包发布时文件名类似 `DemoGame.dwgame.001`、`DemoGame.dwgame.002`、`DemoGame.dwgame.003`。启动时可以传 `.dwgame` 基础路径，也可以传第一个 `.001` 文件：
+
+```powershell
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj -- D:\Games\DemoGame.dwgame.001
+```
+
+包加载时，GamePlayer 会按原有工程目录流程加载。未加密 `.dwgame` 首次启动会解包到用户本地包缓存目录，后续启动会按包文件 hash 直接复用缓存，避免每次重复解包；加密包为了避免明文资源长期留在磁盘上，仍会解包到运行时临时目录并在退出时尝试清理。包模式下 `Scene.Save` / `scene.save` 不会写入解包目录，而是写入用户数据目录，例如 Windows 下的 `%LOCALAPPDATA%\Zhengyan.DigitalWife\GamePlayer\Saves\<GameName>`。
 
 ### 隐藏控制台 / 无终端启动
 
@@ -362,6 +389,7 @@ GUI 控件支持：
 - `WaterInteractionStrength` / `set_water_interaction_strength`
 - `ParticleRippleMinIntervalSeconds` / `set_particle_ripple_min_interval_seconds`
 - `ParticleRippleMergeDistance` / `set_particle_ripple_merge_distance`
+- `MirrorReflectionEnabled` / `set_mirror_reflection_enabled`
 
 C#：
 
@@ -379,6 +407,7 @@ if (rain is not null && pond is not null)
     pond.WaterInteractionStrength = 0.75f;
     pond.ParticleRippleMinIntervalSeconds = 0.08f;
     pond.ParticleRippleMergeDistance = 0.45f;
+    pond.MirrorReflectionEnabled = true;
 }
 ```
 
@@ -397,6 +426,7 @@ if rain is not None and pond is not None:
     pond.set_water_interaction_strength(0.75)
     pond.set_particle_ripple_min_interval_seconds(0.08)
     pond.set_particle_ripple_merge_distance(0.45)
+    pond.set_mirror_reflection_enabled(True)
 ```
 
 配置模板：
@@ -413,3 +443,5 @@ if rain is not None and pond is not None:
   - `KillOnWaterContact = false`
   - `ParticleRippleMinIntervalSeconds = 0.08 - 0.2`
   - `ParticleRippleMergeDistance = 0.2 - 0.5`
+
+`ParticleRippleMergeDistance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并。水面 shader 当前最多同时显示 48 个活动波纹。`MirrorReflectionEnabled` 用于切换水面的镜面反射观感，关闭后水面会更偏普通水色和环境渐变。

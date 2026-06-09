@@ -445,6 +445,23 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool MirrorReflectionEnabled
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            && _definition.Water.MirrorReflectionEnabled;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.MirrorReflectionEnabled = value;
+                if (_water is not null)
+                {
+                    _water.MirrorReflectionEnabled = value;
+                }
+            }
+        }
+    }
+
     public float RippleLifetimeSeconds
     {
         get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
@@ -455,6 +472,10 @@ public sealed class RuntimeEntity
             if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
             {
                 _definition.Water.RippleLifetimeSeconds = Math.Max(0.05f, value);
+                if (_water is not null)
+                {
+                    _water.RippleLifetimeSeconds = _definition.Water.RippleLifetimeSeconds;
+                }
             }
         }
     }
@@ -469,6 +490,10 @@ public sealed class RuntimeEntity
             if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
             {
                 _definition.Water.RippleWaveSpeed = value;
+                if (_water is not null)
+                {
+                    _water.RippleWaveSpeed = value;
+                }
             }
         }
     }
@@ -483,6 +508,10 @@ public sealed class RuntimeEntity
             if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
             {
                 _definition.Water.RippleFrequency = Math.Max(0.0f, value);
+                if (_water is not null)
+                {
+                    _water.RippleFrequency = _definition.Water.RippleFrequency;
+                }
             }
         }
     }
@@ -497,6 +526,10 @@ public sealed class RuntimeEntity
             if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
             {
                 _definition.Water.RippleNormalStrength = Math.Max(0.0f, value);
+                if (_water is not null)
+                {
+                    _water.RippleNormalStrength = _definition.Water.RippleNormalStrength;
+                }
             }
         }
     }
@@ -1436,6 +1469,7 @@ public sealed class RuntimeEntity
             _definition.Water.DeepColor = Vector3Dto.FromVector3(_water.DeepColor);
             _definition.Water.ReflectionTint = Vector3Dto.FromVector3(_water.ReflectionTint);
             _definition.Water.SkyReflectionStrength = _water.SkyReflectionStrength;
+            _definition.Water.MirrorReflectionEnabled = _water.MirrorReflectionEnabled;
         }
         else if (_plane is not null)
         {
