@@ -413,6 +413,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.particle_ripple_min_interval_seconds = float(data.get("particleRippleMinIntervalSeconds", 0.0))
                        self.particle_ripple_merge_distance = float(data.get("particleRippleMergeDistance", 0.0))
                        self.mirror_reflection_enabled = bool(data.get("mirrorReflectionEnabled", False))
+                       self.plane_mirror_reflection_enabled = bool(data.get("planeMirrorReflectionEnabled", False))
+                       self.plane_mirror_reflection_strength = float(data.get("planeMirrorReflectionStrength", 0.0))
                        self.ripple_lifetime_seconds = float(data.get("rippleLifetimeSeconds", 0.0))
                        self.ripple_wave_speed = float(data.get("rippleWaveSpeed", 0.0))
                        self.ripple_frequency = float(data.get("rippleFrequency", 0.0))
@@ -481,6 +483,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_mirror_reflection_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_mirror_reflection_enabled", "flag": bool(enabled)})
+
+                   def set_plane_mirror_reflection_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_plane_mirror_reflection_enabled", "flag": bool(enabled)})
+
+                   def set_plane_mirror_reflection_strength(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_plane_mirror_reflection_strength", "value": value})
 
                    def set_ripple_lifetime_seconds(self, value):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_lifetime_seconds", "value": value})
@@ -3483,6 +3491,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_mirror_reflection_enabled" when command.Flag.HasValue:
                 entity.MirrorReflectionEnabled = command.Flag.Value;
                 break;
+            case "set_plane_mirror_reflection_enabled" when command.Flag.HasValue:
+                entity.PlaneMirrorReflectionEnabled = command.Flag.Value;
+                break;
+            case "set_plane_mirror_reflection_strength" when command.Value.HasValue:
+                entity.PlaneMirrorReflectionStrength = (float)command.Value.Value;
+                break;
             case "set_ripple_lifetime_seconds" when command.Value.HasValue:
                 entity.RippleLifetimeSeconds = (float)command.Value.Value;
                 break;
@@ -4089,6 +4103,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool MirrorReflectionEnabled { get; set; }
 
+        public bool PlaneMirrorReflectionEnabled { get; set; }
+
+        public float PlaneMirrorReflectionStrength { get; set; }
+
         public float RippleLifetimeSeconds { get; set; }
 
         public float RippleWaveSpeed { get; set; }
@@ -4129,6 +4147,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 ParticleRippleMinIntervalSeconds = entity.ParticleRippleMinIntervalSeconds,
                 ParticleRippleMergeDistance = entity.ParticleRippleMergeDistance,
                 MirrorReflectionEnabled = entity.MirrorReflectionEnabled,
+                PlaneMirrorReflectionEnabled = entity.PlaneMirrorReflectionEnabled,
+                PlaneMirrorReflectionStrength = entity.PlaneMirrorReflectionStrength,
                 RippleLifetimeSeconds = entity.RippleLifetimeSeconds,
                 RippleWaveSpeed = entity.RippleWaveSpeed,
                 RippleFrequency = entity.RippleFrequency,

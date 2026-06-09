@@ -835,6 +835,12 @@ public sealed class TexturedPlaneSettings
     public float Opacity { get; set; } = 1.0f;
 
     public Vector4Dto Tint { get; set; } = new(1.0f, 1.0f, 1.0f, 1.0f);
+
+    public bool ReceiveShadow { get; set; } = true;
+
+    public bool MirrorReflectionEnabled { get; set; }
+
+    public float MirrorReflectionStrength { get; set; } = 1.0f;
 }
 
 public sealed class ParticleEntitySettings

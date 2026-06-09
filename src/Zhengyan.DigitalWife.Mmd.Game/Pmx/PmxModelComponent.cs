@@ -158,6 +158,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private PmxShader? _mmdShader;
     private PmxEdgeShader? _edgeShader;
     private PmxGroundShadowShader? _groundShadowShader;
+    private PmxShadowDepthShader? _shadowDepthShader;
     private EmbeddedToonTextureLibrary? _toonTextures;
     private Texture2D? _defaultTexture;
 
@@ -180,6 +181,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private uint _modelVao;
     private uint _edgeVao;
     private uint _groundShadowVao;
+    private uint _shadowDepthVao;
     private float _animationTime;
     private bool _isPlaying = true;
     private bool _skipPhysicsOnNextPlayFrame;
@@ -298,6 +300,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public Vector3 LightDirection { get; set; } = new(-0.5f, -1.0f, -0.5f);
 
     public float GroundShadowPlaneHeight { get; set; }
+
+    public ShadowMapBinding? ShadowMap { get; set; }
 
     public bool IsPlaying
     {
@@ -442,6 +446,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _mmdShader = new PmxShader(gl);
         _edgeShader = new PmxEdgeShader(gl);
         _groundShadowShader = new PmxGroundShadowShader(gl);
+        _shadowDepthShader = new PmxShadowDepthShader(gl);
         _toonTextures = new EmbeddedToonTextureLibrary(gl);
         _defaultTexture = new Texture2D(gl);
         _defaultTexture.Fill(255, 255, 255, 255);
@@ -1511,11 +1516,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.SetUniform(_mmdShader.UniLightDir, viewSpaceLightDirection);
         gl.SetUniform(_mmdShader.UniAmbientLightColor, AmbientLightColor);
         gl.SetUniform(_mmdShader.UniAmbientLightStrength, AmbientLightStrength);
-        gl.SetUniform(_mmdShader.UniShadowMapEnabled, 0);
         gl.SetUniform(_mmdShader.UniShadowMap0, 3);
         gl.SetUniform(_mmdShader.UniShadowMap1, 4);
         gl.SetUniform(_mmdShader.UniShadowMap2, 5);
         gl.SetUniform(_mmdShader.UniShadowMap3, 6);
+        ApplyShadowMapUniforms(gl, transform);
 
         gl.DepthMask(true);
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
@@ -1562,7 +1567,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             gl.UseProgram(0);
         }
 
-        if (DrawShadowInMainPass)
+        if (DrawShadowInMainPass && ShadowMap is not { TextureId: not 0 })
         {
             DrawGroundShadowPassCore(gl, transform);
         }
@@ -1588,6 +1593,61 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.DepthMask(true);
         gl.Disable(GLEnum.Blend);
         gl.Disable(GLEnum.DepthTest);
+    }
+
+    public void DrawShadowDepthPass(Matrix4x4 lightViewProjection)
+    {
+        if (!CanRenderShadowDepth())
+        {
+            return;
+        }
+
+        GL gl = Game!.GraphicsDevice.Gl;
+        Matrix4x4 worldLightViewProjection = World * lightViewProjection;
+
+        gl.Enable(GLEnum.DepthTest);
+        gl.DepthMask(true);
+        gl.Disable(GLEnum.Blend);
+        gl.Enable(GLEnum.CullFace);
+        gl.CullFace(GLEnum.Back);
+        gl.UseProgram(_shadowDepthShader!.Id);
+        gl.BindVertexArray(_shadowDepthVao);
+        gl.SetUniform(_shadowDepthShader.UniWorldLightViewProjection, worldLightViewProjection);
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
+        {
+            Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
+            if (!mmdMaterial.ShadowCaster || mmdMaterial.Alpha <= 0.01f)
+            {
+                continue;
+            }
+
+            if (mmdMaterial.BothFace)
+            {
+                gl.Disable(GLEnum.CullFace);
+            }
+            else
+            {
+                gl.Enable(GLEnum.CullFace);
+                gl.CullFace(GLEnum.Back);
+            }
+
+            gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
+        }
+
+        gl.BindVertexArray(0);
+        gl.UseProgram(0);
+        gl.Disable(GLEnum.CullFace);
+    }
+
+    private bool CanRenderShadowDepth()
+    {
+        return _loaded
+            && Game is not null
+            && _model is not null
+            && _shadowDepthShader is not null
+            && _shadowDepthVao != 0
+            && EnableShadow;
     }
 
     private bool CanRenderGroundShadow()
@@ -1739,6 +1799,50 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
+    }
+
+    private void ApplyShadowMapUniforms(GL gl, Matrix4x4 transform)
+    {
+        if (_mmdShader is null || !EnableShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
+        {
+            if (_mmdShader is not null)
+            {
+                gl.SetUniform(_mmdShader.UniShadowMapEnabled, 0);
+            }
+
+            return;
+        }
+
+        Matrix4x4 lightWvp = transform * shadowMap.LightViewProjection;
+        gl.SetUniform(_mmdShader.UniShadowMapEnabled, 1);
+        gl.SetUniform(_mmdShader.UniShadowMapStrength, Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
+        gl.SetUniform(_mmdShader.UniShadowMapBias, Math.Max(0.0f, shadowMap.Bias));
+        gl.SetUniform(_mmdShader.UniLightWvp0, lightWvp);
+        gl.SetUniform(_mmdShader.UniLightWvp1, lightWvp);
+        gl.SetUniform(_mmdShader.UniLightWvp2, lightWvp);
+        gl.SetUniform(_mmdShader.UniLightWvp3, lightWvp);
+
+        Span<float> splits = stackalloc float[5];
+        splits[0] = Math.Max(0.0f, shadowMap.NearDistance);
+        splits[1] = Math.Max(splits[0] + 0.001f, shadowMap.FarDistance);
+        splits[2] = splits[1] + 0.001f;
+        splits[3] = splits[2] + 0.001f;
+        splits[4] = splits[3] + 0.001f;
+        fixed (float* splitPtr = splits)
+        {
+            gl.Uniform1(_mmdShader.UniShadowMapSplitPosition0, 5, splitPtr);
+        }
+
+        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture3);
+        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture4);
+        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture5);
+        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture6);
+    }
+
+    private static void BindShadowTexture(GL gl, uint textureId, TextureUnit unit)
+    {
+        gl.ActiveTexture(unit);
+        gl.BindTexture(GLEnum.Texture2D, textureId);
     }
 
     public bool SetMaterialTexture(int materialIndex, string textureReference)
@@ -1946,6 +2050,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _groundShadowShader?.Dispose();
         _groundShadowShader = null;
+
+        _shadowDepthShader?.Dispose();
+        _shadowDepthShader = null;
     }
 
     private void DisposeModelResources(GL gl)
@@ -1966,6 +2073,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.DeleteVertexArray(_modelVao);
         gl.DeleteVertexArray(_edgeVao);
         gl.DeleteVertexArray(_groundShadowVao);
+        gl.DeleteVertexArray(_shadowDepthVao);
 
         _positionBuffer = 0;
         _normalBuffer = 0;
@@ -1974,6 +2082,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _modelVao = 0;
         _edgeVao = 0;
         _groundShadowVao = 0;
+        _shadowDepthVao = 0;
 
         DisposeMotionLayers(_motionLayers);
         _motionLayers.Clear();
@@ -2582,7 +2691,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private void Setup(GL gl)
     {
-        if (_model is null || _mmdShader is null || _edgeShader is null || _groundShadowShader is null)
+        if (_model is null || _mmdShader is null || _edgeShader is null || _groundShadowShader is null || _shadowDepthShader is null)
         {
             return;
         }
@@ -2639,6 +2748,14 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
         gl.VertexAttribPointer(_groundShadowShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
         gl.EnableVertexAttribArray(_groundShadowShader.InPos);
+        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
+        gl.BindVertexArray(0);
+
+        _shadowDepthVao = gl.GenVertexArray();
+        gl.BindVertexArray(_shadowDepthVao);
+        gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
+        gl.VertexAttribPointer(_shadowDepthShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+        gl.EnableVertexAttribArray(_shadowDepthShader.InPos);
         gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
         gl.BindVertexArray(0);
 

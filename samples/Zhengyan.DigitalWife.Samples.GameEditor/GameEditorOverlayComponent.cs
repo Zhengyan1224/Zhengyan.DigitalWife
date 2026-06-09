@@ -1822,7 +1822,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         changed |= ImGui.Checkbox("Edge", ref enableEdge);
         changed |= ImGui.Checkbox("Shadow", ref enableShadow);
-        changed |= ImGui.Checkbox("Draw shadow in main pass", ref drawShadowInMainPass);
+        changed |= ImGui.Checkbox("Draw shadow in main pass (legacy)", ref drawShadowInMainPass);
 
         if (changed)
         {
@@ -3975,6 +3975,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool billboard = plane.Billboard;
         float opacity = plane.Opacity;
         Vector4 tint = plane.Tint.ToVector4();
+        bool receiveShadow = plane.ReceiveShadow;
+        bool mirrorReflectionEnabled = plane.MirrorReflectionEnabled;
+        float mirrorReflectionStrength = plane.MirrorReflectionStrength;
         bool changed = false;
 
         if (DrawPathInput("Texture path", ref texturePath, 1024, "planeTexturePath"))
@@ -3991,6 +3994,13 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Billboard", ref billboard);
         changed |= ImGui.SliderFloat("Opacity", ref opacity, 0.0f, 1.0f);
         changed |= ImGui.ColorEdit4("Tint", ref tint);
+        changed |= ImGui.Checkbox("Receive shadow", ref receiveShadow);
+        changed |= ImGui.Checkbox("Mirror reflection", ref mirrorReflectionEnabled);
+        if (mirrorReflectionEnabled)
+        {
+            changed |= ImGui.SliderFloat("Mirror reflection strength", ref mirrorReflectionStrength, 0.0f, 1.0f);
+            ImGui.TextWrapped("Mirror reflection renders the scene again from a reflected camera before drawing this plane.");
+        }
 
         if (changed)
         {
@@ -4001,6 +4011,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             plane.Billboard = billboard;
             plane.Opacity = Math.Clamp(opacity, 0.0f, 1.0f);
             plane.Tint = Vector4Dto.FromVector4(tint);
+            plane.ReceiveShadow = receiveShadow;
+            plane.MirrorReflectionEnabled = mirrorReflectionEnabled;
+            plane.MirrorReflectionStrength = Math.Clamp(mirrorReflectionStrength, 0.0f, 1.0f);
             _editorGame.ApplySelectedPlaneToRuntime();
         }
     }

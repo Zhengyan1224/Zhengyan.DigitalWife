@@ -101,6 +101,37 @@ if rain is not None and pond is not None:
 - `MirrorReflectionEnabled` / `set_mirror_reflection_enabled` 用于切换水面的平面镜面反射。开启时 GameEditor/GamePlayer 会用镜像相机把场景额外渲染到离屏纹理，水面 shader 再采样这张反射纹理并叠加法线扰动和 Fresnel；关闭时水面更接近普通水色/环境渐变。
 - 性能注意：每个启用镜面反射的水面至少会多一次场景渲染，当前反射纹理默认使用当前视口 1/2 分辨率。复杂场景、多个水面或多个相机视口会显著增加 GPU 开销。当前实现优先支持水平水面。
 
+## 3D 贴图矩形面镜面反射
+
+`textured_plane` 也可以开启平面镜面反射，用来制作墙面镜子、地面镜面材质或监视器式反射面。GameEditor 中选中 3D 贴图矩形面后，在 Inspector 勾选 `Mirror reflection` 并调整 `Mirror reflection strength`。
+
+C#：
+
+```csharp
+RuntimeEntity? mirror = Scene.GetEntity("Wall Mirror");
+if (mirror is not null)
+{
+    mirror.PlaneMirrorReflectionEnabled = true;
+    mirror.PlaneMirrorReflectionStrength = 1.0f;
+}
+```
+
+Python：
+
+```python
+mirror = scene.get_entity("Wall Mirror")
+if mirror is not None:
+    mirror.set_plane_mirror_reflection_enabled(True)
+    mirror.set_plane_mirror_reflection_strength(1.0)
+```
+
+注意事项：
+
+- 镜面反射会为每个启用的平面额外渲染一次场景，默认使用当前视口 1/2 分辨率。
+- 当前实现会跳过其它启用镜面反射的水面和平面，避免递归反射和上一帧纹理反馈。
+- 贴图矩形面的 `Receive shadow` 控制它是否接收 PMX shadow map 阴影；这和镜面反射开关相互独立。
+- 如果只想要纯镜子效果，可以把矩形面纹理设为白色或低对比图片，并把 `Mirror reflection strength` 调到 `1.0`。
+
 C# 额外动作查询：
 
 ```csharp

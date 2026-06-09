@@ -32,6 +32,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private GameEditorOverlayComponent? _overlay;
     private SceneRenderTextureManager? _renderTextureManager;
     private PlanarReflectionRenderer? _planarReflectionRenderer;
+    private ShadowMapRenderer? _shadowMapRenderer;
     private SkyboxComponent? _skybox;
     private string _statusMessage = "Ready.";
     private bool _renderedSceneThisFrame;
@@ -110,6 +111,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _sceneRenderTarget.EnsureSize(GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
+        _shadowMapRenderer = new ShadowMapRenderer(this);
 
         ApplyCameraSettings();
         ApplySceneSettings();
@@ -120,11 +122,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             PanSensitivity = 1.0f,
             ZoomSensitivity = 1.0f,
             KeyboardPanSpeed = 4.0f
-        });
-
-        _ = AddComponent(new GroundShadowPassComponent(this)
-        {
-            DrawOrder = 110
         });
 
         _ = AddComponent(new EditorDebugAxesComponent(_camera)
@@ -189,6 +186,11 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         ApplyRuntimeCamera(_camera);
+        RenderShadowMap(
+            gameTime,
+            _sceneRenderTarget.Width,
+            _sceneRenderTarget.Height,
+            () => _sceneRenderTarget.Bind());
         RenderPlanarWaterReflections(
             gameTime,
             _camera,
@@ -248,6 +250,17 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 
             ApplyRuntimeCamera(camera);
+            RenderShadowMap(
+                gameTime,
+                width,
+                height,
+                () =>
+                {
+                    _sceneRenderTarget.Bind();
+                    gl.Enable(GLEnum.ScissorTest);
+                    gl.Viewport(x, y, (uint)width, (uint)height);
+                    gl.Scissor(x, y, (uint)width, (uint)height);
+                });
             RenderPlanarWaterReflections(
                 gameTime,
                 camera,
@@ -298,6 +311,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             gameTime,
             camera,
             _waterObjects.Select(item => item.Component).ToArray(),
+            _planeObjects.Select(item => item.Component).ToArray(),
             GetOverlayComponents(),
             ApplyRuntimeCamera,
             ApplyRuntimeCamera,
@@ -307,9 +321,45 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             restoreRenderTarget);
     }
 
+    private void RenderShadowMap(
+        GameTime gameTime,
+        int targetWidth,
+        int targetHeight,
+        Action? restoreRenderTarget = null)
+    {
+        if (_shadowMapRenderer is null || _sceneRenderTarget is null)
+        {
+            return;
+        }
+
+        Action restore = restoreRenderTarget ?? (() => _sceneRenderTarget.Bind());
+        _shadowMapRenderer.Render(
+            gameTime,
+            _pmxObjects.Select(item => item.Model).ToArray(),
+            _planeObjects.Select(item => item.Component).ToArray(),
+            Project.Scene.Lighting.LightDirection.ToVector3(),
+            Project.Scene.Lighting.ShadowColor.ToVector4(),
+            targetWidth,
+            targetHeight,
+            restore);
+
+        ShadowMapBinding? binding = _shadowMapRenderer.CurrentBinding;
+        foreach (EditorPmxObject item in _pmxObjects)
+        {
+            item.Model.ShadowMap = binding;
+        }
+
+        foreach (EditorPlaneObject item in _planeObjects)
+        {
+            item.Component.ShadowMap = binding;
+        }
+    }
+
     protected override void UnloadContent()
     {
         ClearSceneRuntime();
+        _shadowMapRenderer?.Dispose();
+        _shadowMapRenderer = null;
         _planarReflectionRenderer?.Dispose();
         _planarReflectionRenderer = null;
         _renderTextureManager?.Dispose();
@@ -1976,6 +2026,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.Billboard = entity.Plane.Billboard;
         component.Tint = entity.Plane.Tint.ToVector4();
         component.Opacity = entity.Plane.Opacity;
+        component.ReceiveShadow = entity.Plane.ReceiveShadow;
+        component.MirrorReflectionEnabled = entity.Plane.MirrorReflectionEnabled;
+        component.MirrorReflectionStrength = entity.Plane.MirrorReflectionStrength;
     }
 
     private string ResolvePlaneTexturePath(GameEntity entity)

@@ -47,6 +47,13 @@ internal sealed class PmxShader : IDisposable
         UniShadowMap2 = gl.GetUniformLocation(Id, "u_ShadowMap2");
         UniShadowMap3 = gl.GetUniformLocation(Id, "u_ShadowMap3");
         UniShadowMapEnabled = gl.GetUniformLocation(Id, "u_ShadowMapEnabled");
+        UniShadowMapStrength = gl.GetUniformLocation(Id, "u_ShadowMapStrength");
+        UniShadowMapBias = gl.GetUniformLocation(Id, "u_ShadowMapBias");
+        UniLightWvp0 = gl.GetUniformLocation(Id, "u_LightWVP[0]");
+        UniLightWvp1 = gl.GetUniformLocation(Id, "u_LightWVP[1]");
+        UniLightWvp2 = gl.GetUniformLocation(Id, "u_LightWVP[2]");
+        UniLightWvp3 = gl.GetUniformLocation(Id, "u_LightWVP[3]");
+        UniShadowMapSplitPosition0 = gl.GetUniformLocation(Id, "u_ShadowMapSplitPositions[0]");
     }
 
     public uint Id { get; }
@@ -112,6 +119,20 @@ internal sealed class PmxShader : IDisposable
     public int UniShadowMap3 { get; }
 
     public int UniShadowMapEnabled { get; }
+
+    public int UniShadowMapStrength { get; }
+
+    public int UniShadowMapBias { get; }
+
+    public int UniLightWvp0 { get; }
+
+    public int UniLightWvp1 { get; }
+
+    public int UniLightWvp2 { get; }
+
+    public int UniLightWvp3 { get; }
+
+    public int UniShadowMapSplitPosition0 { get; }
 
     public void Dispose()
     {

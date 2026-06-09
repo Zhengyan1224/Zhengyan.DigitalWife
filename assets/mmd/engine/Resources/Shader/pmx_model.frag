@@ -44,6 +44,8 @@ uniform sampler2DShadow u_ShadowMap1;
 uniform sampler2DShadow u_ShadowMap2;
 uniform sampler2DShadow u_ShadowMap3;
 uniform int u_ShadowMapEnabled;
+uniform float u_ShadowMapStrength;
+uniform float u_ShadowMapBias;
 
 vec3 ComputeTexMulFactor(vec3 texColor, vec4 factor) {
     vec3 ret = texColor * factor.rgb;
@@ -66,6 +68,17 @@ float ComputeTextureAlpha(float textureAlpha) {
     return textureAlpha;
 }
 
+float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord) {
+    vec3 ndc = clipCoord.xyz / max(abs(clipCoord.w), 0.0001);
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+
+    float depth = (ndc.z * 0.5 + 0.5) - u_ShadowMapBias;
+    return texture(shadowMap, vec3(uv, depth));
+}
+
 void main() {
     vec3 eyeDir = normalize(-vs_Pos);
     vec3 lightDir = normalize(-u_LightDir);
@@ -76,19 +89,10 @@ void main() {
     float alpha = u_Alpha;
 
     if(u_ShadowMapEnabled != 0) {
-        float z = -vs_Pos.z;
-        float visibility = 1.0;
-        if(u_ShadowMapSplitPositions[0] <= z && z < u_ShadowMapSplitPositions[0 + 1]) {
-            visibility = textureProj(u_ShadowMap0, vs_shadowMapCoord[0]);
-        } else if(u_ShadowMapSplitPositions[1] <= z && z < u_ShadowMapSplitPositions[1 + 1]) {
-            visibility = textureProj(u_ShadowMap1, vs_shadowMapCoord[1]);
-        } else if(u_ShadowMapSplitPositions[2] <= z && z < u_ShadowMapSplitPositions[2 + 1]) {
-            visibility = textureProj(u_ShadowMap2, vs_shadowMapCoord[2]);
-        } else if(u_ShadowMapSplitPositions[3] <= z && z < u_ShadowMapSplitPositions[3 + 1]) {
-            visibility = textureProj(u_ShadowMap3, vs_shadowMapCoord[3]);
-        }
-        ndotl *= (1.0 - visibility);
-        toonCoord = mix(0.0, toonCoord, 1.0 - visibility);
+        float visibility = SampleShadowMap(u_ShadowMap0, vs_shadowMapCoord[0]);
+        float shadowFactor = mix(1.0 - clamp(u_ShadowMapStrength, 0.0, 1.0), 1.0, visibility);
+        ndotl *= shadowFactor;
+        toonCoord = mix(0.0, toonCoord, shadowFactor);
     }
 
     if(u_TexMode != 0) {

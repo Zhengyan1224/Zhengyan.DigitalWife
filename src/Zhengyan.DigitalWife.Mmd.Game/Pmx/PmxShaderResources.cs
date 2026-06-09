@@ -14,6 +14,8 @@ internal static class PmxShaderResources
     public const string EdgeFragmentShader = "pmx_edge.frag";
     public const string GroundShadowVertexShader = "pmx_ground_shadow.vert";
     public const string GroundShadowFragmentShader = "pmx_ground_shadow.frag";
+    public const string ShadowDepthVertexShader = "pmx_shadow_depth.vert";
+    public const string ShadowDepthFragmentShader = "pmx_shadow_depth.frag";
 
     public static uint CreateProgram(GL gl, string vertexShaderFileName, string fragmentShaderFileName)
     {

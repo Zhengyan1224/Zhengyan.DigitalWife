@@ -14,7 +14,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
     }
 
     private readonly Game _game;
-    private readonly Dictionary<WaterSurfaceComponent, ReflectionSurfaceState> _surfaces = [];
+    private readonly Dictionary<object, ReflectionSurfaceState> _surfaces = [];
     private bool _isRendering;
     private bool _disposed;
     private int _resolutionDivisor = 2;
@@ -34,6 +34,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
         GameTime gameTime,
         OrbitCamera sourceCamera,
         IReadOnlyList<WaterSurfaceComponent> waterSurfaces,
+        IReadOnlyList<TexturedPlaneComponent>? mirrorPlanes,
         IReadOnlyList<DrawableGameComponent> excludedComponents,
         Action<OrbitCamera> applyCamera,
         Action<OrbitCamera> restoreCamera,
@@ -59,12 +60,12 @@ public sealed class PlanarReflectionRenderer : IDisposable
         int textureWidth = Math.Max(targetWidth / _resolutionDivisor, 1);
         int textureHeight = Math.Max(targetHeight / _resolutionDivisor, 1);
 
-        List<WaterSurfaceComponent> activeSurfaces = [];
+        List<ReflectionSurface> activeSurfaces = [];
         foreach (WaterSurfaceComponent water in waterSurfaces)
         {
             if (water.Visible && water.MirrorReflectionEnabled && water.Alpha > 0.001f)
             {
-                activeSurfaces.Add(water);
+                activeSurfaces.Add(ReflectionSurface.ForWater(water));
             }
             else
             {
@@ -72,8 +73,20 @@ public sealed class PlanarReflectionRenderer : IDisposable
             }
         }
 
-        HashSet<WaterSurfaceComponent> validSurfaces = [.. waterSurfaces];
-        foreach (WaterSurfaceComponent stale in _surfaces.Keys.Where(surface => !validSurfaces.Contains(surface)).ToArray())
+        foreach (TexturedPlaneComponent plane in mirrorPlanes ?? [])
+        {
+            if (plane.Visible && plane.MirrorReflectionEnabled && plane.MirrorReflectionStrength > 0.001f && plane.TryGetMirrorPlane(out Vector3 normal, out float distance))
+            {
+                activeSurfaces.Add(ReflectionSurface.ForPlane(plane, normal, distance));
+            }
+            else
+            {
+                plane.ClearPlanarReflection();
+            }
+        }
+
+        HashSet<object> validSurfaces = [.. waterSurfaces.Cast<object>().Concat((mirrorPlanes ?? []).Cast<object>())];
+        foreach (object stale in _surfaces.Keys.Where(surface => !validSurfaces.Contains(surface)).ToArray())
         {
             _surfaces[stale].Texture.Dispose();
             _surfaces.Remove(stale);
@@ -89,14 +102,21 @@ public sealed class PlanarReflectionRenderer : IDisposable
         try
         {
             HashSet<DrawableGameComponent> excluded = [.. excludedComponents];
-
-            foreach (WaterSurfaceComponent water in activeSurfaces)
+            foreach (ReflectionSurface surface in activeSurfaces)
             {
-                ReflectionSurfaceState state = GetOrCreateSurfaceState(water);
+                if (surface.Key is DrawableGameComponent drawableSurface)
+                {
+                    excluded.Add(drawableSurface);
+                }
+            }
+
+            foreach (ReflectionSurface surface in activeSurfaces)
+            {
+                ReflectionSurfaceState state = GetOrCreateSurfaceState(surface.Key);
                 RenderTexture texture = state.Texture;
                 texture.EnsureSize(textureWidth, textureHeight);
 
-                ConfigureReflectionCamera(sourceCamera, state.Camera, water.Position.Y, texture.Width, texture.Height);
+                ConfigureReflectionCamera(sourceCamera, state.Camera, surface.Normal, surface.Distance, texture.Width, texture.Height);
 
                 texture.Bind();
                 gl.Disable(GLEnum.ScissorTest);
@@ -108,7 +128,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
                 applyCamera(state.Camera);
                 DrawReflectionScene(gameTime, excluded);
-                water.SetPlanarReflection(texture.ColorTextureId, state.Camera.View * state.Camera.Projection, texture.Width, texture.Height);
+                surface.SetReflection(texture.ColorTextureId, state.Camera.View * state.Camera.Projection, texture.Width, texture.Height);
             }
         }
         finally
@@ -144,15 +164,15 @@ public sealed class PlanarReflectionRenderer : IDisposable
         _surfaces.Clear();
     }
 
-    private ReflectionSurfaceState GetOrCreateSurfaceState(WaterSurfaceComponent water)
+    private ReflectionSurfaceState GetOrCreateSurfaceState(object key)
     {
-        if (!_surfaces.TryGetValue(water, out ReflectionSurfaceState? state))
+        if (!_surfaces.TryGetValue(key, out ReflectionSurfaceState? state))
         {
             state = new ReflectionSurfaceState
             {
-                Texture = new RenderTexture(_game.GraphicsDevice.Gl, $"WaterReflection-{_surfaces.Count + 1}")
+                Texture = new RenderTexture(_game.GraphicsDevice.Gl, $"PlanarReflection-{_surfaces.Count + 1}")
             };
-            _surfaces[water] = state;
+            _surfaces[key] = state;
         }
 
         return state;
@@ -165,7 +185,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
             .Where(component => component.Visible)
             .OrderBy(component => component.DrawOrder))
         {
-            if (drawable is WaterSurfaceComponent || excluded.Contains(drawable))
+            if (excluded.Contains(drawable))
             {
                 continue;
             }
@@ -177,20 +197,22 @@ public sealed class PlanarReflectionRenderer : IDisposable
     private static void ConfigureReflectionCamera(
         OrbitCamera source,
         OrbitCamera target,
-        float planeY,
+        Vector3 planeNormal,
+        float planeDistance,
         int width,
         int height)
     {
-        Vector3 reflectedPosition = ReflectPoint(source.Position, planeY);
-        Vector3 reflectedTarget = ReflectPoint(source.Target, planeY);
+        Vector3 normal = planeNormal.LengthSquared() > 0.0001f ? Vector3.Normalize(planeNormal) : Vector3.UnitY;
+        Vector3 reflectedPosition = ReflectPoint(source.Position, normal, planeDistance);
+        Vector3 reflectedTarget = ReflectPoint(source.Target, normal, planeDistance);
         if (Vector3.DistanceSquared(reflectedPosition, reflectedTarget) < 0.0001f)
         {
-            reflectedTarget = reflectedPosition + ReflectVector(source.Front);
+            reflectedTarget = reflectedPosition + ReflectVector(source.Front, normal);
         }
 
         target.Width = Math.Max(width, 1);
         target.Height = Math.Max(height, 1);
-        target.SetLookAt(reflectedPosition, reflectedTarget, ReflectVector(source.Up));
+        target.SetLookAt(reflectedPosition, reflectedTarget, ReflectVector(source.Up, normal));
         target.ProjectionMode = source.ProjectionMode;
         target.Fov = source.Fov;
         target.OrthographicSize = source.OrthographicSize;
@@ -198,15 +220,59 @@ public sealed class PlanarReflectionRenderer : IDisposable
         target.FarClipPlane = source.FarClipPlane;
     }
 
-    private static Vector3 ReflectPoint(Vector3 point, float planeY)
+    private static Vector3 ReflectPoint(Vector3 point, Vector3 normal, float distance)
     {
-        point.Y = (planeY * 2.0f) - point.Y;
-        return point;
+        return point - (2.0f * (Vector3.Dot(normal, point) + distance) * normal);
     }
 
-    private static Vector3 ReflectVector(Vector3 direction)
+    private static Vector3 ReflectVector(Vector3 direction, Vector3 normal)
     {
-        direction.Y = -direction.Y;
-        return Vector3.Normalize(direction);
+        return Vector3.Normalize(direction - (2.0f * Vector3.Dot(direction, normal) * normal));
+    }
+
+    private readonly struct ReflectionSurface
+    {
+        private readonly WaterSurfaceComponent? _water;
+        private readonly TexturedPlaneComponent? _plane;
+
+        private ReflectionSurface(WaterSurfaceComponent water)
+        {
+            _water = water;
+            _plane = null;
+            Key = water;
+            Normal = Vector3.UnitY;
+            Distance = -water.Position.Y;
+        }
+
+        private ReflectionSurface(TexturedPlaneComponent plane, Vector3 normal, float distance)
+        {
+            _water = null;
+            _plane = plane;
+            Key = plane;
+            Normal = normal;
+            Distance = distance;
+        }
+
+        public object Key { get; }
+
+        public Vector3 Normal { get; }
+
+        public float Distance { get; }
+
+        public static ReflectionSurface ForWater(WaterSurfaceComponent water) => new(water);
+
+        public static ReflectionSurface ForPlane(TexturedPlaneComponent plane, Vector3 normal, float distance) => new(plane, normal, distance);
+
+        public void SetReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height)
+        {
+            if (_water is not null)
+            {
+                _water.SetPlanarReflection(textureId, reflectionViewProjection, width, height);
+            }
+            else
+            {
+                _plane?.SetPlanarReflection(textureId, reflectionViewProjection, width, height);
+            }
+        }
     }
 }

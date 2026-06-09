@@ -112,7 +112,9 @@ entity.set_draw_shadow_in_main_pass(False)
 - `KillOnWaterContact` 仅对粒子系统有意义。开启后，接触水面的粒子会在当前帧结束；关闭时粒子会穿过水面继续运动。
 - `WaterInteractionEnabled`、`WaterInteractionRadius`、`WaterInteractionStrength`、`ParticleRippleMinIntervalSeconds`、`ParticleRippleMergeDistance`、`RippleLifetimeSeconds`、`RippleWaveSpeed`、`RippleFrequency`、`RippleNormalStrength` 仅对 `water_surface` 有意义。
 - `EnableEdge`、`EnableShadow`、`DrawShadowInMainPass` 仅对 PMX 有意义。
-- `DrawShadowInMainPass = false` 时，地面影子会交给独立的地面阴影 pass 处理；`true` 时在 PMX 主绘制阶段直接绘制。
+- GameEditor/GamePlayer 当前使用单张方向光 shadow map 替代旧的平面投影地面阴影。`EnableShadow = true` 时 PMX 会写入 shadow map 并在主渲染中接收阴影；`false` 时不参与 shadow map。
+- shadow map 需要实际的接收面，例如场景 PMX 模型里的地面或开启 `Receive shadow` 的 3D 贴图矩形面。它不会像旧平面投影阴影那样自动投到固定高度平面。
+- `DrawShadowInMainPass` 是兼容旧示例程序的平面投影阴影开关。GameEditor/GamePlayer 已经不依赖它，通常保持默认即可。
 - `PlayMotion` / `PauseMotion` 只改变播放状态，不会清掉已加载动作层。
 - `StopMotion` 会把动作停下并重置到起始状态，效果接近“停止并回到 0 帧”。
 - `ResetMotion` 会重置动作与姿态；`ResetMotionPhysics` 只重置物理。

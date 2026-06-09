@@ -462,6 +462,41 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool PlaneMirrorReflectionEnabled
+    {
+        get => string.Equals(_definition.Type, "textured_plane", StringComparison.OrdinalIgnoreCase)
+            && _definition.Plane.MirrorReflectionEnabled;
+        set
+        {
+            if (string.Equals(_definition.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Plane.MirrorReflectionEnabled = value;
+                if (_plane is not null)
+                {
+                    _plane.MirrorReflectionEnabled = value;
+                }
+            }
+        }
+    }
+
+    public float PlaneMirrorReflectionStrength
+    {
+        get => string.Equals(_definition.Type, "textured_plane", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Plane.MirrorReflectionStrength
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Plane.MirrorReflectionStrength = Math.Clamp(value, 0.0f, 1.0f);
+                if (_plane is not null)
+                {
+                    _plane.MirrorReflectionStrength = _definition.Plane.MirrorReflectionStrength;
+                }
+            }
+        }
+    }
+
     public float RippleLifetimeSeconds
     {
         get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
@@ -1480,6 +1515,9 @@ public sealed class RuntimeEntity
             _definition.Plane.Billboard = _plane.Billboard;
             _definition.Plane.Opacity = _plane.Opacity;
             _definition.Plane.Tint = Vector4Dto.FromVector4(_plane.Tint);
+            _definition.Plane.ReceiveShadow = _plane.ReceiveShadow;
+            _definition.Plane.MirrorReflectionEnabled = _plane.MirrorReflectionEnabled;
+            _definition.Plane.MirrorReflectionStrength = _plane.MirrorReflectionStrength;
         }
     }
 

@@ -34,7 +34,7 @@ keywords:
 | --- | --- |
 | `pmx_model` | PMX 模型，支持动作、材质贴图覆盖、TTS 口型、PMX 绑定关系。 |
 | `empty_object` | 空对象，不渲染；支持 Transform、脚本、碰撞体，适合触发器、挂点、相机目标。 |
-| `textured_plane` | 3D 矩形面，可设置图片纹理和 Billboard。 |
+| `textured_plane` | 3D 矩形面，可设置图片纹理、Billboard、接收 shadow map 阴影和镜面反射。 |
 | `particle_system` | 粒子系统。 |
 | `water_surface` | 水面对象，可开启水体交互波纹。 |
 
@@ -54,7 +54,7 @@ keywords:
 | `LoopMotion` | 无直接快照字段 | PMX 动作是否循环。Python 用 `set_loop_motion` 修改。 |
 | `ResetPhysicsOnMotionLoop` | 无直接快照字段 | PMX 动作循环时是否重置物理。Python 用 `set_reset_physics_on_motion_loop` 修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
-| `EnableShadow` | 无直接快照字段 | PMX 是否参与阴影绘制。Python 用 `set_shadow_enabled` 修改。 |
+| `EnableShadow` | 无直接快照字段 | PMX 是否参与 shadow map 阴影。开启时会投射并接收阴影；关闭时不参与。Python 用 `set_shadow_enabled` 修改。 |
 | `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
 | `KillOnWaterContact` | `kill_on_water_contact` | 粒子系统粒子接触水面后是否立即消失。Python 用 `set_kill_on_water_contact` 修改。 |
 | `WaterInteractionEnabled` | `water_interaction_enabled` | 水面对象是否启用水体交互检测。Python 用 `set_water_interaction_enabled` 修改。 |
@@ -67,7 +67,9 @@ keywords:
 | `RippleWaveSpeed` | 无 | 水面波纹传播速度。 |
 | `RippleFrequency` | 无 | 水面波纹频率。 |
 | `RippleNormalStrength` | 无 | 水面波纹法线扰动强度。 |
-| `DrawShadowInMainPass` | 无直接快照字段 | PMX 是否在主渲染通道直接绘制地面影子。Python 用 `set_draw_shadow_in_main_pass` 修改。 |
+| `PlaneMirrorReflectionEnabled` | `plane_mirror_reflection_enabled` | 3D 贴图矩形面是否启用平面镜面反射。Python 用 `set_plane_mirror_reflection_enabled` 修改。 |
+| `PlaneMirrorReflectionStrength` | `plane_mirror_reflection_strength` | 3D 贴图矩形面镜面反射强度，范围 `0 - 1`。Python 用 `set_plane_mirror_reflection_strength` 修改。 |
+| `DrawShadowInMainPass` | 无直接快照字段 | 兼容旧 PMX 平面投影阴影的开关。GameEditor/GamePlayer 使用 shadow map 后通常不需要修改。Python 用 `set_draw_shadow_in_main_pass` 修改。 |
 | `MaterialNames` | `material_names` | PMX 材质名称列表。 |
 | `Colliders` | `colliders` | 碰撞体快照。 |
 
@@ -96,6 +98,8 @@ Entity.WaterInteractionStrength = 0.9f;
 Entity.ParticleRippleMinIntervalSeconds = 0.08f;
 Entity.ParticleRippleMergeDistance = 0.5f;
 Entity.MirrorReflectionEnabled = true;
+Entity.PlaneMirrorReflectionEnabled = true;
+Entity.PlaneMirrorReflectionStrength = 0.85f;
 Entity.RippleLifetimeSeconds = 2.8f;
 Entity.RippleWaveSpeed = 12.0f;
 Entity.RippleFrequency = 16.0f;
@@ -125,6 +129,8 @@ entity.set_water_interaction_strength(0.9)
 entity.set_particle_ripple_min_interval_seconds(0.08)
 entity.set_particle_ripple_merge_distance(0.5)
 entity.set_mirror_reflection_enabled(True)
+entity.set_plane_mirror_reflection_enabled(True)
+entity.set_plane_mirror_reflection_strength(0.85)
 entity.set_draw_shadow_in_main_pass(False)
 ```
 
@@ -136,7 +142,7 @@ C# 额外可读/可写属性：
 | `LoopMotion` | PMX 动作是否循环。 |
 | `ResetPhysicsOnMotionLoop` | PMX 动作循环时是否重置物理。 |
 | `EnableEdge` | PMX 是否绘制描边。 |
-| `EnableShadow` | PMX 是否参与阴影绘制。 |
+| `EnableShadow` | PMX 是否参与 shadow map 阴影。 |
 | `EnableWaterInteraction` | 粒子系统是否参与水体交互。 |
 | `KillOnWaterContact` | 粒子系统粒子接触水面后是否立即消失。 |
 | `WaterInteractionEnabled` | 水面对象是否启用水体交互检测。 |
@@ -149,7 +155,9 @@ C# 额外可读/可写属性：
 | `RippleWaveSpeed` | 水面波纹传播速度。 |
 | `RippleFrequency` | 水面波纹频率。 |
 | `RippleNormalStrength` | 水面波纹法线扰动强度。 |
-| `DrawShadowInMainPass` | PMX 是否在主渲染通道直接绘制地面影子。 |
+| `PlaneMirrorReflectionEnabled` | 3D 贴图矩形面是否启用平面镜面反射。 |
+| `PlaneMirrorReflectionStrength` | 3D 贴图矩形面镜面反射强度，范围 `0 - 1`。 |
+| `DrawShadowInMainPass` | 兼容旧 PMX 平面投影阴影的开关。GameEditor/GamePlayer 使用 shadow map 后通常不需要修改。 |
 | `RelationEnabled` | 是否启用 PMX 绑定关系。 |
 | `RelationEntity` | 绑定目标实体名称或 Id。 |
 | `RelationBindComponentTransform` | 是否绑定组件 Transform。 |
