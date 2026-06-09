@@ -183,7 +183,9 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 
 水面实体自己的 `Particle ripple min interval` 和 `Particle ripple merge distance` 用来控制粒子触水时的波纹密度，避免雨、瀑布这类高密度粒子把水面刷满。`Particle ripple merge distance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并成同一个波纹区域。水面 shader 当前最多同时显示 48 个活动波纹。这个效果是视觉交互，不是完整流体模拟，也不会产生浮力或真实物理反馈。
 
-`Mirror reflection` 控制水面是否启用镜面反射观感。开启时水面会按视线和法线采样天空反射并叠加 Fresnel，高光更明显；关闭时水面会退回更偏普通水色/环境渐变的渲染。脚本层可通过水面实体的 `MirrorReflectionEnabled` 或 Python 的 `set_mirror_reflection_enabled(...)` 在运行时切换。
+`Mirror reflection` 控制水面是否启用平面镜面反射。开启后 GameEditor/GamePlayer 会在水面绘制前用镜像相机把场景额外渲染到离屏纹理，水面 shader 再采样这张反射纹理并叠加法线扰动和 Fresnel；关闭时水面会退回更偏普通水色/环境渐变的渲染。脚本层可通过水面实体的 `MirrorReflectionEnabled` 或 Python 的 `set_mirror_reflection_enabled(...)` 在运行时切换。
+
+性能注意：每个启用镜面反射的水面至少会多一次场景渲染，当前反射纹理默认使用当前视口 1/2 分辨率。复杂场景、多个水面或多个相机视口会显著增加 GPU 开销。当前实现优先支持水平水面；旋转水面、严格裁剪平面和递归反射暂未作为首版目标。
 
 推荐参数模板：
 

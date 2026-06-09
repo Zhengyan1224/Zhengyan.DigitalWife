@@ -40,6 +40,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private DesktopSpriteWindowDragComponent? _desktopSpriteWindowDrag;
     private DesktopSpriteTrayComponent? _desktopSpriteTray;
     private SceneRenderTextureManager? _renderTextureManager;
+    private PlanarReflectionRenderer? _planarReflectionRenderer;
     private SkyboxComponent? _skybox;
     private RuntimeScene? _runtimeScene;
     private RuntimeInput? _runtimeInput;
@@ -154,6 +155,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _runtimeInput = new RuntimeInput(this);
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
+        _planarReflectionRenderer = new PlanarReflectionRenderer(this);
 
         _desktopSpriteWindowDrag = AddComponent(new DesktopSpriteWindowDragComponent(() => Project.Window)
         {
@@ -268,6 +270,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         ApplyRuntimeCamera(_camera);
+        RenderPlanarWaterReflections(gameTime, _camera, GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
     }
 
     private bool TryDrawCameraViewports(GameTime gameTime)
@@ -323,6 +326,18 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             gl.Clear(Silk.NET.OpenGLES.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGLES.ClearBufferMask.DepthBufferBit | Silk.NET.OpenGLES.ClearBufferMask.StencilBufferBit);
 
             ApplyRuntimeCamera(camera);
+            RenderPlanarWaterReflections(
+                gameTime,
+                camera,
+                width,
+                height,
+                () =>
+                {
+                    gl.BindFramebuffer(Silk.NET.OpenGLES.GLEnum.Framebuffer, 0);
+                    gl.Enable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+                    gl.Viewport(x, y, (uint)width, (uint)height);
+                    gl.Scissor(x, y, (uint)width, (uint)height);
+                });
             DrawSceneComponentsOnce(gameTime);
         }
 
@@ -344,9 +359,37 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    private void RenderPlanarWaterReflections(
+        GameTime gameTime,
+        OrbitCamera camera,
+        int targetWidth,
+        int targetHeight,
+        Action? restoreRenderTarget = null)
+    {
+        if (_planarReflectionRenderer is null || _waterObjects.Count == 0)
+        {
+            return;
+        }
+
+        Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
+        _planarReflectionRenderer.RenderAll(
+            gameTime,
+            camera,
+            _waterObjects.Select(item => item.Component).ToArray(),
+            GetOverlayComponents(),
+            ApplyRuntimeCamera,
+            ApplyRuntimeCamera,
+            clearColor,
+            targetWidth,
+            targetHeight,
+            restoreRenderTarget);
+    }
+
     protected override void UnloadContent()
     {
         ClearRuntimeScene();
+        _planarReflectionRenderer?.Dispose();
+        _planarReflectionRenderer = null;
         _renderTextureManager?.Dispose();
         _renderTextureManager = null;
         _desktopSpriteTray?.Dispose();

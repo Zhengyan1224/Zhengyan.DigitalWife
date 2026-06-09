@@ -44,8 +44,11 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private int _uniformNormalTex = -1;
     private int _uniformNormalTex2 = -1;
     private int _uniformSkyTex = -1;
+    private int _uniformPlanarReflectionTex = -1;
     private int _uniformSkyReflectionStrength = -1;
     private int _uniformMirrorReflectionEnabled = -1;
+    private int _uniformPlanarReflectionEnabled = -1;
+    private int _uniformReflectionViewProjection = -1;
     private int _uniformRippleCenters = -1;
     private int _uniformRippleTimes = -1;
     private int _uniformRippleRadii = -1;
@@ -54,6 +57,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private int _uniformRippleWaveSpeed = -1;
     private int _uniformRippleFrequency = -1;
     private int _uniformRippleNormalStrength = -1;
+    private uint _planarReflectionTextureId;
+    private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
     private readonly RippleState[] _ripples = new RippleState[MaxRipples];
 
     public WaterSurfaceComponent(
@@ -127,6 +132,22 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     public float RippleFrequency { get; set; } = 24.0f;
 
     public float RippleNormalStrength { get; set; } = 0.30f;
+
+    public bool HasPlanarReflection => _planarReflectionTextureId != 0;
+
+    public void SetPlanarReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height)
+    {
+        _ = width;
+        _ = height;
+        _planarReflectionTextureId = textureId;
+        _planarReflectionViewProjection = reflectionViewProjection;
+    }
+
+    public void ClearPlanarReflection()
+    {
+        _planarReflectionTextureId = 0;
+        _planarReflectionViewProjection = Matrix4x4.Identity;
+    }
 
     public void AddRipple(Vector3 worldPosition, float radius = 0.8f, float strength = 0.8f, float mergeDistance = -1.0f)
     {
@@ -235,8 +256,11 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _uniformNormalTex = gl.GetUniformLocation(_program, "u_NormalTex");
         _uniformNormalTex2 = gl.GetUniformLocation(_program, "u_NormalTex2");
         _uniformSkyTex = gl.GetUniformLocation(_program, "u_SkyTex");
+        _uniformPlanarReflectionTex = gl.GetUniformLocation(_program, "u_PlanarReflectionTex");
         _uniformSkyReflectionStrength = gl.GetUniformLocation(_program, "u_SkyReflectionStrength");
         _uniformMirrorReflectionEnabled = gl.GetUniformLocation(_program, "u_MirrorReflectionEnabled");
+        _uniformPlanarReflectionEnabled = gl.GetUniformLocation(_program, "u_PlanarReflectionEnabled");
+        _uniformReflectionViewProjection = gl.GetUniformLocation(_program, "u_ReflectionViewProjection");
         _uniformRippleCenters = gl.GetUniformLocation(_program, "u_RippleCenters");
         _uniformRippleTimes = gl.GetUniformLocation(_program, "u_RippleTimes");
         _uniformRippleRadii = gl.GetUniformLocation(_program, "u_RippleRadii");
@@ -307,8 +331,11 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.SetUniform(_uniformNormalTex, 0);
         gl.SetUniform(_uniformNormalTex2, 1);
         gl.SetUniform(_uniformSkyTex, 2);
+        gl.SetUniform(_uniformPlanarReflectionTex, 3);
         gl.SetUniform(_uniformSkyReflectionStrength, _skyReflectionStrength);
         gl.Uniform1(_uniformMirrorReflectionEnabled, MirrorReflectionEnabled ? 1.0f : 0.0f);
+        gl.Uniform1(_uniformPlanarReflectionEnabled, MirrorReflectionEnabled && _planarReflectionTextureId != 0 ? 1.0f : 0.0f);
+        gl.SetUniform(_uniformReflectionViewProjection, _planarReflectionViewProjection);
         gl.SetUniform(_uniformRippleLifetime, Math.Max(0.05f, RippleLifetimeSeconds));
         gl.SetUniform(_uniformRippleWaveSpeed, RippleWaveSpeed);
         gl.SetUniform(_uniformRippleFrequency, RippleFrequency);
@@ -321,9 +348,13 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.BindTexture(GLEnum.Texture2D, _normalMaps[frameIndex].Id);
         gl.ActiveTexture(TextureUnit.Texture2);
         gl.BindTexture(GLEnum.Texture2D, _skyTexture.Id);
+        gl.ActiveTexture(TextureUnit.Texture3);
+        gl.BindTexture(GLEnum.Texture2D, _planarReflectionTextureId != 0 ? _planarReflectionTextureId : _skyTexture.Id);
 
         gl.DrawArrays(GLEnum.Triangles, 0, 6);
 
+        gl.ActiveTexture(TextureUnit.Texture3);
+        gl.BindTexture(GLEnum.Texture2D, 0);
         gl.ActiveTexture(TextureUnit.Texture2);
         gl.BindTexture(GLEnum.Texture2D, 0);
         gl.ActiveTexture(TextureUnit.Texture1);
@@ -521,15 +552,18 @@ uniform mat4 u_World;
 uniform mat4 u_View;
 uniform mat4 u_Projection;
 uniform float u_NormalTiling;
+uniform mat4 u_ReflectionViewProjection;
 
 out vec2 vs_Uv;
 out vec3 vs_WorldPos;
+out vec4 vs_ReflectionClipPos;
 
 void main()
 {
     vec4 worldPos = u_World * vec4(in_Pos, 1.0);
     vs_WorldPos = worldPos.xyz;
     vs_Uv = in_Uv * u_NormalTiling;
+    vs_ReflectionClipPos = u_ReflectionViewProjection * worldPos;
     gl_Position = u_Projection * u_View * worldPos;
 }
 """;
@@ -543,10 +577,12 @@ precision highp float;
 
 in vec2 vs_Uv;
 in vec3 vs_WorldPos;
+in vec4 vs_ReflectionClipPos;
 
 uniform sampler2D u_NormalTex;
 uniform sampler2D u_NormalTex2;
 uniform sampler2D u_SkyTex;
+uniform sampler2D u_PlanarReflectionTex;
 uniform vec3 u_EyePos;
 uniform float u_Time;
 uniform float u_TextureLerp;
@@ -555,6 +591,7 @@ uniform vec3 u_DeepColor;
 uniform vec3 u_ReflectionTint;
 uniform float u_SkyReflectionStrength;
 uniform float u_MirrorReflectionEnabled;
+uniform float u_PlanarReflectionEnabled;
 uniform vec3 u_RippleCenters[MAX_RIPPLES];
 uniform float u_RippleTimes[MAX_RIPPLES];
 uniform float u_RippleRadii[MAX_RIPPLES];
@@ -613,6 +650,12 @@ void main()
     vec3 skyColor = texture(u_SkyTex, DirectionToEquirectUv(reflected)).rgb;
     float mirrorEnabled = clamp(u_MirrorReflectionEnabled, 0.0, 1.0);
     vec3 reflection = mix(gradientReflection, skyColor, clamp(u_SkyReflectionStrength, 0.0, 1.0) * mirrorEnabled);
+    vec2 reflectionUv = (vs_ReflectionClipPos.xy / max(abs(vs_ReflectionClipPos.w), 0.0001)) * 0.5 + 0.5;
+    reflectionUv += normal.xz * 0.035;
+    float reflectionInside = step(0.0, reflectionUv.x) * step(reflectionUv.x, 1.0) * step(0.0, reflectionUv.y) * step(reflectionUv.y, 1.0);
+    vec3 planarReflection = texture(u_PlanarReflectionTex, clamp(reflectionUv, 0.001, 0.999)).rgb;
+    float planarEnabled = clamp(u_PlanarReflectionEnabled, 0.0, 1.0) * reflectionInside;
+    reflection = mix(reflection, planarReflection, planarEnabled);
     float reflectionWeight = mix(0.18, clamp(0.35 + fresnel * 0.65, 0.0, 1.0), mirrorEnabled);
     vec3 color = mix(u_DeepColor, reflection, reflectionWeight);
     color += vec3(0.22, 0.25, 0.28) * clamp(rippleHighlight, 0.0, 1.0);

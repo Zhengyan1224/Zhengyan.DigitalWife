@@ -98,7 +98,8 @@ if rain is not None and pond is not None:
 - 平静水面的小粒子点缀：`KillOnWaterContact = false`，让粒子穿过水面但仍留下波纹。
 - `ParticleRippleMergeDistance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并成同一个波纹区域。
 - 水面 shader 当前最多同时显示 48 个活动波纹；超过后会替换最旧的波纹。
-- `MirrorReflectionEnabled` / `set_mirror_reflection_enabled` 用于切换水面的镜面反射观感。开启时使用天空反射和 Fresnel，高光更明显；关闭时水面更接近普通水色/环境渐变。
+- `MirrorReflectionEnabled` / `set_mirror_reflection_enabled` 用于切换水面的平面镜面反射。开启时 GameEditor/GamePlayer 会用镜像相机把场景额外渲染到离屏纹理，水面 shader 再采样这张反射纹理并叠加法线扰动和 Fresnel；关闭时水面更接近普通水色/环境渐变。
+- 性能注意：每个启用镜面反射的水面至少会多一次场景渲染，当前反射纹理默认使用当前视口 1/2 分辨率。复杂场景、多个水面或多个相机视口会显著增加 GPU 开销。当前实现优先支持水平水面。
 
 C# 额外动作查询：
 

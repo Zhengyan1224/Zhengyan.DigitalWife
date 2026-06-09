@@ -444,4 +444,6 @@ if rain is not None and pond is not None:
   - `ParticleRippleMinIntervalSeconds = 0.08 - 0.2`
   - `ParticleRippleMergeDistance = 0.2 - 0.5`
 
-`ParticleRippleMergeDistance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并。水面 shader 当前最多同时显示 48 个活动波纹。`MirrorReflectionEnabled` 用于切换水面的镜面反射观感，关闭后水面会更偏普通水色和环境渐变。
+`ParticleRippleMergeDistance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并。水面 shader 当前最多同时显示 48 个活动波纹。`MirrorReflectionEnabled` 用于切换水面的平面镜面反射：开启时会用镜像相机把场景额外渲染到离屏纹理并由水面采样，关闭后水面会更偏普通水色和环境渐变。
+
+性能注意：每个启用镜面反射的水面至少会多一次场景渲染，当前反射纹理默认使用当前视口 1/2 分辨率。复杂场景、多个水面或多个相机视口会显著增加 GPU 开销。当前实现优先支持水平水面。

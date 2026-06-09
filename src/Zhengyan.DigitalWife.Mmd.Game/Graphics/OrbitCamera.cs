@@ -88,6 +88,16 @@ public class OrbitCamera
 
     public void SetLookAt(Vector3 newPosition, Vector3 newTarget)
     {
+        SetLookAtCore(newPosition, newTarget, preferredUp: null);
+    }
+
+    public void SetLookAt(Vector3 newPosition, Vector3 newTarget, Vector3 preferredUp)
+    {
+        SetLookAtCore(newPosition, newTarget, preferredUp);
+    }
+
+    private void SetLookAtCore(Vector3 newPosition, Vector3 newTarget, Vector3? preferredUp)
+    {
         _position = newPosition;
         _target = newTarget;
 
@@ -96,7 +106,7 @@ public class OrbitCamera
             _target = _position + _front * MinOrbitDistance;
         }
 
-        UpdateVectorsFromLookAt();
+        UpdateVectorsFromLookAt(preferredUp);
     }
 
     public void Orbit(float deltaYawDegrees, float deltaPitchDegrees)
@@ -162,13 +172,25 @@ public class OrbitCamera
         _position = _target - (_front * distance);
     }
 
-    private void UpdateVectorsFromLookAt()
+    private void UpdateVectorsFromLookAt(Vector3? preferredUp = null)
     {
         Vector3 direction = Vector3.Normalize(_target - _position);
         _front = direction;
 
         _yaw = MathF.Atan2(_front.Z, _front.X);
         _pitch = MathF.Asin(_front.Y);
+
+        if (preferredUp is { } up && up.LengthSquared() > 0.0001f)
+        {
+            Vector3 normalizedUp = Vector3.Normalize(up);
+            Vector3 right = Vector3.Cross(_front, normalizedUp);
+            if (right.LengthSquared() > 0.0001f)
+            {
+                _right = Vector3.Normalize(right);
+                _up = Vector3.Normalize(Vector3.Cross(_right, _front));
+                return;
+            }
+        }
 
         UpdateRightAndUp();
     }
