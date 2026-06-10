@@ -265,6 +265,35 @@ if entity.type == "pmx_model":
     entity.set_draw_shadow_in_main_pass(False)
 ```
 
+## LLM Skills
+
+`Project -> LLM / OpenAI-compatible` 中的 `Enable skills tools` 可以让 GamePlayer 在调用 LLM 时自动注册一组内置 function call 工具。开启后，LLM 可以读取项目 `skills/` 目录、读取/写入项目文件、搜索文本，并在项目目录内执行命令。
+
+用户自定义 skills 放在游戏项目目录的 `skills/` 下，每个 skill 使用独立子目录。推荐目录结构：
+
+```text
+skills/
+  quest_writer/
+    SKILL.md
+    scripts/
+    resources/
+```
+
+`SKILL.md` 建议使用常见 skills 规范的 YAML front matter，例如：
+
+```markdown
+---
+name: quest_writer
+description: Generate short quest text for NPC dialogue.
+---
+
+# Quest Writer
+```
+
+启用后，C# 的 `Scene.Llm.ChatAsync/StreamChatAsync/StartChat/StartChatWithTools` 和 Python 的 `scene.llm.start_chat/start_chat_with_tools` 会自动带上内置 skills 工具。Python 的同步 `scene.llm.chat/stream_chat/stream_messages` 由 Python worker 直接请求 HTTP，目前不会执行 GamePlayer 的内置 skills 工具；运行时 UI 建议使用后台式 `start_chat`。
+
+内置工具包括 `skill_list`、`skill_read`、`skill_list_files`、`skill_read_file`、`skill_write_file`、`skill_search_files` 和 `skill_run_command`。文件路径和命令工作目录会限制在游戏项目目录内，但命令执行仍然是受信任本地能力，只应在你信任当前项目和模型输出时开启。
+
 ## TTS
 
 `Project -> Voice / TTS` 配置 `GamePlayer` 的人物说话能力。启用后脚本可调用 `Entity.Speak(...)` 或 `entity.speak(...)`，运行器会合成语音、播放音频并驱动 PMX 口型。

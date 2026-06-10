@@ -57,6 +57,26 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.Di
 - 按步骤加载场景、实体、音频、TTS 预热、脚本和 PMX 绑定关系。
 - 加载完成后再移除遮罩。
 
+## LLM Skills
+
+GamePlayer 支持在 LLM function call 基础上启用内置 skills 工具。开关位于 GameEditor 的 `Project -> LLM / OpenAI-compatible -> Enable skills tools`，也可以在 `game.project.json` 的 `llm.enableSkills` 中配置。
+
+启用后，GamePlayer 会读取项目目录下的 `skills/`：
+
+```text
+skills/
+  quest_writer/
+    SKILL.md
+    scripts/
+    resources/
+```
+
+每个 skill 建议使用 `SKILL.md`，并按常见 skills 规范写 `name` 和 `description` front matter。运行时会向 LLM 注册 `skill_list`、`skill_read`、`skill_list_files`、`skill_read_file`、`skill_write_file`、`skill_search_files` 和 `skill_run_command`。文件路径和命令工作目录会限制在当前游戏项目目录内；如果加载的是 `.dwgame` 包，则项目目录是 GamePlayer 当前解包/缓存后的运行目录。
+
+C# 的 `Scene.Llm.ChatAsync/StreamChatAsync/StartChat/StartChatWithTools` 和 Python 的 `scene.llm.start_chat/start_chat_with_tools` 会自动带上这些内置工具。Python 的同步 `scene.llm.chat/stream_chat/stream_messages` 由 Python worker 直接请求 HTTP，目前不会执行 GamePlayer 的内置 skills 工具。
+
+`skill_run_command` 仍然是受信任本地能力，虽然工作目录被限制在项目目录内，但命令本身会在本机执行。只在你信任当前项目和模型输出时开启 skills。
+
 ## TTS 路径规则
 
 `game.project.json` 的 `voice` 节点支持 TTS 配置。路径字段包括：

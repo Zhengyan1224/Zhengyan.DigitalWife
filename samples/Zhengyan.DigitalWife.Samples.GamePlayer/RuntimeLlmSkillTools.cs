@@ -414,6 +414,17 @@ internal sealed class RuntimeLlmSkillTools
             int maxResults = Math.Clamp(parsed.MaxResults ?? 50, 1, 200);
             SearchOption option = parsed.Recursive != false ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
             List<object> matches = [];
+            if (string.IsNullOrWhiteSpace(parsed.Path) && !Directory.Exists(startPath))
+            {
+                return new
+                {
+                    ok = true,
+                    query = parsed.Query,
+                    path = ToProjectRelative(startPath),
+                    matches
+                };
+            }
+
             IEnumerable<string> files = File.Exists(startPath)
                 ? [startPath]
                 : Directory.Exists(startPath)
@@ -481,9 +492,9 @@ internal sealed class RuntimeLlmSkillTools
 
     private async Task<string> RunCommandAsync(RuntimeLlmToolCall toolCall, CancellationToken cancellationToken)
     {
-        RunCommandArgs parsed = ParseArguments<RunCommandArgs>(toolCall.ArgumentsJson);
         try
         {
+            RunCommandArgs parsed = ParseArguments<RunCommandArgs>(toolCall.ArgumentsJson);
             if (string.IsNullOrWhiteSpace(parsed.Command))
             {
                 throw new InvalidOperationException("Command is required.");
@@ -556,7 +567,7 @@ internal sealed class RuntimeLlmSkillTools
                 ok = !timedOut && process.ExitCode == 0,
                 command = parsed.Command,
                 workingDirectory = ToProjectRelative(workingDirectory),
-                exitCode = timedOut ? null : process.ExitCode,
+                exitCode = timedOut ? (int?)null : process.ExitCode,
                 timedOut,
                 durationSeconds = Math.Round((DateTimeOffset.UtcNow - startedAt).TotalSeconds, 3),
                 stdout = Truncate(stdout, MaxCommandOutputChars),
@@ -601,15 +612,31 @@ internal sealed class RuntimeLlmSkillTools
         }
 
         int byteLimit = Math.Clamp(maxBytes ?? DefaultMaxReadBytes, 1, MaxReadBytes);
-        byte[] bytes = File.ReadAllBytes(filePath);
-        int count = Math.Min(bytes.Length, byteLimit);
-        string content = Encoding.UTF8.GetString(bytes, 0, count);
+        FileInfo fileInfo = new(filePath);
+        int count = (int)Math.Min(fileInfo.Length, byteLimit);
+        byte[] bytes = new byte[count];
+        int offset = 0;
+        using (FileStream stream = File.OpenRead(filePath))
+        {
+            while (offset < count)
+            {
+                int read = stream.Read(bytes, offset, count - offset);
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                offset += read;
+            }
+        }
+
+        string content = Encoding.UTF8.GetString(bytes, 0, offset);
         return new
         {
             ok = true,
             path = ToProjectRelative(filePath),
-            bytes = bytes.Length,
-            truncated = bytes.Length > count,
+            bytes = fileInfo.Length,
+            truncated = fileInfo.Length > count,
             content
         };
     }
