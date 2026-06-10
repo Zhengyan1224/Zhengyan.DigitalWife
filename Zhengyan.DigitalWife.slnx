@@ -2,8 +2,6 @@
   <Folder Name="/samples/">
     <Project Path="samples/Zhengyan.DigitalWife.Samples.AssistantConsole/Zhengyan.DigitalWife.Samples.AssistantConsole.csproj" />
     <Project Path="samples/Zhengyan.DigitalWife.Samples.DigitalHuman/Zhengyan.DigitalWife.Samples.DigitalHuman.csproj" />
-    <Project Path="samples/Zhengyan.DigitalWife.Samples.GameEditor/Zhengyan.DigitalWife.Samples.GameEditor.csproj" />
-    <Project Path="samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.DigitalWife.Samples.GamePlayer.csproj" />
     <Project Path="samples/Zhengyan.DigitalWife.Samples.MmdDemo/Zhengyan.DigitalWife.Samples.MmdDemo.csproj" />
     <Project Path="samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/Zhengyan.DigitalWife.Samples.MmdQuickStart.csproj" />
     <Project Path="samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/Zhengyan.DigitalWife.Samples.RealtimeVoice.csproj" />
@@ -13,6 +11,8 @@
     <Project Path="src/Zhengyan.DigitalWife.Assistant/Zhengyan.DigitalWife.Assistant.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Audio.OpenAL/Zhengyan.DigitalWife.Audio.OpenAL.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Audio.PortAudio/Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.GameEditor/Zhengyan.DigitalWife.GameEditor.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.GamePlayer/Zhengyan.DigitalWife.GamePlayer.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.GameProjects/Zhengyan.DigitalWife.GameProjects.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Llm.OpenAI/Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Mmd.Game/Zhengyan.DigitalWife.Mmd.Game.csproj" />

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+        <ApplicationIcon>..\..\assets\mmd\samples\GameData\Logo\favicon.ico</ApplicationIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="ImGui.NET" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
+        <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Audio.PortAudio\Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects\Zhengyan.DigitalWife.GameProjects.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.RealtimeVoice.Client\Zhengyan.DigitalWife.RealtimeVoice.Client.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Speech.SherpaOnnx\Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Speech.WhisperNet\Zhengyan.DigitalWife.Speech.WhisperNet.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
+            <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\..\assets\mmd\samples\GameData\Logo\logo.png">
+            <Link>Resources\Logo\logo.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\..\assets\mmd\samples\GameData\Logo\favicon.ico">
+            <Link>Resources\Logo\favicon.ico</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\..\assets\mmd\samples\GameData\Logo\favicon.png">
+            <Link>Resources\Logo\favicon.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>
