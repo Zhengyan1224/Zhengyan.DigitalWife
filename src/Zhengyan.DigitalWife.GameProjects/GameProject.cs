@@ -20,6 +20,8 @@ public sealed class GameProject
 
     public GameProjectVoiceSettings Voice { get; set; } = new();
 
+    public GameProjectMicrophoneSettings Microphone { get; set; } = new();
+
     public GameProjectAsrSettings Asr { get; set; } = new();
 
     public GameProjectRealtimeVoiceSettings RealtimeVoice { get; set; } = new();
@@ -89,6 +91,11 @@ public sealed class GameProjectVoiceSettings
     public string WarmUpText { get; set; } = "你好";
 
     public GameProjectLipSyncSettings LipSync { get; set; } = new();
+}
+
+public sealed class GameProjectMicrophoneSettings
+{
+    public bool AutoDetectOnPlayerLoad { get; set; }
 }
 
 public sealed class GameProjectRealtimeVoiceSettings

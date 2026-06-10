@@ -641,12 +641,32 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         DrawLlmSettings(project.Llm);
+        DrawMicrophoneSettings(project.Microphone);
         DrawVoiceSettings(project.Voice);
         DrawAsrSettings(project.Asr);
         DrawRealtimeVoiceSettings(project.RealtimeVoice);
         DrawPackageExportSettings();
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
+        ImGui.PopID();
+    }
+
+    private static void DrawMicrophoneSettings(GameProjectMicrophoneSettings microphone)
+    {
+        if (!ImGui.CollapsingHeader("Microphone", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        ImGui.PushID("microphoneSettings");
+
+        bool autoDetectOnPlayerLoad = microphone.AutoDetectOnPlayerLoad;
+        if (ImGui.Checkbox("Auto-detect microphone when GamePlayer loads", ref autoDetectOnPlayerLoad))
+        {
+            microphone.AutoDetectOnPlayerLoad = autoDetectOnPlayerLoad;
+        }
+
+        ImGui.TextWrapped("When enabled, published GamePlayer builds detect a microphone on the player's machine during loading and use that runtime device for ASR and Realtime Voice. Saved input device indexes remain available as advanced fallbacks.");
         ImGui.PopID();
     }
 

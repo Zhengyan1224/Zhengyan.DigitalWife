@@ -2,6 +2,8 @@ using System.Reflection;
 using System.Numerics;
 using System.Text.Json;
 using ImGuiNET;
+using Microsoft.Extensions.Logging.Abstractions;
+using Zhengyan.DigitalWife.Audio.PortAudio;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Audio;
@@ -471,17 +473,119 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             Project = GameProjectStore.Load(_projectDirectory);
             ApplyRuntimeSettings();
             ApplyWindowSettings();
-            _runtimeVoice?.Dispose();
-            _runtimeVoice = new RuntimeVoice(this, _dispatcher, _projectDirectory, Project.Voice);
-            _runtimeLlm?.Dispose();
-            _runtimeLlm = new RuntimeLlm(Project.Llm, _projectDirectory, _dispatcher, DispatchLlmEvent);
-            _runtimeAsr?.Dispose();
-            _runtimeAsr = new RuntimeAsr(_projectDirectory, Project.Asr, _dispatcher, DispatchAsrEvent);
-            _runtimeRealtimeVoice?.Dispose();
-            _runtimeRealtimeVoice = new RuntimeRealtimeVoice(this, _projectDirectory, Project.RealtimeVoice, Project.Voice, _dispatcher, DispatchRealtimeVoiceEvent);
-            _runtimePerformance = new RuntimePerformance();
-            EnqueueSceneLoadSteps(Project.DefaultScene);
+            if (ShouldAutoDetectMicrophone())
+            {
+                EnqueueLoadingStep("Detecting microphone...", AutoDetectMicrophone);
+            }
+
+            EnqueueLoadingStep("Initializing runtime...", () =>
+            {
+                _runtimeVoice?.Dispose();
+                _runtimeVoice = new RuntimeVoice(this, _dispatcher, _projectDirectory, Project.Voice);
+                _runtimeLlm?.Dispose();
+                _runtimeLlm = new RuntimeLlm(Project.Llm, _projectDirectory, _dispatcher, DispatchLlmEvent);
+                _runtimeAsr?.Dispose();
+                _runtimeAsr = new RuntimeAsr(_projectDirectory, Project.Asr, _dispatcher, DispatchAsrEvent);
+                _runtimeRealtimeVoice?.Dispose();
+                _runtimeRealtimeVoice = new RuntimeRealtimeVoice(this, _projectDirectory, Project.RealtimeVoice, Project.Voice, _dispatcher, DispatchRealtimeVoiceEvent);
+                _runtimePerformance = new RuntimePerformance();
+                EnqueueSceneLoadSteps(Project.DefaultScene);
+            });
         });
+    }
+
+    private bool ShouldAutoDetectMicrophone()
+        => Project.Microphone.AutoDetectOnPlayerLoad
+            && (Project.Asr.Enabled || Project.RealtimeVoice.Enabled);
+
+    private void AutoDetectMicrophone()
+    {
+        int channels = ResolveMicrophoneProbeChannels();
+        var detector = new PortAudioMicrophoneAutoDetector(NullLogger.Instance);
+        PortAudioMicrophoneDetectionResult result = detector.Detect(new PortAudioMicrophoneDetectionOptions
+        {
+            PreferredSampleRates = ResolveMicrophoneProbeSampleRates(),
+            Channels = channels,
+            FramesPerBuffer = ResolveMicrophoneProbeFramesPerBuffer(),
+            ProbeDuration = TimeSpan.FromMilliseconds(350),
+            RequireSignal = false
+        });
+
+        if (!result.Success || !result.DeviceIndex.HasValue)
+        {
+            Console.Error.WriteLine($"Microphone auto-detect failed: {result.Error}");
+            Project.Asr.InputDeviceIndex = null;
+            Project.RealtimeVoice.InputDeviceIndex = null;
+            return;
+        }
+
+        Project.Asr.InputDeviceIndex = result.DeviceIndex;
+        Project.RealtimeVoice.InputDeviceIndex = result.DeviceIndex;
+        ApplyDetectedMicrophoneSampleRate(result.SampleRate);
+
+        string defaultSuffix = result.IsDefaultDevice ? "default " : string.Empty;
+        Console.WriteLine(
+            $"Microphone auto-detected: {defaultSuffix}device [{result.DeviceIndex}] {result.DeviceName}, " +
+            $"sampleRate={result.SampleRate}, rms={result.Rms:0.000000}");
+    }
+
+    private IReadOnlyList<int> ResolveMicrophoneProbeSampleRates()
+    {
+        var sampleRates = new List<int>();
+
+        Add(Project.Asr.Capture.SampleRate);
+        Add(Project.Asr.Sherpa.SampleRate);
+        Add(Project.Asr.Whisper.SampleRate);
+        Add(Project.RealtimeVoice.UserCapture.SampleRate);
+        Add(Project.RealtimeVoice.WakeWord.Capture.SampleRate);
+        Add(Project.RealtimeVoice.InputAudioSampleRate);
+
+        return sampleRates;
+
+        void Add(int sampleRate)
+        {
+            if (sampleRate >= 8_000 && sampleRate <= 192_000 && !sampleRates.Contains(sampleRate))
+            {
+                sampleRates.Add(sampleRate);
+            }
+        }
+    }
+
+    private int ResolveMicrophoneProbeChannels()
+    {
+        var channels = new[]
+        {
+            Project.Asr.Capture.Channels,
+            Project.RealtimeVoice.UserCapture.Channels,
+            Project.RealtimeVoice.WakeWord.Capture.Channels
+        };
+
+        return Math.Clamp(channels.FirstOrDefault(channel => channel > 0), 1, 8);
+    }
+
+    private uint ResolveMicrophoneProbeFramesPerBuffer()
+    {
+        var values = new[]
+        {
+            Project.Asr.Capture.FramesPerBuffer,
+            Project.RealtimeVoice.UserCapture.FramesPerBuffer,
+            Project.RealtimeVoice.WakeWord.Capture.FramesPerBuffer
+        };
+
+        int framesPerBuffer = values.FirstOrDefault(value => value > 0);
+        return (uint)Math.Clamp(framesPerBuffer <= 0 ? 512 : framesPerBuffer, 64, 8192);
+    }
+
+    private void ApplyDetectedMicrophoneSampleRate(int? sampleRate)
+    {
+        if (sampleRate is null || sampleRate.Value < 8_000 || sampleRate.Value > 192_000)
+        {
+            return;
+        }
+
+        Project.Asr.Capture.SampleRate = sampleRate.Value;
+        Project.RealtimeVoice.UserCapture.SampleRate = sampleRate.Value;
+        Project.RealtimeVoice.WakeWord.Capture.SampleRate = sampleRate.Value;
     }
 
     private void BeginSceneLoad(string scenePath)
