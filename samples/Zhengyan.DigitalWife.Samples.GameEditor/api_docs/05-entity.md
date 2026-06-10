@@ -197,6 +197,229 @@ def update(entity, scene, input, audio, delta_seconds):
         entity.translate(0, 0, step)
     if input.is_key_down("a"):
         entity.translate(-step, 0, 0)
-    if input.is_key_down("d"):
-        entity.translate(step, 0, 0)
+if input.is_key_down("d"):
+    entity.translate(step, 0, 0)
+```
+
+## 自定义 Shader
+
+脚本层可以给 `pmx_model` 和 `textured_plane` 绑定用户自定义 shader。shader 文件建议放在工程目录 `assets/shaders` 下，例如 `assets/shaders/outline.vert` 和 `assets/shaders/outline.frag`。路径支持工程相对路径、`project:`、`app:` 和绝对路径；不支持 `rt:`，因为 `rt:` 是运行时贴图引用，不是 shader 文件。
+
+自定义 shader 会替换对象的主渲染 pass。PMX 的 shadow map 深度 pass、旧平面投影阴影 pass 和描边 pass 仍使用内置逻辑；如果自定义 PMX shader 不希望叠加描边，可以同时设置 `Entity.EnableEdge = false` 或 Python `entity.set_edge_enabled(False)`。
+
+### 方法
+
+| C# 方法 | Python 方法 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `SetCustomShader(vertexShaderPath, fragmentShaderPath)` | `set_custom_shader(vertex_shader, fragment_shader)` | vertex/fragment shader 文件路径 | 编译并启用自定义 shader。 |
+| `ClearCustomShader()` | `clear_custom_shader()` | 无 | 恢复内置 shader，并清空自定义 uniform。 |
+| `SetCustomShaderFloat(name, value)` | `set_custom_shader_float(name, value)` | `name`: uniform 名称；`value`: float | 设置 `float` uniform。 |
+| `SetCustomShaderInt(name, value)` | `set_custom_shader_int(name, value)` | `name`: uniform 名称；`value`: int | 设置 `int` uniform。 |
+| `SetCustomShaderVector2(name, x, y)` | `set_custom_shader_vector2(name, x, y)` | `name`, `x`, `y` | 设置 `vec2` uniform。 |
+| `SetCustomShaderVector3(name, x, y, z)` | `set_custom_shader_vector3(name, x, y, z)` | `name`, `x`, `y`, `z` | 设置 `vec3` uniform。 |
+| `SetCustomShaderVector4(name, x, y, z, w)` | `set_custom_shader_vector4(name, x, y, z, w)` | `name`, `x`, `y`, `z`, `w` | 设置 `vec4` uniform。 |
+| `SetCustomShaderColor(name, r, g, b, a)` | `set_custom_shader_color(name, r, g, b, a=1.0)` | `name`, RGBA | 设置颜色型 `vec4` uniform。 |
+| `ClearCustomShaderUniform(name)` | `clear_custom_shader_uniform(name)` | `name`: uniform 名称 | 删除单个脚本设置的 uniform。 |
+| `ClearCustomShaderUniforms()` | `clear_custom_shader_uniforms()` | 无 | 删除所有脚本设置的 uniform。 |
+
+### 顶点属性
+
+| 对象 | 属性名 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `textured_plane` | `in_Pos` | `vec3` | 本地坐标位置。 |
+| `textured_plane` | `in_Uv` 或 `in_UV` | `vec2` | 纹理坐标。 |
+| `pmx_model` | `in_Pos` | `vec3` | 动画/物理更新后的模型顶点位置。 |
+| `pmx_model` | `in_Nor` | `vec3` | 动画/物理更新后的模型法线。 |
+| `pmx_model` | `in_UV` 或 `in_Uv` | `vec2` | 模型 UV。 |
+
+### 内置 Uniform
+
+| Uniform | 类型 | 说明 |
+| --- | --- | --- |
+| `u_World` | `mat4` | 对象世界矩阵。 |
+| `u_View` | `mat4` | 当前相机 View 矩阵。 |
+| `u_Projection` | `mat4` | 当前相机 Projection 矩阵。 |
+| `u_WV` | `mat4` | `World * View`。 |
+| `u_WVP` | `mat4` | `World * View * Projection`。 |
+| `u_Time` | `float` | 游戏运行总秒数。 |
+| `u_DeltaTime` | `float` | 当前帧间隔秒数。 |
+| `u_FrameCount` | `int` | 当前帧序号。 |
+| `u_Texture` / `u_Tex` | `sampler2D` | 主贴图，绑定在 texture unit 0。PMX 会优先使用脚本材质覆盖贴图。 |
+| `u_Tint` | `vec4` | `textured_plane` 的颜色叠加。 |
+| `u_Opacity` | `float` | `textured_plane` 的透明度。 |
+| `u_FlipV` | `int` | `textured_plane` 使用 Render Texture 时为 `1`，可用于翻转 V 坐标。 |
+| `u_PlanarReflectionTex` | `sampler2D` | `textured_plane` 的平面反射贴图，绑定在 texture unit 2。 |
+| `u_PlanarReflectionEnabled` | `float` | `textured_plane` 是否启用反射。 |
+| `u_ReflectionViewProjection` | `mat4` | 反射相机 ViewProjection。 |
+| `u_ShadowMapEnabled` | `int` | shadow map 是否可用。 |
+| `u_ShadowMap` | `sampler2DShadow` | `textured_plane` 的阴影贴图，绑定在 texture unit 1。 |
+| `u_LightViewProjection` | `mat4` | 平面接收阴影时使用的方向光矩阵。 |
+| `u_ShadowMapStrength` | `float` | 阴影强度。 |
+| `u_ShadowMapBias` | `float` | 阴影深度偏移。 |
+| `u_MaterialIndex` | `int` | PMX 当前材质索引。 |
+| `u_Ambient` / `u_MaterialAmbient` | `vec3` | PMX 当前材质环境光。 |
+| `u_Diffuse` / `u_MaterialDiffuse` | `vec3` | PMX 当前材质漫反射。 |
+| `u_Specular` / `u_MaterialSpecular` | `vec3` | PMX 当前材质高光颜色。 |
+| `u_SpecularPower` / `u_MaterialSpecularPower` | `float` | PMX 当前材质高光强度。 |
+| `u_Alpha` / `u_MaterialAlpha` | `float` | PMX 当前材质透明度。 |
+| `u_LightColor` | `vec3` | PMX 当前方向光颜色。 |
+| `u_LightDir` | `vec3` | PMX 当前方向光方向，已转换到视图空间。 |
+| `u_AmbientLightColor` | `vec3` | PMX 环境光颜色。 |
+| `u_AmbientLightStrength` | `float` | PMX 环境光强度。 |
+
+没有被 shader 声明的 uniform 会被跳过，不需要全部写出来。shader 编译或链接失败会抛出错误并显示在 GamePlayer 控制台日志中。
+
+### textured_plane 示例
+
+`assets/shaders/wave_plane.vert`：
+
+```glsl
+#version 300 es
+
+in vec3 in_Pos;
+in vec2 in_Uv;
+
+uniform mat4 u_WVP;
+uniform float u_Time;
+uniform float u_WaveStrength;
+
+out vec2 v_Uv;
+
+void main()
+{
+    v_Uv = in_Uv;
+    vec3 p = in_Pos;
+    p.z += sin((p.x + u_Time) * 10.0) * u_WaveStrength;
+    gl_Position = u_WVP * vec4(p, 1.0);
+}
+```
+
+`assets/shaders/wave_plane.frag`：
+
+```glsl
+#version 300 es
+
+precision highp float;
+
+in vec2 v_Uv;
+
+uniform sampler2D u_Texture;
+uniform int u_FlipV;
+uniform vec4 u_Tint;
+uniform vec4 u_ColorBoost;
+
+out vec4 out_Color;
+
+void main()
+{
+    vec2 uv = v_Uv;
+    if (u_FlipV != 0)
+    {
+        uv.y = 1.0 - uv.y;
+    }
+
+    vec4 baseColor = texture(u_Texture, uv) * u_Tint;
+    out_Color = vec4(baseColor.rgb * u_ColorBoost.rgb, baseColor.a * u_ColorBoost.a);
+}
+```
+
+C#：
+
+```csharp
+if (IsStart)
+{
+    Entity.SetCustomShader("assets/shaders/wave_plane.vert", "assets/shaders/wave_plane.frag");
+    Entity.SetCustomShaderColor("u_ColorBoost", 0.6f, 1.0f, 1.4f, 1.0f);
+}
+
+if (IsUpdate)
+{
+    float strength = 0.03f + 0.02f * MathF.Sin((float)Scene.Performance.TotalSeconds * 2.0f);
+    Entity.SetCustomShaderFloat("u_WaveStrength", strength);
+}
+```
+
+Python：
+
+```python
+def start(entity, scene, input, audio):
+    entity.set_custom_shader("assets/shaders/wave_plane.vert", "assets/shaders/wave_plane.frag")
+    entity.set_custom_shader_color("u_ColorBoost", 0.6, 1.0, 1.4, 1.0)
+
+def update(entity, scene, input, audio, delta_seconds):
+    strength = 0.03 + 0.02 * math.sin(scene.performance.total_seconds * 2.0)
+    entity.set_custom_shader_float("u_WaveStrength", strength)
+```
+
+### PMX 示例
+
+`assets/shaders/pmx_tint.vert`：
+
+```glsl
+#version 300 es
+
+in vec3 in_Pos;
+in vec3 in_Nor;
+in vec2 in_UV;
+
+uniform mat4 u_WVP;
+
+out vec3 v_Normal;
+out vec2 v_Uv;
+
+void main()
+{
+    v_Normal = normalize(in_Nor);
+    v_Uv = in_UV;
+    gl_Position = u_WVP * vec4(in_Pos, 1.0);
+}
+```
+
+`assets/shaders/pmx_tint.frag`：
+
+```glsl
+#version 300 es
+
+precision highp float;
+
+in vec3 v_Normal;
+in vec2 v_Uv;
+
+uniform sampler2D u_Texture;
+uniform vec3 u_MaterialDiffuse;
+uniform float u_MaterialAlpha;
+uniform vec4 u_TintColor;
+
+out vec4 out_Color;
+
+void main()
+{
+    vec4 tex = texture(u_Texture, v_Uv);
+    float light = 0.35 + 0.65 * max(dot(normalize(v_Normal), normalize(vec3(0.3, 0.8, 0.5))), 0.0);
+    out_Color = vec4(tex.rgb * u_MaterialDiffuse * u_TintColor.rgb * light, tex.a * u_MaterialAlpha * u_TintColor.a);
+    if (out_Color.a <= 0.001)
+    {
+        discard;
+    }
+}
+```
+
+C#：
+
+```csharp
+if (IsStart)
+{
+    Entity.EnableEdge = false;
+    Entity.SetCustomShader("assets/shaders/pmx_tint.vert", "assets/shaders/pmx_tint.frag");
+    Entity.SetCustomShaderColor("u_TintColor", 1.0f, 0.75f, 0.55f, 1.0f);
+}
+```
+
+Python：
+
+```python
+def start(entity, scene, input, audio):
+    entity.set_edge_enabled(False)
+    entity.set_custom_shader("assets/shaders/pmx_tint.vert", "assets/shaders/pmx_tint.frag")
+    entity.set_custom_shader_color("u_TintColor", 1.0, 0.75, 0.55, 1.0)
 ```

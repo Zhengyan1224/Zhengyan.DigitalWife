@@ -55,6 +55,7 @@ public static class GameProjectStore
         Directory.CreateDirectory(Path.Combine(projectDirectory, "assets", "audio"));
         Directory.CreateDirectory(Path.Combine(projectDirectory, "assets", "motions"));
         Directory.CreateDirectory(Path.Combine(projectDirectory, "assets", "particles"));
+        Directory.CreateDirectory(Path.Combine(projectDirectory, "assets", "shaders"));
         Directory.CreateDirectory(Path.Combine(projectDirectory, "assets", "sprites"));
         Directory.CreateDirectory(Path.Combine(projectDirectory, "assets", "tts"));
         Directory.CreateDirectory(Path.Combine(projectDirectory, "scenes"));

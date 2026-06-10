@@ -82,6 +82,17 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null, null);
     }
 
+    public string? InvokeLlmTool(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
+    {
+        object? result = Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: true, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, llmEvent, null, null);
+        return result switch
+        {
+            null => null,
+            string text => text,
+            _ => JsonSerializer.Serialize(result)
+        };
+    }
+
     public void AsrEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeAsrScriptEvent asrEvent)
     {
         Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: true, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, asrEvent, null);
@@ -96,7 +107,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
     {
     }
 
-    private void Execute(
+    private object? Execute(
         RuntimeEntity entity,
         RuntimeScene scene,
         RuntimeInput input,
@@ -168,7 +179,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             SpeechCallbackName = speechCallbackName
         };
 
-        _runner(globals).GetAwaiter().GetResult();
+        return _runner(globals).GetAwaiter().GetResult();
     }
 
     private static IEnumerable<Assembly> GetScriptReferences()

@@ -117,6 +117,8 @@ dotnet run --project samples/Zhengyan.DigitalWife.Samples.GamePlayer/Zhengyan.Di
 
 即使导入时没有勾选复制，保存工程时编辑器也会扫描工程引用的外部资源并归档到工程目录下，包括 PMX、音频、VMD、2D Sprite、3D 贴图矩形面纹理、粒子贴图、天空盒贴图、加载背景图、窗口图标、TTS 模型/词表/字典等。保存后配置会改成工程相对路径。`app:` 内置资源、`Resources/...` 运行器资源和 `rt:<RenderTextureName>` 引用不会被复制。
 
+脚本自定义 shader 建议放在工程目录 `assets/shaders` 下，并在脚本中通过 `assets/shaders/*.vert` / `assets/shaders/*.frag` 或 `project:assets/shaders/*.frag` 引用。当前脚本层支持给 PMX 模型和 3D 贴图矩形面绑定自定义 shader；具体属性、uniform 和 C#/Python 示例见 `script_api.html` 的 `Entity API -> 自定义 Shader`。
+
 ## 实体类型
 
 - `pmx_model`：PMX 模型实体，支持渲染、动作、动作层、口型、TTS、脚本、绑定关系和多个碰撞体。

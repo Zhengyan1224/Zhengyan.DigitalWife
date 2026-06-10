@@ -182,6 +182,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private uint _edgeVao;
     private uint _groundShadowVao;
     private uint _shadowDepthVao;
+    private uint _customShaderVao;
     private float _animationTime;
     private bool _isPlaying = true;
     private bool _skipPhysicsOnNextPlayFrame;
@@ -196,6 +197,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private float[] _blendMorphWeights = [];
     private float[] _blendIkEnabledWeights = [];
     private float[] _blendIkTotalWeights = [];
+    private CustomShaderProgram? _customShader;
+    private readonly Dictionary<string, CustomShaderUniformValue> _customShaderUniforms = new(StringComparer.Ordinal);
 
     public PmxModelComponent(string modelPath, string? motionPath = null)
     {
@@ -353,6 +356,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public bool DrawShadowInMainPass { get; set; } = true;
 
     public Matrix4x4 World => Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateFromQuaternion(Rotation) * Matrix4x4.CreateTranslation(Position);
+
+    public bool HasCustomShader => _customShader is not null;
 
     private bool IsPoseDirty => (_dirtyFlags & DirtyFlags.Pose) != 0;
 
@@ -1481,8 +1486,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public override void Draw(GameTime gameTime)
     {
-        _ = gameTime;
-
         if (!_loaded || Game is null || Camera is null || _model is null || _mmdShader is null || _edgeShader is null || _groundShadowShader is null || _defaultTexture is null)
         {
             return;
@@ -1502,42 +1505,49 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.Enable(GLEnum.Blend);
         gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
 
-        gl.UseProgram(_mmdShader.Id);
-        gl.BindVertexArray(_modelVao);
-        gl.SetUniform(_mmdShader.UniWVP, worldViewProjection);
-        gl.SetUniform(_mmdShader.UniWV, worldView);
-        gl.SetUniform(_mmdShader.UniTex, 0);
-        gl.SetUniform(_mmdShader.UniSphereTex, 1);
-        gl.SetUniform(_mmdShader.UniToonTex, 2);
-        gl.SetUniform(_mmdShader.UniLightColor, LightColor);
-        // The shader evaluates normals in view space, so transform the configured
-        // world-space light direction into view space before uploading it.
-        Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(LightDirection, Camera.View));
-        gl.SetUniform(_mmdShader.UniLightDir, viewSpaceLightDirection);
-        gl.SetUniform(_mmdShader.UniAmbientLightColor, AmbientLightColor);
-        gl.SetUniform(_mmdShader.UniAmbientLightStrength, AmbientLightStrength);
-        gl.SetUniform(_mmdShader.UniShadowMap0, 3);
-        gl.SetUniform(_mmdShader.UniShadowMap1, 4);
-        gl.SetUniform(_mmdShader.UniShadowMap2, 5);
-        gl.SetUniform(_mmdShader.UniShadowMap3, 6);
-        ApplyShadowMapUniforms(gl, transform);
-
-        gl.DepthMask(true);
-        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
+        if (_customShader is not null && _customShaderVao != 0)
         {
-            Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
-            if (!_materials.TryGetValue(mmdMaterial, out MaterialTextures? materialTextures) || mmdMaterial.Alpha == 0.0f)
+            DrawCustomShaderPass(gl, gameTime, transform, worldView, worldViewProjection);
+        }
+        else
+        {
+            gl.UseProgram(_mmdShader.Id);
+            gl.BindVertexArray(_modelVao);
+            gl.SetUniform(_mmdShader.UniWVP, worldViewProjection);
+            gl.SetUniform(_mmdShader.UniWV, worldView);
+            gl.SetUniform(_mmdShader.UniTex, 0);
+            gl.SetUniform(_mmdShader.UniSphereTex, 1);
+            gl.SetUniform(_mmdShader.UniToonTex, 2);
+            gl.SetUniform(_mmdShader.UniLightColor, LightColor);
+            // The shader evaluates normals in view space, so transform the configured
+            // world-space light direction into view space before uploading it.
+            Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(LightDirection, Camera.View));
+            gl.SetUniform(_mmdShader.UniLightDir, viewSpaceLightDirection);
+            gl.SetUniform(_mmdShader.UniAmbientLightColor, AmbientLightColor);
+            gl.SetUniform(_mmdShader.UniAmbientLightStrength, AmbientLightStrength);
+            gl.SetUniform(_mmdShader.UniShadowMap0, 3);
+            gl.SetUniform(_mmdShader.UniShadowMap1, 4);
+            gl.SetUniform(_mmdShader.UniShadowMap2, 5);
+            gl.SetUniform(_mmdShader.UniShadowMap3, 6);
+            ApplyShadowMapUniforms(gl, transform);
+
+            gl.DepthMask(true);
+            foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
             {
-                continue;
+                Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
+                if (!_materials.TryGetValue(mmdMaterial, out MaterialTextures? materialTextures) || mmdMaterial.Alpha == 0.0f)
+                {
+                    continue;
+                }
+
+                DrawMesh(gl, mesh, mmdMaterial, materialTextures, GetMaterialIndex(mmdMaterial));
+
+                _lastOpaqueMeshDrawCount++;
             }
 
-            DrawMesh(gl, mesh, mmdMaterial, materialTextures, GetMaterialIndex(mmdMaterial));
-
-            _lastOpaqueMeshDrawCount++;
+            gl.BindVertexArray(0);
+            gl.UseProgram(0);
         }
-
-        gl.BindVertexArray(0);
-        gl.UseProgram(0);
 
         if (EnableEdge)
         {
@@ -1801,6 +1811,140 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
     }
 
+    private void DrawCustomShaderPass(GL gl, GameTime gameTime, Matrix4x4 transform, Matrix4x4 worldView, Matrix4x4 worldViewProjection)
+    {
+        if (_customShader is null || Camera is null || _defaultTexture is null)
+        {
+            return;
+        }
+
+        CustomShaderProgram shader = _customShader;
+        gl.UseProgram(shader.Id);
+        gl.BindVertexArray(_customShaderVao);
+        gl.DepthMask(true);
+
+        Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(LightDirection, Camera.View));
+        shader.SetUniform("u_World", transform);
+        shader.SetUniform("u_View", Camera.View);
+        shader.SetUniform("u_Projection", Camera.Projection);
+        shader.SetUniform("u_WV", worldView);
+        shader.SetUniform("u_WVP", worldViewProjection);
+        shader.SetUniform("u_Time", (float)gameTime.TotalSeconds);
+        shader.SetUniform("u_DeltaTime", (float)gameTime.ElapsedSeconds);
+        shader.SetUniform("u_FrameCount", (int)Math.Min(int.MaxValue, gameTime.FrameCount));
+        shader.SetUniform("u_Texture", 0);
+        shader.SetUniform("u_Tex", 0);
+        shader.SetUniform("u_SphereTex", 1);
+        shader.SetUniform("u_ToonTex", 2);
+        shader.SetUniform("u_LightColor", LightColor);
+        shader.SetUniform("u_LightDir", viewSpaceLightDirection);
+        shader.SetUniform("u_AmbientLightColor", AmbientLightColor);
+        shader.SetUniform("u_AmbientLightStrength", AmbientLightStrength);
+        ApplyCustomShaderShadowUniforms(shader, transform);
+        shader.ApplyUniforms(_customShaderUniforms);
+
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
+        {
+            Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
+            if (!_materials.TryGetValue(mmdMaterial, out MaterialTextures? materialTextures) || mmdMaterial.Alpha == 0.0f)
+            {
+                continue;
+            }
+
+            int materialIndex = GetMaterialIndex(mmdMaterial);
+            BindCustomShaderMaterialTextures(gl, materialTextures, materialIndex);
+            shader.SetUniform("u_MaterialIndex", materialIndex);
+            shader.SetUniform("u_Ambient", mmdMaterial.Ambient);
+            shader.SetUniform("u_Diffuse", mmdMaterial.Diffuse);
+            shader.SetUniform("u_Specular", mmdMaterial.Specular);
+            shader.SetUniform("u_SpecularPower", mmdMaterial.SpecularPower);
+            shader.SetUniform("u_Alpha", mmdMaterial.Alpha);
+            shader.SetUniform("u_MaterialAmbient", mmdMaterial.Ambient);
+            shader.SetUniform("u_MaterialDiffuse", mmdMaterial.Diffuse);
+            shader.SetUniform("u_MaterialSpecular", mmdMaterial.Specular);
+            shader.SetUniform("u_MaterialSpecularPower", mmdMaterial.SpecularPower);
+            shader.SetUniform("u_MaterialAlpha", mmdMaterial.Alpha);
+
+            if (mmdMaterial.BothFace)
+            {
+                gl.Disable(GLEnum.CullFace);
+            }
+            else
+            {
+                gl.Enable(GLEnum.CullFace);
+                gl.CullFace(GLEnum.Back);
+            }
+
+            gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
+            _lastOpaqueMeshDrawCount++;
+        }
+
+        gl.ActiveTexture(TextureUnit.Texture6);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture5);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture4);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture3);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture1);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.BindVertexArray(0);
+        gl.UseProgram(0);
+    }
+
+    private void BindCustomShaderMaterialTextures(GL gl, MaterialTextures materialTextures, int materialIndex)
+    {
+        gl.ActiveTexture(TextureUnit.Texture0);
+        uint overrideTextureId = ResolveMaterialOverrideTextureId(materialIndex);
+        if (overrideTextureId != 0)
+        {
+            gl.BindTexture(GLEnum.Texture2D, overrideTextureId);
+        }
+        else if (materialTextures.Texture is not null)
+        {
+            gl.BindTexture(GLEnum.Texture2D, materialTextures.Texture.Id);
+        }
+        else
+        {
+            gl.BindTexture(GLEnum.Texture2D, _defaultTexture?.Id ?? 0);
+        }
+
+        gl.ActiveTexture(TextureUnit.Texture1);
+        gl.BindTexture(GLEnum.Texture2D, materialTextures.SphereTexture?.Id ?? _defaultTexture?.Id ?? 0);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(GLEnum.Texture2D, materialTextures.ToonTexture?.Id ?? _defaultTexture?.Id ?? 0);
+    }
+
+    private void ApplyCustomShaderShadowUniforms(CustomShaderProgram shader, Matrix4x4 transform)
+    {
+        if (!EnableShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
+        {
+            shader.SetUniform("u_ShadowMapEnabled", 0);
+            return;
+        }
+
+        Matrix4x4 lightWvp = transform * shadowMap.LightViewProjection;
+        shader.SetUniform("u_ShadowMapEnabled", 1);
+        shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
+        shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+        shader.SetUniform("u_LightWVP", lightWvp);
+        shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
+        shader.SetUniform("u_ShadowMap0", 3);
+        shader.SetUniform("u_ShadowMap1", 4);
+        shader.SetUniform("u_ShadowMap2", 5);
+        shader.SetUniform("u_ShadowMap3", 6);
+
+        BindShadowTexture(Game!.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture3);
+        BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture4);
+        BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture5);
+        BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture6);
+    }
+
     private void ApplyShadowMapUniforms(GL gl, Matrix4x4 transform)
     {
         if (_mmdShader is null || !EnableShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
@@ -1891,6 +2035,67 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public void ClearMaterialTextureOverrides()
     {
         _materialTextureOverrides.Clear();
+    }
+
+    public void SetCustomShader(string vertexShaderPath, string fragmentShaderPath)
+    {
+        if (Game is null)
+        {
+            throw new InvalidOperationException("Game is not attached.");
+        }
+
+        GL gl = Game.GraphicsDevice.Gl;
+        CustomShaderProgram nextShader = new(gl, vertexShaderPath, fragmentShaderPath);
+        _customShader?.Dispose();
+        _customShader = nextShader;
+        RebuildCustomShaderVao(gl);
+    }
+
+    public void ClearCustomShader()
+    {
+        if (Game is not null)
+        {
+            DeleteCustomShaderVao(Game.GraphicsDevice.Gl);
+        }
+
+        _customShader?.Dispose();
+        _customShader = null;
+        _customShaderUniforms.Clear();
+    }
+
+    public void SetCustomShaderFloat(string name, float value)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromFloat(value);
+    }
+
+    public void SetCustomShaderInt(string name, int value)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromInt(value);
+    }
+
+    public void SetCustomShaderVector2(string name, float x, float y)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromVector2(x, y);
+    }
+
+    public void SetCustomShaderVector3(string name, float x, float y, float z)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromVector3(x, y, z);
+    }
+
+    public void SetCustomShaderVector4(string name, float x, float y, float z, float w)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromVector4(x, y, z, w);
+    }
+
+    public void ClearCustomShaderUniform(string name)
+    {
+        _customShaderUniforms.Remove(NormalizeUniformName(name));
+    }
+
+    public void ClearCustomShaderUniforms()
+    {
+        _customShaderUniforms.Clear();
     }
 
     private uint ResolveMaterialOverrideTextureId(int materialIndex)
@@ -2053,10 +2258,16 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _shadowDepthShader?.Dispose();
         _shadowDepthShader = null;
+
+        _customShader?.Dispose();
+        _customShader = null;
+        _customShaderUniforms.Clear();
     }
 
     private void DisposeModelResources(GL gl)
     {
+        DeleteCustomShaderVao(gl);
+
         foreach (Texture2D texture in _textures.Values)
         {
             texture.Dispose();
@@ -2083,6 +2294,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _edgeVao = 0;
         _groundShadowVao = 0;
         _shadowDepthVao = 0;
+        _customShaderVao = 0;
 
         DisposeMotionLayers(_motionLayers);
         _motionLayers.Clear();
@@ -2105,6 +2317,56 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _lastShadowMeshDrawCount = 0;
         _boundsMin = Vector3.Zero;
         _boundsMax = Vector3.Zero;
+    }
+
+    private void RebuildCustomShaderVao(GL gl)
+    {
+        DeleteCustomShaderVao(gl);
+        if (_customShader is null || _positionBuffer == 0 || _indexBuffer == 0)
+        {
+            return;
+        }
+
+        _customShaderVao = gl.GenVertexArray();
+        gl.BindVertexArray(_customShaderVao);
+
+        if (_customShader.InPos >= 0)
+        {
+            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
+            gl.VertexAttribPointer((uint)_customShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+            gl.EnableVertexAttribArray((uint)_customShader.InPos);
+        }
+
+        if (_customShader.InNor >= 0)
+        {
+            gl.BindBuffer(GLEnum.ArrayBuffer, _normalBuffer);
+            gl.VertexAttribPointer((uint)_customShader.InNor, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+            gl.EnableVertexAttribArray((uint)_customShader.InNor);
+        }
+
+        int uvAttribute = _customShader.InUV >= 0 ? _customShader.InUV : _customShader.InUv;
+        if (uvAttribute >= 0)
+        {
+            gl.BindBuffer(GLEnum.ArrayBuffer, _uvBuffer);
+            gl.VertexAttribPointer((uint)uvAttribute, 2, GLEnum.Float, false, (uint)sizeof(Vector2), (void*)0);
+            gl.EnableVertexAttribArray((uint)uvAttribute);
+        }
+
+        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
+        gl.BindVertexArray(0);
+        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        gl.BindBuffer(GLEnum.ElementArrayBuffer, 0);
+    }
+
+    private void DeleteCustomShaderVao(GL gl)
+    {
+        if (_customShaderVao == 0)
+        {
+            return;
+        }
+
+        gl.DeleteVertexArray(_customShaderVao);
+        _customShaderVao = 0;
     }
 
     private void LoadModel(string pmxPath, IReadOnlyList<MotionLayerConfig> motionLayers)
@@ -2359,6 +2621,16 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private static bool IsFinite(float value)
     {
         return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    private static string NormalizeUniformName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Uniform name cannot be empty.", nameof(name));
+        }
+
+        return name.Trim();
     }
 
     private void MarkDirty(DirtyFlags flags)
@@ -2758,6 +3030,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.EnableVertexAttribArray(_shadowDepthShader.InPos);
         gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
         gl.BindVertexArray(0);
+
+        if (_customShader is not null)
+        {
+            RebuildCustomShaderVao(gl);
+        }
 
         foreach (Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial in _model.GetMaterials())
         {

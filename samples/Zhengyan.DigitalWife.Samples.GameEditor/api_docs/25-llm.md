@@ -6,11 +6,15 @@ objects:
   - RuntimeLlm
   - RuntimeLlmScriptEvent
   - RuntimeLlmChatMessage
+  - RuntimeLlmTool
+  - RuntimeLlmScriptTool
 keywords:
   - llm
   - openai
   - chat
   - stream
+  - function call
+  - tools
 ---
 
 # LLM / OpenAI-compatible API
@@ -21,10 +25,10 @@ keywords:
 | --- | --- |
 | 模块 | LLM / OpenAI-compatible API |
 | 分类 | AI |
-| 主要对象 | ``RuntimeLlm``, ``RuntimeLlmScriptEvent``, ``RuntimeLlmChatMessage`` |
-| C# 入口 | `Scene.Llm.ChatAsync/StreamChatAsync/StartChat` |
-| Python 入口 | `scene.llm.chat/stream_chat/start_chat` |
-| 说明 | OpenAI-compatible LLM 完整请求、流式请求、后台回调和消息列表。 |
+| 主要对象 | ``RuntimeLlm``, ``RuntimeLlmScriptEvent``, ``RuntimeLlmChatMessage``, ``RuntimeLlmTool``, ``RuntimeLlmScriptTool`` |
+| C# 入口 | `Scene.Llm.ChatAsync/StreamChatAsync/StartChat/StartChatWithTools` |
+| Python 入口 | `scene.llm.chat/stream_chat/start_chat/start_chat_with_tools` |
+| 说明 | OpenAI-compatible LLM 完整请求、流式请求、后台回调、消息列表和 function call 工具调用。 |
 
 ## API 内容
 
@@ -65,6 +69,9 @@ C# LLM API：
 | `StreamChatAsync(text, systemPrompt, model, temperature)` | 按文本 prompt 发起流式请求。 |
 | `StreamChatAsync(messages, model, temperature)` | 按消息列表发起流式请求。 |
 | `StartChat(entity, text, systemPrompt, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback)` | 后台流式请求，通过脚本事件回调。 |
+| `ChatWithToolsAsync(text, tools, systemPrompt, model, temperature, maxToolRounds)` | 带工具调用的完整文本请求。LLM 请求工具时会执行脚本或 C# 工具并把结果继续发回模型。 |
+| `StreamChatWithToolsAsync(messages, tools, model, temperature, maxToolRounds)` | 带工具调用的流式请求。工具调用完成后继续输出最终回复。 |
+| `StartChatWithTools(entity, text, tools, systemPrompt, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, maxToolRounds)` | 后台工具调用请求，适合运行时 UI。 |
 
 C# 阻塞式完整结果：
 
@@ -78,6 +85,93 @@ if (IsGuiEvent && GuiEventName == "clicked")
     Scene.GetGuiControl("LLM Output")?.SetValue(answer);
 }
 ```
+
+C# function call 工具调用：
+
+```csharp
+using System.Text.Json;
+
+RuntimeLlmTool[] tools =
+[
+    new RuntimeLlmScriptTool(
+        "get_player_status",
+        "读取当前玩家状态，包括 HP、金币和当前位置。",
+        """
+        {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+        """,
+        "get_player_status_tool").ToTool(Entity, Scene)
+];
+
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    Scene.GetGuiControl("LLM Output")?.SetValue("");
+
+    Scene.Llm.StartChatWithTools(
+        Entity,
+        "根据我的当前状态，给我一个下一步行动建议。",
+        tools,
+        systemPrompt: "你是游戏 NPC。需要状态数据时调用工具，不要编造。",
+        onDeltaCallback: "npc_tool_reply_delta",
+        onCompletedCallback: "npc_tool_reply_done",
+        onErrorCallback: "npc_tool_reply_error",
+        onToolCallCallback: "npc_tool_call",
+        onToolResultCallback: "npc_tool_result",
+        maxToolRounds: 4);
+}
+
+if (IsLlmEvent && LlmEventName == "tool_execute" && LlmCallbackName == "get_player_status_tool")
+{
+    return JsonSerializer.Serialize(new
+    {
+        hp = 80,
+        gold = 12,
+        position = new { x = Entity.Position.X, y = Entity.Position.Y, z = Entity.Position.Z }
+    });
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_tool_reply_delta")
+{
+    Scene.GetGuiControl("LLM Output")?.SetValue(LlmText);
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_tool_call")
+{
+    Console.WriteLine($"LLM wants tool: {LlmToolName}, args={LlmToolArgumentsJson}");
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_tool_result")
+{
+    Console.WriteLine($"Tool result: {LlmToolResult}");
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_tool_reply_done")
+{
+    Entity.Speak(LlmText);
+}
+
+if (IsLlmEvent && LlmCallbackName == "npc_tool_reply_error")
+{
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+C# 工具相关对象：
+
+| 对象 / 属性 | 说明 |
+| --- | --- |
+| `RuntimeLlmTool(name, description, parametersJsonSchema, handler)` | C# 直接定义工具。`handler` 收到 `RuntimeLlmToolCall` 或参数 JSON，返回工具结果字符串。 |
+| `RuntimeLlmScriptTool(name, description, parametersJsonSchema, callbackName)` | 把脚本回调包装成工具。适合 `.csx` 顶层脚本或 Python worker 回调。 |
+| `RuntimeLlmToolCall.Id` | LLM 生成的工具调用 ID。 |
+| `RuntimeLlmToolCall.Name` | LLM 要调用的工具名。 |
+| `RuntimeLlmToolCall.ArgumentsJson` | LLM 传入的参数 JSON 字符串。脚本需要自行解析和校验。 |
+| `LlmEventName == "tool_execute"` | 当前脚本事件是实际执行工具，脚本应 `return` JSON 字符串、普通字符串或可被 JSON 序列化的对象。 |
+| `LlmEventName == "tool_call"` | LLM 请求调用工具，仅用于通知 UI 或日志。 |
+| `LlmEventName == "tool_result"` | 工具执行完成，仅用于通知 UI 或日志。 |
+| `LlmToolName` / `LlmToolArgumentsJson` / `LlmToolResult` | C# 全局便捷属性。 |
 
 C# 事件内同步流式读取：
 

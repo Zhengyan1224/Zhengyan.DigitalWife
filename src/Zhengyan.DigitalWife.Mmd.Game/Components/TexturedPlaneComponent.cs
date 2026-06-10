@@ -12,6 +12,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private IRuntimeTextureProvider? _runtimeTextureProvider;
     private uint _program;
     private uint _vao;
+    private uint _customVao;
     private uint _vertexBuffer;
     private int _uniformWorld = -1;
     private int _uniformView = -1;
@@ -30,6 +31,8 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformMirrorReflectionStrength = -1;
     private uint _planarReflectionTextureId;
     private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
+    private CustomShaderProgram? _customShader;
+    private readonly Dictionary<string, CustomShaderUniformValue> _customShaderUniforms = new(StringComparer.Ordinal);
 
     public TexturedPlaneComponent(OrbitCamera camera, string texturePath)
     {
@@ -108,6 +111,69 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     {
         _planarReflectionTextureId = 0;
         _planarReflectionViewProjection = Matrix4x4.Identity;
+    }
+
+    public bool HasCustomShader => _customShader is not null;
+
+    public void SetCustomShader(string vertexShaderPath, string fragmentShaderPath)
+    {
+        if (Game is null)
+        {
+            throw new InvalidOperationException("Game is not attached.");
+        }
+
+        GL gl = Game.GraphicsDevice.Gl;
+        CustomShaderProgram nextShader = new(gl, vertexShaderPath, fragmentShaderPath);
+        _customShader?.Dispose();
+        _customShader = nextShader;
+        RebuildCustomShaderVao(gl);
+    }
+
+    public void ClearCustomShader()
+    {
+        if (Game is not null)
+        {
+            DeleteCustomShaderVao(Game.GraphicsDevice.Gl);
+        }
+
+        _customShader?.Dispose();
+        _customShader = null;
+        _customShaderUniforms.Clear();
+    }
+
+    public void SetCustomShaderFloat(string name, float value)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromFloat(value);
+    }
+
+    public void SetCustomShaderInt(string name, int value)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromInt(value);
+    }
+
+    public void SetCustomShaderVector2(string name, float x, float y)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromVector2(x, y);
+    }
+
+    public void SetCustomShaderVector3(string name, float x, float y, float z)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromVector3(x, y, z);
+    }
+
+    public void SetCustomShaderVector4(string name, float x, float y, float z, float w)
+    {
+        _customShaderUniforms[NormalizeUniformName(name)] = CustomShaderUniformValue.FromVector4(x, y, z, w);
+    }
+
+    public void ClearCustomShaderUniform(string name)
+    {
+        _customShaderUniforms.Remove(NormalizeUniformName(name));
+    }
+
+    public void ClearCustomShaderUniforms()
+    {
+        _customShaderUniforms.Clear();
     }
 
     public bool TryGetMirrorPlane(out Vector3 normal, out float distance)
@@ -206,11 +272,15 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _uniformReflectionViewProjection = gl.GetUniformLocation(_program, "u_ReflectionViewProjection");
         _uniformMirrorReflectionStrength = gl.GetUniformLocation(_program, "u_MirrorReflectionStrength");
         ReloadTexture(gl);
+
+        if (_customShader is not null)
+        {
+            RebuildCustomShaderVao(gl);
+        }
     }
 
     public override void Draw(GameTime gameTime)
     {
-        _ = gameTime;
         if (Game is null || (_texture is null && !IsRuntimeTextureReference(_texturePath)))
         {
             return;
@@ -221,6 +291,12 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.Enable(GLEnum.Blend);
         gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
         gl.Disable(GLEnum.CullFace);
+
+        if (_customShader is not null)
+        {
+            DrawCustomShader(gl, gameTime);
+            return;
+        }
 
         gl.UseProgram(_program);
         gl.BindVertexArray(_vao);
@@ -265,9 +341,12 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
             gl.DeleteVertexArray(_vao);
+            DeleteCustomShaderVao(gl);
             gl.DeleteProgram(_program);
         }
 
+        _customShader?.Dispose();
+        _customShader = null;
         base.Dispose();
     }
 
@@ -312,6 +391,119 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.SetUniform(_uniformLightViewProjection, shadowMap.LightViewProjection);
         gl.SetUniform(_uniformShadowMapStrength, Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         gl.SetUniform(_uniformShadowMapBias, Math.Max(0.0f, shadowMap.Bias));
+    }
+
+    private void DrawCustomShader(GL gl, GameTime gameTime)
+    {
+        CustomShaderProgram shader = _customShader!;
+        Matrix4x4 world = World;
+        Matrix4x4 worldView = world * _camera.View;
+        Matrix4x4 worldViewProjection = worldView * _camera.Projection;
+        uint baseTextureId = ResolveTextureId();
+
+        gl.UseProgram(shader.Id);
+        gl.BindVertexArray(_customVao != 0 ? _customVao : _vao);
+
+        shader.SetUniform("u_World", world);
+        shader.SetUniform("u_View", _camera.View);
+        shader.SetUniform("u_Projection", _camera.Projection);
+        shader.SetUniform("u_WV", worldView);
+        shader.SetUniform("u_WVP", worldViewProjection);
+        shader.SetUniform("u_Time", (float)gameTime.TotalSeconds);
+        shader.SetUniform("u_DeltaTime", (float)gameTime.ElapsedSeconds);
+        shader.SetUniform("u_FrameCount", (int)Math.Min(int.MaxValue, gameTime.FrameCount));
+        shader.SetUniform("u_Texture", 0);
+        shader.SetUniform("u_Tint", Tint);
+        shader.SetUniform("u_Opacity", Tint.W);
+        shader.SetUniform("u_FlipV", IsRuntimeTextureReference(_texturePath) ? 1 : 0);
+        shader.SetUniform("u_ShadowMap", 1);
+        shader.SetUniform("u_PlanarReflectionTex", 2);
+        shader.SetUniform("u_PlanarReflectionEnabled", MirrorReflectionEnabled && _planarReflectionTextureId != 0 ? 1.0f : 0.0f);
+        shader.SetUniform("u_ReflectionViewProjection", _planarReflectionViewProjection);
+        shader.SetUniform("u_MirrorReflectionStrength", Math.Clamp(MirrorReflectionStrength, 0.0f, 1.0f));
+        ApplyCustomShadowMapUniforms(shader);
+        shader.ApplyUniforms(_customShaderUniforms);
+
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(GLEnum.Texture2D, baseTextureId);
+        gl.ActiveTexture(TextureUnit.Texture1);
+        gl.BindTexture(GLEnum.Texture2D, ShadowMap?.TextureId ?? 0);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(GLEnum.Texture2D, _planarReflectionTextureId != 0 ? _planarReflectionTextureId : baseTextureId);
+        gl.DrawArrays(GLEnum.Triangles, 0, 6);
+
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture1);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.BindVertexArray(0);
+        gl.UseProgram(0);
+        gl.Disable(GLEnum.Blend);
+    }
+
+    private void ApplyCustomShadowMapUniforms(CustomShaderProgram shader)
+    {
+        if (!ReceiveShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
+        {
+            shader.SetUniform("u_ShadowMapEnabled", 0);
+            return;
+        }
+
+        shader.SetUniform("u_ShadowMapEnabled", 1);
+        shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
+        shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
+        shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+    }
+
+    private void RebuildCustomShaderVao(GL gl)
+    {
+        DeleteCustomShaderVao(gl);
+        if (_customShader is null || _vertexBuffer == 0)
+        {
+            return;
+        }
+
+        _customVao = gl.GenVertexArray();
+        gl.BindVertexArray(_customVao);
+        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
+        if (_customShader.InPos >= 0)
+        {
+            gl.VertexAttribPointer((uint)_customShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(PlaneVertex), (void*)0);
+            gl.EnableVertexAttribArray((uint)_customShader.InPos);
+        }
+
+        int uvAttribute = _customShader.InUv >= 0 ? _customShader.InUv : _customShader.InUV;
+        if (uvAttribute >= 0)
+        {
+            gl.VertexAttribPointer((uint)uvAttribute, 2, GLEnum.Float, false, (uint)sizeof(PlaneVertex), (void*)(3 * sizeof(float)));
+            gl.EnableVertexAttribArray((uint)uvAttribute);
+        }
+
+        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        gl.BindVertexArray(0);
+    }
+
+    private void DeleteCustomShaderVao(GL gl)
+    {
+        if (_customVao == 0)
+        {
+            return;
+        }
+
+        gl.DeleteVertexArray(_customVao);
+        _customVao = 0;
+    }
+
+    private static string NormalizeUniformName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Uniform name cannot be empty.", nameof(name));
+        }
+
+        return name.Trim();
     }
 
     private static bool IsRuntimeTextureReference(string texturePath)

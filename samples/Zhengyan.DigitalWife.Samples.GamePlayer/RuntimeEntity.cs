@@ -28,31 +28,31 @@ public sealed class RuntimeEntity
         _resolvePath = resolvePath;
     }
 
-    internal RuntimeEntity(GameEntity definition, ParticleSystemComponent particle)
+    internal RuntimeEntity(GameEntity definition, ParticleSystemComponent particle, Func<string, string>? resolvePath = null)
     {
         _definition = definition;
         _particle = particle;
-        _resolvePath = static path => path;
+        _resolvePath = resolvePath ?? (static path => path);
     }
 
-    internal RuntimeEntity(GameEntity definition, WaterSurfaceComponent water)
+    internal RuntimeEntity(GameEntity definition, WaterSurfaceComponent water, Func<string, string>? resolvePath = null)
     {
         _definition = definition;
         _water = water;
-        _resolvePath = static path => path;
+        _resolvePath = resolvePath ?? (static path => path);
     }
 
-    internal RuntimeEntity(GameEntity definition, TexturedPlaneComponent plane)
+    internal RuntimeEntity(GameEntity definition, TexturedPlaneComponent plane, Func<string, string>? resolvePath = null)
     {
         _definition = definition;
         _plane = plane;
-        _resolvePath = static path => path;
+        _resolvePath = resolvePath ?? (static path => path);
     }
 
-    internal RuntimeEntity(GameEntity definition)
+    internal RuntimeEntity(GameEntity definition, Func<string, string>? resolvePath = null)
     {
         _definition = definition;
-        _resolvePath = static path => path;
+        _resolvePath = resolvePath ?? (static path => path);
     }
 
     public string Id => _definition.Id;
@@ -1205,6 +1205,78 @@ public sealed class RuntimeEntity
         _model?.ClearMaterialTextureOverrides();
     }
 
+    public bool SetCustomShader(string vertexShaderPath, string fragmentShaderPath)
+    {
+        string resolvedVertexShaderPath = ResolveRuntimeShaderPath(vertexShaderPath);
+        string resolvedFragmentShaderPath = ResolveRuntimeShaderPath(fragmentShaderPath);
+        if (_model is not null)
+        {
+            _model.SetCustomShader(resolvedVertexShaderPath, resolvedFragmentShaderPath);
+            return true;
+        }
+
+        if (_plane is not null)
+        {
+            _plane.SetCustomShader(resolvedVertexShaderPath, resolvedFragmentShaderPath);
+            return true;
+        }
+
+        return false;
+    }
+
+    public void ClearCustomShader()
+    {
+        _model?.ClearCustomShader();
+        _plane?.ClearCustomShader();
+    }
+
+    public void SetCustomShaderFloat(string name, float value)
+    {
+        _model?.SetCustomShaderFloat(name, value);
+        _plane?.SetCustomShaderFloat(name, value);
+    }
+
+    public void SetCustomShaderInt(string name, int value)
+    {
+        _model?.SetCustomShaderInt(name, value);
+        _plane?.SetCustomShaderInt(name, value);
+    }
+
+    public void SetCustomShaderVector2(string name, float x, float y)
+    {
+        _model?.SetCustomShaderVector2(name, x, y);
+        _plane?.SetCustomShaderVector2(name, x, y);
+    }
+
+    public void SetCustomShaderVector3(string name, float x, float y, float z)
+    {
+        _model?.SetCustomShaderVector3(name, x, y, z);
+        _plane?.SetCustomShaderVector3(name, x, y, z);
+    }
+
+    public void SetCustomShaderVector4(string name, float x, float y, float z, float w)
+    {
+        _model?.SetCustomShaderVector4(name, x, y, z, w);
+        _plane?.SetCustomShaderVector4(name, x, y, z, w);
+    }
+
+    public void SetCustomShaderColor(string name, float r, float g, float b, float a = 1.0f)
+    {
+        SetCustomShaderVector4(name, r, g, b, a);
+    }
+
+    public void ClearCustomShaderUniform(string name)
+    {
+        _model?.ClearCustomShaderUniform(name);
+        _plane?.ClearCustomShaderUniform(name);
+    }
+
+    public void ClearCustomShaderUniforms()
+    {
+        _model?.ClearCustomShaderUniforms();
+        _plane?.ClearCustomShaderUniforms();
+    }
+
     public void Speak(string text)
     {
         _voice?.Speak(this, text, (RuntimeVoiceOptions?)null);
@@ -1656,6 +1728,22 @@ public sealed class RuntimeEntity
             || trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
         {
             return trimmed;
+        }
+
+        return _resolvePath(trimmed);
+    }
+
+    private string ResolveRuntimeShaderPath(string shaderPath)
+    {
+        string trimmed = (shaderPath ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            throw new ArgumentException("Shader path cannot be empty.", nameof(shaderPath));
+        }
+
+        if (trimmed.StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Custom shader path cannot use a render texture reference.", nameof(shaderPath));
         }
 
         return _resolvePath(trimmed);

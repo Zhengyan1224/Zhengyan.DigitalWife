@@ -22,6 +22,7 @@ public sealed class RuntimeScene
     private readonly RuntimePerformance _performance;
     private readonly Action<string> _requestSceneChange;
     private readonly Action<RuntimeEntity, string> _dispatchSpeechEvent;
+    private readonly Func<RuntimeEntity, string, RuntimeLlmToolCall, Task<string?>> _invokeLlmTool;
 
     internal RuntimeScene(
         GameProjectScene scene,
@@ -41,6 +42,7 @@ public sealed class RuntimeScene
         RuntimeNetwork network,
         RuntimePerformance performance,
         Action<RuntimeEntity, string> dispatchSpeechEvent,
+        Func<RuntimeEntity, string, RuntimeLlmToolCall, Task<string?>> invokeLlmTool,
         Action<string> requestSceneChange)
     {
         _scene = scene;
@@ -60,6 +62,7 @@ public sealed class RuntimeScene
         _network = network;
         _performance = performance;
         _dispatchSpeechEvent = dispatchSpeechEvent;
+        _invokeLlmTool = invokeLlmTool;
         _requestSceneChange = requestSceneChange;
     }
 
@@ -155,5 +158,10 @@ public sealed class RuntimeScene
     internal void DispatchSpeechEvent(RuntimeEntity entity, string callbackName)
     {
         _dispatchSpeechEvent(entity, callbackName);
+    }
+
+    internal Task<string?> InvokeLlmToolAsync(RuntimeEntity entity, string callbackName, RuntimeLlmToolCall toolCall)
+    {
+        return _invokeLlmTool(entity, callbackName, toolCall);
     }
 }

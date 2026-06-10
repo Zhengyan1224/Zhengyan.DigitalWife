@@ -52,6 +52,16 @@ public sealed class CSharpScriptGlobals
 
     public string LlmCallbackName => LlmEvent?.CallbackName ?? string.Empty;
 
+    public RuntimeLlmToolCall? LlmToolCall => LlmEvent?.ToolCall;
+
+    public string LlmToolCallId => LlmEvent?.ToolCall?.Id ?? string.Empty;
+
+    public string LlmToolName => LlmEvent?.ToolCall?.Name ?? string.Empty;
+
+    public string LlmToolArgumentsJson => LlmEvent?.ToolCall?.ArgumentsJson ?? string.Empty;
+
+    public string LlmToolResult => LlmEvent?.ToolResult ?? string.Empty;
+
     public string AsrRequestId => AsrEvent?.RequestId ?? string.Empty;
 
     public string AsrEventName => AsrEvent?.EventName ?? string.Empty;

@@ -12,6 +12,8 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 internal sealed class PythonScriptInstance : IScriptInstance
 {
     private const string CommandMarker = "__DW_COMMANDS__";
+    private const string FlushMarker = "__DW_FLUSH__";
+    private const string ToolResultMarker = "__DW_TOOL_RESULT__";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -89,6 +91,17 @@ internal sealed class PythonScriptInstance : IScriptInstance
             audio,
             0.0,
             llmEvent: llmEvent);
+    }
+
+    public string? InvokeLlmTool(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeLlmScriptEvent llmEvent)
+    {
+        return SendEventForToolResult(
+            "llm_event",
+            entity,
+            scene,
+            input,
+            audio,
+            llmEvent);
     }
 
     public void AsrEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, RuntimeAsrScriptEvent asrEvent)
@@ -197,9 +210,76 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 return;
             }
 
-            if (line.StartsWith("__DW_FLUSH__", StringComparison.Ordinal))
+            if (line.StartsWith(FlushMarker, StringComparison.Ordinal))
             {
-                ApplyCommands(line["__DW_FLUSH__".Length..], entity, scene, input, audio);
+                ApplyCommands(line[FlushMarker.Length..], entity, scene, input, audio);
+                continue;
+            }
+
+            Console.WriteLine(line);
+        }
+    }
+
+    private string? SendEventForToolResult(
+        string eventName,
+        RuntimeEntity entity,
+        RuntimeScene scene,
+        RuntimeInput input,
+        RuntimeAudio audio,
+        RuntimeLlmScriptEvent llmEvent)
+    {
+        if (_process.HasExited)
+        {
+            throw new InvalidOperationException($"Python process exited with code {_process.ExitCode}.");
+        }
+
+        PythonEvent payload = PythonEvent.Create(
+            eventName,
+            entity,
+            scene,
+            input,
+            0.0,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            0.0f,
+            string.Empty,
+            string.Empty,
+            llmEvent,
+            null,
+            null);
+        _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
+        _process.StandardInput.Flush();
+
+        while (true)
+        {
+            string? line = _process.StandardOutput.ReadLine();
+            if (line is null)
+            {
+                throw new InvalidOperationException("Python process closed stdout.");
+            }
+
+            if (line.StartsWith(ToolResultMarker, StringComparison.Ordinal))
+            {
+                PythonToolResult? result = JsonSerializer.Deserialize<PythonToolResult>(line[ToolResultMarker.Length..], JsonOptions);
+                return result?.Result;
+            }
+
+            if (line.StartsWith(CommandMarker, StringComparison.Ordinal))
+            {
+                ApplyCommands(line[CommandMarker.Length..], entity, scene, input, audio);
+                continue;
+            }
+
+            if (line.StartsWith(FlushMarker, StringComparison.Ordinal))
+            {
+                ApplyCommands(line[FlushMarker.Length..], entity, scene, input, audio);
                 continue;
             }
 
@@ -279,6 +359,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                COMMAND_MARKER = "__DW_COMMANDS__"
                FLUSH_MARKER = "__DW_FLUSH__"
+               TOOL_RESULT_MARKER = "__DW_TOOL_RESULT__"
                script_path = sys.argv[1]
                save_directory = os.path.abspath(sys.argv[2])
                os.makedirs(save_directory, exist_ok=True)
@@ -356,6 +437,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                def emit_commands(commands):
                    print(FLUSH_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
+
+               def tool_result_to_text(value):
+                   if value is None:
+                       return ""
+                   if isinstance(value, str):
+                       return value
+                   try:
+                       return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                   except Exception:
+                       return str(value)
 
                def read_openai_sse(url, api_key, payload, timeout_seconds):
                    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -750,6 +841,92 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def clear_material_texture_overrides(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "clear_material_texture_overrides"})
+
+                   def set_custom_shader(self, vertex_shader, fragment_shader):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader",
+                           "vertexShader": str(vertex_shader),
+                           "fragmentShader": str(fragment_shader)
+                       })
+
+                   def clear_custom_shader(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_custom_shader"})
+
+                   def set_custom_shader_float(self, name, value):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader_float",
+                           "name": str(name),
+                           "value": value
+                       })
+
+                   def set_custom_shader_int(self, name, value):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader_int",
+                           "name": str(name),
+                           "index": int(value)
+                       })
+
+                   def set_custom_shader_vector2(self, name, x, y):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader_vector2",
+                           "name": str(name),
+                           "x": x,
+                           "y": y
+                       })
+
+                   def set_custom_shader_vector3(self, name, x, y, z):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader_vector3",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z
+                       })
+
+                   def set_custom_shader_vector4(self, name, x, y, z, w):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader_vector4",
+                           "name": str(name),
+                           "x": x,
+                           "y": y,
+                           "z": z,
+                           "w": w
+                       })
+
+                   def set_custom_shader_color(self, name, r, g, b, a=1.0):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "set_custom_shader_color",
+                           "name": str(name),
+                           "colorR": r,
+                           "colorG": g,
+                           "colorB": b,
+                           "colorA": a
+                       })
+
+                   def clear_custom_shader_uniform(self, name):
+                       self._commands.append({
+                           "target": "entity",
+                           "entity": self.id,
+                           "action": "clear_custom_shader_uniform",
+                           "name": str(name)
+                       })
+
+                   def clear_custom_shader_uniforms(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "clear_custom_shader_uniforms"})
 
                    def speak(self, text, speaker_id=None, speed=None, volume=None, on_completed=None):
                        command = {"target": "entity", "entity": self.id, "action": "speak", "text": text}
@@ -2100,19 +2277,52 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                "is_final": bool(chunk.get("is_final", False))
                            }
 
-               def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
-                   self._commands.append({
-                       "target": "llm",
-                       "action": "start_chat",
-                       "text": text,
-                       "systemPrompt": system_prompt or "",
-                       "model": model or "",
-                       "temperature": temperature,
-                       "requestId": request_id or "",
-                       "onDelta": on_delta or "",
-                       "onCompleted": on_completed or "",
-                       "onError": on_error or ""
-                   })
+                   def tool(self, name, description, parameters_json_schema, callback):
+                       schema = parameters_json_schema
+                       if not isinstance(schema, str):
+                           schema = json.dumps(schema or {"type": "object", "properties": {}}, ensure_ascii=False, separators=(",", ":"))
+                       return {
+                           "name": str(name or ""),
+                           "description": str(description or ""),
+                           "parametersJsonSchema": schema,
+                           "callback": str(callback or "")
+                       }
+
+                   def start_chat(self, text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error"):
+                       self._commands.append({
+                           "target": "llm",
+                           "action": "start_chat",
+                           "text": text,
+                           "systemPrompt": system_prompt or "",
+                           "model": model or "",
+                           "temperature": temperature,
+                           "requestId": request_id or "",
+                           "onDelta": on_delta or "",
+                           "onCompleted": on_completed or "",
+                           "onError": on_error or ""
+                       })
+
+                   def start_chat_with_tools(self, text, tools, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error", on_tool_call="llm_tool_call", on_tool_result="llm_tool_result", max_tool_rounds=4):
+                       normalized_tools = []
+                       for tool in tools or []:
+                           if isinstance(tool, dict):
+                               normalized_tools.append(tool)
+                       self._commands.append({
+                           "target": "llm",
+                           "action": "start_chat_with_tools",
+                           "text": text,
+                           "systemPrompt": system_prompt or "",
+                           "model": model or "",
+                           "temperature": temperature,
+                           "requestId": request_id or "",
+                           "onDelta": on_delta or "",
+                           "onCompleted": on_completed or "",
+                           "onError": on_error or "",
+                           "onToolCall": on_tool_call or "",
+                           "onToolResult": on_tool_result or "",
+                           "maxToolRounds": int(max_tool_rounds or 4),
+                           "tools": normalized_tools
+                       })
 
                class RealtimeVoiceClient:
                    def __init__(self, scene, commands):
@@ -2702,10 +2912,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        elif event == "llm_event":
                            llm_event = ctx.get("llmEvent", {})
                            callback = llm_event.get("callbackName", "")
+                           llm_result = None
                            if callback and hasattr(module, callback):
-                               getattr(module, callback)(entity, scene, input, audio, llm_event)
+                               llm_result = getattr(module, callback)(entity, scene, input, audio, llm_event)
                            elif hasattr(module, "llm_event"):
-                               module.llm_event(entity, scene, input, audio, llm_event)
+                               llm_result = module.llm_event(entity, scene, input, audio, llm_event)
+                           if llm_event.get("eventName", "") == "tool_execute":
+                               print(FLUSH_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
+                               commands = []
+                               print(TOOL_RESULT_MARKER + json.dumps({"result": tool_result_to_text(llm_result)}, ensure_ascii=False, separators=(",", ":")), flush=True)
+                               continue
                        elif event == "asr_event":
                            asr_event = ctx.get("asrEvent", {})
                            callback = asr_event.get("callbackName", "")
@@ -2990,22 +3206,50 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
     private static void ApplyLlmCommand(PythonCommand command, RuntimeEntity callbackEntity, RuntimeScene scene)
     {
-        if (!string.Equals(command.Action, "start_chat", StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(command.Text))
+        if (string.IsNullOrWhiteSpace(command.Text))
         {
             return;
         }
 
-        scene.Llm.StartChat(
-            callbackEntity,
-            command.Text,
-            command.SystemPrompt,
-            command.Model,
-            ToFloat(command.Temperature),
-            requestId: command.RequestId,
-            onDeltaCallback: command.OnDelta,
-            onCompletedCallback: command.OnCompleted,
-            onErrorCallback: command.OnError);
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "start_chat":
+                scene.Llm.StartChat(
+                    callbackEntity,
+                    command.Text,
+                    command.SystemPrompt,
+                    command.Model,
+                    ToFloat(command.Temperature),
+                    requestId: command.RequestId,
+                    onDeltaCallback: command.OnDelta,
+                    onCompletedCallback: command.OnCompleted,
+                    onErrorCallback: command.OnError);
+                break;
+            case "start_chat_with_tools":
+                RuntimeLlmTool[] tools = (command.Tools ?? [])
+                    .Where(tool => !string.IsNullOrWhiteSpace(tool.Name) && !string.IsNullOrWhiteSpace(tool.Callback))
+                    .Select(tool => new RuntimeLlmScriptTool(
+                        tool.Name!,
+                        tool.Description ?? string.Empty,
+                        tool.ParametersJsonSchema ?? tool.Parameters ?? "{\"type\":\"object\",\"properties\":{}}",
+                        tool.Callback!).ToTool(callbackEntity, scene))
+                    .ToArray();
+                scene.Llm.StartChatWithTools(
+                    callbackEntity,
+                    command.Text,
+                    tools,
+                    command.SystemPrompt,
+                    command.Model,
+                    ToFloat(command.Temperature),
+                    requestId: command.RequestId,
+                    onDeltaCallback: command.OnDelta,
+                    onCompletedCallback: command.OnCompleted,
+                    onErrorCallback: command.OnError,
+                    onToolCallCallback: command.OnToolCall,
+                    onToolResultCallback: command.OnToolResult,
+                    maxToolRounds: command.MaxToolRounds ?? 4);
+                break;
+        }
     }
 
     private static void ApplyRealtimeVoiceCommand(PythonCommand command, RuntimeEntity callbackEntity, RuntimeScene scene)
@@ -3647,6 +3891,37 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "clear_material_texture_overrides":
                 entity.ClearMaterialTextureOverrides();
                 break;
+            case "set_custom_shader" when !string.IsNullOrWhiteSpace(command.VertexShader) && !string.IsNullOrWhiteSpace(command.FragmentShader):
+                entity.SetCustomShader(command.VertexShader, command.FragmentShader);
+                break;
+            case "clear_custom_shader":
+                entity.ClearCustomShader();
+                break;
+            case "set_custom_shader_float" when !string.IsNullOrWhiteSpace(command.Name) && command.Value.HasValue:
+                entity.SetCustomShaderFloat(command.Name, (float)command.Value.Value);
+                break;
+            case "set_custom_shader_int" when !string.IsNullOrWhiteSpace(command.Name) && command.Index.HasValue:
+                entity.SetCustomShaderInt(command.Name, command.Index.Value);
+                break;
+            case "set_custom_shader_vector2" when !string.IsNullOrWhiteSpace(command.Name) && command.X.HasValue && command.Y.HasValue:
+                entity.SetCustomShaderVector2(command.Name, (float)command.X.Value, (float)command.Y.Value);
+                break;
+            case "set_custom_shader_vector3" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector(command, out float x, out float y, out float z):
+                entity.SetCustomShaderVector3(command.Name, x, y, z);
+                break;
+            case "set_custom_shader_vector4" when !string.IsNullOrWhiteSpace(command.Name) && TryGetVector4(command, out Vector4 vector):
+                entity.SetCustomShaderVector4(command.Name, vector.X, vector.Y, vector.Z, vector.W);
+                break;
+            case "set_custom_shader_color" when !string.IsNullOrWhiteSpace(command.Name):
+                Vector4 color = GetCommandColor(command, Vector4.One);
+                entity.SetCustomShaderColor(command.Name, color.X, color.Y, color.Z, color.W);
+                break;
+            case "clear_custom_shader_uniform" when !string.IsNullOrWhiteSpace(command.Name):
+                entity.ClearCustomShaderUniform(command.Name);
+                break;
+            case "clear_custom_shader_uniforms":
+                entity.ClearCustomShaderUniforms();
+                break;
             case "speak" when !string.IsNullOrWhiteSpace(command.Text):
                 entity.Speak(command.Text, new RuntimeVoiceOptions
                 {
@@ -3810,6 +4085,22 @@ internal sealed class PythonScriptInstance : IScriptInstance
         return true;
     }
 
+    private static bool TryGetVector4(PythonCommand command, out Vector4 vector)
+    {
+        vector = default;
+        if (!command.X.HasValue || !command.Y.HasValue || !command.Z.HasValue || !command.W.HasValue)
+        {
+            return false;
+        }
+
+        vector = new Vector4(
+            (float)command.X.Value,
+            (float)command.Y.Value,
+            (float)command.Z.Value,
+            (float)command.W.Value);
+        return true;
+    }
+
     private static bool TryGetLookAt(PythonCommand command, out Vector3 position, out Vector3 target)
     {
         position = default;
@@ -3965,6 +4256,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string CallbackName { get; set; } = string.Empty;
 
+        public PythonLlmToolCall? ToolCall { get; set; }
+
+        public string ToolResult { get; set; } = string.Empty;
+
         public static PythonLlmEvent FromRuntime(RuntimeLlmScriptEvent? llmEvent)
         {
             return llmEvent is null
@@ -3977,9 +4272,37 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     AccumulatedText = llmEvent.AccumulatedText,
                     IsFinal = llmEvent.IsFinal,
                     Error = llmEvent.Error,
-                    CallbackName = llmEvent.CallbackName
+                    CallbackName = llmEvent.CallbackName,
+                    ToolCall = PythonLlmToolCall.FromRuntime(llmEvent.ToolCall),
+                    ToolResult = llmEvent.ToolResult ?? string.Empty
                 };
         }
+    }
+
+    private sealed class PythonLlmToolCall
+    {
+        public string Id { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string ArgumentsJson { get; set; } = string.Empty;
+
+        public static PythonLlmToolCall? FromRuntime(RuntimeLlmToolCall? toolCall)
+        {
+            return toolCall is null
+                ? null
+                : new PythonLlmToolCall
+                {
+                    Id = toolCall.Id,
+                    Name = toolCall.Name,
+                    ArgumentsJson = toolCall.ArgumentsJson
+                };
+        }
+    }
+
+    private sealed class PythonToolResult
+    {
+        public string Result { get; set; } = string.Empty;
     }
 
     private sealed class PythonRealtimeVoiceEvent
@@ -4791,6 +5114,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string? Texture { get; set; }
 
+        public string? VertexShader { get; set; }
+
+        public string? FragmentShader { get; set; }
+
         public string? Path { get; set; }
 
         public string? Mode { get; set; }
@@ -4915,6 +5242,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string? OnError { get; set; }
 
+        public string? OnToolCall { get; set; }
+
+        public string? OnToolResult { get; set; }
+
+        public int? MaxToolRounds { get; set; }
+
+        public PythonLlmToolCommand[]? Tools { get; set; }
+
         public string? Callback { get; set; }
 
         public string? HeaderText { get; set; }
@@ -4943,5 +5278,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public double? Weight { get; set; }
 
         public bool? ResetPhysicsOnLoop { get; set; }
+    }
+
+    private sealed class PythonLlmToolCommand
+    {
+        public string? Name { get; set; }
+
+        public string? Description { get; set; }
+
+        public string? ParametersJsonSchema { get; set; }
+
+        public string? Parameters { get; set; }
+
+        public string? Callback { get; set; }
     }
 }

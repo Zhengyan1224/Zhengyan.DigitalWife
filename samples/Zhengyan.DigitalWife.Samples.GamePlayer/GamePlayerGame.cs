@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Numerics;
+using System.Text.Json;
 using ImGuiNET;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
@@ -645,6 +646,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 new RuntimeNetwork(),
                 _runtimePerformance,
                 DispatchSpeechEvent,
+                InvokeLlmTool,
                 RequestSceneChange);
             PrepareLoadingScripts();
             DispatchLoadingEvent("loading_started", 0.0f, $"Loading scene: {Project.Scene.Name}");
@@ -681,7 +683,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             Id = "__scene_loading__",
             Name = Project.Scene.Name,
             Type = "scene"
-        });
+        }, ResolveProjectPath);
         _loadingEntity.AttachScene(_runtimeScene);
 
         foreach (ScriptBinding binding in Project.Scene.LoadingScripts.Where(script => script.Enabled))
@@ -1131,7 +1133,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         if (IsEmptyEntity(entity))
         {
-            RegisterRuntimeEntity(new RuntimeEntity(entity));
+            RegisterRuntimeEntity(new RuntimeEntity(entity, ResolveProjectPath));
             return;
         }
 
@@ -1220,7 +1222,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 DrawOrder = 130
             });
             ApplyEntityToParticle(entity, component, resetParticles: true);
-            RuntimeEntity runtimeEntity = new(entity, component);
+            RuntimeEntity runtimeEntity = new(entity, component, ResolveProjectPath);
             _particleObjects.Add(new RuntimeParticleObject
             {
                 Definition = entity,
@@ -1244,7 +1246,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 DrawOrder = 120
             });
             ApplyEntityToWater(entity, component);
-            RuntimeEntity runtimeEntity = new(entity, component);
+            RuntimeEntity runtimeEntity = new(entity, component, ResolveProjectPath);
             _waterObjects.Add(new RuntimeWaterObject
             {
                 Definition = entity,
@@ -1268,7 +1270,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 DrawOrder = 115
             });
             ApplyEntityToPlane(entity, component);
-            RuntimeEntity runtimeEntity = new(entity, component);
+            RuntimeEntity runtimeEntity = new(entity, component, ResolveProjectPath);
             _planeObjects.Add(new RuntimePlaneObject
             {
                 Definition = entity,
@@ -1868,6 +1870,58 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 }
             }
         }
+    }
+
+    private Task<string?> InvokeLlmTool(RuntimeEntity target, string callbackName, RuntimeLlmToolCall toolCall)
+    {
+        return _dispatcher.InvokeAsync(() =>
+        {
+            if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
+            {
+                return null;
+            }
+
+            RuntimeLlmScriptEvent llmEvent = new(
+                string.Empty,
+                "tool_execute",
+                string.Empty,
+                string.Empty,
+                false,
+                string.Empty,
+                callbackName,
+                toolCall,
+                null);
+
+            foreach ((RuntimeEntity entity, List<IScriptInstance> scripts, _) in _scriptTargets.ToArray())
+            {
+                if (!ReferenceEquals(entity, target))
+                {
+                    continue;
+                }
+
+                foreach (IScriptInstance script in scripts)
+                {
+                    try
+                    {
+                        string? result = script.InvokeLlmTool(entity, _runtimeScene, _runtimeInput, _runtimeAudio, llmEvent);
+                        if (!string.IsNullOrWhiteSpace(result))
+                        {
+                            return result;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Script LLM tool '{toolCall.Name}' failed for entity '{entity.Name}': {ex.Message}");
+                        return JsonSerializer.Serialize(new
+                        {
+                            error = ex.Message
+                        });
+                    }
+                }
+            }
+
+            return null;
+        });
     }
 
     private void DispatchAsrEvent(RuntimeEntity target, RuntimeAsrScriptEvent asrEvent)

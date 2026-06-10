@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Llm;
 using Zhengyan.DigitalWife.Llm.OpenAI;
@@ -6,6 +7,8 @@ namespace Zhengyan.DigitalWife.Samples.GamePlayer;
 
 public sealed class RuntimeLlm : IDisposable
 {
+    private const int DefaultMaxToolRounds = 4;
+
     private readonly GameProjectLlmSettings _settings;
     private readonly MainThreadDispatcher _dispatcher;
     private readonly Action<RuntimeEntity, RuntimeLlmScriptEvent> _dispatchScriptEvent;
@@ -47,6 +50,31 @@ public sealed class RuntimeLlm : IDisposable
     {
         string result = string.Empty;
         await foreach (RuntimeLlmStreamUpdate update in StreamChatAsync(userText, systemPrompt, model, temperature, cancellationToken))
+        {
+            result = update.AccumulatedText;
+        }
+
+        return result;
+    }
+
+    public async Task<string> ChatWithToolsAsync(
+        string userText,
+        IEnumerable<RuntimeLlmTool> tools,
+        string? systemPrompt = null,
+        string? model = null,
+        float? temperature = null,
+        int maxToolRounds = DefaultMaxToolRounds,
+        CancellationToken cancellationToken = default)
+    {
+        string result = string.Empty;
+        List<RuntimeLlmChatMessage> messages = [];
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            messages.Add(new RuntimeLlmChatMessage("system", systemPrompt));
+        }
+
+        messages.Add(new RuntimeLlmChatMessage("user", userText));
+        await foreach (RuntimeLlmStreamUpdate update in StreamChatWithToolsAsync(messages, tools, model, temperature, maxToolRounds, cancellationToken))
         {
             result = update.AccumulatedText;
         }
@@ -104,6 +132,228 @@ public sealed class RuntimeLlm : IDisposable
         string? onCompletedCallback = null,
         string? onErrorCallback = null)
     {
+        return StartChatCore(
+            callbackTarget,
+            messages,
+            model,
+            temperature,
+            tools: null,
+            maxToolRounds: DefaultMaxToolRounds,
+            onDelta,
+            onCompleted,
+            onError,
+            requestId,
+            onDeltaCallback,
+            onCompletedCallback,
+            onErrorCallback,
+            onToolCallCallback: null,
+            onToolResultCallback: null);
+    }
+
+    public string StartChatWithTools(
+        RuntimeEntity callbackTarget,
+        string userText,
+        IEnumerable<RuntimeLlmTool> tools,
+        string? systemPrompt = null,
+        string? model = null,
+        float? temperature = null,
+        string? requestId = null,
+        string? onDeltaCallback = null,
+        string? onCompletedCallback = null,
+        string? onErrorCallback = null,
+        string? onToolCallCallback = null,
+        string? onToolResultCallback = null,
+        int maxToolRounds = DefaultMaxToolRounds)
+    {
+        ArgumentNullException.ThrowIfNull(callbackTarget);
+
+        List<RuntimeLlmChatMessage> messages = [];
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            messages.Add(new RuntimeLlmChatMessage("system", systemPrompt));
+        }
+
+        messages.Add(new RuntimeLlmChatMessage("user", userText));
+        return StartChatWithTools(
+            callbackTarget,
+            messages,
+            tools,
+            model,
+            temperature,
+            requestId,
+            onDeltaCallback,
+            onCompletedCallback,
+            onErrorCallback,
+            onToolCallCallback,
+            onToolResultCallback,
+            maxToolRounds);
+    }
+
+    public string StartChatWithTools(
+        RuntimeEntity callbackTarget,
+        IEnumerable<RuntimeLlmChatMessage> messages,
+        IEnumerable<RuntimeLlmTool> tools,
+        string? model = null,
+        float? temperature = null,
+        string? requestId = null,
+        string? onDeltaCallback = null,
+        string? onCompletedCallback = null,
+        string? onErrorCallback = null,
+        string? onToolCallCallback = null,
+        string? onToolResultCallback = null,
+        int maxToolRounds = DefaultMaxToolRounds)
+    {
+        return StartChatCore(
+            callbackTarget,
+            messages,
+            model,
+            temperature,
+            tools,
+            maxToolRounds,
+            onDelta: null,
+            onCompleted: null,
+            onError: null,
+            requestId,
+            onDeltaCallback,
+            onCompletedCallback,
+            onErrorCallback,
+            onToolCallCallback,
+            onToolResultCallback);
+    }
+
+    public IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatAsync(
+        string userText,
+        string? systemPrompt = null,
+        string? model = null,
+        float? temperature = null,
+        CancellationToken cancellationToken = default)
+    {
+        List<RuntimeLlmChatMessage> messages = [];
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            messages.Add(new RuntimeLlmChatMessage("system", systemPrompt));
+        }
+
+        messages.Add(new RuntimeLlmChatMessage("user", userText));
+        return StreamChatAsync(messages, model, temperature, cancellationToken);
+    }
+
+    public async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatAsync(
+        IEnumerable<RuntimeLlmChatMessage> messages,
+        string? model = null,
+        float? temperature = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+            messages,
+            model,
+            temperature,
+            tools: null,
+            cancellationToken))
+        {
+            yield return update;
+        }
+    }
+
+    public async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatWithToolsAsync(
+        IEnumerable<RuntimeLlmChatMessage> messages,
+        IEnumerable<RuntimeLlmTool> tools,
+        string? model = null,
+        float? temperature = null,
+        int maxToolRounds = DefaultMaxToolRounds,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        List<RuntimeLlmChatMessage> conversation = messages.ToList();
+        List<RuntimeLlmTool> toolList = tools.ToList();
+        RuntimeLlmStreamUpdate lastUpdate = new(string.Empty, string.Empty, false);
+
+        for (int round = 0; round <= Math.Max(0, maxToolRounds); round++)
+        {
+            RuntimeLlmStreamUpdate roundLastUpdate = lastUpdate;
+            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+                conversation,
+                model,
+                temperature,
+                toolList,
+                cancellationToken))
+            {
+                roundLastUpdate = update;
+                if (update.ToolCalls.Count == 0)
+                {
+                    yield return update;
+                }
+            }
+
+            lastUpdate = roundLastUpdate;
+            if (roundLastUpdate.ToolCalls.Count == 0)
+            {
+                yield break;
+            }
+
+            conversation.Add(new RuntimeLlmChatMessage("assistant", roundLastUpdate.AccumulatedText)
+            {
+                ToolCalls = roundLastUpdate.ToolCalls
+            });
+
+            foreach (RuntimeLlmToolCall toolCall in roundLastUpdate.ToolCalls)
+            {
+                RuntimeLlmTool? tool = FindTool(toolList, toolCall.Name);
+                string result = tool is null
+                    ? $"Tool '{toolCall.Name}' is not registered."
+                    : await tool.InvokeAsync(toolCall, cancellationToken);
+                conversation.Add(new RuntimeLlmChatMessage("tool", result)
+                {
+                    ToolCallId = toolCall.Id
+                });
+            }
+        }
+
+        throw new InvalidOperationException($"LLM tool call loop exceeded maxToolRounds={maxToolRounds}.");
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        CancellationTokenSource[] requests;
+        lock (_sync)
+        {
+            requests = _activeRequests.ToArray();
+            _activeRequests.Clear();
+        }
+
+        foreach (CancellationTokenSource request in requests)
+        {
+            request.Cancel();
+            request.Dispose();
+        }
+
+        _client?.Dispose();
+        _client = null;
+    }
+
+    private string StartChatCore(
+        RuntimeEntity callbackTarget,
+        IEnumerable<RuntimeLlmChatMessage> messages,
+        string? model,
+        float? temperature,
+        IEnumerable<RuntimeLlmTool>? tools,
+        int maxToolRounds,
+        Action<RuntimeLlmStreamUpdate>? onDelta,
+        Action<RuntimeLlmResult>? onCompleted,
+        Action<Exception>? onError,
+        string? requestId,
+        string? onDeltaCallback,
+        string? onCompletedCallback,
+        string? onErrorCallback,
+        string? onToolCallCallback,
+        string? onToolResultCallback)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(callbackTarget);
 
@@ -111,6 +361,8 @@ public sealed class RuntimeLlm : IDisposable
             ? Guid.NewGuid().ToString("N")
             : requestId.Trim();
         List<RuntimeLlmChatMessage> capturedMessages = messages.ToList();
+        List<RuntimeLlmTool>? capturedTools = tools?.ToList();
+
         try
         {
             CancellationTokenSource cts = new();
@@ -124,7 +376,21 @@ public sealed class RuntimeLlm : IDisposable
                 string accumulated = string.Empty;
                 try
                 {
-                    await foreach (RuntimeLlmStreamUpdate update in StreamChatAsync(capturedMessages, model, temperature, cts.Token))
+                    IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = capturedTools is { Count: > 0 }
+                        ? StreamChatWithToolsForBackgroundAsync(
+                            callbackTarget,
+                            resolvedRequestId,
+                            capturedMessages,
+                            capturedTools,
+                            model,
+                            temperature,
+                            maxToolRounds,
+                            onToolCallCallback,
+                            onToolResultCallback,
+                            cts.Token)
+                        : StreamChatAsync(capturedMessages, model, temperature, cts.Token);
+
+                    await foreach (RuntimeLlmStreamUpdate update in stream)
                     {
                         accumulated = update.AccumulatedText;
                         RuntimeLlmStreamUpdate capturedUpdate = update;
@@ -145,7 +411,9 @@ public sealed class RuntimeLlm : IDisposable
                                     capturedUpdate.AccumulatedText,
                                     capturedUpdate.IsFinal,
                                     string.Empty,
-                                    onDeltaCallback ?? string.Empty));
+                                    onDeltaCallback ?? string.Empty,
+                                    null,
+                                    null));
                         });
                     }
 
@@ -167,7 +435,9 @@ public sealed class RuntimeLlm : IDisposable
                                 result.Text,
                                 true,
                                 string.Empty,
-                                onCompletedCallback ?? string.Empty));
+                                onCompletedCallback ?? string.Empty,
+                                null,
+                                null));
                     });
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested || _disposed)
@@ -192,7 +462,9 @@ public sealed class RuntimeLlm : IDisposable
                                 accumulated,
                                 true,
                                 ex.Message,
-                                onErrorCallback ?? string.Empty));
+                                onErrorCallback ?? string.Empty,
+                                null,
+                                null));
                     });
                 }
                 finally
@@ -220,34 +492,81 @@ public sealed class RuntimeLlm : IDisposable
                         string.Empty,
                         true,
                         ex.Message,
-                        onErrorCallback ?? string.Empty));
+                        onErrorCallback ?? string.Empty,
+                        null,
+                        null));
             });
         }
 
         return resolvedRequestId;
     }
 
-    public IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatAsync(
-        string userText,
-        string? systemPrompt = null,
-        string? model = null,
-        float? temperature = null,
-        CancellationToken cancellationToken = default)
+    private async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatWithToolsForBackgroundAsync(
+        RuntimeEntity callbackTarget,
+        string requestId,
+        IEnumerable<RuntimeLlmChatMessage> messages,
+        IReadOnlyList<RuntimeLlmTool> tools,
+        string? model,
+        float? temperature,
+        int maxToolRounds,
+        string? onToolCallCallback,
+        string? onToolResultCallback,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        List<RuntimeLlmChatMessage> messages = [];
-        if (!string.IsNullOrWhiteSpace(systemPrompt))
+        List<RuntimeLlmChatMessage> conversation = messages.ToList();
+        RuntimeLlmStreamUpdate lastUpdate = new(string.Empty, string.Empty, false);
+
+        for (int round = 0; round <= Math.Max(0, maxToolRounds); round++)
         {
-            messages.Add(new RuntimeLlmChatMessage("system", systemPrompt));
+            RuntimeLlmStreamUpdate roundLastUpdate = lastUpdate;
+            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+                conversation,
+                model,
+                temperature,
+                tools,
+                cancellationToken))
+            {
+                roundLastUpdate = update;
+                if (update.ToolCalls.Count == 0)
+                {
+                    yield return update;
+                }
+            }
+
+            lastUpdate = roundLastUpdate;
+            if (roundLastUpdate.ToolCalls.Count == 0)
+            {
+                yield break;
+            }
+
+            conversation.Add(new RuntimeLlmChatMessage("assistant", roundLastUpdate.AccumulatedText)
+            {
+                ToolCalls = roundLastUpdate.ToolCalls
+            });
+
+            foreach (RuntimeLlmToolCall toolCall in roundLastUpdate.ToolCalls)
+            {
+                DispatchToolEvent(callbackTarget, requestId, "tool_call", onToolCallCallback, toolCall, null);
+                RuntimeLlmTool? tool = FindTool(tools, toolCall.Name);
+                string result = tool is null
+                    ? $"Tool '{toolCall.Name}' is not registered."
+                    : await tool.InvokeAsync(toolCall, cancellationToken);
+                DispatchToolEvent(callbackTarget, requestId, "tool_result", onToolResultCallback, toolCall, result);
+                conversation.Add(new RuntimeLlmChatMessage("tool", result)
+                {
+                    ToolCallId = toolCall.Id
+                });
+            }
         }
 
-        messages.Add(new RuntimeLlmChatMessage("user", userText));
-        return StreamChatAsync(messages, model, temperature, cancellationToken);
+        throw new InvalidOperationException($"LLM tool call loop exceeded maxToolRounds={maxToolRounds}.");
     }
 
-    public async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatAsync(
+    private async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatCoreAsync(
         IEnumerable<RuntimeLlmChatMessage> messages,
-        string? model = null,
-        float? temperature = null,
+        string? model,
+        float? temperature,
+        IEnumerable<RuntimeLlmTool>? tools,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -258,8 +577,8 @@ public sealed class RuntimeLlm : IDisposable
 
         string resolvedModel = ResolveModel(model);
         List<LlmChatMessage> requestMessages = messages
-            .Where(message => !string.IsNullOrWhiteSpace(message.Role) && !string.IsNullOrWhiteSpace(message.Content))
-            .Select(message => new LlmChatMessage(message.Role.Trim(), message.Content))
+            .Where(message => !string.IsNullOrWhiteSpace(message.Role) && IsValidMessage(message))
+            .Select(ToLlmChatMessage)
             .ToList();
 
         if (requestMessages.Count == 0)
@@ -267,42 +586,56 @@ public sealed class RuntimeLlm : IDisposable
             throw new ArgumentException("At least one LLM message is required.", nameof(messages));
         }
 
+        IReadOnlyList<LlmToolDefinition>? requestTools = tools?
+            .Select(tool => new LlmToolDefinition(tool.Name, tool.Description, tool.ParametersJsonSchema))
+            .ToArray();
+
         await foreach (LlmStreamUpdate update in GetClient().StreamChatAsync(
             requestMessages,
             new LlmRequestOptions
             {
                 Model = resolvedModel,
-                Temperature = temperature ?? _settings.DefaultTemperature
+                Temperature = temperature ?? _settings.DefaultTemperature,
+                Tools = requestTools
             },
             cancellationToken))
         {
-            yield return new RuntimeLlmStreamUpdate(update.Delta, update.AccumulatedText, update.IsFinal);
+            yield return new RuntimeLlmStreamUpdate(
+                update.Delta,
+                update.AccumulatedText,
+                update.IsFinal,
+                update.ToolCalls.Select(call => new RuntimeLlmToolCall(call.Id, call.Name, call.ArgumentsJson)).ToArray());
         }
     }
 
-    public void Dispose()
+    private void DispatchToolEvent(
+        RuntimeEntity target,
+        string requestId,
+        string eventName,
+        string? callbackName,
+        RuntimeLlmToolCall toolCall,
+        string? toolResult)
     {
-        if (_disposed)
+        _dispatcher.Post(() =>
         {
-            return;
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        _disposed = true;
-        CancellationTokenSource[] requests;
-        lock (_sync)
-        {
-            requests = _activeRequests.ToArray();
-            _activeRequests.Clear();
-        }
-
-        foreach (CancellationTokenSource request in requests)
-        {
-            request.Cancel();
-            request.Dispose();
-        }
-
-        _client?.Dispose();
-        _client = null;
+            DispatchScriptEvent(
+                target,
+                new RuntimeLlmScriptEvent(
+                    requestId,
+                    eventName,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    string.Empty,
+                    callbackName ?? string.Empty,
+                    toolCall,
+                    toolResult));
+        });
     }
 
     private void DispatchScriptEvent(RuntimeEntity target, RuntimeLlmScriptEvent scriptEvent)
@@ -340,7 +673,7 @@ public sealed class RuntimeLlm : IDisposable
 
     private string ResolveModel(string? overrideModel)
     {
-        string model = !string.IsNullOrWhiteSpace(overrideModel)
+        string? model = !string.IsNullOrWhiteSpace(overrideModel)
             ? overrideModel
             : _settings.Model;
         return string.IsNullOrWhiteSpace(model)
@@ -362,13 +695,94 @@ public sealed class RuntimeLlm : IDisposable
 
         return string.Empty;
     }
+
+    private static RuntimeLlmTool? FindTool(IEnumerable<RuntimeLlmTool> tools, string name)
+    {
+        return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsValidMessage(RuntimeLlmChatMessage message)
+    {
+        return !string.IsNullOrWhiteSpace(message.Content)
+            || !string.IsNullOrWhiteSpace(message.ToolCallId)
+            || message.ToolCalls.Count > 0;
+    }
+
+    private static LlmChatMessage ToLlmChatMessage(RuntimeLlmChatMessage message)
+    {
+        return new LlmChatMessage(message.Role.Trim(), message.Content)
+        {
+            ToolCallId = message.ToolCallId,
+            ToolCalls = message.ToolCalls.Select(call => new LlmToolCall(call.Id, call.Name, call.ArgumentsJson)).ToArray()
+        };
+    }
 }
 
-public sealed record RuntimeLlmChatMessage(string Role, string Content);
+public sealed record RuntimeLlmChatMessage(string Role, string Content)
+{
+    public string? ToolCallId { get; init; }
 
-public sealed record RuntimeLlmStreamUpdate(string Delta, string AccumulatedText, bool IsFinal);
+    public IReadOnlyList<RuntimeLlmToolCall> ToolCalls { get; init; } = [];
+}
+
+public sealed record RuntimeLlmToolCall(string Id, string Name, string ArgumentsJson);
+
+public sealed record RuntimeLlmStreamUpdate(
+    string Delta,
+    string AccumulatedText,
+    bool IsFinal,
+    IReadOnlyList<RuntimeLlmToolCall> ToolCalls)
+{
+    public RuntimeLlmStreamUpdate(string delta, string accumulatedText, bool isFinal)
+        : this(delta, accumulatedText, isFinal, [])
+    {
+    }
+}
 
 public sealed record RuntimeLlmResult(string RequestId, string Text);
+
+public sealed record RuntimeLlmTool(
+    string Name,
+    string Description,
+    string ParametersJsonSchema,
+    Func<RuntimeLlmToolCall, CancellationToken, Task<string>> Handler)
+{
+    public RuntimeLlmTool(string name, string description, string parametersJsonSchema, Func<string, string> handler)
+        : this(name, description, parametersJsonSchema, (call, _) => Task.FromResult(handler(call.ArgumentsJson)))
+    {
+    }
+
+    public RuntimeLlmTool(string name, string description, string parametersJsonSchema, Func<string, CancellationToken, Task<string>> handler)
+        : this(name, description, parametersJsonSchema, (call, cancellationToken) => handler(call.ArgumentsJson, cancellationToken))
+    {
+    }
+
+    public Task<string> InvokeAsync(RuntimeLlmToolCall toolCall, CancellationToken cancellationToken)
+    {
+        return Handler(toolCall, cancellationToken);
+    }
+}
+
+public sealed record RuntimeLlmScriptTool(
+    string Name,
+    string Description,
+    string ParametersJsonSchema,
+    string CallbackName)
+{
+    public RuntimeLlmTool ToTool(RuntimeEntity entity, RuntimeScene scene)
+    {
+        return new RuntimeLlmTool(
+            Name,
+            Description,
+            ParametersJsonSchema,
+            async (toolCall, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string? result = await scene.InvokeLlmToolAsync(entity, CallbackName, toolCall);
+                return string.IsNullOrWhiteSpace(result) ? "{}" : result;
+            });
+    }
+}
 
 public sealed record RuntimeLlmScriptEvent(
     string RequestId,
@@ -377,4 +791,6 @@ public sealed record RuntimeLlmScriptEvent(
     string AccumulatedText,
     bool IsFinal,
     string Error,
-    string CallbackName);
+    string CallbackName,
+    RuntimeLlmToolCall? ToolCall,
+    string? ToolResult);
