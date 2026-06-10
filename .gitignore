@@ -5,7 +5,6 @@ artifacts/
 temp/
 .codex-dotnet-home/
 appsettings.Local.json
-docs/
 imgui.ini
 **/imgui.ini
 .session/
