@@ -89,7 +89,7 @@ keywords:
 | --- | --- | --- |
 | `maxSlopeDegrees` | `Scene.Navigation.Bake(maxSlopeDegrees)` | 全局烘焙坡度上限。最终可行走坡度会同时受全局值和 Collider 自身 `Max slope degrees` 影响。 |
 | `maxStepHeight` | `Scene.Navigation.Bake(maxStepHeight)` | 自动连接相邻台阶/平台的最大高度差。默认 `0.45`。场景缩放较小时可降低，楼梯较高时可提高。 |
-| `maxStepHorizontalDistance` | `Scene.Navigation.Bake(maxStepHorizontalDistance)` | 自动连接相邻台阶/平台的最大水平间距。默认 `0.35`。如果台阶之间有缝隙或模型三角面没有共享边，可适当提高。 |
+| `maxStepHorizontalDistance` | `Scene.Navigation.Bake(maxStepHorizontalDistance)` | 自动连接相邻台阶/平台的最大水平间距。默认 `0.35`。现在按三角形 XZ 投影的最短距离判断；桌面/地面这类上下投影重叠的面会被认为水平距离为 `0`，不需要把这个值调得很大。 |
 | `maxSnapDistance` | `TryFindPath(..., maxSnapDistance)` | 起点和终点吸附到最近 NavMesh 三角面的最大距离。人物脚底或鼠标命中点略高于地面时，可以适当增大。 |
 | `originY` | `SampleGround(..., originY, maxDistance)` | 向下采样地面的射线起点高度。一般用 `Entity.Position.Y + 10.0f`。 |
 | `maxDistance` | `SampleGround(..., maxDistance)` | 向下采样地面的最大距离。地形落差大时需要增大。 |
@@ -104,6 +104,7 @@ keywords:
 | `Scene.Navigation.FindPath(start, end, maxSnapDistance = 5.0f)` | 返回路径点列表；失败返回空列表。 |
 | `Scene.Navigation.TryFindPath(start, end, out path, maxSnapDistance = 5.0f)` | 查询路径，成功时返回 `RuntimeNavigationPath`。 |
 | `Scene.Navigation.SamplePosition(position, out nearest, maxDistance = 5.0f)` | 把一个世界坐标吸附到最近 NavMesh 三角面。 |
+| `Scene.Navigation.LastDebugInfo` | 最近一次 `TryFindPath` / `FindPath` 的调试信息，便于判断是起点吸附失败、终点吸附失败，还是起点/终点不在同一个连通区域。 |
 
 `RuntimeNavigationBakeResult` 字段：
 
@@ -119,6 +120,16 @@ keywords:
 | `Points` | 路径点列表，世界坐标。 |
 | `Length` | 路径折线长度。 |
 | `Success` | `Points.Count > 0` 的快捷判断。 |
+
+`RuntimeNavigationDebugInfo` 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `Status` | 最近一次状态，例如 `path_found`、`no_start_candidate`、`no_end_candidate`、`no_shared_component`、`no_triangle_path`。 |
+| `StartCandidateCount` / `EndCandidateCount` | 起点/终点在 `maxSnapDistance` 内找到的候选三角面数量。 |
+| `StartComponentId` / `EndComponentId` | 起点/终点最终或最近候选所在的 NavMesh 连通区域 ID。 |
+| `StartComponentSize` / `EndComponentSize` | 对应连通区域包含的三角形数量。 |
+| `StartSnapDistance` / `EndSnapDistance` | 起点/终点吸附到 NavMesh 的距离。 |
 
 ### C#：点击目标点后沿 NavMesh 移动
 
@@ -169,7 +180,13 @@ if (IsUpdate)
             {
                 path.Clear();
                 pathIndex = 0;
-                Console.WriteLine("No NavMesh path found. Check walkable MeshCollider and maxSnapDistance.");
+                RuntimeNavigationDebugInfo debug = Scene.Navigation.LastDebugInfo;
+                Console.WriteLine(
+                    $"No NavMesh path found. status={debug.Status}, " +
+                    $"startCandidates={debug.StartCandidateCount}, endCandidates={debug.EndCandidateCount}, " +
+                    $"startComponent={debug.StartComponentId}/{debug.StartComponentSize}, " +
+                    $"endComponent={debug.EndComponentId}/{debug.EndComponentSize}, " +
+                    $"startSnap={debug.StartSnapDistance:0.00}, endSnap={debug.EndSnapDistance:0.00}");
             }
         }
     }
