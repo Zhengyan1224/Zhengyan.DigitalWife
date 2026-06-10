@@ -2938,6 +2938,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                                module.realtime_voice_event(entity, scene, input, audio, realtime_voice_event)
                        print(COMMAND_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
                    except Exception as ex:
+                       try:
+                           if event == "llm_event":
+                               llm_event = ctx.get("llmEvent", {})
+                               if llm_event.get("eventName", "") == "tool_execute":
+                                   print(FLUSH_MARKER + json.dumps(commands, ensure_ascii=False, separators=(",", ":")), flush=True)
+                                   print(TOOL_RESULT_MARKER + json.dumps({
+                                       "result": json.dumps({"error": str(ex)}, ensure_ascii=False, separators=(",", ":"))
+                                   }, ensure_ascii=False, separators=(",", ":")), flush=True)
+                                   print(str(ex), file=sys.stderr, flush=True)
+                                   continue
+                       except Exception:
+                           pass
                        print(COMMAND_MARKER + "[]", flush=True)
                        print(str(ex), file=sys.stderr, flush=True)
                """;

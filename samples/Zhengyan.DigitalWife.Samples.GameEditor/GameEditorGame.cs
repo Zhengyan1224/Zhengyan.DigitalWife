@@ -301,7 +301,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         int targetHeight,
         Action? restoreRenderTarget = null)
     {
-        if (_planarReflectionRenderer is null || _waterObjects.Count == 0)
+        if (_planarReflectionRenderer is null || (_waterObjects.Count == 0 && _planeObjects.Count == 0))
         {
             return;
         }

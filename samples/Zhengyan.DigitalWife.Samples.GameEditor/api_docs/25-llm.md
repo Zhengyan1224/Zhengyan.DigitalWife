@@ -248,6 +248,7 @@ if (IsGuiEvent && GuiEventName == "clicked")
 - `scene.llm.chat(...)`：等待完整结果。
 - `scene.llm.stream_chat(...)` / `stream_messages(...)`：在当前函数里同步流式迭代。适合加载脚本或测试；运行中 UI 建议用 `start_chat`，否则当前脚本事件会占用主循环。
 - `scene.llm.start_chat(...)`：后台请求，delta / completed / error 会回调到指定 Python 函数，不阻塞当前事件。
+- `scene.llm.start_chat_with_tools(...)`：后台工具调用请求。LLM 需要额外信息时会触发 Python 或 C# 脚本工具回调，再把结果继续发回模型。
 
 Python LLM API：
 
@@ -259,6 +260,8 @@ Python LLM API：
 | `scene.llm.stream_chat(text, system_prompt=None, model=None, temperature=None)` | 按文本 prompt 发起流式请求。 |
 | `scene.llm.stream_messages(messages, model=None, temperature=None)` | 按消息列表发起流式请求。 |
 | `scene.llm.start_chat(text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error")` | 后台流式请求，通过 Python 函数回调。 |
+| `scene.llm.tool(name, description, parameters_json_schema, callback)` | 创建一个 function call 工具定义。`parameters_json_schema` 可以是 JSON 字符串或 Python dict。 |
+| `scene.llm.start_chat_with_tools(text, tools, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error", on_tool_call="llm_tool_call", on_tool_result="llm_tool_result", max_tool_rounds=4)` | 后台工具调用请求，通过 Python 函数回调执行工具。 |
 
 Python 完整结果：
 
@@ -327,6 +330,81 @@ def npc_reply_error(entity, scene, input, audio, event):
     print("LLM error:", event["error"])
 ```
 
+Python function call 工具调用：
+
+```python
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if event_name != "clicked":
+        return
+
+    output = scene.get_gui_control("LLM Output")
+    if output:
+        output.set_value("")
+
+    tools = [
+        scene.llm.tool(
+            "get_player_status",
+            "读取当前玩家状态，包括 HP、金币和当前位置。",
+            {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            "get_player_status_tool")
+    ]
+
+    scene.llm.start_chat_with_tools(
+        "根据我的当前状态，给我一个下一步行动建议。",
+        tools,
+        system_prompt="你是游戏 NPC。需要状态数据时调用工具，不要编造。",
+        on_delta="npc_tool_reply_delta",
+        on_completed="npc_tool_reply_done",
+        on_error="npc_tool_reply_error",
+        on_tool_call="npc_tool_call",
+        on_tool_result="npc_tool_result",
+        max_tool_rounds=4)
+
+def get_player_status_tool(entity, scene, input, audio, event):
+    return {
+        "hp": 80,
+        "gold": 12,
+        "position": {
+            "x": entity.position[0],
+            "y": entity.position[1],
+            "z": entity.position[2],
+        }
+    }
+
+def npc_tool_reply_delta(entity, scene, input, audio, event):
+    output = scene.get_gui_control("LLM Output")
+    if output:
+        output.set_value(event["accumulatedText"])
+
+def npc_tool_call(entity, scene, input, audio, event):
+    call = event.get("toolCall") or {}
+    print("LLM wants tool:", call.get("name", ""), call.get("argumentsJson", ""))
+
+def npc_tool_result(entity, scene, input, audio, event):
+    print("Tool result:", event.get("toolResult", ""))
+
+def npc_tool_reply_done(entity, scene, input, audio, event):
+    entity.speak(event["accumulatedText"])
+
+def npc_tool_reply_error(entity, scene, input, audio, event):
+    print("LLM error:", event["error"])
+```
+
+Python 工具事件字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `event["eventName"] == "tool_execute"` | 当前回调正在执行工具，需要返回工具结果。 |
+| `event["toolCall"]["id"]` | 工具调用 ID。 |
+| `event["toolCall"]["name"]` | 工具名。 |
+| `event["toolCall"]["argumentsJson"]` | 工具参数 JSON 字符串。需要脚本自行 `json.loads(...)` 并校验。 |
+| `event["toolResult"]` | `tool_result` 通知事件中的工具返回文本。 |
+| 工具回调返回值 | 可以返回 `str`、`dict`、`list`、数字或布尔值；非字符串会自动序列化为 JSON 文本。 |
+
 Python 消息列表调用：
 
 ```python
@@ -350,5 +428,8 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
 
 - LLM 请求是网络请求。同步 `ChatAsync` / `chat` / 当前函数内 `stream_chat` 会占用脚本事件执行时间；运行中实时 UI 建议用 `StartChat` / `start_chat`。
 - Python 的 `scene.flush()` 只会提交当前已累计的引擎命令，例如 GUI 文本变化、实体移动等；不会重新读取新的输入快照，也不会让被阻塞的主循环提前渲染新帧。
-- `start_chat` 的回调事件字段包括 `requestId`、`eventName`、`delta`、`accumulatedText`、`isFinal`、`error`、`callbackName`。
-- 当前 LLM API 面向文本 Chat Completions；图片、多模态、工具调用等还没有封装到脚本层。
+- `start_chat` / `start_chat_with_tools` 的回调事件字段包括 `requestId`、`eventName`、`delta`、`accumulatedText`、`isFinal`、`error`、`callbackName`、`toolCall`、`toolResult`。
+- function call 使用 OpenAI-compatible Chat Completions 的 `tools: [{ type: "function", function: ... }]` 格式。不同供应商如果对工具调用字段兼容性不足，需要在服务端适配。
+- 工具参数由 LLM 生成，脚本必须自行校验参数类型和范围，不要直接把参数拼接成系统命令或文件路径。
+- `maxToolRounds` / `max_tool_rounds` 用于限制“模型调用工具 -> 工具结果返回模型 -> 模型再次调用工具”的最大轮数，避免模型无限循环调用工具。
+- 当前 LLM API 面向文本 Chat Completions；图片和多模态暂未封装到脚本层。

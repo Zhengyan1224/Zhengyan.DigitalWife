@@ -261,7 +261,7 @@ def after_speak(entity, scene, input, audio):
     entity.rotate_y(180)
 ```
 
-`scene.llm.start_chat(...)` 的回调会优先调用 `on_delta`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `llm_event(entity, scene, input, audio, event)`，则会调用通用 `llm_event`。
+`scene.llm.start_chat(...)` 和 `scene.llm.start_chat_with_tools(...)` 的回调会优先调用传入的同名函数；如果没有同名函数但脚本定义了 `llm_event(entity, scene, input, audio, event)`，则会调用通用 `llm_event`。当 `event["eventName"] == "tool_execute"` 时，回调需要返回工具结果；`tool_call` 和 `tool_result` 事件则适合做日志或 UI 提示。
 
 `scene.asr.start_streaming_recognition(...)` 的回调会优先调用 `on_partial`、`on_completed`、`on_error` 指定的同名函数；如果没有同名函数但脚本定义了 `asr_event(entity, scene, input, audio, event)`，则会调用通用 `asr_event`。
 
