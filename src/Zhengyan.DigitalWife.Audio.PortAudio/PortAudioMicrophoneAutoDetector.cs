@@ -81,35 +81,34 @@ public sealed class PortAudioMicrophoneAutoDetector
                         probe.Rms,
                         probe.Error));
 
-                    if (probe.IsUsable && (!options.RequireSignal || probe.Rms >= options.MinRms))
+                    if (probe.IsUsable)
                     {
-                        _logger.LogInformation(
-                            "Auto-detected microphone [{DeviceIndex}] {DeviceName}, sampleRate={SampleRate}, rms={Rms:0.000000}.",
-                            deviceIndex,
-                            deviceInfo.name,
-                            sampleRate,
-                            probe.Rms);
-
-                        return PortAudioMicrophoneDetectionResult.Detected(
-                            deviceIndex,
-                            deviceInfo.name,
-                            sampleRate,
-                            probe.Rms,
-                            deviceIndex == defaultInputDevice,
-                            candidates);
+                        break;
                     }
                 }
             }
 
-            PortAudioMicrophoneDetectionCandidate? firstUsable = candidates.FirstOrDefault(candidate => candidate.IsUsable);
-            if (firstUsable is not null)
+            PortAudioMicrophoneDetectionCandidate? bestCandidate = candidates
+                .Where(candidate => candidate.IsUsable && (!options.RequireSignal || candidate.Rms >= options.MinRms))
+                .OrderByDescending(candidate => ScoreCandidate(candidate, options.MinRms))
+                .ThenBy(candidate => candidate.DeviceIndex)
+                .FirstOrDefault();
+
+            if (bestCandidate is not null)
             {
+                _logger.LogInformation(
+                    "Auto-detected microphone [{DeviceIndex}] {DeviceName}, sampleRate={SampleRate}, rms={Rms:0.000000}.",
+                    bestCandidate.DeviceIndex,
+                    bestCandidate.Name,
+                    bestCandidate.SampleRate,
+                    bestCandidate.Rms);
+
                 return PortAudioMicrophoneDetectionResult.Detected(
-                    firstUsable.DeviceIndex,
-                    firstUsable.Name,
-                    firstUsable.SampleRate!.Value,
-                    firstUsable.Rms,
-                    firstUsable.IsDefault,
+                    bestCandidate.DeviceIndex,
+                    bestCandidate.Name,
+                    bestCandidate.SampleRate!.Value,
+                    bestCandidate.Rms,
+                    bestCandidate.IsDefault,
                     candidates);
             }
 
@@ -119,6 +118,64 @@ public sealed class PortAudioMicrophoneAutoDetector
         {
             PortAudioSharp.PortAudio.Terminate();
         }
+    }
+
+    private static double ScoreCandidate(PortAudioMicrophoneDetectionCandidate candidate, double minRms)
+    {
+        double score = 0.0;
+
+        if (candidate.Rms >= minRms)
+        {
+            score += Math.Min(candidate.Rms * 10_000.0, 100.0);
+        }
+
+        string name = candidate.Name ?? string.Empty;
+        if (LooksLikePhysicalMicrophone(name))
+        {
+            score += 30.0;
+        }
+
+        if (LooksLikeVirtualOrCompatibilityDevice(name))
+        {
+            score -= 20.0;
+        }
+
+        if (candidate.IsDefault)
+        {
+            score += 5.0;
+        }
+
+        return score;
+    }
+
+    private static bool LooksLikePhysicalMicrophone(string name)
+    {
+        return name.Contains("mic", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("microphone", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("input", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("capture", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("usb", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("alsa_input", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeVirtualOrCompatibilityDevice(string name)
+    {
+        return string.Equals(name, "default", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("default", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("sysdefault", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("pulse", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("pipewire", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("jack", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("oss", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("dmix", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("dsnoop", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("front", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("rear", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("center", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("side", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("surround", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("spdif", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("hdmi", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<int> BuildSampleRates(IReadOnlyList<int> preferredSampleRates)

@@ -101,6 +101,9 @@ public sealed class RuntimeAsr : IDisposable
         StopAllStreamingRecognitions();
 
         string resolvedRequestId = ResolveRequestId(requestId);
+        Console.WriteLine(
+            $"[GamePlayer] ASR streaming start request={resolvedRequestId}, target={callbackTarget.Name}, " +
+            $"device={_settings.InputDeviceIndex?.ToString() ?? "default"}, provider={_settings.Provider}");
         CancellationTokenSource cts = new();
         lock (_sync)
         {
@@ -120,9 +123,11 @@ public sealed class RuntimeAsr : IDisposable
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested || _disposed)
             {
+                Console.WriteLine($"[GamePlayer] ASR streaming canceled request={resolvedRequestId}.");
             }
             catch (Exception ex)
             {
+                Console.Error.WriteLine($"[GamePlayer] ASR streaming failed request={resolvedRequestId}: {ex.Message}");
                 DispatchEvent(
                     callbackTarget,
                     new RuntimeAsrScriptEvent(
@@ -142,6 +147,7 @@ public sealed class RuntimeAsr : IDisposable
                 }
 
                 cts.Dispose();
+                Console.WriteLine($"[GamePlayer] ASR streaming finished request={resolvedRequestId}.");
             }
         });
 
@@ -221,6 +227,9 @@ public sealed class RuntimeAsr : IDisposable
             await foreach (SpeechRecognitionUpdate update in session.GetUpdatesAsync())
             {
                 string eventName = update.IsFinal ? "completed" : "partial";
+                Console.WriteLine(
+                    $"[GamePlayer] ASR update request={requestId}, event={eventName}, " +
+                    $"textLength={(update.Text ?? string.Empty).Length}, text='{TrimForLog(update.Text ?? string.Empty)}'");
                 DispatchEvent(
                     callbackTarget,
                     new RuntimeAsrScriptEvent(
@@ -235,11 +244,26 @@ public sealed class RuntimeAsr : IDisposable
         }, cancellationToken);
 
         AudioCaptureOptions captureOptions = CreateCaptureOptions();
+        Console.WriteLine(
+            $"[GamePlayer] ASR capture open request={requestId}, device={captureOptions.DeviceIndex?.ToString() ?? "default"}, " +
+            $"sampleRate={captureOptions.SampleRate}, channels={captureOptions.Channels}, framesPerBuffer={captureOptions.FramesPerBuffer}");
+        var chunkCount = 0;
+        double maxRms = 0.0;
 
         try
         {
             await foreach (AudioChunk chunk in _audioSource.CaptureAsync(captureOptions, cancellationToken).ConfigureAwait(false))
             {
+                chunkCount++;
+                double rms = CalculateRms(chunk.Samples.Span);
+                maxRms = Math.Max(maxRms, rms);
+                if (chunkCount <= 5 || chunkCount % 50 == 0)
+                {
+                    Console.WriteLine(
+                        $"[GamePlayer] ASR audio chunk request={requestId}, chunks={chunkCount}, " +
+                        $"rms={rms:0.000000}, maxRms={maxRms:0.000000}, duration={chunk.Duration.TotalMilliseconds:0}ms");
+                }
+
                 await session.WriteAsync(chunk, CancellationToken.None).ConfigureAwait(false);
             }
         }
@@ -248,6 +272,8 @@ public sealed class RuntimeAsr : IDisposable
         }
         finally
         {
+            Console.WriteLine(
+                $"[GamePlayer] ASR capture complete request={requestId}, chunks={chunkCount}, maxRms={maxRms:0.000000}");
             await session.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -319,6 +345,28 @@ public sealed class RuntimeAsr : IDisposable
             Channels = Math.Max(1, _settings.Capture.Channels),
             FramesPerBuffer = (uint)Math.Max(0, _settings.Capture.FramesPerBuffer)
         };
+    }
+
+    private static double CalculateRms(ReadOnlySpan<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return 0.0;
+        }
+
+        double sum = 0.0;
+        foreach (float sample in samples)
+        {
+            sum += sample * sample;
+        }
+
+        return Math.Sqrt(sum / samples.Length);
+    }
+
+    private static string TrimForLog(string value)
+    {
+        value = value.ReplaceLineEndings(" ").Trim();
+        return value.Length <= 80 ? value : value[..80] + "...";
     }
 
     private AudioData CreateWarmupAudio()

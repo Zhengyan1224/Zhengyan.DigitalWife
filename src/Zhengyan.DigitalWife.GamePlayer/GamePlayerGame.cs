@@ -507,13 +507,14 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             PreferredSampleRates = ResolveMicrophoneProbeSampleRates(),
             Channels = channels,
             FramesPerBuffer = ResolveMicrophoneProbeFramesPerBuffer(),
-            ProbeDuration = TimeSpan.FromMilliseconds(350),
+            ProbeDuration = TimeSpan.FromMilliseconds(800),
             RequireSignal = false
         });
 
         if (!result.Success || !result.DeviceIndex.HasValue)
         {
             Console.Error.WriteLine($"Microphone auto-detect failed: {result.Error}");
+            PrintMicrophoneCandidates(result.Candidates);
             Project.Asr.InputDeviceIndex = null;
             Project.RealtimeVoice.InputDeviceIndex = null;
             return;
@@ -527,6 +528,23 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         Console.WriteLine(
             $"Microphone auto-detected: {defaultSuffix}device [{result.DeviceIndex}] {result.DeviceName}, " +
             $"sampleRate={result.SampleRate}, rms={result.Rms:0.000000}");
+        PrintMicrophoneCandidates(result.Candidates);
+    }
+
+    private static void PrintMicrophoneCandidates(IReadOnlyList<PortAudioMicrophoneDetectionCandidate> candidates)
+    {
+        foreach (PortAudioMicrophoneDetectionCandidate candidate in candidates
+            .Where(candidate => candidate.IsUsable)
+            .OrderByDescending(candidate => candidate.Rms)
+            .ThenBy(candidate => candidate.DeviceIndex)
+            .Take(8))
+        {
+            string defaultSuffix = candidate.IsDefault ? " default" : string.Empty;
+            Console.WriteLine(
+                $"Microphone candidate: [{candidate.DeviceIndex}]{defaultSuffix} {candidate.Name}, " +
+                $"sampleRate={candidate.SampleRate}, rms={candidate.Rms:0.000000}, " +
+                $"maxInputChannels={candidate.MaxInputChannels}, defaultSampleRate={candidate.DefaultSampleRate:0}");
+        }
     }
 
     private IReadOnlyList<int> ResolveMicrophoneProbeSampleRates()
