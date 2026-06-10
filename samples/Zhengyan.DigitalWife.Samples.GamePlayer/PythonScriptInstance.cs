@@ -2237,6 +2237,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def model(self):
                        return self._settings.get("model", "")
 
+                   @property
+                   def skills_enabled(self):
+                       return bool(self._settings.get("skillsEnabled", False))
+
+                   @property
+                   def skills_directory(self):
+                       return self._settings.get("skillsDirectory", "")
+
                    def chat(self, text, system_prompt=None, model=None, temperature=None):
                        result = ""
                        for update in self.stream_chat(text, system_prompt=system_prompt, model=model, temperature=temperature):
@@ -4751,6 +4759,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float? DefaultTemperature { get; set; }
 
+        public bool SkillsEnabled { get; set; }
+
+        public string SkillsDirectory { get; set; } = string.Empty;
+
         public static PythonLlmSettings FromRuntime(RuntimeLlm llm)
         {
             GameProjectLlmSettings settings = llm.Settings;
@@ -4764,7 +4776,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Model = settings.Model,
                 ChatCompletionsPath = settings.ChatCompletionsPath,
                 TimeoutSeconds = settings.TimeoutSeconds,
-                DefaultTemperature = settings.DefaultTemperature
+                DefaultTemperature = settings.DefaultTemperature,
+                SkillsEnabled = llm.SkillsEnabled,
+                SkillsDirectory = llm.SkillsDirectory
             };
         }
     }

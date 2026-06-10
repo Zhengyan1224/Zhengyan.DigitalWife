@@ -474,7 +474,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _runtimeVoice?.Dispose();
             _runtimeVoice = new RuntimeVoice(this, _dispatcher, _projectDirectory, Project.Voice);
             _runtimeLlm?.Dispose();
-            _runtimeLlm = new RuntimeLlm(Project.Llm, _dispatcher, DispatchLlmEvent);
+            _runtimeLlm = new RuntimeLlm(Project.Llm, _projectDirectory, _dispatcher, DispatchLlmEvent);
             _runtimeAsr?.Dispose();
             _runtimeAsr = new RuntimeAsr(_projectDirectory, Project.Asr, _dispatcher, DispatchAsrEvent);
             _runtimeRealtimeVoice?.Dispose();

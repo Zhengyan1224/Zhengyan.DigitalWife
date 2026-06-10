@@ -859,6 +859,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             llm.Enabled = enabled;
         }
 
+        bool enableSkills = llm.EnableSkills;
+        if (ImGui.Checkbox("Enable skills tools", ref enableSkills))
+        {
+            llm.EnableSkills = enableSkills;
+        }
+
+        if (llm.EnableSkills)
+        {
+            ImGui.TextWrapped("Skills are loaded from the project skills/ directory. Built-in LLM tools can read skills, read/write project files, search text, and run shell commands inside the project directory.");
+        }
+
         string provider = llm.Provider;
         if (DrawTextInputWithPaste("LLM provider", ref provider, 128, "llmProvider"))
         {

@@ -70,7 +70,7 @@ MeshCollider 配置步骤：
 | --- | --- | --- |
 | `name` | `name` | Collider 名称。 |
 | `walkable` | `walkable` | 是否参与 NavMesh 烘焙。 |
-| `maxSlopeDegrees` | `max_slope_degrees` | 最大可行走坡度，范围会被限制在 `0` 到 `89.9`。 |
+| `maxSlopeDegrees` | `max_slope_degrees` | 最大可行走坡度，范围会被限制在 `0` 到 `89.9`。值为 `0` 时运行时会使用 `Scene.Navigation.Bake(...)` 的全局坡度。 |
 | `offsetX/Y/Z` | `offset_x/y/z` | MeshCollider 本地位置偏移。 |
 | `scaleX/Y/Z` | `scale_x/y/z` | MeshCollider 本地缩放，最小值会限制到 `0.001`。 |
 | `rotationX/Y/Z` | `rotation_x/y/z` | MeshCollider 本地旋转，单位是角度。 |

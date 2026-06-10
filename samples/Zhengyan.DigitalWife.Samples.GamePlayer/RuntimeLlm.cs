@@ -10,6 +10,8 @@ public sealed class RuntimeLlm : IDisposable
     private const int DefaultMaxToolRounds = 4;
 
     private readonly GameProjectLlmSettings _settings;
+    private readonly string _projectDirectory;
+    private readonly RuntimeLlmSkillTools _skillTools;
     private readonly MainThreadDispatcher _dispatcher;
     private readonly Action<RuntimeEntity, RuntimeLlmScriptEvent> _dispatchScriptEvent;
     private readonly object _sync = new();
@@ -19,10 +21,13 @@ public sealed class RuntimeLlm : IDisposable
 
     internal RuntimeLlm(
         GameProjectLlmSettings settings,
+        string projectDirectory,
         MainThreadDispatcher dispatcher,
         Action<RuntimeEntity, RuntimeLlmScriptEvent> dispatchScriptEvent)
     {
         _settings = settings;
+        _projectDirectory = Path.GetFullPath(projectDirectory);
+        _skillTools = new RuntimeLlmSkillTools(_projectDirectory);
         _dispatcher = dispatcher;
         _dispatchScriptEvent = dispatchScriptEvent;
     }
@@ -38,6 +43,10 @@ public sealed class RuntimeLlm : IDisposable
     public string ChatCompletionsPath => _settings.ChatCompletionsPath;
 
     public float? DefaultTemperature => _settings.DefaultTemperature;
+
+    public bool SkillsEnabled => _settings.EnableSkills;
+
+    public string SkillsDirectory => _skillTools.SkillsDirectory;
 
     internal GameProjectLlmSettings Settings => _settings;
 
@@ -244,6 +253,23 @@ public sealed class RuntimeLlm : IDisposable
         float? temperature = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        List<RuntimeLlmTool> effectiveTools = CreateEffectiveTools(null);
+        if (effectiveTools.Count > 0)
+        {
+            await foreach (RuntimeLlmStreamUpdate update in StreamChatWithToolsAsync(
+                messages,
+                effectiveTools,
+                model,
+                temperature,
+                DefaultMaxToolRounds,
+                cancellationToken))
+            {
+                yield return update;
+            }
+
+            yield break;
+        }
+
         await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
             messages,
             model,
@@ -265,7 +291,7 @@ public sealed class RuntimeLlm : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         List<RuntimeLlmChatMessage> conversation = messages.ToList();
-        List<RuntimeLlmTool> toolList = tools.ToList();
+        List<RuntimeLlmTool> toolList = CreateEffectiveTools(tools);
         RuntimeLlmStreamUpdate lastUpdate = new(string.Empty, string.Empty, false);
 
         for (int round = 0; round <= Math.Max(0, maxToolRounds); round++)
@@ -361,7 +387,7 @@ public sealed class RuntimeLlm : IDisposable
             ? Guid.NewGuid().ToString("N")
             : requestId.Trim();
         List<RuntimeLlmChatMessage> capturedMessages = messages.ToList();
-        List<RuntimeLlmTool>? capturedTools = tools?.ToList();
+        List<RuntimeLlmTool> capturedTools = CreateEffectiveTools(tools);
 
         try
         {
@@ -376,7 +402,7 @@ public sealed class RuntimeLlm : IDisposable
                 string accumulated = string.Empty;
                 try
                 {
-                    IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = capturedTools is { Count: > 0 }
+                    IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = capturedTools.Count > 0
                         ? StreamChatWithToolsForBackgroundAsync(
                             callbackTarget,
                             resolvedRequestId,
@@ -699,6 +725,34 @@ public sealed class RuntimeLlm : IDisposable
     private static RuntimeLlmTool? FindTool(IEnumerable<RuntimeLlmTool> tools, string name)
     {
         return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private List<RuntimeLlmTool> CreateEffectiveTools(IEnumerable<RuntimeLlmTool>? tools)
+    {
+        Dictionary<string, RuntimeLlmTool> effectiveTools = new(StringComparer.OrdinalIgnoreCase);
+        if (tools is not null)
+        {
+            foreach (RuntimeLlmTool tool in tools)
+            {
+                if (!string.IsNullOrWhiteSpace(tool.Name))
+                {
+                    effectiveTools[tool.Name.Trim()] = tool;
+                }
+            }
+        }
+
+        if (_settings.EnableSkills)
+        {
+            foreach (RuntimeLlmTool tool in _skillTools.Tools)
+            {
+                if (!effectiveTools.ContainsKey(tool.Name))
+                {
+                    effectiveTools[tool.Name] = tool;
+                }
+            }
+        }
+
+        return effectiveTools.Values.ToList();
     }
 
     private static bool IsValidMessage(RuntimeLlmChatMessage message)

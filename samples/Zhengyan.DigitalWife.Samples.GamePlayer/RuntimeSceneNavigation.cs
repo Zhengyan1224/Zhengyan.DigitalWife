@@ -14,6 +14,8 @@ public sealed class RuntimeSceneNavigation
     private readonly Func<IEnumerable<RuntimeEntity>> _getEntities;
     private readonly List<RuntimeNavNode> _nodes = [];
     private float _maxSlopeDegrees = 55.0f;
+    private float _maxStepHeight = 0.45f;
+    private float _maxStepHorizontalDistance = 0.35f;
 
     internal RuntimeSceneNavigation(Func<IEnumerable<RuntimeEntity>> getEntities)
     {
@@ -22,9 +24,14 @@ public sealed class RuntimeSceneNavigation
 
     public int TriangleCount => _nodes.Count;
 
-    public RuntimeNavigationBakeResult Bake(float maxSlopeDegrees = 55.0f)
+    public RuntimeNavigationBakeResult Bake(
+        float maxSlopeDegrees = 55.0f,
+        float maxStepHeight = 0.45f,
+        float maxStepHorizontalDistance = 0.35f)
     {
         _maxSlopeDegrees = Math.Clamp(maxSlopeDegrees, 0.0f, 89.9f);
+        _maxStepHeight = Math.Max(0.0f, maxStepHeight);
+        _maxStepHorizontalDistance = Math.Max(0.0f, maxStepHorizontalDistance);
         _nodes.Clear();
         float minUp = MathF.Cos(_maxSlopeDegrees * MathF.PI / 180.0f);
 
@@ -37,7 +44,10 @@ public sealed class RuntimeSceneNavigation
                     continue;
                 }
 
-                float colliderMinUp = MathF.Cos(Math.Clamp(collider.MaxSlopeDegrees, 0.0f, _maxSlopeDegrees) * MathF.PI / 180.0f);
+                float colliderMaxSlopeDegrees = collider.MaxSlopeDegrees <= 0.001f
+                    ? _maxSlopeDegrees
+                    : Math.Clamp(collider.MaxSlopeDegrees, 0.0f, _maxSlopeDegrees);
+                float colliderMinUp = MathF.Cos(colliderMaxSlopeDegrees * MathF.PI / 180.0f);
                 foreach (RuntimeMeshTriangle triangle in collider.Mesh.Triangles)
                 {
                     if (MathF.Abs(triangle.Normal.Y) < MathF.Max(minUp, colliderMinUp))
@@ -50,7 +60,7 @@ public sealed class RuntimeSceneNavigation
             }
         }
 
-        int edgeCount = BuildAdjacency();
+        int edgeCount = BuildAdjacency(_maxStepHeight, _maxStepHorizontalDistance);
         return new RuntimeNavigationBakeResult(_nodes.Count, edgeCount);
     }
 
@@ -116,11 +126,11 @@ public sealed class RuntimeSceneNavigation
     {
         if (_nodes.Count == 0)
         {
-            Bake(_maxSlopeDegrees);
+            Bake(_maxSlopeDegrees, _maxStepHeight, _maxStepHorizontalDistance);
         }
     }
 
-    private int BuildAdjacency()
+    private int BuildAdjacency(float maxStepHeight, float maxStepHorizontalDistance)
     {
         Dictionary<EdgeKey, List<int>> edges = [];
         for (int i = 0; i < _nodes.Count; i++)
@@ -155,7 +165,107 @@ public sealed class RuntimeSceneNavigation
             }
         }
 
+        edgeCount += BuildStepAdjacency(maxStepHeight, maxStepHorizontalDistance);
         return edgeCount;
+    }
+
+    private int BuildStepAdjacency(float maxStepHeight, float maxStepHorizontalDistance)
+    {
+        if (maxStepHeight <= 0.0f || maxStepHorizontalDistance <= 0.0f || _nodes.Count < 2)
+        {
+            return 0;
+        }
+
+        float cellSize = Math.Max(maxStepHorizontalDistance, 0.001f);
+        Dictionary<GridKey, List<int>> buckets = BuildStepBuckets(cellSize);
+        float maxHorizontalDistanceSquared = maxStepHorizontalDistance * maxStepHorizontalDistance;
+        int edgeCount = 0;
+        for (int i = 0; i < _nodes.Count; i++)
+        {
+            RuntimeNavNode a = _nodes[i];
+            HashSet<int> candidates = [];
+            AddStepCandidates(buckets, candidates, a.Triangle.A, cellSize);
+            AddStepCandidates(buckets, candidates, a.Triangle.B, cellSize);
+            AddStepCandidates(buckets, candidates, a.Triangle.C, cellSize);
+
+            foreach (int j in candidates)
+            {
+                if (j <= i)
+                {
+                    continue;
+                }
+
+                RuntimeNavNode b = _nodes[j];
+                if (a.Neighbors.Contains(j))
+                {
+                    continue;
+                }
+
+                if (MathF.Abs(a.Triangle.Center.Y - b.Triangle.Center.Y) > maxStepHeight)
+                {
+                    continue;
+                }
+
+                if (MinHorizontalDistanceSquared(a.Triangle, b.Triangle) > maxHorizontalDistanceSquared)
+                {
+                    continue;
+                }
+
+                a.Neighbors.Add(j);
+                b.Neighbors.Add(i);
+                edgeCount++;
+            }
+        }
+
+        return edgeCount;
+    }
+
+    private Dictionary<GridKey, List<int>> BuildStepBuckets(float cellSize)
+    {
+        Dictionary<GridKey, List<int>> buckets = [];
+        for (int i = 0; i < _nodes.Count; i++)
+        {
+            RuntimeMeshTriangle triangle = _nodes[i].Triangle;
+            AddStepBucket(buckets, triangle.A, i, cellSize);
+            AddStepBucket(buckets, triangle.B, i, cellSize);
+            AddStepBucket(buckets, triangle.C, i, cellSize);
+        }
+
+        return buckets;
+    }
+
+    private static void AddStepCandidates(
+        Dictionary<GridKey, List<int>> buckets,
+        HashSet<int> candidates,
+        Vector3 vertex,
+        float cellSize)
+    {
+        GridKey center = GridKey.Create(vertex, cellSize);
+        for (int x = -1; x <= 1; x++)
+        {
+            for (int z = -1; z <= 1; z++)
+            {
+                if (buckets.TryGetValue(new GridKey(center.X + x, center.Z + z), out List<int>? bucket))
+                {
+                    candidates.UnionWith(bucket);
+                }
+            }
+        }
+    }
+
+    private static void AddStepBucket(Dictionary<GridKey, List<int>> buckets, Vector3 vertex, int nodeIndex, float cellSize)
+    {
+        GridKey key = GridKey.Create(vertex, cellSize);
+        if (!buckets.TryGetValue(key, out List<int>? bucket))
+        {
+            bucket = [];
+            buckets[key] = bucket;
+        }
+
+        if (bucket.Count == 0 || bucket[^1] != nodeIndex)
+        {
+            bucket.Add(nodeIndex);
+        }
     }
 
     private bool TryFindNearestTriangle(Vector3 position, float maxDistance, out int nodeIndex, out Vector3 nearest)
@@ -257,6 +367,29 @@ public sealed class RuntimeSceneNavigation
         }
 
         return length;
+    }
+
+    private static float MinHorizontalDistanceSquared(RuntimeMeshTriangle a, RuntimeMeshTriangle b)
+    {
+        float best = float.MaxValue;
+        best = MathF.Min(best, HorizontalDistanceSquared(a.A, b.A));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.A, b.B));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.A, b.C));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.B, b.A));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.B, b.B));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.B, b.C));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.C, b.A));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.C, b.B));
+        best = MathF.Min(best, HorizontalDistanceSquared(a.C, b.C));
+
+        return best;
+    }
+
+    private static float HorizontalDistanceSquared(Vector3 a, Vector3 b)
+    {
+        float dx = a.X - b.X;
+        float dz = a.Z - b.Z;
+        return (dx * dx) + (dz * dz);
     }
 
     private static void AddEdge(Dictionary<EdgeKey, List<int>> edges, Vector3 a, Vector3 b, int nodeIndex)
@@ -365,6 +498,16 @@ public sealed class RuntimeSceneNavigation
 
             int y = Y.CompareTo(other.Y);
             return y != 0 ? y : Z.CompareTo(other.Z);
+        }
+    }
+
+    private readonly record struct GridKey(int X, int Z)
+    {
+        public static GridKey Create(Vector3 value, float cellSize)
+        {
+            return new GridKey(
+                (int)MathF.Floor(value.X / cellSize),
+                (int)MathF.Floor(value.Z / cellSize));
         }
     }
 }

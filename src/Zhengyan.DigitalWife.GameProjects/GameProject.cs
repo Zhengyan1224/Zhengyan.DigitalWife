@@ -247,6 +247,8 @@ public sealed class GameProjectLlmSettings
 {
     public bool Enabled { get; set; }
 
+    public bool EnableSkills { get; set; }
+
     public string Provider { get; set; } = "openai-compatible";
 
     public string BaseUrl { get; set; } = "https://api.openai.com";

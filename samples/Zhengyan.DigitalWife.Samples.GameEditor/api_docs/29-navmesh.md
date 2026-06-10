@@ -88,6 +88,8 @@ keywords:
 | 参数 | 位置 | 说明 |
 | --- | --- | --- |
 | `maxSlopeDegrees` | `Scene.Navigation.Bake(maxSlopeDegrees)` | 全局烘焙坡度上限。最终可行走坡度会同时受全局值和 Collider 自身 `Max slope degrees` 影响。 |
+| `maxStepHeight` | `Scene.Navigation.Bake(maxStepHeight)` | 自动连接相邻台阶/平台的最大高度差。默认 `0.45`。场景缩放较小时可降低，楼梯较高时可提高。 |
+| `maxStepHorizontalDistance` | `Scene.Navigation.Bake(maxStepHorizontalDistance)` | 自动连接相邻台阶/平台的最大水平间距。默认 `0.35`。如果台阶之间有缝隙或模型三角面没有共享边，可适当提高。 |
 | `maxSnapDistance` | `TryFindPath(..., maxSnapDistance)` | 起点和终点吸附到最近 NavMesh 三角面的最大距离。人物脚底或鼠标命中点略高于地面时，可以适当增大。 |
 | `originY` | `SampleGround(..., originY, maxDistance)` | 向下采样地面的射线起点高度。一般用 `Entity.Position.Y + 10.0f`。 |
 | `maxDistance` | `SampleGround(..., maxDistance)` | 向下采样地面的最大距离。地形落差大时需要增大。 |
@@ -98,7 +100,7 @@ keywords:
 | 属性 / 方法 | 说明 |
 | --- | --- |
 | `Scene.Navigation.TriangleCount` | 当前已烘焙的可行走三角面数量。 |
-| `Scene.Navigation.Bake(maxSlopeDegrees = 55.0f)` | 从所有 walkable MeshCollider 重建导航图，返回 `RuntimeNavigationBakeResult`。 |
+| `Scene.Navigation.Bake(maxSlopeDegrees = 55.0f, maxStepHeight = 0.45f, maxStepHorizontalDistance = 0.35f)` | 从所有 walkable MeshCollider 重建导航图，返回 `RuntimeNavigationBakeResult`。除共享边外，也会为高度差和水平距离在阈值内的台阶/平台建立连接。 |
 | `Scene.Navigation.FindPath(start, end, maxSnapDistance = 5.0f)` | 返回路径点列表；失败返回空列表。 |
 | `Scene.Navigation.TryFindPath(start, end, out path, maxSnapDistance = 5.0f)` | 查询路径，成功时返回 `RuntimeNavigationPath`。 |
 | `Scene.Navigation.SamplePosition(position, out nearest, maxDistance = 5.0f)` | 把一个世界坐标吸附到最近 NavMesh 三角面。 |
@@ -136,7 +138,10 @@ const float FootOffset = 0.02f;
 
 if (IsStart && !baked)
 {
-    RuntimeNavigationBakeResult bake = Scene.Navigation.Bake(maxSlopeDegrees: 55.0f);
+    RuntimeNavigationBakeResult bake = Scene.Navigation.Bake(
+        maxSlopeDegrees: 55.0f,
+        maxStepHeight: 0.45f,
+        maxStepHorizontalDistance: 0.35f);
     Console.WriteLine($"NavMesh triangles={bake.TriangleCount}, edges={bake.EdgeCount}");
     baked = true;
 }
@@ -253,7 +258,7 @@ if (IsUpdate)
 | `TriangleCount=0` | 没有任何 MeshCollider 勾选 `Walkable for NavMesh`。 | 在 GameEditor 中给地面添加 `Mesh Collider` 并勾选 `Walkable for NavMesh`。 |
 | `TriangleCount=0` | 坡度过滤太严格。 | 提高 Collider 的 `Max slope degrees`，或提高 `Scene.Navigation.Bake(maxSlopeDegrees)`。 |
 | 鼠标点击有命中，但找不到路径 | 起点或终点离 NavMesh 太远。 | 增大 `TryFindPath(..., maxSnapDistance)`，或确认人物脚底在可行走区域附近。 |
-| 路径断开 | 导入模型的地面三角面没有共享边，或者不同平台之间物理上不连接。 | 在建模软件里合并地面网格，或添加一个简化的隐藏导航面。 |
+| 路径断开 | 台阶/平台高度差或水平间距超过 `Bake(...)` 的台阶连接阈值。 | 适当提高 `maxStepHeight` 或 `maxStepHorizontalDistance`，或添加一个简化的隐藏导航面。 |
 | 人物移动时上下抖动 | `SampleGround` 命中了人物自身 Collider，或地面网格有重叠面。 | 传入 `ignoredEntity: Entity`，并检查场景模型是否有重复地面。 |
 | 人物陷入地面 | `FootOffset` 太小，或模型脚底原点不在脚底。 | 增大 `FootOffset`，或调整人物实体原点/脚本高度偏移。 |
 | 人物走到墙边或桌子下 | 当前 NavMesh 不做角色半径膨胀和动态避障。 | 用更简单的导航专用地面网格，预留角色宽度。 |
@@ -277,5 +282,5 @@ if (IsUpdate)
 - NavMesh 只使用 `Shape=mesh` 且 `Walkable=true` 的 Collider。
 - PMX MeshCollider 使用模型静态顶点；不会把骨骼动画后的实时变形写入导航图。
 - 当前路径点是三角图路径点，不做角色半径膨胀、障碍物避让或动态障碍。
-- 如果导入场景模型的地面三角面没有共享边，导航图不会自动跨断开的面连接。需要在建模阶段保证地面连续，或用额外平面/简化地面网格作为导航面。
+- 如果导入场景模型的地面三角面没有共享边，NavMesh 会尝试按 `maxStepHeight` 和 `maxStepHorizontalDistance` 建立台阶连接；超过阈值的断面仍然需要在建模阶段保证连续，或用额外平面/简化地面网格作为导航面。
 - Python 暂未提供同步 NavMesh 查询，因为 Python 脚本桥接是命令/快照模型，不适合每帧同步返回大网格查询结果。
