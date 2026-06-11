@@ -2366,6 +2366,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def input_device_index(self):
                        return self._settings.get("inputDeviceIndex", None)
 
+                   @property
+                   def microphone_input_available(self):
+                       return bool(self._settings.get("microphoneInputAvailable", False))
+
+                   @property
+                   def microphone_unavailable_reason(self):
+                       return self._settings.get("microphoneUnavailableReason", "")
+
                    def start_wake_word_monitoring(self, on_detected="wake_word_detected", on_error="wake_word_error"):
                        self._commands.append({
                            "target": "realtime_voice",
@@ -2470,6 +2478,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    @property
                    def is_recording(self):
                        return bool(self._settings.get("isRecording", False))
+
+                   @property
+                   def microphone_input_available(self):
+                       return bool(self._settings.get("microphoneInputAvailable", False))
+
+                   @property
+                   def microphone_unavailable_reason(self):
+                       return self._settings.get("microphoneUnavailableReason", "")
 
                    def start_streaming_recognition(self, request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error"):
                        self._commands.append({
@@ -4655,6 +4671,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public int? InputDeviceIndex { get; set; }
 
+        public bool MicrophoneInputAvailable { get; set; }
+
+        public string MicrophoneUnavailableReason { get; set; } = string.Empty;
+
         public static PythonRealtimeVoiceSettings FromRuntime(RuntimeRealtimeVoice realtimeVoice)
         {
             return new PythonRealtimeVoiceSettings
@@ -4665,7 +4685,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Voice = realtimeVoice.Voice,
                 WakeWordEnabled = realtimeVoice.WakeWordEnabled,
                 WakeWords = realtimeVoice.WakeWords.ToArray(),
-                InputDeviceIndex = realtimeVoice.InputDeviceIndex
+                InputDeviceIndex = realtimeVoice.InputDeviceIndex,
+                MicrophoneInputAvailable = realtimeVoice.MicrophoneInputAvailable,
+                MicrophoneUnavailableReason = realtimeVoice.MicrophoneUnavailableReason
             };
         }
     }
@@ -4682,6 +4704,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool IsRecording { get; set; }
 
+        public bool MicrophoneInputAvailable { get; set; }
+
+        public string MicrophoneUnavailableReason { get; set; } = string.Empty;
+
         public static PythonAsrSettings FromRuntime(RuntimeAsr asr)
         {
             return new PythonAsrSettings
@@ -4690,7 +4716,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Provider = asr.Provider,
                 InputDeviceIndex = asr.InputDeviceIndex,
                 PartialResultIntervalSeconds = asr.PartialResultIntervalSeconds,
-                IsRecording = asr.IsRecording
+                IsRecording = asr.IsRecording,
+                MicrophoneInputAvailable = asr.MicrophoneInputAvailable,
+                MicrophoneUnavailableReason = asr.MicrophoneUnavailableReason
             };
         }
     }

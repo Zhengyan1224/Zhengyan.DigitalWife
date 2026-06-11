@@ -15,6 +15,8 @@ public sealed class RuntimeAsr : IDisposable
     private readonly MainThreadDispatcher _dispatcher;
     private readonly Action<RuntimeEntity, RuntimeAsrScriptEvent> _dispatchScriptEvent;
     private readonly IAudioSource _audioSource;
+    private readonly bool _microphoneInputAvailable;
+    private readonly string _microphoneUnavailableReason;
     private readonly object _sync = new();
     private readonly Dictionary<string, CancellationTokenSource> _activeRequests = new(StringComparer.OrdinalIgnoreCase);
     private ISpeechRecognizer? _recognizer;
@@ -24,12 +26,18 @@ public sealed class RuntimeAsr : IDisposable
         string projectDirectory,
         GameProjectAsrSettings settings,
         MainThreadDispatcher dispatcher,
-        Action<RuntimeEntity, RuntimeAsrScriptEvent> dispatchScriptEvent)
+        Action<RuntimeEntity, RuntimeAsrScriptEvent> dispatchScriptEvent,
+        bool microphoneInputAvailable = true,
+        string? microphoneUnavailableReason = null)
     {
         _projectDirectory = projectDirectory;
         _settings = settings;
         _dispatcher = dispatcher;
         _dispatchScriptEvent = dispatchScriptEvent;
+        _microphoneInputAvailable = microphoneInputAvailable;
+        _microphoneUnavailableReason = string.IsNullOrWhiteSpace(microphoneUnavailableReason)
+            ? "No usable microphone input device is available."
+            : microphoneUnavailableReason.Trim();
         _audioSource = new PortAudioMicrophoneSource(
             NullLogger<PortAudioMicrophoneSource>.Instance,
             new PortAudioRuntimeOptions
@@ -38,11 +46,15 @@ public sealed class RuntimeAsr : IDisposable
             });
     }
 
-    public bool Enabled => _settings.Enabled;
+    public bool Enabled => _settings.Enabled && _microphoneInputAvailable;
 
     public string Provider => _settings.Provider;
 
     public int? InputDeviceIndex => _settings.InputDeviceIndex;
+
+    public bool MicrophoneInputAvailable => _microphoneInputAvailable;
+
+    public string MicrophoneUnavailableReason => _microphoneInputAvailable ? string.Empty : _microphoneUnavailableReason;
 
     public float PartialResultIntervalSeconds => _settings.PartialResultIntervalSeconds;
 
@@ -227,9 +239,6 @@ public sealed class RuntimeAsr : IDisposable
             await foreach (SpeechRecognitionUpdate update in session.GetUpdatesAsync())
             {
                 string eventName = update.IsFinal ? "completed" : "partial";
-                Console.WriteLine(
-                    $"[GamePlayer] ASR update request={requestId}, event={eventName}, " +
-                    $"textLength={(update.Text ?? string.Empty).Length}, text='{TrimForLog(update.Text ?? string.Empty)}'");
                 DispatchEvent(
                     callbackTarget,
                     new RuntimeAsrScriptEvent(
@@ -247,23 +256,14 @@ public sealed class RuntimeAsr : IDisposable
         Console.WriteLine(
             $"[GamePlayer] ASR capture open request={requestId}, device={captureOptions.DeviceIndex?.ToString() ?? "default"}, " +
             $"sampleRate={captureOptions.SampleRate}, channels={captureOptions.Channels}, framesPerBuffer={captureOptions.FramesPerBuffer}");
+
         var chunkCount = 0;
-        double maxRms = 0.0;
 
         try
         {
             await foreach (AudioChunk chunk in _audioSource.CaptureAsync(captureOptions, cancellationToken).ConfigureAwait(false))
             {
                 chunkCount++;
-                double rms = CalculateRms(chunk.Samples.Span);
-                maxRms = Math.Max(maxRms, rms);
-                if (chunkCount <= 5 || chunkCount % 50 == 0)
-                {
-                    Console.WriteLine(
-                        $"[GamePlayer] ASR audio chunk request={requestId}, chunks={chunkCount}, " +
-                        $"rms={rms:0.000000}, maxRms={maxRms:0.000000}, duration={chunk.Duration.TotalMilliseconds:0}ms");
-                }
-
                 await session.WriteAsync(chunk, CancellationToken.None).ConfigureAwait(false);
             }
         }
@@ -272,8 +272,7 @@ public sealed class RuntimeAsr : IDisposable
         }
         finally
         {
-            Console.WriteLine(
-                $"[GamePlayer] ASR capture complete request={requestId}, chunks={chunkCount}, maxRms={maxRms:0.000000}");
+            Console.WriteLine($"[GamePlayer] ASR capture complete request={requestId}, chunks={chunkCount}");
             await session.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -347,28 +346,6 @@ public sealed class RuntimeAsr : IDisposable
         };
     }
 
-    private static double CalculateRms(ReadOnlySpan<float> samples)
-    {
-        if (samples.IsEmpty)
-        {
-            return 0.0;
-        }
-
-        double sum = 0.0;
-        foreach (float sample in samples)
-        {
-            sum += sample * sample;
-        }
-
-        return Math.Sqrt(sum / samples.Length);
-    }
-
-    private static string TrimForLog(string value)
-    {
-        value = value.ReplaceLineEndings(" ").Trim();
-        return value.Length <= 80 ? value : value[..80] + "...";
-    }
-
     private AudioData CreateWarmupAudio()
     {
         int sampleRate = string.Equals(_settings.Provider, "whisper", StringComparison.OrdinalIgnoreCase)
@@ -437,6 +414,11 @@ public sealed class RuntimeAsr : IDisposable
         if (!_settings.Enabled)
         {
             throw new InvalidOperationException("Project ASR is disabled. Enable Project.Asr.Enabled in GameEditor or game.project.json.");
+        }
+
+        if (!_microphoneInputAvailable)
+        {
+            throw new InvalidOperationException($"Project ASR microphone input is unavailable: {_microphoneUnavailableReason}");
         }
     }
 

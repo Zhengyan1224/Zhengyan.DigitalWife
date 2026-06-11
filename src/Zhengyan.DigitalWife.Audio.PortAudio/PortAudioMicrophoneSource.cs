@@ -93,11 +93,9 @@ public sealed class PortAudioMicrophoneSource : IAudioSource, IDisposable
         }
         finally
         {
-            waveWriter?.Dispose();
-            stream?.Stop();
-            stream?.Close();
-            stream?.Dispose();
-            _engine.Release();
+            DisposeWaveWriter(waveWriter);
+            StopAndDisposeStream(stream);
+            ReleaseEngine();
         }
     }
 
@@ -224,5 +222,63 @@ public sealed class PortAudioMicrophoneSource : IAudioSource, IDisposable
 
         return (float)Math.Sqrt(sum / samples.Length);
     }
-}
 
+    private void StopAndDisposeStream(PortAudioSharp.Stream? stream)
+    {
+        if (stream is null)
+        {
+            return;
+        }
+
+        try
+        {
+            stream.Stop();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "PortAudio stream stop failed during microphone capture cleanup.");
+        }
+
+        try
+        {
+            stream.Close();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "PortAudio stream close failed during microphone capture cleanup.");
+        }
+
+        try
+        {
+            stream.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "PortAudio stream dispose failed during microphone capture cleanup.");
+        }
+    }
+
+    private void ReleaseEngine()
+    {
+        try
+        {
+            _engine.Release();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "PortAudio termination failed during microphone capture cleanup.");
+        }
+    }
+
+    private void DisposeWaveWriter(PortAudioWaveWriter? waveWriter)
+    {
+        try
+        {
+            waveWriter?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Wave writer disposal failed during microphone capture cleanup.");
+        }
+    }
+}

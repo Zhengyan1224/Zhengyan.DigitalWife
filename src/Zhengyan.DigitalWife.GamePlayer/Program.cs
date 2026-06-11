@@ -9,6 +9,12 @@ internal static class Program
             return Zhengyan.DigitalWife.Mmd.Kernel.ProbeCurrentProcessUnsafe() ? 0 : 2;
         }
 
+        string? microphoneProbeOptionsPath = ReadOptionValue(args, "--dw-portaudio-microphone-probe");
+        if (microphoneProbeOptionsPath is not null)
+        {
+            return PortAudioMicrophoneProbeProcess.RunProbeChild(microphoneProbeOptionsPath);
+        }
+
         string? packagePassword = ReadOptionValue(args, "--package-password");
         string inputPath = ReadProjectInputPath(args);
 

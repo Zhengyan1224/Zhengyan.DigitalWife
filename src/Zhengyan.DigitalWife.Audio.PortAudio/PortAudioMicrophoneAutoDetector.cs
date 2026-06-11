@@ -20,12 +20,14 @@ public sealed class PortAudioMicrophoneAutoDetector
 
         var sampleRates = BuildSampleRates(options.PreferredSampleRates);
         var candidates = new List<PortAudioMicrophoneDetectionCandidate>();
-
-        PortAudioSharp.PortAudio.LoadNativeLibrary();
-        PortAudioSharp.PortAudio.Initialize();
+        var initialized = false;
 
         try
         {
+            PortAudioSharp.PortAudio.LoadNativeLibrary();
+            PortAudioSharp.PortAudio.Initialize();
+            initialized = true;
+
             int defaultInputDevice = PortAudioSharp.PortAudio.DefaultInputDevice;
             var deviceIndices = BuildDeviceOrder(defaultInputDevice, options.PreferredDeviceIndices);
             if (deviceIndices.Count == 0)
@@ -33,6 +35,7 @@ public sealed class PortAudioMicrophoneAutoDetector
                 return PortAudioMicrophoneDetectionResult.NotDetected("No PortAudio input devices found.", candidates);
             }
 
+            PortAudioMicrophoneDetectionCandidate? fallbackCandidate = null;
             foreach (int deviceIndex in deviceIndices)
             {
                 DeviceInfo deviceInfo;
@@ -83,79 +86,63 @@ public sealed class PortAudioMicrophoneAutoDetector
 
                     if (probe.IsUsable)
                     {
+                        var candidate = candidates[^1];
+                        if (!options.RequireSignal || candidate.Rms >= options.MinRms)
+                        {
+                            return PortAudioMicrophoneDetectionResult.Detected(
+                                candidate.DeviceIndex,
+                                candidate.Name,
+                                candidate.SampleRate!.Value,
+                                candidate.Rms,
+                                candidate.IsDefault,
+                                candidates);
+                        }
+
+                        fallbackCandidate ??= candidate;
                         break;
                     }
                 }
             }
 
-            PortAudioMicrophoneDetectionCandidate? bestCandidate = candidates
-                .Where(candidate => candidate.IsUsable && (!options.RequireSignal || candidate.Rms >= options.MinRms))
-                .OrderByDescending(candidate => ScoreCandidate(candidate, options.MinRms))
-                .ThenBy(candidate => candidate.DeviceIndex)
-                .FirstOrDefault();
-
-            if (bestCandidate is not null)
+            if (fallbackCandidate is not null)
             {
                 _logger.LogInformation(
                     "Auto-detected microphone [{DeviceIndex}] {DeviceName}, sampleRate={SampleRate}, rms={Rms:0.000000}.",
-                    bestCandidate.DeviceIndex,
-                    bestCandidate.Name,
-                    bestCandidate.SampleRate,
-                    bestCandidate.Rms);
+                    fallbackCandidate.DeviceIndex,
+                    fallbackCandidate.Name,
+                    fallbackCandidate.SampleRate,
+                    fallbackCandidate.Rms);
 
                 return PortAudioMicrophoneDetectionResult.Detected(
-                    bestCandidate.DeviceIndex,
-                    bestCandidate.Name,
-                    bestCandidate.SampleRate!.Value,
-                    bestCandidate.Rms,
-                    bestCandidate.IsDefault,
+                    fallbackCandidate.DeviceIndex,
+                    fallbackCandidate.Name,
+                    fallbackCandidate.SampleRate!.Value,
+                    fallbackCandidate.Rms,
+                    fallbackCandidate.IsDefault,
                     candidates);
             }
 
             return PortAudioMicrophoneDetectionResult.NotDetected("No usable PortAudio input device was found.", candidates);
         }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "PortAudio microphone detection failed.");
+            return PortAudioMicrophoneDetectionResult.NotDetected($"PortAudio microphone detection failed: {ex.Message}", candidates);
+        }
         finally
         {
-            PortAudioSharp.PortAudio.Terminate();
+            if (initialized)
+            {
+                try
+                {
+                    PortAudioSharp.PortAudio.Terminate();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "PortAudio termination after microphone detection failed.");
+                }
+            }
         }
-    }
-
-    private static double ScoreCandidate(PortAudioMicrophoneDetectionCandidate candidate, double minRms)
-    {
-        double score = 0.0;
-
-        if (candidate.Rms >= minRms)
-        {
-            score += Math.Min(candidate.Rms * 10_000.0, 100.0);
-        }
-
-        string name = candidate.Name ?? string.Empty;
-        if (LooksLikePhysicalMicrophone(name))
-        {
-            score += 30.0;
-        }
-
-        if (LooksLikeVirtualOrCompatibilityDevice(name))
-        {
-            score -= 20.0;
-        }
-
-        if (candidate.IsDefault)
-        {
-            score += 5.0;
-        }
-
-        return score;
-    }
-
-    private static bool LooksLikePhysicalMicrophone(string name)
-    {
-        return name.Contains("mic", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("microphone", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("input", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("capture", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("usb", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("alsa_input", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LooksLikeVirtualOrCompatibilityDevice(string name)
@@ -203,7 +190,44 @@ public sealed class PortAudioMicrophoneAutoDetector
 
         AddDeviceIndex(defaultInputDevice);
 
+        var physicalLike = new List<int>();
+        var virtualLike = new List<int>();
         for (var index = 0; index < PortAudioSharp.PortAudio.DeviceCount; index++)
+        {
+            if (deviceIndices.Contains(index))
+            {
+                continue;
+            }
+
+            try
+            {
+                DeviceInfo info = PortAudioSharp.PortAudio.GetDeviceInfo(index);
+                if (info.maxInputChannels <= 0)
+                {
+                    continue;
+                }
+
+                if (LooksLikeVirtualOrCompatibilityDevice(info.name))
+                {
+                    virtualLike.Add(index);
+                }
+                else
+                {
+                    physicalLike.Add(index);
+                }
+            }
+            catch
+            {
+                virtualLike.Add(index);
+            }
+        }
+
+        foreach (int index in physicalLike)
+        {
+            AddDeviceIndex(index);
+        }
+
+        foreach (int index in virtualLike)
         {
             AddDeviceIndex(index);
         }
@@ -317,7 +341,13 @@ public sealed class PortAudioMicrophoneAutoDetector
             {
             }
 
-            stream?.Dispose();
+            try
+            {
+                stream?.Dispose();
+            }
+            catch
+            {
+            }
         }
     }
 

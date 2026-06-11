@@ -66,6 +66,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private string _hoveredSpriteId = string.Empty;
     private string _pressedSpriteId = string.Empty;
     private bool _wasLeftMouseDown;
+    private bool _microphoneInputAvailable = true;
+    private string _microphoneUnavailableReason = string.Empty;
 
     public GamePlayerGame(GameProjectPackageSession projectSession)
         : base(CreateInitialOptions(projectSession.ProjectDirectory))
@@ -471,6 +473,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         EnqueueLoadingStep("Loading project...", () =>
         {
             Project = GameProjectStore.Load(_projectDirectory);
+            _microphoneInputAvailable = true;
+            _microphoneUnavailableReason = string.Empty;
             ApplyRuntimeSettings();
             ApplyWindowSettings();
             if (ShouldAutoDetectMicrophone())
@@ -485,9 +489,23 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 _runtimeLlm?.Dispose();
                 _runtimeLlm = new RuntimeLlm(Project.Llm, _projectDirectory, _dispatcher, DispatchLlmEvent);
                 _runtimeAsr?.Dispose();
-                _runtimeAsr = new RuntimeAsr(_projectDirectory, Project.Asr, _dispatcher, DispatchAsrEvent);
+                _runtimeAsr = new RuntimeAsr(
+                    _projectDirectory,
+                    Project.Asr,
+                    _dispatcher,
+                    DispatchAsrEvent,
+                    _microphoneInputAvailable,
+                    _microphoneUnavailableReason);
                 _runtimeRealtimeVoice?.Dispose();
-                _runtimeRealtimeVoice = new RuntimeRealtimeVoice(this, _projectDirectory, Project.RealtimeVoice, Project.Voice, _dispatcher, DispatchRealtimeVoiceEvent);
+                _runtimeRealtimeVoice = new RuntimeRealtimeVoice(
+                    this,
+                    _projectDirectory,
+                    Project.RealtimeVoice,
+                    Project.Voice,
+                    _dispatcher,
+                    DispatchRealtimeVoiceEvent,
+                    _microphoneInputAvailable,
+                    _microphoneUnavailableReason);
                 _runtimePerformance = new RuntimePerformance();
                 EnqueueSceneLoadSteps(Project.DefaultScene);
             });
@@ -495,14 +513,14 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     }
 
     private bool ShouldAutoDetectMicrophone()
-        => Project.Microphone.AutoDetectOnPlayerLoad
+        => _microphoneInputAvailable
+            && Project.Microphone.AutoDetectOnPlayerLoad
             && (Project.Asr.Enabled || Project.RealtimeVoice.Enabled);
 
     private void AutoDetectMicrophone()
     {
         int channels = ResolveMicrophoneProbeChannels();
-        var detector = new PortAudioMicrophoneAutoDetector(NullLogger.Instance);
-        PortAudioMicrophoneDetectionResult result = detector.Detect(new PortAudioMicrophoneDetectionOptions
+        PortAudioMicrophoneDetectionResult result = PortAudioMicrophoneProbeProcess.Detect(new PortAudioMicrophoneDetectionOptions
         {
             PreferredSampleRates = ResolveMicrophoneProbeSampleRates(),
             Channels = channels,
@@ -513,22 +531,44 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         if (!result.Success || !result.DeviceIndex.HasValue)
         {
-            Console.Error.WriteLine($"Microphone auto-detect failed: {result.Error}");
+            _microphoneInputAvailable = false;
+            _microphoneUnavailableReason = string.IsNullOrWhiteSpace(result.Error)
+                ? "No usable PortAudio input device was found."
+                : result.Error;
+            Console.Error.WriteLine($"Microphone auto-detect failed; microphone input features will be disabled for this run: {_microphoneUnavailableReason}");
             PrintMicrophoneCandidates(result.Candidates);
-            Project.Asr.InputDeviceIndex = null;
-            Project.RealtimeVoice.InputDeviceIndex = null;
             return;
         }
 
-        Project.Asr.InputDeviceIndex = result.DeviceIndex;
-        Project.RealtimeVoice.InputDeviceIndex = result.DeviceIndex;
+        _microphoneInputAvailable = true;
+        _microphoneUnavailableReason = string.Empty;
+        int? runtimeInputDeviceIndex = ShouldUseRuntimeDefaultInputDevice(result) ? null : result.DeviceIndex;
+        Project.Asr.InputDeviceIndex = runtimeInputDeviceIndex;
+        Project.RealtimeVoice.InputDeviceIndex = runtimeInputDeviceIndex;
         ApplyDetectedMicrophoneSampleRate(result.SampleRate);
 
         string defaultSuffix = result.IsDefaultDevice ? "default " : string.Empty;
+        string runtimeDevice = runtimeInputDeviceIndex.HasValue
+            ? $"device [{runtimeInputDeviceIndex.Value}]"
+            : "current process default device";
         Console.WriteLine(
             $"Microphone auto-detected: {defaultSuffix}device [{result.DeviceIndex}] {result.DeviceName}, " +
-            $"sampleRate={result.SampleRate}, rms={result.Rms:0.000000}");
+            $"sampleRate={result.SampleRate}, rms={result.Rms:0.000000}, runtime={runtimeDevice}");
         PrintMicrophoneCandidates(result.Candidates);
+    }
+
+    private static bool ShouldUseRuntimeDefaultInputDevice(PortAudioMicrophoneDetectionResult result)
+    {
+        if (result.IsDefaultDevice)
+        {
+            return true;
+        }
+
+        string deviceName = result.DeviceName ?? string.Empty;
+        return string.Equals(deviceName, "default", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Contains("default", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Contains("pulse", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Contains("pipewire", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void PrintMicrophoneCandidates(IReadOnlyList<PortAudioMicrophoneDetectionCandidate> candidates)

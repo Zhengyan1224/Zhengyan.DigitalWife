@@ -24,6 +24,8 @@ public sealed class RuntimeRealtimeVoice : IDisposable
     private readonly IAudioSource _audioSource;
     private readonly IAudioPlayer _audioPlayer;
     private readonly IDisposable _ownedAudioPlayer;
+    private readonly bool _microphoneInputAvailable;
+    private readonly string _microphoneUnavailableReason;
     private readonly object _sync = new();
     private readonly object _resourceSync = new();
     private readonly Dictionary<string, CancellationTokenSource> _activeRequests = new(StringComparer.OrdinalIgnoreCase);
@@ -40,7 +42,9 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         GameProjectRealtimeVoiceSettings settings,
         GameProjectVoiceSettings voiceSettings,
         MainThreadDispatcher dispatcher,
-        Action<RuntimeEntity, RuntimeRealtimeVoiceScriptEvent> dispatchScriptEvent)
+        Action<RuntimeEntity, RuntimeRealtimeVoiceScriptEvent> dispatchScriptEvent,
+        bool microphoneInputAvailable = true,
+        string? microphoneUnavailableReason = null)
     {
         _game = game;
         _projectDirectory = projectDirectory;
@@ -48,6 +52,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         _voiceSettings = voiceSettings;
         _dispatcher = dispatcher;
         _dispatchScriptEvent = dispatchScriptEvent;
+        _microphoneInputAvailable = microphoneInputAvailable;
+        _microphoneUnavailableReason = string.IsNullOrWhiteSpace(microphoneUnavailableReason)
+            ? "No usable microphone input device is available."
+            : microphoneUnavailableReason.Trim();
         _audioSource = new PortAudioMicrophoneSource(
             NullLogger<PortAudioMicrophoneSource>.Instance,
             new PortAudioRuntimeOptions
@@ -76,11 +84,15 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
     public string Voice => _settings.Voice;
 
-    public bool WakeWordEnabled => _settings.WakeWord.Enabled;
+    public bool WakeWordEnabled => _settings.WakeWord.Enabled && _microphoneInputAvailable;
 
     public IReadOnlyList<string> WakeWords => _settings.WakeWord.Keywords;
 
     public int? InputDeviceIndex => _settings.InputDeviceIndex;
+
+    public bool MicrophoneInputAvailable => _microphoneInputAvailable;
+
+    public string MicrophoneUnavailableReason => _microphoneInputAvailable ? string.Empty : _microphoneUnavailableReason;
 
     public bool IsWakeWordMonitoring
     {
@@ -101,6 +113,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(callbackTarget);
         EnsureEnabled();
+        EnsureMicrophoneInputAvailable();
 
         StopWakeWordMonitoring();
 
@@ -200,6 +213,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(callbackTarget);
         EnsureEnabled();
+        EnsureMicrophoneInputAvailable();
         StopWakeWordMonitoring();
 
         string resolvedRequestId = ResolveRequestId(requestId);
@@ -285,6 +299,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(callbackTarget);
         EnsureEnabled();
+        EnsureMicrophoneInputAvailable();
         StopWakeWordMonitoring();
 
         string resolvedRequestId = ResolveRequestId(requestId);
@@ -954,6 +969,15 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         if (!_settings.Enabled)
         {
             throw new InvalidOperationException("Project Realtime Voice is disabled. Enable Project.RealtimeVoice.Enabled in GameEditor or game.project.json.");
+        }
+
+    }
+
+    private void EnsureMicrophoneInputAvailable()
+    {
+        if (!_microphoneInputAvailable)
+        {
+            throw new InvalidOperationException($"Project Realtime Voice microphone input is unavailable: {_microphoneUnavailableReason}");
         }
     }
 

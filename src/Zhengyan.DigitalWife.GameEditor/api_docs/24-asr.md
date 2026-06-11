@@ -63,9 +63,11 @@ C# API：
 
 | API | 说明 |
 | --- | --- |
-| `Scene.Asr.Enabled` | 当前项目是否启用 ASR。 |
+| `Scene.Asr.Enabled` | 当前项目是否启用 ASR，且当前本机麦克风输入可用。 |
 | `Scene.Asr.Provider` | 当前 ASR Provider 名称。 |
 | `Scene.Asr.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.Asr.MicrophoneInputAvailable` | 当前本机麦克风输入是否可用。 |
+| `Scene.Asr.MicrophoneUnavailableReason` | 麦克风不可用时的原因。 |
 | `Scene.Asr.PartialResultIntervalSeconds` | 当前部分结果间隔秒数。 |
 | `Scene.Asr.IsRecording` | 当前是否在录音。 |
 | `StartStreamingRecognition(entity, requestId, onPartialCallback, onCompletedCallback, onErrorCallback)` | 开始后台录音，并持续推送部分识别结果。 |
@@ -263,9 +265,11 @@ Python API：
 
 | API | 说明 |
 | --- | --- |
-| `scene.asr.enabled` | 当前项目是否启用 ASR。 |
+| `scene.asr.enabled` | 当前项目是否启用 ASR，且当前本机麦克风输入可用。 |
 | `scene.asr.provider` | 当前 ASR Provider 名称。 |
 | `scene.asr.input_device_index` | 当前输入设备索引。 |
+| `scene.asr.microphone_input_available` | 当前本机麦克风输入是否可用。 |
+| `scene.asr.microphone_unavailable_reason` | 麦克风不可用时的原因。 |
 | `scene.asr.partial_result_interval_seconds` | 当前部分结果间隔秒数。 |
 | `scene.asr.is_recording` | 当前是否在录音。 |
 | `scene.asr.start_streaming_recognition(request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error")` | 开始后台录音并持续识别。 |
@@ -317,9 +321,11 @@ C# API：
 
 | API | 说明 |
 | --- | --- |
-| `Scene.Asr.Enabled` | 当前项目是否启用 ASR。 |
+| `Scene.Asr.Enabled` | 当前项目是否启用 ASR，且当前本机麦克风输入可用。 |
 | `Scene.Asr.Provider` | 当前 provider。 |
 | `Scene.Asr.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.Asr.MicrophoneInputAvailable` | 当前本机麦克风输入是否可用。 |
+| `Scene.Asr.MicrophoneUnavailableReason` | 麦克风不可用时的原因。 |
 | `Scene.Asr.PartialResultIntervalSeconds` | 当前部分结果刷新间隔。 |
 | `Scene.Asr.IsRecording` | 当前是否正在录音识别。 |
 | `StartStreamingRecognition(entity, requestId, onPartialCallback, onCompletedCallback, onErrorCallback)` | 开始后台录音，并推送部分识别结果。 |
@@ -344,9 +350,11 @@ Python API：
 
 | API | 说明 |
 | --- | --- |
-| `scene.asr.enabled` | 当前项目是否启用 ASR。 |
+| `scene.asr.enabled` | 当前项目是否启用 ASR，且当前本机麦克风输入可用。 |
 | `scene.asr.provider` | 当前 provider。 |
 | `scene.asr.input_device_index` | 当前输入设备索引。 |
+| `scene.asr.microphone_input_available` | 当前本机麦克风输入是否可用。 |
+| `scene.asr.microphone_unavailable_reason` | 麦克风不可用时的原因。 |
 | `scene.asr.partial_result_interval_seconds` | 当前部分结果刷新间隔。 |
 | `scene.asr.is_recording` | 当前是否正在录音识别。 |
 | `scene.asr.start_streaming_recognition(request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error")` | 开始后台录音识别。 |
@@ -553,9 +561,11 @@ C# API：
 
 | API | 说明 |
 | --- | --- |
-| `Scene.Asr.Enabled` | 当前项目是否启用 ASR。 |
+| `Scene.Asr.Enabled` | 当前项目是否启用 ASR，且当前本机麦克风输入可用。 |
 | `Scene.Asr.Provider` | 当前 provider。 |
 | `Scene.Asr.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.Asr.MicrophoneInputAvailable` | 当前本机麦克风输入是否可用。 |
+| `Scene.Asr.MicrophoneUnavailableReason` | 麦克风不可用时的原因。 |
 | `Scene.Asr.PartialResultIntervalSeconds` | 当前部分结果刷新间隔。 |
 | `Scene.Asr.IsRecording` | 当前是否正在录音识别。 |
 | `StartStreamingRecognition(entity, requestId, onPartialCallback, onCompletedCallback, onErrorCallback)` | 开始后台录音，并推送部分识别结果。 |
@@ -580,9 +590,11 @@ Python API：
 
 | API | 说明 |
 | --- | --- |
-| `scene.asr.enabled` | 当前项目是否启用 ASR。 |
+| `scene.asr.enabled` | 当前项目是否启用 ASR，且当前本机麦克风输入可用。 |
 | `scene.asr.provider` | 当前 provider。 |
 | `scene.asr.input_device_index` | 当前输入设备索引。 |
+| `scene.asr.microphone_input_available` | 当前本机麦克风输入是否可用。 |
+| `scene.asr.microphone_unavailable_reason` | 麦克风不可用时的原因。 |
 | `scene.asr.partial_result_interval_seconds` | 当前部分结果刷新间隔。 |
 | `scene.asr.is_recording` | 当前是否正在录音识别。 |
 | `scene.asr.start_streaming_recognition(request_id=None, on_partial="asr_partial", on_completed="asr_completed", on_error="asr_error")` | 开始后台录音识别。 |

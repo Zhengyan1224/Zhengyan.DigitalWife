@@ -69,9 +69,11 @@ C# API：
 | `Scene.RealtimeVoice.BaseUrl` | 服务根地址。 |
 | `Scene.RealtimeVoice.Model` | 默认模型名。 |
 | `Scene.RealtimeVoice.Voice` | 默认 voice。 |
-| `Scene.RealtimeVoice.WakeWordEnabled` | 是否启用了唤醒词监听配置。 |
+| `Scene.RealtimeVoice.WakeWordEnabled` | 是否启用了唤醒词监听配置，且当前本机麦克风输入可用。 |
 | `Scene.RealtimeVoice.WakeWords` | 当前配置的唤醒词列表。 |
 | `Scene.RealtimeVoice.InputDeviceIndex` | 当前输入设备索引；`null` 表示默认设备。 |
+| `Scene.RealtimeVoice.MicrophoneInputAvailable` | 当前本机麦克风输入是否可用。 |
+| `Scene.RealtimeVoice.MicrophoneUnavailableReason` | 麦克风不可用时的原因。 |
 | `Scene.RealtimeVoice.IsWakeWordMonitoring` | 当前是否在监听唤醒词。 |
 | `StartWakeWordMonitoring(entity, onDetectedCallback, onErrorCallback)` | 开始后台唤醒词监听。 |
 | `StopWakeWordMonitoring()` | 停止唤醒词监听。 |
@@ -86,7 +88,7 @@ C# API：
 典型流程：开始唤醒词监听，命中后发起一轮语音对话。
 
 ```csharp
-if (IsStart && Scene.RealtimeVoice.Enabled)
+if (IsStart && Scene.RealtimeVoice.WakeWordEnabled)
 {
     Scene.RealtimeVoice.StartWakeWordMonitoring(
         Entity,
@@ -284,7 +286,7 @@ void EndConversationAndReturnToStand(string statusText)
 void EnsureWakeWordMonitor()
 {
     EnsureMotionBlendSetup();
-    if (VoiceState.WakeWordMonitorStarted || !Scene.RealtimeVoice.Enabled)
+    if (VoiceState.WakeWordMonitorStarted || !Scene.RealtimeVoice.WakeWordEnabled)
     {
         return;
     }
@@ -438,9 +440,11 @@ Python API：
 | `scene.realtime_voice.base_url` | 服务根地址。 |
 | `scene.realtime_voice.model` | 默认模型名。 |
 | `scene.realtime_voice.voice` | 默认 voice。 |
-| `scene.realtime_voice.wake_word_enabled` | 是否启用了唤醒词监听配置。 |
+| `scene.realtime_voice.wake_word_enabled` | 是否启用了唤醒词监听配置，且当前本机麦克风输入可用。 |
 | `scene.realtime_voice.wake_words` | 当前配置的唤醒词列表。 |
 | `scene.realtime_voice.input_device_index` | 当前输入设备索引。 |
+| `scene.realtime_voice.microphone_input_available` | 当前本机麦克风输入是否可用。 |
+| `scene.realtime_voice.microphone_unavailable_reason` | 麦克风不可用时的原因。 |
 | `scene.realtime_voice.start_wake_word_monitoring(on_detected="wake_word_detected", on_error="wake_word_error")` | 开始后台唤醒词监听。 |
 | `scene.realtime_voice.stop_wake_word_monitoring()` | 停止唤醒词监听。 |
 | `scene.realtime_voice.start_transcription(request_id=None, timeout_seconds=None, on_completed="realtime_voice_transcription_completed", on_timeout="realtime_voice_timeout", on_error="realtime_voice_error")` | 录音直到静音并转写；可配置超时。 |
@@ -545,7 +549,7 @@ def end_conversation_and_return_to_stand(entity, scene, status_text):
     start(entity, scene, input=None, audio=None)
 
 def start(entity, scene, input, audio):
-    if scene.realtime_voice.enabled and not state["wake_word_monitor_started"]:
+    if scene.realtime_voice.wake_word_enabled and not state["wake_word_monitor_started"]:
         set_stand_state(entity)
         scene.realtime_voice.start_wake_word_monitoring(
             on_detected="wake_word_hit",
