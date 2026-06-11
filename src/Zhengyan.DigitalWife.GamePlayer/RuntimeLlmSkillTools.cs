@@ -50,7 +50,7 @@ internal sealed class RuntimeLlmSkillTools
                 ListSkillsAsync),
             new RuntimeLlmTool(
                 "skill_read",
-                "Read a skill markdown file or a file under one skill directory. The skill name must match a direct child directory under skills/.",
+                "Read a skill markdown file or a file under one skill directory. The skill name must match a direct child directory under skills/. Accepts name, skill, or skillName.",
                 """
                 {
                   "type": "object",
@@ -58,6 +58,14 @@ internal sealed class RuntimeLlmSkillTools
                     "name": {
                       "type": "string",
                       "description": "Skill directory name under skills/."
+                    },
+                    "skill": {
+                      "type": "string",
+                      "description": "Alias of name."
+                    },
+                    "skillName": {
+                      "type": "string",
+                      "description": "Alias of name."
                     },
                     "path": {
                       "type": "string",
@@ -69,8 +77,7 @@ internal sealed class RuntimeLlmSkillTools
                       "default": 262144
                     }
                   },
-                  "required": ["name"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
                 """,
                 ReadSkillAsync),
@@ -88,6 +95,14 @@ internal sealed class RuntimeLlmSkillTools
                     "skillName": {
                       "type": "string",
                       "description": "Optional skill directory name. When set, path is resolved inside that skill."
+                    },
+                    "skill": {
+                      "type": "string",
+                      "description": "Alias of skillName."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Alias of skillName when listing inside one skill."
                     },
                     "recursive": {
                       "type": "boolean",
@@ -271,12 +286,13 @@ internal sealed class RuntimeLlmSkillTools
         return ExecuteToolAsync(toolCall, cancellationToken, args =>
         {
             ReadSkillArgs parsed = ParseArguments<ReadSkillArgs>(args);
-            if (string.IsNullOrWhiteSpace(parsed.Name))
+            string skillName = FirstNonWhiteSpace(parsed.Name, parsed.Skill, parsed.SkillName);
+            if (string.IsNullOrWhiteSpace(skillName))
             {
                 throw new InvalidOperationException("Skill name is required.");
             }
 
-            string skillDirectory = ResolveSkillDirectory(parsed.Name);
+            string skillDirectory = ResolveSkillDirectory(skillName);
             string filePath = string.IsNullOrWhiteSpace(parsed.Path)
                 ? FindSkillMarkdownPath(skillDirectory) ?? throw new FileNotFoundException("No SKILL.md or markdown file found for the skill.")
                 : ResolveUnderRoot(skillDirectory, parsed.Path);
@@ -289,9 +305,10 @@ internal sealed class RuntimeLlmSkillTools
         return ExecuteToolAsync(toolCall, cancellationToken, args =>
         {
             ListFilesArgs parsed = ParseArguments<ListFilesArgs>(args);
-            string root = string.IsNullOrWhiteSpace(parsed.SkillName)
+            string skillName = FirstNonWhiteSpace(parsed.SkillName, parsed.Skill, parsed.Name);
+            string root = string.IsNullOrWhiteSpace(skillName)
                 ? ResolveProjectPath(parsed.Path)
-                : ResolveUnderRoot(ResolveSkillDirectory(parsed.SkillName), parsed.Path);
+                : ResolveUnderRoot(ResolveSkillDirectory(skillName), parsed.Path);
             if (!Directory.Exists(root))
             {
                 if (File.Exists(root))
@@ -806,6 +823,19 @@ internal sealed class RuntimeLlmSkillTools
         return JsonSerializer.Deserialize<T>(argumentsJson, JsonOptions) ?? new T();
     }
 
+    private static string FirstNonWhiteSpace(params string?[] values)
+    {
+        foreach (string? value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static string Serialize(object value)
     {
         return JsonSerializer.Serialize(value, JsonOptions);
@@ -837,6 +867,10 @@ internal sealed class RuntimeLlmSkillTools
     {
         public string Name { get; set; } = string.Empty;
 
+        public string Skill { get; set; } = string.Empty;
+
+        public string SkillName { get; set; } = string.Empty;
+
         public string Path { get; set; } = string.Empty;
 
         public int? MaxBytes { get; set; }
@@ -847,6 +881,10 @@ internal sealed class RuntimeLlmSkillTools
         public string Path { get; set; } = string.Empty;
 
         public string SkillName { get; set; } = string.Empty;
+
+        public string Skill { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
 
         public bool Recursive { get; set; }
 

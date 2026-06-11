@@ -61,6 +61,64 @@ public sealed class RuntimeProjectControl
             CreateNoWindow = true
         };
 
+        return Execute(startInfo, timeoutMilliseconds);
+    }
+
+    public RuntimeCommandResult ExecuteCommand(
+        string fileName,
+        IEnumerable<string> arguments,
+        int timeoutMilliseconds = 30000,
+        string? workingDirectory = null)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            throw new ArgumentException("Command file name cannot be empty.", nameof(fileName));
+        }
+
+        ProcessStartInfo startInfo = new()
+        {
+            FileName = fileName,
+            WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+                ? _game.ProjectDirectory
+                : workingDirectory!,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (string argument in arguments ?? [])
+        {
+            startInfo.ArgumentList.Add(argument ?? string.Empty);
+        }
+
+        return Execute(startInfo, timeoutMilliseconds);
+    }
+
+    public RuntimeCommandResult ExecuteShellCommand(string command, int timeoutMilliseconds = 30000, string? workingDirectory = null)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            throw new ArgumentException("Shell command cannot be empty.", nameof(command));
+        }
+
+        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? ExecuteCommand("cmd.exe", "/c " + QuoteShellArgument(command), timeoutMilliseconds, workingDirectory)
+            : ExecuteCommand("/bin/sh", "-c " + QuoteShellArgument(command), timeoutMilliseconds, workingDirectory);
+    }
+
+    private static string QuoteShellArgument(string value)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+
+        return "'" + value.Replace("'", "'\"'\"'") + "'";
+    }
+
+    private static RuntimeCommandResult Execute(ProcessStartInfo startInfo, int timeoutMilliseconds)
+    {
         using Process process = new()
         {
             StartInfo = startInfo
@@ -98,27 +156,5 @@ public sealed class RuntimeProjectControl
             StandardError = errorTask.IsCompletedSuccessfully ? errorTask.Result : string.Empty,
             TimedOut = !exited
         };
-    }
-
-    public RuntimeCommandResult ExecuteShellCommand(string command, int timeoutMilliseconds = 30000, string? workingDirectory = null)
-    {
-        if (string.IsNullOrWhiteSpace(command))
-        {
-            throw new ArgumentException("Shell command cannot be empty.", nameof(command));
-        }
-
-        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? ExecuteCommand("cmd.exe", "/c " + QuoteShellArgument(command), timeoutMilliseconds, workingDirectory)
-            : ExecuteCommand("/bin/sh", "-c " + QuoteShellArgument(command), timeoutMilliseconds, workingDirectory);
-    }
-
-    private static string QuoteShellArgument(string value)
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return "\"" + value.Replace("\"", "\\\"") + "\"";
-        }
-
-        return "'" + value.Replace("'", "'\"'\"'") + "'";
     }
 }

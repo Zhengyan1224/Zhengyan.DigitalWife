@@ -3,6 +3,7 @@ obj/
 models/
 artifacts/
 temp/
+.obj-trash/
 .codex-dotnet-home/
 appsettings.Local.json
 imgui.ini

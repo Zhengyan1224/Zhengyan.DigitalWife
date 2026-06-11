@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Llm;
@@ -8,6 +9,12 @@ namespace Zhengyan.DigitalWife.GamePlayer;
 public sealed class RuntimeLlm : IDisposable
 {
     private const int DefaultMaxToolRounds = 4;
+    private const string TextToolCallStart = "<dw_tool_call>";
+    private const string TextToolCallEnd = "</dw_tool_call>";
+
+    private sealed record ResolvedToolCalls(IReadOnlyList<RuntimeLlmToolCall> Calls, bool FromTextProtocol);
+
+    private sealed record ToolRoundResult(RuntimeLlmStreamUpdate LastUpdate, bool NativeToolsEnabled);
 
     private readonly GameProjectLlmSettings _settings;
     private readonly string _projectDirectory;
@@ -290,48 +297,54 @@ public sealed class RuntimeLlm : IDisposable
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        List<RuntimeLlmChatMessage> conversation = messages.ToList();
         List<RuntimeLlmTool> toolList = CreateEffectiveTools(tools);
+        List<RuntimeLlmChatMessage> conversation = CreateToolAwareConversation(messages, toolList);
         RuntimeLlmStreamUpdate lastUpdate = new(string.Empty, string.Empty, false);
+        bool nativeToolsEnabled = toolList.Count > 0;
 
         for (int round = 0; round <= Math.Max(0, maxToolRounds); round++)
         {
-            RuntimeLlmStreamUpdate roundLastUpdate = lastUpdate;
-            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+            ToolRoundResult roundResult = await ReadToolRoundAsync(
                 conversation,
                 model,
                 temperature,
                 toolList,
-                cancellationToken))
-            {
-                roundLastUpdate = update;
-                if (update.ToolCalls.Count == 0)
-                {
-                    yield return update;
-                }
-            }
+                nativeToolsEnabled,
+                lastUpdate,
+                cancellationToken);
 
+            RuntimeLlmStreamUpdate roundLastUpdate = roundResult.LastUpdate;
             lastUpdate = roundLastUpdate;
-            if (roundLastUpdate.ToolCalls.Count == 0)
+            nativeToolsEnabled = roundResult.NativeToolsEnabled;
+            ResolvedToolCalls resolvedToolCalls = ResolveToolCalls(roundLastUpdate);
+            IReadOnlyList<RuntimeLlmToolCall> toolCalls = resolvedToolCalls.Calls;
+            if (toolCalls.Count == 0)
             {
+                if (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta))
+                {
+                    yield return new RuntimeLlmStreamUpdate(
+                        roundLastUpdate.AccumulatedText,
+                        roundLastUpdate.AccumulatedText,
+                        roundLastUpdate.IsFinal);
+                }
+
                 yield break;
             }
 
-            conversation.Add(new RuntimeLlmChatMessage("assistant", roundLastUpdate.AccumulatedText)
+            if (resolvedToolCalls.FromTextProtocol)
             {
-                ToolCalls = roundLastUpdate.ToolCalls
-            });
+                nativeToolsEnabled = false;
+            }
 
-            foreach (RuntimeLlmToolCall toolCall in roundLastUpdate.ToolCalls)
+            AddToolCallMessage(conversation, roundLastUpdate, resolvedToolCalls);
+
+            foreach (RuntimeLlmToolCall toolCall in toolCalls)
             {
                 RuntimeLlmTool? tool = FindTool(toolList, toolCall.Name);
                 string result = tool is null
                     ? $"Tool '{toolCall.Name}' is not registered."
                     : await tool.InvokeAsync(toolCall, cancellationToken);
-                conversation.Add(new RuntimeLlmChatMessage("tool", result)
-                {
-                    ToolCallId = toolCall.Id
-                });
+                AddToolResultMessage(conversation, toolCall, result, resolvedToolCalls.FromTextProtocol);
             }
         }
 
@@ -539,38 +552,47 @@ public sealed class RuntimeLlm : IDisposable
         string? onToolResultCallback,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        List<RuntimeLlmChatMessage> conversation = messages.ToList();
+        List<RuntimeLlmChatMessage> conversation = CreateToolAwareConversation(messages, tools);
         RuntimeLlmStreamUpdate lastUpdate = new(string.Empty, string.Empty, false);
+        bool nativeToolsEnabled = tools.Count > 0;
 
         for (int round = 0; round <= Math.Max(0, maxToolRounds); round++)
         {
-            RuntimeLlmStreamUpdate roundLastUpdate = lastUpdate;
-            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+            ToolRoundResult roundResult = await ReadToolRoundAsync(
                 conversation,
                 model,
                 temperature,
                 tools,
-                cancellationToken))
-            {
-                roundLastUpdate = update;
-                if (update.ToolCalls.Count == 0)
-                {
-                    yield return update;
-                }
-            }
+                nativeToolsEnabled,
+                lastUpdate,
+                cancellationToken);
 
+            RuntimeLlmStreamUpdate roundLastUpdate = roundResult.LastUpdate;
             lastUpdate = roundLastUpdate;
-            if (roundLastUpdate.ToolCalls.Count == 0)
+            nativeToolsEnabled = roundResult.NativeToolsEnabled;
+            ResolvedToolCalls resolvedToolCalls = ResolveToolCalls(roundLastUpdate);
+            IReadOnlyList<RuntimeLlmToolCall> toolCalls = resolvedToolCalls.Calls;
+            if (toolCalls.Count == 0)
             {
+                if (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta))
+                {
+                    yield return new RuntimeLlmStreamUpdate(
+                        roundLastUpdate.AccumulatedText,
+                        roundLastUpdate.AccumulatedText,
+                        roundLastUpdate.IsFinal);
+                }
+
                 yield break;
             }
 
-            conversation.Add(new RuntimeLlmChatMessage("assistant", roundLastUpdate.AccumulatedText)
+            if (resolvedToolCalls.FromTextProtocol)
             {
-                ToolCalls = roundLastUpdate.ToolCalls
-            });
+                nativeToolsEnabled = false;
+            }
 
-            foreach (RuntimeLlmToolCall toolCall in roundLastUpdate.ToolCalls)
+            AddToolCallMessage(conversation, roundLastUpdate, resolvedToolCalls);
+
+            foreach (RuntimeLlmToolCall toolCall in toolCalls)
             {
                 DispatchToolEvent(callbackTarget, requestId, "tool_call", onToolCallCallback, toolCall, null);
                 RuntimeLlmTool? tool = FindTool(tools, toolCall.Name);
@@ -578,10 +600,7 @@ public sealed class RuntimeLlm : IDisposable
                     ? $"Tool '{toolCall.Name}' is not registered."
                     : await tool.InvokeAsync(toolCall, cancellationToken);
                 DispatchToolEvent(callbackTarget, requestId, "tool_result", onToolResultCallback, toolCall, result);
-                conversation.Add(new RuntimeLlmChatMessage("tool", result)
-                {
-                    ToolCallId = toolCall.Id
-                });
+                AddToolResultMessage(conversation, toolCall, result, resolvedToolCalls.FromTextProtocol);
             }
         }
 
@@ -669,6 +688,69 @@ public sealed class RuntimeLlm : IDisposable
         _dispatchScriptEvent(target, scriptEvent);
     }
 
+    private async Task<ToolRoundResult> ReadToolRoundAsync(
+        List<RuntimeLlmChatMessage> conversation,
+        string? model,
+        float? temperature,
+        IReadOnlyList<RuntimeLlmTool> tools,
+        bool nativeToolsEnabled,
+        RuntimeLlmStreamUpdate fallbackLastUpdate,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
+            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+                conversation,
+                model,
+                temperature,
+                nativeToolsEnabled ? tools : null,
+                cancellationToken))
+            {
+                lastUpdate = update;
+            }
+
+            return new ToolRoundResult(lastUpdate, nativeToolsEnabled);
+        }
+        catch (HttpRequestException exception) when (nativeToolsEnabled && IsNativeToolPayloadRejected(exception))
+        {
+            Console.Error.WriteLine($"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
+            RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
+            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+                conversation,
+                model,
+                temperature,
+                tools: null,
+                cancellationToken))
+            {
+                lastUpdate = update;
+            }
+
+            return new ToolRoundResult(lastUpdate, NativeToolsEnabled: false);
+        }
+    }
+
+    private static bool IsNativeToolPayloadRejected(HttpRequestException exception)
+    {
+        return exception.StatusCode is HttpStatusCode.BadRequest
+            or HttpStatusCode.UnprocessableEntity
+            or HttpStatusCode.NotImplemented
+            or HttpStatusCode.UnsupportedMediaType;
+    }
+
+    private static ResolvedToolCalls ResolveToolCalls(RuntimeLlmStreamUpdate update)
+    {
+        if (update.ToolCalls.Count > 0)
+        {
+            return new ResolvedToolCalls(update.ToolCalls, FromTextProtocol: false);
+        }
+
+        RuntimeLlmToolCall? textToolCall = TryParseTextToolCall(update.AccumulatedText);
+        return textToolCall is null
+            ? new ResolvedToolCalls(Array.Empty<RuntimeLlmToolCall>(), FromTextProtocol: false)
+            : new ResolvedToolCalls([textToolCall], FromTextProtocol: true);
+    }
+
     private OpenAiCompatibleLlmClient GetClient()
     {
         if (_client is not null)
@@ -727,6 +809,65 @@ public sealed class RuntimeLlm : IDisposable
         return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static void AddToolCallMessage(
+        List<RuntimeLlmChatMessage> conversation,
+        RuntimeLlmStreamUpdate update,
+        ResolvedToolCalls resolvedToolCalls)
+    {
+        if (resolvedToolCalls.FromTextProtocol)
+        {
+            string content = string.IsNullOrWhiteSpace(update.AccumulatedText)
+                ? string.Join(
+                    "\n",
+                    resolvedToolCalls.Calls.Select(CreateTextToolCallMessage))
+                : update.AccumulatedText;
+            conversation.Add(new RuntimeLlmChatMessage("assistant", content));
+            return;
+        }
+
+        conversation.Add(new RuntimeLlmChatMessage("assistant", string.Empty)
+        {
+            ToolCalls = resolvedToolCalls.Calls
+        });
+    }
+
+    private static void AddToolResultMessage(
+        List<RuntimeLlmChatMessage> conversation,
+        RuntimeLlmToolCall toolCall,
+        string result,
+        bool fromTextProtocol)
+    {
+        if (fromTextProtocol)
+        {
+            conversation.Add(new RuntimeLlmChatMessage("user", CreateTextToolResultMessage(toolCall, result)));
+            return;
+        }
+
+        conversation.Add(new RuntimeLlmChatMessage("tool", result)
+        {
+            ToolCallId = toolCall.Id
+        });
+    }
+
+    private static string CreateTextToolResultMessage(RuntimeLlmToolCall toolCall, string result)
+    {
+        string example = TextToolCallStart + "{\"name\":\"tool_name\",\"arguments\":{}}" + TextToolCallEnd;
+        return string.Join(
+            "\n",
+            $"Tool result for {toolCall.Name}:",
+            string.IsNullOrWhiteSpace(result) ? "{}" : result,
+            "",
+            "Use this tool result to continue answering the original user request.",
+            $"If another tool is required, output only {example}.");
+    }
+
+    private static string CreateTextToolCallMessage(RuntimeLlmToolCall toolCall)
+    {
+        string toolNameJson = JsonSerializer.Serialize(toolCall.Name);
+        string argumentsJson = NormalizeArgumentsJson(toolCall.ArgumentsJson);
+        return TextToolCallStart + "{\"name\":" + toolNameJson + ",\"arguments\":" + argumentsJson + "}" + TextToolCallEnd;
+    }
+
     private List<RuntimeLlmTool> CreateEffectiveTools(IEnumerable<RuntimeLlmTool>? tools)
     {
         Dictionary<string, RuntimeLlmTool> effectiveTools = new(StringComparer.OrdinalIgnoreCase);
@@ -753,6 +894,161 @@ public sealed class RuntimeLlm : IDisposable
         }
 
         return effectiveTools.Values.ToList();
+    }
+
+    private static List<RuntimeLlmChatMessage> CreateToolAwareConversation(
+        IEnumerable<RuntimeLlmChatMessage> messages,
+        IReadOnlyList<RuntimeLlmTool> tools)
+    {
+        List<RuntimeLlmChatMessage> conversation = messages.ToList();
+        if (tools.Count == 0)
+        {
+            return conversation;
+        }
+
+        string instruction = CreateTextToolCallInstruction(tools);
+        int lastSystemIndex = -1;
+        for (int i = 0; i < conversation.Count; i++)
+        {
+            if (string.Equals(conversation[i].Role, "system", StringComparison.OrdinalIgnoreCase))
+            {
+                lastSystemIndex = i;
+            }
+        }
+
+        if (lastSystemIndex >= 0)
+        {
+            RuntimeLlmChatMessage system = conversation[lastSystemIndex];
+            conversation[lastSystemIndex] = system with
+            {
+                Content = string.Join("\n\n", system.Content, instruction)
+            };
+            return conversation;
+        }
+
+        conversation.Insert(0, new RuntimeLlmChatMessage("system", instruction));
+        return conversation;
+    }
+
+    private static string CreateTextToolCallInstruction(IReadOnlyList<RuntimeLlmTool> tools)
+    {
+        string toolList = string.Join(
+            "\n",
+            tools.Select(tool => $"- {tool.Name}: {tool.Description}"));
+
+        return string.Join(
+            "\n",
+            "工具调用说明：",
+            "如果你需要读取 skills、搜索项目、执行命令、联网查询或使用任何已注册工具，优先使用原生 OpenAI tool_calls/function calling。",
+            "如果当前模型或服务不能发出原生 tool_calls，则你必须只输出下面这种文本协议，不要附加解释、寒暄或其它内容：",
+            $"{TextToolCallStart}{{\"name\":\"tool_name\",\"arguments\":{{}}}}{TextToolCallEnd}",
+            "运行时会执行该工具，并把工具结果继续发给你；拿到工具结果后再回答用户，或继续请求下一个工具。",
+            "arguments 必须是 JSON object，name 必须是下列工具名之一。",
+            "可用工具：",
+            toolList);
+    }
+
+    private static RuntimeLlmToolCall? TryParseTextToolCall(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        string payload = ExtractTextToolCallPayload(text);
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(payload);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            string name = GetOptionalString(root, "name");
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = GetOptionalString(root, "tool");
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return null;
+            }
+
+            string argumentsJson = "{}";
+            if (root.TryGetProperty("arguments", out JsonElement arguments)
+                || root.TryGetProperty("args", out arguments))
+            {
+                argumentsJson = arguments.ValueKind == JsonValueKind.String
+                    ? NormalizeArgumentsJson(arguments.GetString())
+                    : arguments.GetRawText();
+            }
+
+            return new RuntimeLlmToolCall(Guid.NewGuid().ToString("N"), name.Trim(), argumentsJson);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string ExtractTextToolCallPayload(string text)
+    {
+        string trimmed = text.Trim();
+        int start = trimmed.IndexOf(TextToolCallStart, StringComparison.OrdinalIgnoreCase);
+        if (start >= 0)
+        {
+            start += TextToolCallStart.Length;
+            int end = trimmed.IndexOf(TextToolCallEnd, start, StringComparison.OrdinalIgnoreCase);
+            if (end < 0)
+            {
+                return string.Empty;
+            }
+
+            return trimmed[start..end].Trim();
+        }
+
+        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            string[] lines = trimmed.Split('\n');
+            if (lines.Length >= 3)
+            {
+                trimmed = string.Join('\n', lines.Skip(1).Take(lines.Length - 2)).Trim();
+            }
+        }
+
+        return trimmed.StartsWith("{", StringComparison.Ordinal) ? trimmed : string.Empty;
+    }
+
+    private static string GetOptionalString(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out JsonElement property)
+            && property.ValueKind == JsonValueKind.String
+            ? property.GetString() ?? string.Empty
+            : string.Empty;
+    }
+
+    private static string NormalizeArgumentsJson(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "{}";
+        }
+
+        string trimmed = value.Trim();
+        if (trimmed.StartsWith("{", StringComparison.Ordinal)
+            || trimmed.StartsWith("[", StringComparison.Ordinal))
+        {
+            return trimmed;
+        }
+
+        return JsonSerializer.Serialize(new { value = trimmed });
     }
 
     private static bool IsValidMessage(RuntimeLlmChatMessage message)
