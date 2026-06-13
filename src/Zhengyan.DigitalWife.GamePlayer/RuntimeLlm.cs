@@ -407,9 +407,13 @@ public sealed class RuntimeLlm : IDisposable
             : requestId.Trim();
         List<RuntimeLlmChatMessage> capturedMessages = messages.ToList();
         List<RuntimeLlmTool> capturedTools = CreateEffectiveTools(tools);
+        string displayModel = string.IsNullOrWhiteSpace(model) ? _settings.Model : model.Trim();
 
         try
         {
+            Console.WriteLine(
+                $"[GamePlayer] LLM request start request={resolvedRequestId}, target={callbackTarget.Name}, " +
+                $"model={displayModel}, tools={capturedTools.Count}, messages={capturedMessages.Count}");
             CancellationTokenSource cts = new();
             lock (_sync)
             {
@@ -463,6 +467,9 @@ public sealed class RuntimeLlm : IDisposable
                     }
 
                     RuntimeLlmResult result = new(resolvedRequestId, accumulated);
+                    Console.WriteLine(
+                        $"[GamePlayer] LLM request completed request={resolvedRequestId}, " +
+                        $"textLength={result.Text.Length}");
                     _dispatcher.Post(() =>
                     {
                         if (_disposed)
@@ -487,9 +494,11 @@ public sealed class RuntimeLlm : IDisposable
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested || _disposed)
                 {
+                    Console.WriteLine($"[GamePlayer] LLM request canceled request={resolvedRequestId}.");
                 }
                 catch (Exception ex)
                 {
+                    Console.Error.WriteLine($"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}");
                     _dispatcher.Post(() =>
                     {
                         if (_disposed)
@@ -525,6 +534,7 @@ public sealed class RuntimeLlm : IDisposable
         }
         catch (Exception ex)
         {
+            Console.Error.WriteLine($"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}");
             _dispatcher.Post(() =>
             {
                 onError?.Invoke(ex);
@@ -603,11 +613,17 @@ public sealed class RuntimeLlm : IDisposable
 
             foreach (RuntimeLlmToolCall toolCall in toolCalls)
             {
+                Console.WriteLine(
+                    $"[GamePlayer] LLM tool call request={requestId}, name={toolCall.Name}, " +
+                    $"argumentsLength={toolCall.ArgumentsJson.Length}");
                 DispatchToolEvent(callbackTarget, requestId, "tool_call", onToolCallCallback, toolCall, null);
                 RuntimeLlmTool? tool = FindTool(tools, toolCall.Name);
                 string result = tool is null
                     ? $"Tool '{toolCall.Name}' is not registered."
                     : await tool.InvokeAsync(toolCall, cancellationToken);
+                Console.WriteLine(
+                    $"[GamePlayer] LLM tool result request={requestId}, name={toolCall.Name}, " +
+                    $"resultLength={result.Length}");
                 DispatchToolEvent(callbackTarget, requestId, "tool_result", onToolResultCallback, toolCall, result);
                 AddToolResultMessage(conversation, toolCall, result, resolvedToolCalls.FromTextProtocol);
             }

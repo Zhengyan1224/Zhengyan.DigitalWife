@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Zhengyan.DigitalWife.Llm;
 
@@ -120,14 +121,16 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
             }
 
             ChatCompletionChunk? chunk = JsonSerializer.Deserialize<ChatCompletionChunk>(data, JsonOptions);
-            Delta? responseDelta = chunk?.Choices?.FirstOrDefault()?.Delta;
+            Choice? choice = chunk?.Choices?.FirstOrDefault();
+            Delta? responseDelta = choice?.Delta ?? choice?.Message;
             if (responseDelta is null)
             {
                 continue;
             }
 
             AppendToolCalls(toolCallBuilders, responseDelta.ToolCalls);
-            string delta = responseDelta.Content ?? string.Empty;
+            AppendFunctionCall(toolCallBuilders, responseDelta.FunctionCall);
+            string delta = GetTextContent(responseDelta.Content);
             IReadOnlyList<LlmToolCall> toolCalls = BuildToolCalls(toolCallBuilders);
             if (string.IsNullOrEmpty(delta) && toolCalls.Count == 0)
             {
@@ -263,6 +266,42 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
         };
     }
 
+    private static string GetTextContent(JsonElement? content)
+    {
+        if (!content.HasValue)
+        {
+            return string.Empty;
+        }
+
+        return GetTextContent(content.Value);
+    }
+
+    private static string GetTextContent(JsonElement content)
+    {
+        return content.ValueKind switch
+        {
+            JsonValueKind.String => content.GetString() ?? string.Empty,
+            JsonValueKind.Array => string.Concat(content.EnumerateArray().Select(GetTextContent)),
+            JsonValueKind.Object => GetObjectTextContent(content),
+            _ => string.Empty
+        };
+    }
+
+    private static string GetObjectTextContent(JsonElement content)
+    {
+        if (content.TryGetProperty("text", out JsonElement text))
+        {
+            return GetTextContent(text);
+        }
+
+        if (content.TryGetProperty("content", out JsonElement nestedContent))
+        {
+            return GetTextContent(nestedContent);
+        }
+
+        return string.Empty;
+    }
+
     private static void AppendToolCalls(List<ToolCallBuilder> builders, List<ToolCallDelta>? deltas)
     {
         if (deltas is null)
@@ -296,6 +335,30 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
         }
     }
 
+    private static void AppendFunctionCall(List<ToolCallBuilder> builders, ToolCallFunctionDelta? delta)
+    {
+        if (delta is null)
+        {
+            return;
+        }
+
+        while (builders.Count == 0)
+        {
+            builders.Add(new ToolCallBuilder());
+        }
+
+        ToolCallBuilder builder = builders[0];
+        if (!string.IsNullOrWhiteSpace(delta.Name))
+        {
+            builder.Name = delta.Name;
+        }
+
+        if (delta.Arguments is not null)
+        {
+            builder.Arguments.Append(delta.Arguments);
+        }
+    }
+
     private static IReadOnlyList<LlmToolCall> BuildToolCalls(List<ToolCallBuilder> builders)
     {
         return builders
@@ -309,34 +372,52 @@ public sealed class OpenAiCompatibleLlmClient : ILlmClient, IDisposable
 
     private sealed class ChatCompletionChunk
     {
+        [JsonPropertyName("choices")]
         public List<Choice>? Choices { get; init; }
     }
 
     private sealed class Choice
     {
+        [JsonPropertyName("delta")]
         public Delta? Delta { get; init; }
+
+        [JsonPropertyName("message")]
+        public Delta? Message { get; init; }
+
+        [JsonPropertyName("finish_reason")]
+        public string? FinishReason { get; init; }
     }
 
     private sealed class Delta
     {
-        public string? Content { get; init; }
+        [JsonPropertyName("content")]
+        public JsonElement? Content { get; init; }
 
+        [JsonPropertyName("tool_calls")]
         public List<ToolCallDelta>? ToolCalls { get; init; }
+
+        [JsonPropertyName("function_call")]
+        public ToolCallFunctionDelta? FunctionCall { get; init; }
     }
 
     private sealed class ToolCallDelta
     {
+        [JsonPropertyName("index")]
         public int? Index { get; init; }
 
+        [JsonPropertyName("id")]
         public string? Id { get; init; }
 
+        [JsonPropertyName("function")]
         public ToolCallFunctionDelta? Function { get; init; }
     }
 
     private sealed class ToolCallFunctionDelta
     {
+        [JsonPropertyName("name")]
         public string? Name { get; init; }
 
+        [JsonPropertyName("arguments")]
         public string? Arguments { get; init; }
     }
 

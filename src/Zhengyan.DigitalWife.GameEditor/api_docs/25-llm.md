@@ -75,6 +75,7 @@ GamePlayer 通过 OpenAI-compatible `/v1/chat/completions` 调用 LLM。配置�
 | `ChatWithToolsAsync(text, tools, systemPrompt, model, temperature, maxToolRounds)` | 带 function call 的完整文本请求。启用 skills 时会合并内置工具。 |
 | `StreamChatWithToolsAsync(messages, tools, model, temperature, maxToolRounds)` | 带 function call 的流式请求。启用 skills 时会合并内置工具。 |
 | `StartChatWithTools(entity, text, tools, systemPrompt, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, maxToolRounds)` | 后台工具调用请求，适合运行时 UI。启用 skills 时会合并内置工具。 |
+| `StartChatWithTools(entity, messages, tools, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, maxToolRounds)` | 按消息列表发起后台工具调用请求，适合多轮对话。启用 skills 时会合并内置工具。 |
 
 ### C#：后台流式输出
 
@@ -322,12 +323,16 @@ static class VoiceChatState
     public const string LlmToolCallCallback = "voice_chat_llm_tool_call";
     public const string LlmToolResultCallback = "voice_chat_llm_tool_result";
     public const int MaxSpeechSegmentLength = 70;
+    public const int MaxConversationTurns = 8;
+    public const int MaxConversationCharacters = 6000;
 
     public static string AsrRequestId = string.Empty;
     public static string LlmRequestId = string.Empty;
     public static string CurrentUserText = string.Empty;
+    public static string ActiveLlmUserText = string.Empty;
     public static string CurrentAssistantText = string.Empty;
     public static string PendingSentenceBuffer = string.Empty;
+    public static List<RuntimeLlmChatMessage> ConversationHistory = new();
     public static Queue<string> SpeakQueue = new();
     public static bool IsRecording;
     public static bool IsSpeaking;
@@ -505,6 +510,79 @@ string CreateLlmSystemPrompt()
         "如果工具调用失败，请直接说明失败原因，不要编造工具没有返回的信息。");
 }
 
+int CountConversationHistoryCharacters()
+{
+    int total = 0;
+    foreach (RuntimeLlmChatMessage message in VoiceChatState.ConversationHistory)
+    {
+        total += message.Content.Length;
+    }
+
+    return total;
+}
+
+void RemoveOldestConversationTurn()
+{
+    if (VoiceChatState.ConversationHistory.Count == 0)
+    {
+        return;
+    }
+
+    VoiceChatState.ConversationHistory.RemoveAt(0);
+    if (VoiceChatState.ConversationHistory.Count > 0
+        && string.Equals(VoiceChatState.ConversationHistory[0].Role, "assistant", StringComparison.OrdinalIgnoreCase))
+    {
+        VoiceChatState.ConversationHistory.RemoveAt(0);
+    }
+}
+
+void TrimConversationHistory()
+{
+    int maxMessages = VoiceChatState.MaxConversationTurns * 2;
+    while (VoiceChatState.ConversationHistory.Count > maxMessages)
+    {
+        RemoveOldestConversationTurn();
+    }
+
+    while (CountConversationHistoryCharacters() > VoiceChatState.MaxConversationCharacters)
+    {
+        RemoveOldestConversationTurn();
+    }
+}
+
+List<RuntimeLlmChatMessage> BuildConversationMessages(string prompt)
+{
+    TrimConversationHistory();
+
+    List<RuntimeLlmChatMessage> messages =
+    [
+        new RuntimeLlmChatMessage("system", CreateLlmSystemPrompt())
+    ];
+
+    foreach (RuntimeLlmChatMessage message in VoiceChatState.ConversationHistory)
+    {
+        if (!string.IsNullOrWhiteSpace(message.Content))
+        {
+            messages.Add(message);
+        }
+    }
+
+    messages.Add(new RuntimeLlmChatMessage("user", prompt));
+    return messages;
+}
+
+void AddConversationTurn(string userText, string assistantText)
+{
+    if (string.IsNullOrWhiteSpace(userText) || string.IsNullOrWhiteSpace(assistantText))
+    {
+        return;
+    }
+
+    VoiceChatState.ConversationHistory.Add(new RuntimeLlmChatMessage("user", userText.Trim()));
+    VoiceChatState.ConversationHistory.Add(new RuntimeLlmChatMessage("assistant", assistantText.Trim()));
+    TrimConversationHistory();
+}
+
 void StartReplyFromPromptInput()
 {
     string prompt = GetPromptInputText();
@@ -514,14 +592,15 @@ void StartReplyFromPromptInput()
     }
 
     VoiceChatState.CurrentUserText = prompt;
+    VoiceChatState.ActiveLlmUserText = prompt;
     ResetReplyState(stopSpeaking: true);
     ShowBubble(prompt, string.Empty, "思考中...");
 
+    List<RuntimeLlmChatMessage> messages = BuildConversationMessages(prompt);
     VoiceChatState.LlmRequestId = Scene.Llm.StartChatWithTools(
         Entity,
-        prompt,
+        messages,
         Array.Empty<RuntimeLlmTool>(),
-        systemPrompt: CreateLlmSystemPrompt(),
         onDeltaCallback: "voice_chat_llm_delta",
         onCompletedCallback: "voice_chat_llm_done",
         onErrorCallback: "voice_chat_llm_error",
@@ -641,6 +720,7 @@ if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_done")
 
     VoiceChatState.ReplyCompleted = true;
     VoiceChatState.CurrentAssistantText = LlmText;
+    AddConversationTurn(VoiceChatState.ActiveLlmUserText, VoiceChatState.CurrentAssistantText);
     EnqueueAssistantSpeech(string.Empty, flushTail: true);
     ShowBubble(
         VoiceChatState.CurrentUserText,
