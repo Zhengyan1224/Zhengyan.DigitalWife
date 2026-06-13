@@ -289,6 +289,718 @@ def npc_tool_result(entity, scene, input, audio, event):
     print("Tool result:", event.get("toolResult", ""))
 ```
 
+## 完整示例：ASR -> LLM -> TTS
+
+下面示例展示一个完整的语音对话链路：
+
+1. 玩家按住 `RecordButton` 开始录音。
+2. 松开按钮后停止 ASR 流式识别。
+3. 把识别结果写入 `PromptInput`，玩家也可以手动编辑后点击 `SendButton`。
+4. 使用 `StartChatWithTools` 调用 LLM；如果项目启用了 skills，LLM 可自动调用内置 skills 工具。
+5. LLM 流式输出写入对话气泡，并按短句排队调用 TTS。
+6. 每段 TTS 播完后再播放下一段，避免多段语音重叠。
+
+示例假设场景里有：
+
+- 一个按钮：`RecordButton`
+- 一个按钮：`SendButton`
+- 一个输入框：`PromptInput`
+- 脚本绑定在要说话的 PMX 实体上
+
+### C#：ASR -> LLM with skills -> TTS
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+using System.Text.RegularExpressions;
+
+static class VoiceChatState
+{
+    public const string BubbleName = "voice-chat-bubble";
+    public const string TtsDoneCallback = "voice_chat_tts_done";
+    public const string LlmToolCallCallback = "voice_chat_llm_tool_call";
+    public const string LlmToolResultCallback = "voice_chat_llm_tool_result";
+    public const int MaxSpeechSegmentLength = 70;
+
+    public static string AsrRequestId = string.Empty;
+    public static string LlmRequestId = string.Empty;
+    public static string CurrentUserText = string.Empty;
+    public static string CurrentAssistantText = string.Empty;
+    public static string PendingSentenceBuffer = string.Empty;
+    public static Queue<string> SpeakQueue = new();
+    public static bool IsRecording;
+    public static bool IsSpeaking;
+    public static bool ReplyCompleted;
+}
+
+RuntimeDialogueBubble GetChatBubble()
+{
+    RuntimeDialogueBubble bubble = Scene.Bubble.GetOrCreate(VoiceChatState.BubbleName);
+    bubble.AttachToEntity(Entity.Id, useModelTopAnchor: true);
+    bubble.SetWorldOffset(0.0f, 0.20f, 0.0f);
+    bubble.SetScreenOffset(0.0f, -16.0f);
+    bubble.Width = 440.0f;
+    bubble.TextAlignment = "left";
+    bubble.BackgroundColor = new Vector4(0.9f, 0.0f, 1.0f, 0.50f);
+    bubble.TextColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+    bubble.FooterTextColor = new Vector4(0.76f, 0.80f, 0.88f, 1.0f);
+    return bubble;
+}
+
+void ShowBubble(string userText, string assistantText, string footer)
+{
+    RuntimeDialogueBubble bubble = GetChatBubble();
+    bubble.SetContent(
+        assistantText,
+        headerText: string.IsNullOrWhiteSpace(userText) ? "语音助手" : $"你：{userText}",
+        footerText: footer);
+    bubble.Show();
+}
+
+void ResetReplyState(bool stopSpeaking)
+{
+    VoiceChatState.CurrentAssistantText = string.Empty;
+    VoiceChatState.PendingSentenceBuffer = string.Empty;
+    VoiceChatState.SpeakQueue.Clear();
+    VoiceChatState.ReplyCompleted = false;
+    VoiceChatState.IsSpeaking = false;
+
+    if (stopSpeaking)
+    {
+        Entity.StopSpeaking();
+    }
+}
+
+bool IsSpeechBreak(char ch)
+{
+    return ch is '。' or '！' or '？' or '；' or '，' or '、' or '.' or '!' or '?' or ';' or ',' or '\n';
+}
+
+string CleanSpeechText(string rawText)
+{
+    if (string.IsNullOrWhiteSpace(rawText))
+    {
+        return string.Empty;
+    }
+
+    string text = rawText
+        .Replace("**", "")
+        .Replace("__", "")
+        .Replace("`", "")
+        .Replace("（", "，")
+        .Replace("）", "，")
+        .Replace("(", "，")
+        .Replace(")", "，")
+        .Replace("——", "，")
+        .Replace("-", "，");
+    text = Regex.Replace(text, @"https?://\S+", "网页链接");
+    text = Regex.Replace(text, @"[^\u4e00-\u9fa5a-zA-Z0-9\s，,。.!?！？；;、]", "");
+    text = Regex.Replace(text, @"\s+", " ");
+    return text.Trim();
+}
+
+IEnumerable<string> DrainCompletedSentences(ref string buffer, bool flushTail)
+{
+    List<string> result = [];
+    int sentenceStart = 0;
+
+    for (int i = 0; i < buffer.Length; i++)
+    {
+        bool shouldBreak = IsSpeechBreak(buffer[i])
+            || i - sentenceStart + 1 >= VoiceChatState.MaxSpeechSegmentLength;
+        if (!shouldBreak)
+        {
+            continue;
+        }
+
+        string sentence = buffer[sentenceStart..(i + 1)].Trim();
+        if (!string.IsNullOrWhiteSpace(sentence))
+        {
+            result.Add(sentence);
+        }
+
+        sentenceStart = i + 1;
+    }
+
+    string tail = sentenceStart >= buffer.Length ? string.Empty : buffer[sentenceStart..];
+    if (flushTail)
+    {
+        string finalSentence = tail.Trim();
+        if (!string.IsNullOrWhiteSpace(finalSentence))
+        {
+            result.Add(finalSentence);
+        }
+
+        buffer = string.Empty;
+    }
+    else
+    {
+        buffer = tail;
+    }
+
+    return result;
+}
+
+void EnqueueAssistantSpeech(string text, bool flushTail)
+{
+    if (!string.IsNullOrEmpty(text))
+    {
+        VoiceChatState.PendingSentenceBuffer += text;
+    }
+
+    foreach (string sentence in DrainCompletedSentences(ref VoiceChatState.PendingSentenceBuffer, flushTail))
+    {
+        string cleanSentence = CleanSpeechText(sentence);
+        if (!string.IsNullOrWhiteSpace(cleanSentence))
+        {
+            VoiceChatState.SpeakQueue.Enqueue(cleanSentence);
+        }
+    }
+}
+
+void TrySpeakNext()
+{
+    if (VoiceChatState.IsSpeaking || VoiceChatState.SpeakQueue.Count == 0)
+    {
+        return;
+    }
+
+    string sentence = VoiceChatState.SpeakQueue.Dequeue();
+    VoiceChatState.IsSpeaking = true;
+    ShowBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, "语音回复中...");
+
+    try
+    {
+        Entity.SpeakWithCallback(sentence, VoiceChatState.TtsDoneCallback);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"TTS start failed: {ex.Message}");
+        VoiceChatState.IsSpeaking = false;
+        TrySpeakNext();
+    }
+}
+
+string GetPromptInputText()
+{
+    return Scene.GetGuiControl("PromptInput")?.Value.Trim() ?? string.Empty;
+}
+
+void SetPromptInputText(string text)
+{
+    Scene.GetGuiControl("PromptInput")?.SetValue(text ?? string.Empty);
+}
+
+string CreateLlmSystemPrompt()
+{
+    return string.Join(
+        "\n",
+        "你是一个中文语音助手，回答要自然、简洁。",
+        $"当前本机时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}。",
+        $"项目 skills 是否启用：{Scene.Llm.SkillsEnabled}。",
+        $"项目 skills 目录：{Scene.Llm.SkillsDirectory}。",
+        "遇到需要外部能力、实时信息、项目文件、命令执行、计算或联网查询的问题时，主动调用工具，不要假装已经完成。",
+        "如果不确定项目里有哪些能力，先调用 skill_list；需要了解某个 skill 的使用方法时，调用 skill_read；需要执行 skill 脚本时，按说明调用 skill_run_command。",
+        "如果工具调用失败，请直接说明失败原因，不要编造工具没有返回的信息。");
+}
+
+void StartReplyFromPromptInput()
+{
+    string prompt = GetPromptInputText();
+    if (string.IsNullOrWhiteSpace(prompt))
+    {
+        return;
+    }
+
+    VoiceChatState.CurrentUserText = prompt;
+    ResetReplyState(stopSpeaking: true);
+    ShowBubble(prompt, string.Empty, "思考中...");
+
+    VoiceChatState.LlmRequestId = Scene.Llm.StartChatWithTools(
+        Entity,
+        prompt,
+        Array.Empty<RuntimeLlmTool>(),
+        systemPrompt: CreateLlmSystemPrompt(),
+        onDeltaCallback: "voice_chat_llm_delta",
+        onCompletedCallback: "voice_chat_llm_done",
+        onErrorCallback: "voice_chat_llm_error",
+        onToolCallCallback: VoiceChatState.LlmToolCallCallback,
+        onToolResultCallback: VoiceChatState.LlmToolResultCallback,
+        maxToolRounds: 8);
+}
+
+if (IsStart)
+{
+    Console.WriteLine($"LLM skills enabled: {Scene.Llm.SkillsEnabled}, skills directory: {Scene.Llm.SkillsDirectory}");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "pressed")
+{
+    if (!Scene.Asr.Enabled || VoiceChatState.IsRecording)
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = true;
+    VoiceChatState.CurrentUserText = string.Empty;
+    ResetReplyState(stopSpeaking: true);
+    SetPromptInputText(string.Empty);
+    ShowBubble(string.Empty, string.Empty, "请说话，松开按钮后停止录音");
+
+    VoiceChatState.AsrRequestId = Scene.Asr.StartStreamingRecognition(
+        Entity,
+        onPartialCallback: "voice_chat_asr_partial",
+        onCompletedCallback: "voice_chat_asr_completed",
+        onErrorCallback: "voice_chat_asr_error");
+}
+
+if (IsGuiEvent && GuiControlName == "RecordButton" && GuiEventName == "released")
+{
+    if (!VoiceChatState.IsRecording)
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = false;
+    Scene.Asr.StopStreamingRecognition(VoiceChatState.AsrRequestId);
+    ShowBubble(VoiceChatState.CurrentUserText, string.Empty, "录音已结束，可编辑后点击发送");
+}
+
+if (IsGuiEvent && GuiControlName == "SendButton" && GuiEventName == "clicked")
+{
+    if (VoiceChatState.IsRecording)
+    {
+        VoiceChatState.IsRecording = false;
+        Scene.Asr.StopStreamingRecognition(VoiceChatState.AsrRequestId);
+    }
+
+    StartReplyFromPromptInput();
+}
+
+if (IsAsrEvent && AsrCallbackName == "voice_chat_asr_partial")
+{
+    if (!string.Equals(AsrRequestId, VoiceChatState.AsrRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.CurrentUserText = AsrText;
+    SetPromptInputText(AsrText);
+    ShowBubble(AsrText, string.Empty, "请继续说，松开按钮后停止录音");
+}
+
+if (IsAsrEvent && AsrCallbackName == "voice_chat_asr_completed")
+{
+    if (!string.Equals(AsrRequestId, VoiceChatState.AsrRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = false;
+    VoiceChatState.CurrentUserText = AsrText.Trim();
+    SetPromptInputText(VoiceChatState.CurrentUserText);
+    ShowBubble(VoiceChatState.CurrentUserText, string.Empty, "可编辑文本框后点击发送");
+}
+
+if (IsAsrEvent && AsrCallbackName == "voice_chat_asr_error")
+{
+    if (!string.Equals(AsrRequestId, VoiceChatState.AsrRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.IsRecording = false;
+    ShowBubble(VoiceChatState.CurrentUserText, string.Empty, "ASR 出错");
+    Console.Error.WriteLine(AsrError);
+}
+
+if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_delta")
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.CurrentAssistantText = LlmText;
+    ShowBubble(
+        VoiceChatState.CurrentUserText,
+        VoiceChatState.CurrentAssistantText,
+        VoiceChatState.IsSpeaking ? "语音回复中..." : "正在生成回复...");
+
+    EnqueueAssistantSpeech(LlmDelta, flushTail: false);
+    TrySpeakNext();
+}
+
+if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_done")
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    VoiceChatState.ReplyCompleted = true;
+    VoiceChatState.CurrentAssistantText = LlmText;
+    EnqueueAssistantSpeech(string.Empty, flushTail: true);
+    ShowBubble(
+        VoiceChatState.CurrentUserText,
+        VoiceChatState.CurrentAssistantText,
+        VoiceChatState.SpeakQueue.Count > 0 || VoiceChatState.IsSpeaking ? "语音回复中..." : "回复完成");
+
+    TrySpeakNext();
+}
+
+if (IsLlmEvent && LlmCallbackName == VoiceChatState.LlmToolCallCallback)
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    Console.WriteLine($"LLM tool call: {LlmToolName} {LlmToolArgumentsJson}");
+    ShowBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, $"正在调用工具：{LlmToolName}");
+}
+
+if (IsLlmEvent && LlmCallbackName == VoiceChatState.LlmToolResultCallback)
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    Console.WriteLine($"LLM tool result: {LlmToolName} {LlmToolResult}");
+    ShowBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, $"工具返回结果：{LlmToolName}");
+}
+
+if (IsSpeechEvent && SpeechCallbackName == VoiceChatState.TtsDoneCallback)
+{
+    VoiceChatState.IsSpeaking = false;
+    TrySpeakNext();
+
+    if (!VoiceChatState.IsSpeaking && VoiceChatState.SpeakQueue.Count == 0 && VoiceChatState.ReplyCompleted)
+    {
+        ShowBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, "回复完成");
+    }
+}
+
+if (IsLlmEvent && LlmCallbackName == "voice_chat_llm_error")
+{
+    if (!string.Equals(LlmRequestId, VoiceChatState.LlmRequestId, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    ShowBubble(VoiceChatState.CurrentUserText, VoiceChatState.CurrentAssistantText, "LLM 出错");
+    Console.Error.WriteLine(LlmError);
+}
+```
+
+### Python：ASR -> LLM with skills -> TTS
+
+```python
+import datetime
+import re
+
+BUBBLE_NAME = "voice-chat-bubble"
+TTS_DONE_CALLBACK = "voice_chat_tts_done"
+LLM_TOOL_CALL_CALLBACK = "voice_chat_llm_tool_call"
+LLM_TOOL_RESULT_CALLBACK = "voice_chat_llm_tool_result"
+MAX_SPEECH_SEGMENT_LENGTH = 70
+
+asr_request_id = ""
+llm_request_id = ""
+current_user_text = ""
+current_assistant_text = ""
+pending_sentence_buffer = ""
+speak_queue = []
+is_recording = False
+is_speaking = False
+reply_completed = False
+
+def get_chat_bubble(scene, entity):
+    bubble = scene.bubble.get_or_create(BUBBLE_NAME)
+    bubble.attach_to_entity(entity.id, use_model_top_anchor=True)
+    bubble.set_world_offset(0.0, 0.20, 0.0)
+    bubble.set_screen_offset(0.0, -16.0)
+    bubble.set_width(440.0)
+    bubble.set_text_alignment("left")
+    bubble.set_background_color(0.9, 0.0, 1.0, 0.50)
+    bubble.set_text_color(1.0, 1.0, 1.0, 1.0)
+    bubble.set_footer_text_color(0.76, 0.80, 0.88, 1.0)
+    return bubble
+
+def show_bubble(entity, scene, user_text, assistant_text, footer):
+    bubble = get_chat_bubble(scene, entity)
+    bubble.show(
+        assistant_text,
+        header_text="语音助手" if not user_text.strip() else f"你：{user_text}",
+        footer_text=footer)
+
+def reset_reply_state(entity, stop_speaking):
+    global current_assistant_text, pending_sentence_buffer, speak_queue
+    global reply_completed, is_speaking
+
+    current_assistant_text = ""
+    pending_sentence_buffer = ""
+    speak_queue = []
+    reply_completed = False
+    is_speaking = False
+
+    if stop_speaking:
+        entity.stop_speaking()
+
+def is_speech_break(ch):
+    return ch in "。！？；，、.!?;,\n"
+
+def clean_speech_text(raw_text):
+    if not raw_text or not raw_text.strip():
+        return ""
+
+    text = raw_text
+    for old, new in [
+        ("**", ""), ("__", ""), ("`", ""),
+        ("（", "，"), ("）", "，"), ("(", "，"), (")", "，"),
+        ("——", "，"), ("-", "，"),
+    ]:
+        text = text.replace(old, new)
+    text = re.sub(r"https?://\S+", "网页链接", text)
+    text = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9\s，,。.!?！？；;、]", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+def drain_completed_sentences(flush_tail):
+    global pending_sentence_buffer
+
+    result = []
+    sentence_start = 0
+    text = pending_sentence_buffer
+    for i, ch in enumerate(text):
+        should_break = is_speech_break(ch) or i - sentence_start + 1 >= MAX_SPEECH_SEGMENT_LENGTH
+        if not should_break:
+            continue
+
+        sentence = text[sentence_start:i + 1].strip()
+        if sentence:
+            result.append(sentence)
+        sentence_start = i + 1
+
+    tail = "" if sentence_start >= len(text) else text[sentence_start:]
+    if flush_tail:
+        final_sentence = tail.strip()
+        if final_sentence:
+            result.append(final_sentence)
+        pending_sentence_buffer = ""
+    else:
+        pending_sentence_buffer = tail
+
+    return result
+
+def enqueue_assistant_speech(text, flush_tail):
+    global pending_sentence_buffer, speak_queue
+
+    if text:
+        pending_sentence_buffer += text
+
+    for sentence in drain_completed_sentences(flush_tail):
+        clean_sentence = clean_speech_text(sentence)
+        if clean_sentence:
+            speak_queue.append(clean_sentence)
+
+def try_speak_next(entity, scene):
+    global is_speaking
+
+    if is_speaking or not speak_queue:
+        return
+
+    sentence = speak_queue.pop(0)
+    is_speaking = True
+    show_bubble(entity, scene, current_user_text, current_assistant_text, "语音回复中...")
+    entity.speak(sentence, on_completed=TTS_DONE_CALLBACK)
+
+def get_prompt_input_text(scene):
+    control = scene.get_gui_control("PromptInput")
+    return (control.value.strip() if control and control.value else "")
+
+def set_prompt_input_text(scene, text):
+    control = scene.get_gui_control("PromptInput")
+    if control:
+        control.set_value(text or "")
+
+def create_llm_system_prompt(scene):
+    return "\n".join([
+        "你是一个中文语音助手，回答要自然、简洁。",
+        f"当前本机时间：{datetime.datetime.now():%Y-%m-%d %H:%M:%S}。",
+        f"项目 skills 是否启用：{scene.llm.skills_enabled}。",
+        f"项目 skills 目录：{scene.llm.skills_directory}。",
+        "遇到需要外部能力、实时信息、项目文件、命令执行、计算或联网查询的问题时，主动调用工具，不要假装已经完成。",
+        "如果不确定项目里有哪些能力，先调用 skill_list；需要了解某个 skill 的使用方法时，调用 skill_read；需要执行 skill 脚本时，按说明调用 skill_run_command。",
+        "如果工具调用失败，请直接说明失败原因，不要编造工具没有返回的信息。",
+    ])
+
+def start_reply_from_prompt_input(entity, scene):
+    global current_user_text, llm_request_id
+
+    prompt = get_prompt_input_text(scene)
+    if not prompt.strip():
+        return
+
+    current_user_text = prompt
+    reset_reply_state(entity, stop_speaking=True)
+    show_bubble(entity, scene, prompt, "", "思考中...")
+
+    request_id = "voice_chat_llm"
+    llm_request_id = request_id
+    scene.llm.start_chat_with_tools(
+        prompt,
+        [],
+        system_prompt=create_llm_system_prompt(scene),
+        request_id=request_id,
+        on_delta="voice_chat_llm_delta",
+        on_completed="voice_chat_llm_done",
+        on_error="voice_chat_llm_error",
+        on_tool_call=LLM_TOOL_CALL_CALLBACK,
+        on_tool_result=LLM_TOOL_RESULT_CALLBACK,
+        max_tool_rounds=8)
+
+def start(entity, scene, input, audio):
+    print("LLM skills enabled:", scene.llm.skills_enabled, "skills directory:", scene.llm.skills_directory)
+
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    global asr_request_id, current_user_text, is_recording
+
+    if control_name == "RecordButton" and event_name == "pressed":
+        if not scene.asr.enabled or is_recording:
+            return
+
+        is_recording = True
+        current_user_text = ""
+        reset_reply_state(entity, stop_speaking=True)
+        set_prompt_input_text(scene, "")
+        show_bubble(entity, scene, "", "", "请说话，松开按钮后停止录音")
+
+        asr_request_id = "voice_chat_asr"
+        scene.asr.start_streaming_recognition(
+            request_id=asr_request_id,
+            on_partial="voice_chat_asr_partial",
+            on_completed="voice_chat_asr_completed",
+            on_error="voice_chat_asr_error")
+        return
+
+    if control_name == "RecordButton" and event_name == "released":
+        if not is_recording:
+            return
+
+        is_recording = False
+        scene.asr.stop_streaming_recognition(asr_request_id)
+        show_bubble(entity, scene, current_user_text, "", "录音已结束，可编辑后点击发送")
+        return
+
+    if control_name == "SendButton" and event_name == "clicked":
+        if is_recording:
+            is_recording = False
+            scene.asr.stop_streaming_recognition(asr_request_id)
+        start_reply_from_prompt_input(entity, scene)
+
+def voice_chat_asr_partial(entity, scene, input, audio, event):
+    global current_user_text
+
+    if event.get("requestId") != asr_request_id:
+        return
+
+    text = event.get("text", "")
+    current_user_text = text
+    set_prompt_input_text(scene, text)
+    show_bubble(entity, scene, text, "", "请继续说，松开按钮后停止录音")
+
+def voice_chat_asr_completed(entity, scene, input, audio, event):
+    global current_user_text, is_recording
+
+    if event.get("requestId") != asr_request_id:
+        return
+
+    is_recording = False
+    current_user_text = event.get("text", "").strip()
+    set_prompt_input_text(scene, current_user_text)
+    show_bubble(entity, scene, current_user_text, "", "可编辑文本框后点击发送")
+
+def voice_chat_asr_error(entity, scene, input, audio, event):
+    global is_recording
+
+    if event.get("requestId") != asr_request_id:
+        return
+
+    is_recording = False
+    show_bubble(entity, scene, current_user_text, "", "ASR 出错")
+    print("ASR error:", event.get("error", ""))
+
+def voice_chat_llm_delta(entity, scene, input, audio, event):
+    global current_assistant_text
+
+    if event.get("requestId") != llm_request_id:
+        return
+
+    current_assistant_text = event.get("accumulatedText", "")
+    show_bubble(
+        entity,
+        scene,
+        current_user_text,
+        current_assistant_text,
+        "语音回复中..." if is_speaking else "正在生成回复...")
+
+    enqueue_assistant_speech(event.get("delta", ""), flush_tail=False)
+    try_speak_next(entity, scene)
+
+def voice_chat_llm_done(entity, scene, input, audio, event):
+    global reply_completed, current_assistant_text
+
+    if event.get("requestId") != llm_request_id:
+        return
+
+    reply_completed = True
+    current_assistant_text = event.get("accumulatedText", "")
+    enqueue_assistant_speech("", flush_tail=True)
+    show_bubble(
+        entity,
+        scene,
+        current_user_text,
+        current_assistant_text,
+        "语音回复中..." if speak_queue or is_speaking else "回复完成")
+    try_speak_next(entity, scene)
+
+def voice_chat_llm_tool_call(entity, scene, input, audio, event):
+    call = event.get("toolCall") or {}
+    print("LLM tool call:", call.get("name", ""), call.get("argumentsJson", ""))
+    show_bubble(entity, scene, current_user_text, current_assistant_text, f"正在调用工具：{call.get('name', '')}")
+
+def voice_chat_llm_tool_result(entity, scene, input, audio, event):
+    call = event.get("toolCall") or {}
+    print("LLM tool result:", call.get("name", ""), event.get("toolResult", ""))
+    show_bubble(entity, scene, current_user_text, current_assistant_text, f"工具返回结果：{call.get('name', '')}")
+
+def voice_chat_tts_done(entity, scene, input, audio):
+    global is_speaking
+
+    is_speaking = False
+    try_speak_next(entity, scene)
+
+    if not is_speaking and not speak_queue and reply_completed:
+        show_bubble(entity, scene, current_user_text, current_assistant_text, "回复完成")
+
+def voice_chat_llm_error(entity, scene, input, audio, event):
+    if event.get("requestId") != llm_request_id:
+        return
+
+    show_bubble(entity, scene, current_user_text, current_assistant_text, "LLM 出错")
+    print("LLM error:", event.get("error", ""))
+```
+
+这个示例的关键点是：
+
+- ASR 录音和 LLM 请求都是后台式回调，避免阻塞主脚本事件。
+- `StartChatWithTools` 即使传入空工具列表，也会在项目启用 skills 时自动合并内置 `skill_*` 工具。
+- TTS 使用队列和 `SpeakWithCallback` / `entity.speak(..., on_completed=...)` 串行播放，避免多段语音重叠。
+- 送入 TTS 前先清理 Markdown、链接和不稳定符号，并把长回复切成短片段。
+
 ## 内置 Skills 工具
 
 启用 `Project -> LLM / OpenAI-compatible -> Enable skills tools` 后，GamePlayer 会把一组 `skill_*` 内置工具注册给 LLM。用户可以在游戏项目目录下创建 `skills/` 目录，并按功能创建子目录。每个 skill 建议使用主流 skills 目录规范：
