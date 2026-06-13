@@ -7,4 +7,6 @@ public sealed record RuntimeAsrScriptEvent(
     bool IsFinal,
     string Error,
     string CallbackName,
-    double OffsetSeconds);
+    double OffsetSeconds,
+    string WakeWord = "",
+    string RecognizedText = "");

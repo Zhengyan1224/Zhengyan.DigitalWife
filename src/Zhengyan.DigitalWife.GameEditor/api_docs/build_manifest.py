@@ -102,10 +102,8 @@ def main() -> None:
     json_text = json.dumps(docs, ensure_ascii=False, separators=(",", ":"))
 
     (api_docs_dir / "api_manifest.json").write_text(json_text, encoding="utf-8")
-    (api_docs_dir / "api_manifest.js").write_text(
-        f"window.API_DOCS = {json_text};\n",
-        encoding="utf-8",
-    )
+    with (api_docs_dir / "api_manifest.js").open("w", encoding="utf-8", newline="\n") as js_file:
+        js_file.write(f"window.API_DOCS = {json_text};\n")
 
     print(f"Generated {len(docs)} API docs.")
 

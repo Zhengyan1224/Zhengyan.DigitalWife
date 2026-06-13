@@ -2480,6 +2480,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        return bool(self._settings.get("isRecording", False))
 
                    @property
+                   def is_wake_word_monitoring(self):
+                       return bool(self._settings.get("isWakeWordMonitoring", False))
+
+                   @property
                    def microphone_input_available(self):
                        return bool(self._settings.get("microphoneInputAvailable", False))
 
@@ -2502,6 +2506,29 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            "target": "asr",
                            "action": "stop_streaming_recognition",
                            "requestId": request_id or ""
+                       })
+
+                   def start_wake_word_monitoring(self, wake_words, request_id=None, chunk_duration_seconds=None, extension_duration_seconds=None, trailing_silence_padding_seconds=None, on_detected="asr_wake_word_detected", on_error="asr_wake_word_error"):
+                       if isinstance(wake_words, str):
+                           resolved_wake_words = [wake_words]
+                       else:
+                           resolved_wake_words = list(wake_words or [])
+                       self._commands.append({
+                           "target": "asr",
+                           "action": "start_wake_word_monitoring",
+                           "requestId": request_id or "",
+                           "wakeWords": resolved_wake_words,
+                           "chunkDurationSeconds": chunk_duration_seconds,
+                           "extensionDurationSeconds": extension_duration_seconds,
+                           "trailingSilencePaddingSeconds": trailing_silence_padding_seconds,
+                           "onCompleted": on_detected or "",
+                           "onError": on_error or ""
+                       })
+
+                   def stop_wake_word_monitoring(self):
+                       self._commands.append({
+                           "target": "asr",
+                           "action": "stop_wake_word_monitoring"
                        })
 
                class SaveStore:
@@ -3362,6 +3389,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "stop_streaming_recognition":
                 scene.Asr.StopStreamingRecognition(command.RequestId);
+                break;
+            case "start_wake_word_monitoring":
+                scene.Asr.StartWakeWordMonitoring(
+                    callbackEntity,
+                    command.WakeWords ?? [],
+                    requestId: command.RequestId,
+                    chunkDurationSeconds: ToFloat(command.ChunkDurationSeconds),
+                    extensionDurationSeconds: ToFloat(command.ExtensionDurationSeconds),
+                    trailingSilencePaddingSeconds: ToFloat(command.TrailingSilencePaddingSeconds),
+                    onDetectedCallback: command.OnCompleted,
+                    onErrorCallback: command.OnError);
+                break;
+            case "stop_wake_word_monitoring":
+                scene.Asr.StopWakeWordMonitoring();
                 break;
         }
     }
@@ -4399,6 +4440,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public double OffsetSeconds { get; set; }
 
+        public string WakeWord { get; set; } = string.Empty;
+
+        public string RecognizedText { get; set; } = string.Empty;
+
         public static PythonAsrEvent FromRuntime(RuntimeAsrScriptEvent? asrEvent)
         {
             return asrEvent is null
@@ -4411,7 +4456,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     IsFinal = asrEvent.IsFinal,
                     Error = asrEvent.Error,
                     CallbackName = asrEvent.CallbackName,
-                    OffsetSeconds = asrEvent.OffsetSeconds
+                    OffsetSeconds = asrEvent.OffsetSeconds,
+                    WakeWord = asrEvent.WakeWord,
+                    RecognizedText = asrEvent.RecognizedText
                 };
         }
     }
@@ -4704,6 +4751,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool IsRecording { get; set; }
 
+        public bool IsWakeWordMonitoring { get; set; }
+
         public bool MicrophoneInputAvailable { get; set; }
 
         public string MicrophoneUnavailableReason { get; set; } = string.Empty;
@@ -4717,6 +4766,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 InputDeviceIndex = asr.InputDeviceIndex,
                 PartialResultIntervalSeconds = asr.PartialResultIntervalSeconds,
                 IsRecording = asr.IsRecording,
+                IsWakeWordMonitoring = asr.IsWakeWordMonitoring,
                 MicrophoneInputAvailable = asr.MicrophoneInputAvailable,
                 MicrophoneUnavailableReason = asr.MicrophoneUnavailableReason
             };
@@ -5284,7 +5334,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string? RequestId { get; set; }
 
+        public string[]? WakeWords { get; set; }
+
         public double? TimeoutSeconds { get; set; }
+
+        public double? ChunkDurationSeconds { get; set; }
+
+        public double? ExtensionDurationSeconds { get; set; }
+
+        public double? TrailingSilencePaddingSeconds { get; set; }
 
         public string? OnPartial { get; set; }
 

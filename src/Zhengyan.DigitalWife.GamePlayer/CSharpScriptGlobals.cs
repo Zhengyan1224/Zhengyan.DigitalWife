@@ -76,6 +76,10 @@ public sealed class CSharpScriptGlobals
 
     public double AsrOffsetSeconds => AsrEvent?.OffsetSeconds ?? 0.0;
 
+    public string AsrWakeWord => AsrEvent?.WakeWord ?? string.Empty;
+
+    public string AsrRecognizedText => AsrEvent?.RecognizedText ?? string.Empty;
+
     public string RealtimeVoiceRequestId => RealtimeVoiceEvent?.RequestId ?? string.Empty;
 
     public string RealtimeVoiceEventName => RealtimeVoiceEvent?.EventName ?? string.Empty;
