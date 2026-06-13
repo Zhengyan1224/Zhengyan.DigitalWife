@@ -44,12 +44,14 @@ internal sealed class DesktopSpriteTrayComponent(
 
         DisposeTray();
         _fingerprint = fingerprint;
+        string tooltipText = ResolveTrayTooltipText(settings);
 
         if (OperatingSystem.IsWindows())
         {
             _tray = WindowsDesktopSpriteTray.TryCreate(
                 Game.Window,
                 ResolveTrayIconPath(settings),
+                tooltipText,
                 settings.DesktopSpriteTrayMenuItems ?? [],
                 _onMenuItemClicked);
             return;
@@ -59,6 +61,7 @@ internal sealed class DesktopSpriteTrayComponent(
         {
             _tray = LinuxGtkDesktopSpriteTray.TryCreate(
                 ResolveTrayIconPath(settings),
+                tooltipText,
                 settings.DesktopSpriteTrayMenuItems ?? [],
                 _onMenuItemClicked);
             if (_tray is not null)
@@ -71,6 +74,7 @@ internal sealed class DesktopSpriteTrayComponent(
         {
             _tray = MacDesktopSpriteTray.TryCreate(
                 ResolveTrayIconPath(settings),
+                tooltipText,
                 settings.DesktopSpriteTrayMenuItems ?? [],
                 _onMenuItemClicked);
             if (_tray is not null)
@@ -120,6 +124,13 @@ internal sealed class DesktopSpriteTrayComponent(
         return Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", defaultIcon);
     }
 
+    private static string ResolveTrayTooltipText(GameWindowSettings settings)
+    {
+        return string.IsNullOrWhiteSpace(settings.Title)
+            ? "Zhengyan.DigitalWife"
+            : settings.Title.Trim();
+    }
+
     private void DisposeTray()
     {
         _tray?.Dispose();
@@ -135,7 +146,8 @@ internal sealed class DesktopSpriteTrayComponent(
             .Append(settings.DesktopSpriteTrayWindowsIconPath).Append('|')
             .Append(settings.DesktopSpriteTrayLinuxIconPath).Append('|')
             .Append(settings.DesktopSpriteTrayMacOSIconPath).Append('|')
-            .Append(settings.IconPath);
+            .Append(settings.IconPath).Append('|')
+            .Append(ResolveTrayTooltipText(settings));
 
         foreach (DesktopSpriteTrayMenuItemSettings item in settings.DesktopSpriteTrayMenuItems ?? [])
         {
@@ -184,17 +196,20 @@ internal sealed class DesktopSpriteTrayComponent(
         private readonly WndProc _wndProc;
         private readonly IntPtr _hwnd;
         private readonly IntPtr _icon;
+        private readonly string _tooltipText;
         private bool _disposed;
 
         private WindowsDesktopSpriteTray(
             IntPtr hwnd,
             IntPtr icon,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked,
             WndProc wndProc)
         {
             _hwnd = hwnd;
             _icon = icon;
+            _tooltipText = tooltipText;
             _items = items
                 .Where(item => !string.IsNullOrWhiteSpace(item.Text))
                 .Select(CloneMenuItem)
@@ -206,6 +221,7 @@ internal sealed class DesktopSpriteTrayComponent(
         public static WindowsDesktopSpriteTray? TryCreate(
             IWindow window,
             string iconPath,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
@@ -256,7 +272,7 @@ internal sealed class DesktopSpriteTrayComponent(
             }
 
             IntPtr icon = LoadTrayIcon(iconPath);
-            WindowsDesktopSpriteTray tray = new(hwnd, icon, items, onMenuItemClicked, wndProc);
+            WindowsDesktopSpriteTray tray = new(hwnd, icon, tooltipText, items, onMenuItemClicked, wndProc);
             SetWindowLongPtr(hwnd, GwlUserData, GCHandle.ToIntPtr(GCHandle.Alloc(tray)));
 
             if (!tray.AddIcon())
@@ -319,7 +335,7 @@ internal sealed class DesktopSpriteTrayComponent(
             data.UFlags = NifMessage | NifIcon | NifTip;
             data.UCallbackMessage = WmTrayIcon;
             data.HIcon = _icon != IntPtr.Zero ? _icon : LoadIcon(IntPtr.Zero, new IntPtr(IdiApplication));
-            data.SzTip = "Zhengyan.DigitalWife";
+            data.SzTip = TruncateTooltipText(_tooltipText, 127);
 
             if (!Shell_NotifyIcon(NimAdd, ref data))
             {
@@ -442,6 +458,16 @@ internal sealed class DesktopSpriteTrayComponent(
                 "exit" or "quit" => "exit",
                 _ => "none"
             };
+        }
+
+        private static string TruncateTooltipText(string value, int maxLength)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            {
+                return value;
+            }
+
+            return value[..maxLength];
         }
 
         private static IntPtr LoadTrayIcon(string iconPath)
@@ -615,6 +641,7 @@ internal sealed class DesktopSpriteTrayComponent(
         private readonly IntPtr _indicator;
         private readonly IntPtr _statusIcon;
         private readonly IntPtr _menu;
+        private readonly string _tooltipText;
         private StatusIconPopupCallback? _statusIconPopupCallback;
         private ActivatedCallback? _statusIconActivateCallback;
         private bool _disposed;
@@ -623,12 +650,14 @@ internal sealed class DesktopSpriteTrayComponent(
             IntPtr indicator,
             IntPtr statusIcon,
             IntPtr menu,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
             _indicator = indicator;
             _statusIcon = statusIcon;
             _menu = menu;
+            _tooltipText = tooltipText;
             _items = items
                 .Where(item => !string.IsNullOrWhiteSpace(item.Text))
                 .Select(CloneMenuItem)
@@ -638,6 +667,7 @@ internal sealed class DesktopSpriteTrayComponent(
 
         public static LinuxGtkDesktopSpriteTray? TryCreate(
             string iconPath,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
@@ -672,16 +702,17 @@ internal sealed class DesktopSpriteTrayComponent(
 
             if (PreferLegacyGtkStatusIcon())
             {
-                return TryCreateGtkStatusIcon(iconPath, items, onMenuItemClicked)
-                    ?? TryCreateAppIndicator(iconPath, items, onMenuItemClicked);
+                return TryCreateGtkStatusIcon(iconPath, tooltipText, items, onMenuItemClicked)
+                    ?? TryCreateAppIndicator(iconPath, tooltipText, items, onMenuItemClicked);
             }
 
-            return TryCreateAppIndicator(iconPath, items, onMenuItemClicked)
-                ?? TryCreateGtkStatusIcon(iconPath, items, onMenuItemClicked);
+            return TryCreateAppIndicator(iconPath, tooltipText, items, onMenuItemClicked)
+                ?? TryCreateGtkStatusIcon(iconPath, tooltipText, items, onMenuItemClicked);
         }
 
         private static LinuxGtkDesktopSpriteTray? TryCreateAppIndicator(
             string iconPath,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
@@ -709,7 +740,7 @@ internal sealed class DesktopSpriteTrayComponent(
             if (!string.IsNullOrWhiteSpace(iconThemePath) && LinuxTrayNative.SupportsCustomIconPath)
             {
                 LinuxTrayNative.app_indicator_set_icon_theme_path(indicator, iconThemePath);
-                LinuxTrayNative.app_indicator_set_icon_full(indicator, iconName, "Zhengyan.DigitalWife");
+                LinuxTrayNative.app_indicator_set_icon_full(indicator, iconName, tooltipText);
             }
 
             IntPtr menu = LinuxTrayNative.gtk_menu_new();
@@ -718,7 +749,7 @@ internal sealed class DesktopSpriteTrayComponent(
                 return null;
             }
 
-            LinuxGtkDesktopSpriteTray tray = new(indicator, IntPtr.Zero, menu, items, onMenuItemClicked);
+            LinuxGtkDesktopSpriteTray tray = new(indicator, IntPtr.Zero, menu, tooltipText, items, onMenuItemClicked);
             tray.BuildMenu();
             LinuxTrayNative.app_indicator_set_status(indicator, AppIndicatorStatusActive);
             LinuxTrayNative.app_indicator_set_menu(indicator, menu);
@@ -727,6 +758,7 @@ internal sealed class DesktopSpriteTrayComponent(
 
         private static LinuxGtkDesktopSpriteTray? TryCreateGtkStatusIcon(
             string iconPath,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
@@ -744,7 +776,7 @@ internal sealed class DesktopSpriteTrayComponent(
                     return null;
                 }
 
-                LinuxGtkDesktopSpriteTray tray = new(IntPtr.Zero, statusIcon, menu, items, onMenuItemClicked);
+                LinuxGtkDesktopSpriteTray tray = new(IntPtr.Zero, statusIcon, menu, tooltipText, items, onMenuItemClicked);
                 tray.BuildMenu();
                 tray.ConfigureStatusIcon(iconPath);
                 tray.ConnectStatusIconMenu();
@@ -831,7 +863,7 @@ internal sealed class DesktopSpriteTrayComponent(
 
         private void ConfigureStatusIcon(string iconPath)
         {
-            LinuxTrayNative.gtk_status_icon_set_tooltip_text(_statusIcon, "Zhengyan.DigitalWife");
+            LinuxTrayNative.gtk_status_icon_set_tooltip_text(_statusIcon, _tooltipText);
 
             if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
             {
@@ -1181,18 +1213,21 @@ internal sealed class DesktopSpriteTrayComponent(
         private readonly IntPtr _statusItem;
         private readonly IntPtr _target;
         private readonly IntPtr _menu;
+        private readonly string _tooltipText;
         private bool _disposed;
 
         private MacDesktopSpriteTray(
             IntPtr statusItem,
             IntPtr target,
             IntPtr menu,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
             _statusItem = statusItem;
             _target = target;
             _menu = menu;
+            _tooltipText = tooltipText;
             _items = items
                 .Where(item => !string.IsNullOrWhiteSpace(item.Text))
                 .Select(CloneMenuItem)
@@ -1202,6 +1237,7 @@ internal sealed class DesktopSpriteTrayComponent(
 
         public static MacDesktopSpriteTray? TryCreate(
             string iconPath,
+            string tooltipText,
             IEnumerable<DesktopSpriteTrayMenuItemSettings> items,
             Action<DesktopSpriteTrayMenuItemSettings> onMenuItemClicked)
         {
@@ -1241,7 +1277,7 @@ internal sealed class DesktopSpriteTrayComponent(
                 return null;
             }
 
-            MacDesktopSpriteTray tray = new(statusItem, target, menu, items, onMenuItemClicked);
+            MacDesktopSpriteTray tray = new(statusItem, target, menu, tooltipText, items, onMenuItemClicked);
             tray.BuildMenu();
             tray.ConfigureStatusItem(iconPath);
             MacNative.objc_msgSend_IntPtr(statusItem, MacNative.sel_registerName("setMenu:"), menu);
@@ -1302,6 +1338,8 @@ internal sealed class DesktopSpriteTrayComponent(
             {
                 return;
             }
+
+            MacNative.objc_msgSend_IntPtr(button, MacNative.sel_registerName("setToolTip:"), MacNative.CreateNSString(_tooltipText));
 
             if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
             {
