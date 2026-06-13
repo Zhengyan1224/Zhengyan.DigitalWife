@@ -967,12 +967,20 @@ bool IsMeaningfulText(string text)
 
 string CreateSystemPrompt()
 {
+    string characterMemoryPath = Scene.Llm.GetCharacterMemoryPath(Entity);
+
     return string.Join(
         "\n",
         "你是一个中文语音助手，回答要自然、简洁。",
         $"当前本机时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}",
         $"项目 skills 是否启用：{Scene.Llm.SkillsEnabled}",
         $"项目 skills 目录：{Scene.Llm.SkillsDirectory}",
+        $"长期记忆目录：{Scene.Llm.MemoryDirectory}",
+        $"当前角色名：{Entity.Name}",
+        $"当前角色长期记忆文件：{characterMemoryPath}",
+        "如果用户的问题可能依赖过去告诉你的身份、称呼、偏好、关系、长期任务或重要经历，先调用 memory_search；必要时再调用 memory_read 读取 memory/index.md 或相关记忆文件。",
+        "如果用户明确要求你记住、更新或忘记某件事，使用 memory_write、memory_update 或 memory_forget 执行，不要只口头答应。",
+        $"如果本轮对话产生了稳定、长期、有价值的信息，可以用 memory_write 追加到合适的记忆文件；与当前角色相关的信息优先写入 {characterMemoryPath}；不要保存寒暄、临时问题、一次性天气或完整聊天原文。",
         "如果需要外部能力、实时信息、项目文件、命令执行或专门技能，请主动调用可用 skills 工具。",
         "如果工具失败，请说明失败原因，不要编造工具没有返回的信息。");
 }
@@ -1380,12 +1388,19 @@ def show_bubble(entity, scene, user_text, assistant_text, footer):
 def is_meaningful_text(text):
     return any(not ch.isspace() for ch in (text or ""))
 
-def create_system_prompt(scene):
+def create_system_prompt(entity, scene):
+    character_memory_path = scene.llm.get_character_memory_path(entity)
     return "\n".join([
         "你是一个中文语音助手，回答要自然、简洁。",
         "当前本机时间：" + time.strftime("%Y-%m-%d %H:%M:%S"),
         "项目 skills 是否启用：" + str(scene.llm.skills_enabled),
         "项目 skills 目录：" + scene.llm.skills_directory,
+        "长期记忆目录：" + scene.llm.memory_directory,
+        "当前角色名：" + entity.name,
+        "当前角色长期记忆文件：" + character_memory_path,
+        "如果用户的问题可能依赖过去告诉你的身份、称呼、偏好、关系、长期任务或重要经历，先调用 memory_search；必要时再调用 memory_read 读取 memory/index.md 或相关记忆文件。",
+        "如果用户明确要求你记住、更新或忘记某件事，使用 memory_write、memory_update 或 memory_forget 执行，不要只口头答应。",
+        "如果本轮对话产生了稳定、长期、有价值的信息，可以用 memory_write 追加到合适的记忆文件；与当前角色相关的信息优先写入 " + character_memory_path + "；不要保存寒暄、临时问题、一次性天气或完整聊天原文。",
         "如果需要外部能力、实时信息、项目文件、命令执行或专门技能，请主动调用可用 skills 工具。",
         "如果工具失败，请说明失败原因，不要编造工具没有返回的信息。",
     ])
@@ -1508,7 +1523,7 @@ def start_reply(entity, scene, user_text):
     scene.llm.start_chat_with_tools(
         build_user_prompt(user_text),
         [],
-        system_prompt=create_system_prompt(scene),
+        system_prompt=create_system_prompt(entity, scene),
         request_id="local_asr_llm",
         on_delta="local_llm_delta",
         on_completed="local_llm_completed",

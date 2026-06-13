@@ -68,6 +68,8 @@ GamePlayer 通过 OpenAI-compatible `/v1/chat/completions` 调用 LLM。配置�
 | `Scene.Llm.DefaultTemperature` | 默认温度，可能为 `null`。 |
 | `Scene.Llm.SkillsEnabled` | 是否启用项目 skills 内置工具。 |
 | `Scene.Llm.SkillsDirectory` | 当前项目的 skills 目录绝对路径。 |
+| `Scene.Llm.MemoryDirectory` | 当前项目长期记忆目录绝对路径；实际写入本地 save 目录的 `memory/`。 |
+| `Scene.Llm.GetCharacterMemoryPath(entityOrName)` | 返回角色长期记忆逻辑路径，例如 `character/<sanitized-name>.md`；实际文件仍由 `memory_*` 工具写入。 |
 | `ChatAsync(text, systemPrompt, model, temperature)` | 非流式返回完整文本。启用 skills 时会自动带内置工具。 |
 | `StreamChatAsync(text, systemPrompt, model, temperature)` | 按文本 prompt 发起流式请求。启用 skills 时会自动带内置工具。 |
 | `StreamChatAsync(messages, model, temperature)` | 按消息列表发起流式请求。启用 skills 时会自动带内置工具。 |
@@ -199,6 +201,8 @@ if (IsLlmEvent && LlmCallbackName == "npc_tool_result")
 | `scene.llm.model` | 默认模型名。 |
 | `scene.llm.skills_enabled` | 是否启用项目 skills 内置工具。 |
 | `scene.llm.skills_directory` | 当前项目的 skills 目录绝对路径。 |
+| `scene.llm.memory_directory` | 当前项目长期记忆目录绝对路径；实际写入本地 save 目录的 `memory/`。 |
+| `scene.llm.get_character_memory_path(entity_or_name)` | 返回角色长期记忆逻辑路径，例如 `character/<sanitized-name>.md`；实际文件仍由 `memory_*` 工具写入。 |
 | `scene.llm.chat(text, system_prompt=None, model=None, temperature=None)` | 非流式返回完整文本。Python worker 直连 HTTP，不执行内置 skills 工具。 |
 | `scene.llm.stream_chat(text, system_prompt=None, model=None, temperature=None)` | 按文本 prompt 发起同步流式请求。Python worker 直连 HTTP，不执行内置 skills 工具。 |
 | `scene.llm.stream_messages(messages, model=None, temperature=None)` | 按消息列表发起同步流式请求。Python worker 直连 HTTP，不执行内置 skills 工具。 |
@@ -499,12 +503,20 @@ void SetPromptInputText(string text)
 
 string CreateLlmSystemPrompt()
 {
+    string characterMemoryPath = Scene.Llm.GetCharacterMemoryPath(Entity);
+
     return string.Join(
         "\n",
         "你是一个中文语音助手，回答要自然、简洁。",
         $"当前本机时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}。",
         $"项目 skills 是否启用：{Scene.Llm.SkillsEnabled}。",
         $"项目 skills 目录：{Scene.Llm.SkillsDirectory}。",
+        $"长期记忆目录：{Scene.Llm.MemoryDirectory}。",
+        $"当前角色名：{Entity.Name}。",
+        $"当前角色长期记忆文件：{characterMemoryPath}。",
+        "如果用户的问题可能依赖过去告诉你的身份、称呼、偏好、关系、长期任务或重要经历，先调用 memory_search；必要时再调用 memory_read 读取 memory/index.md 或相关记忆文件。",
+        "如果用户明确要求你记住、更新或忘记某件事，使用 memory_write、memory_update 或 memory_forget 执行，不要只口头答应。",
+        $"如果本轮对话产生了稳定、长期、有价值的信息，可以用 memory_write 追加到合适的记忆文件；与当前角色相关的信息优先写入 {characterMemoryPath}；不要保存寒暄、临时问题、一次性天气或完整聊天原文。",
         "遇到需要外部能力、实时信息、项目文件、命令执行、计算或联网查询的问题时，主动调用工具，不要假装已经完成。",
         "如果不确定项目里有哪些能力，先调用 skill_list；需要了解某个 skill 的使用方法时，调用 skill_read；需要执行 skill 脚本时，按说明调用 skill_run_command。",
         "如果工具调用失败，请直接说明失败原因，不要编造工具没有返回的信息。");
@@ -906,12 +918,19 @@ def set_prompt_input_text(scene, text):
     if control:
         control.set_value(text or "")
 
-def create_llm_system_prompt(scene):
+def create_llm_system_prompt(entity, scene):
+    character_memory_path = scene.llm.get_character_memory_path(entity)
     return "\n".join([
         "你是一个中文语音助手，回答要自然、简洁。",
         f"当前本机时间：{datetime.datetime.now():%Y-%m-%d %H:%M:%S}。",
         f"项目 skills 是否启用：{scene.llm.skills_enabled}。",
         f"项目 skills 目录：{scene.llm.skills_directory}。",
+        f"长期记忆目录：{scene.llm.memory_directory}。",
+        f"当前角色名：{entity.name}。",
+        f"当前角色长期记忆文件：{character_memory_path}。",
+        "如果用户的问题可能依赖过去告诉你的身份、称呼、偏好、关系、长期任务或重要经历，先调用 memory_search；必要时再调用 memory_read 读取 memory/index.md 或相关记忆文件。",
+        "如果用户明确要求你记住、更新或忘记某件事，使用 memory_write、memory_update 或 memory_forget 执行，不要只口头答应。",
+        f"如果本轮对话产生了稳定、长期、有价值的信息，可以用 memory_write 追加到合适的记忆文件；与当前角色相关的信息优先写入 {character_memory_path}；不要保存寒暄、临时问题、一次性天气或完整聊天原文。",
         "遇到需要外部能力、实时信息、项目文件、命令执行、计算或联网查询的问题时，主动调用工具，不要假装已经完成。",
         "如果不确定项目里有哪些能力，先调用 skill_list；需要了解某个 skill 的使用方法时，调用 skill_read；需要执行 skill 脚本时，按说明调用 skill_run_command。",
         "如果工具调用失败，请直接说明失败原因，不要编造工具没有返回的信息。",
@@ -933,7 +952,7 @@ def start_reply_from_prompt_input(entity, scene):
     scene.llm.start_chat_with_tools(
         prompt,
         [],
-        system_prompt=create_llm_system_prompt(scene),
+        system_prompt=create_llm_system_prompt(entity, scene),
         request_id=request_id,
         on_delta="voice_chat_llm_delta",
         on_completed="voice_chat_llm_done",
@@ -1081,9 +1100,11 @@ def voice_chat_llm_error(entity, scene, input, audio, event):
 - TTS 使用队列和 `SpeakWithCallback` / `entity.speak(..., on_completed=...)` 串行播放，避免多段语音重叠。
 - 送入 TTS 前先清理 Markdown、链接和不稳定符号，并把长回复切成短片段。
 
-## 内置 Skills 工具
+## 内置 Skills / Memory 工具
 
-启用 `Project -> LLM / OpenAI-compatible -> Enable skills tools` 后，GamePlayer 会把一组 `skill_*` 内置工具注册给 LLM。用户可以在游戏项目目录下创建 `skills/` 目录，并按功能创建子目录。每个 skill 建议使用主流 skills 目录规范：
+启用 `Project -> LLM / OpenAI-compatible -> Enable skills tools` 后，GamePlayer 会把一组 `skill_*` 和 `memory_*` 内置工具注册给 LLM。`skill_*` 用于读取项目技能、文件和本地命令能力；`memory_*` 用于读写本地长期记忆，文件实际保存到 `Scene.Llm.MemoryDirectory`，逻辑路径显示为 `memory/...`。
+
+用户可以在游戏项目目录下创建 `skills/` 目录，并按功能创建子目录。每个 skill 建议使用主流 skills 目录规范：
 
 ```text
 GameProject/
@@ -1124,6 +1145,11 @@ Use this skill when the player asks for a quest idea or NPC dialogue.
 
 | 工具名 | 作用 | 主要参数 |
 | --- | --- | --- |
+| `memory_search` | 搜索本地长期记忆。适合回答依赖过去偏好、称呼、关系、任务或重要经历的问题前使用。 | `query`, `path`, `recursive`, `maxResults` |
+| `memory_read` | 读取长期记忆文件。首次了解结构时可读取 `memory/index.md`。 | `path`, `maxBytes` |
+| `memory_write` | 写入或追加长期记忆。内容应是蒸馏后的稳定事实，不应保存完整聊天原文。 | `path`, `content`, `append`, `createDirectories` |
+| `memory_update` | 精确替换某个记忆文件中的文本片段，用于修正或合并冲突记忆。 | `path`, `oldText`, `newText` |
+| `memory_forget` | 删除某个记忆文件，或从文件中移除指定文本片段。 | `path`, `text`, `deleteFile` |
 | `skill_list` | 列出项目 `skills/` 下的所有技能，并读取名称、描述和 markdown 路径。 | `includeContent`, `maxResults` |
 | `skill_read` | 读取某个 skill 的 `SKILL.md` 或 skill 目录内指定文件。 | `name`, `path`, `maxBytes` |
 | `skill_list_files` | 列出项目目录或某个 skill 目录下的文件。 | `path`, `skillName`, `recursive`, `maxResults` |
@@ -1132,7 +1158,81 @@ Use this skill when the player asks for a quest idea or NPC dialogue.
 | `skill_search_files` | 在项目文件或 skills 文件中搜索文本。 | `query`, `path`, `recursive`, `maxResults` |
 | `skill_run_command` | 在项目目录内执行 shell 命令并返回 stdout/stderr/exit code。 | `command`, `workingDirectory`, `timeoutSeconds` |
 
-所有文件路径都会限制在游戏项目目录内；`skill_read` 的 `name` 只能是 `skills/` 下的直接子目录名。`skill_run_command` 的工作目录也会限制在项目目录内，但命令本身仍然是受信任本地能力，只应在你信任当前项目和模型输出时开启。
+`memory_*` 路径会限制在本地 save 目录的 `memory/` 下。默认会创建 `memory/index.md`、`memory/user/`、`memory/character/`、`memory/tasks/`、`memory/conversations/` 这套目录结构。`skill_*` 文件路径会限制在游戏项目目录内；`skill_read` 的 `name` 只能是 `skills/` 下的直接子目录名。`skill_run_command` 的工作目录也会限制在项目目录内，但命令本身仍然是受信任本地能力，只应在你信任当前项目和模型输出时开启。
+
+建议在角色脚本的 system prompt 中明确长期记忆策略：
+
+- 用户要求“记住/更新/忘记”时，必须调用对应 `memory_*` 工具，不要只口头承诺。
+- 问题可能依赖过去信息时，先调用 `memory_search`，必要时读取 `memory/index.md` 和相关文件。
+- 写入长期记忆时只保存稳定、长期、有价值的事实，避免保存寒暄、临时查询和完整聊天记录。
+- 发现冲突时优先 `memory_update`，不要简单追加互相矛盾的事实。
+
+默认长期记忆结构如下：
+
+```text
+memory/
+  index.md
+  user/
+    profile.md
+    preferences.md
+    relationships.md
+  character/
+    <character-name>.md
+  tasks/
+    open_tasks.md
+  conversations/
+```
+
+### C#：让 LLM 使用长期记忆
+
+```csharp
+string characterMemoryPath = Scene.Llm.GetCharacterMemoryPath(Entity);
+string systemPrompt = string.Join(
+    "\n",
+    "你是一个自然简洁的中文语音助手。",
+    $"长期记忆目录：{Scene.Llm.MemoryDirectory}",
+    $"当前角色长期记忆文件：{characterMemoryPath}",
+    "如果用户的问题可能依赖过去告诉你的身份、称呼、偏好、关系、长期任务或重要经历，先调用 memory_search；必要时再调用 memory_read。",
+    "如果用户明确要求你记住、更新或忘记某件事，使用 memory_write、memory_update 或 memory_forget，不要只口头答应。",
+    $"写入长期记忆时使用简短 Markdown 条目；与当前角色相关的信息优先写入 {characterMemoryPath}；不保存完整聊天原文。");
+
+Scene.Llm.StartChatWithTools(
+    Entity,
+    "我喜欢被叫小林，你以后要记得。",
+    Array.Empty<RuntimeLlmTool>(),
+    systemPrompt: systemPrompt,
+    onDeltaCallback: "memory_reply_delta",
+    onCompletedCallback: "memory_reply_done",
+    onErrorCallback: "memory_reply_error",
+    onToolCallCallback: "memory_tool_call",
+    onToolResultCallback: "memory_tool_result",
+    maxToolRounds: 8);
+```
+
+### Python：让 LLM 使用长期记忆
+
+```python
+character_memory_path = scene.llm.get_character_memory_path(entity)
+system_prompt = "\n".join([
+    "你是一个自然简洁的中文语音助手。",
+    f"长期记忆目录：{scene.llm.memory_directory}",
+    f"当前角色长期记忆文件：{character_memory_path}",
+    "如果用户的问题可能依赖过去告诉你的身份、称呼、偏好、关系、长期任务或重要经历，先调用 memory_search；必要时再调用 memory_read。",
+    "如果用户明确要求你记住、更新或忘记某件事，使用 memory_write、memory_update 或 memory_forget，不要只口头答应。",
+    f"写入长期记忆时使用简短 Markdown 条目；与当前角色相关的信息优先写入 {character_memory_path}；不保存完整聊天原文。",
+])
+
+scene.llm.start_chat_with_tools(
+    "我喜欢被叫小林，你以后要记得。",
+    [],
+    system_prompt=system_prompt,
+    on_delta="memory_reply_delta",
+    on_completed="memory_reply_done",
+    on_error="memory_reply_error",
+    on_tool_call="memory_tool_call",
+    on_tool_result="memory_tool_result",
+    max_tool_rounds=8)
+```
 
 ### C#：让 LLM 使用 skills
 

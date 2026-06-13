@@ -32,12 +32,13 @@ public sealed class RuntimeLlm : IDisposable
     internal RuntimeLlm(
         GameProjectLlmSettings settings,
         string projectDirectory,
+        string saveDirectory,
         MainThreadDispatcher dispatcher,
         Action<RuntimeEntity, RuntimeLlmScriptEvent> dispatchScriptEvent)
     {
         _settings = settings;
         _projectDirectory = Path.GetFullPath(projectDirectory);
-        _skillTools = new RuntimeLlmSkillTools(_projectDirectory);
+        _skillTools = new RuntimeLlmSkillTools(_projectDirectory, saveDirectory);
         _dispatcher = dispatcher;
         _dispatchScriptEvent = dispatchScriptEvent;
     }
@@ -57,6 +58,17 @@ public sealed class RuntimeLlm : IDisposable
     public bool SkillsEnabled => _settings.EnableSkills;
 
     public string SkillsDirectory => _skillTools.SkillsDirectory;
+
+    public string MemoryDirectory => _skillTools.MemoryDirectory;
+
+    public string GetCharacterMemoryPath(RuntimeEntity entity)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        return _skillTools.GetCharacterMemoryPath(entity.Name);
+    }
+
+    public string GetCharacterMemoryPath(string characterName)
+        => _skillTools.GetCharacterMemoryPath(characterName);
 
     internal GameProjectLlmSettings Settings => _settings;
 

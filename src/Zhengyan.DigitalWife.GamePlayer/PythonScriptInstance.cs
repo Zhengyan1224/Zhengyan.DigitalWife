@@ -2245,6 +2245,28 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def skills_directory(self):
                        return self._settings.get("skillsDirectory", "")
 
+                   @property
+                   def memory_directory(self):
+                       return self._settings.get("memoryDirectory", "")
+
+                   def get_character_memory_path(self, entity_or_name):
+                       name = entity_or_name
+                       if hasattr(entity_or_name, "name"):
+                           name = entity_or_name.name
+                       raw = str(name or "character").strip() or "character"
+                       chars = []
+                       previous_dash = False
+                       for ch in raw:
+                           if ch.isalnum() or ch in "_-":
+                               chars.append(ch)
+                               previous_dash = False
+                           elif ch.isspace() or ch in "./\\:;":
+                               if chars and not previous_dash:
+                                   chars.append("-")
+                                   previous_dash = True
+                       safe = "".join(chars).strip("-") or "character"
+                       return "character/" + safe + ".md"
+
                    def chat(self, text, system_prompt=None, model=None, temperature=None):
                        result = ""
                        for update in self.stream_chat(text, system_prompt=system_prompt, model=model, temperature=temperature):
@@ -4841,6 +4863,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string SkillsDirectory { get; set; } = string.Empty;
 
+        public string MemoryDirectory { get; set; } = string.Empty;
+
         public static PythonLlmSettings FromRuntime(RuntimeLlm llm)
         {
             GameProjectLlmSettings settings = llm.Settings;
@@ -4856,7 +4880,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 TimeoutSeconds = settings.TimeoutSeconds,
                 DefaultTemperature = settings.DefaultTemperature,
                 SkillsEnabled = llm.SkillsEnabled,
-                SkillsDirectory = llm.SkillsDirectory
+                SkillsDirectory = llm.SkillsDirectory,
+                MemoryDirectory = llm.MemoryDirectory
             };
         }
     }
