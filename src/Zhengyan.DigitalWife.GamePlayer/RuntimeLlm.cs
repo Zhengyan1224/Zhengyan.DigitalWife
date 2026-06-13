@@ -14,7 +14,10 @@ public sealed class RuntimeLlm : IDisposable
 
     private sealed record ResolvedToolCalls(IReadOnlyList<RuntimeLlmToolCall> Calls, bool FromTextProtocol);
 
-    private sealed record ToolRoundResult(RuntimeLlmStreamUpdate LastUpdate, bool NativeToolsEnabled);
+    private sealed record ToolRoundResult(
+        RuntimeLlmStreamUpdate LastUpdate,
+        bool NativeToolsEnabled,
+        IReadOnlyList<RuntimeLlmStreamUpdate> Updates);
 
     private readonly GameProjectLlmSettings _settings;
     private readonly string _projectDirectory;
@@ -320,12 +323,15 @@ public sealed class RuntimeLlm : IDisposable
             IReadOnlyList<RuntimeLlmToolCall> toolCalls = resolvedToolCalls.Calls;
             if (toolCalls.Count == 0)
             {
-                if (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta))
+                foreach (RuntimeLlmStreamUpdate update in roundResult.Updates)
                 {
-                    yield return new RuntimeLlmStreamUpdate(
-                        roundLastUpdate.AccumulatedText,
-                        roundLastUpdate.AccumulatedText,
-                        roundLastUpdate.IsFinal);
+                    yield return update;
+                }
+
+                if (roundResult.Updates.Count == 0
+                    && (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta)))
+                {
+                    yield return roundLastUpdate;
                 }
 
                 yield break;
@@ -574,12 +580,15 @@ public sealed class RuntimeLlm : IDisposable
             IReadOnlyList<RuntimeLlmToolCall> toolCalls = resolvedToolCalls.Calls;
             if (toolCalls.Count == 0)
             {
-                if (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta))
+                foreach (RuntimeLlmStreamUpdate update in roundResult.Updates)
                 {
-                    yield return new RuntimeLlmStreamUpdate(
-                        roundLastUpdate.AccumulatedText,
-                        roundLastUpdate.AccumulatedText,
-                        roundLastUpdate.IsFinal);
+                    yield return update;
+                }
+
+                if (roundResult.Updates.Count == 0
+                    && (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta)))
+                {
+                    yield return roundLastUpdate;
                 }
 
                 yield break;
@@ -700,6 +709,7 @@ public sealed class RuntimeLlm : IDisposable
         try
         {
             RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
+            List<RuntimeLlmStreamUpdate> updates = [];
             await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
                 conversation,
                 model,
@@ -708,14 +718,16 @@ public sealed class RuntimeLlm : IDisposable
                 cancellationToken))
             {
                 lastUpdate = update;
+                updates.Add(update);
             }
 
-            return new ToolRoundResult(lastUpdate, nativeToolsEnabled);
+            return new ToolRoundResult(lastUpdate, nativeToolsEnabled, updates);
         }
         catch (HttpRequestException exception) when (nativeToolsEnabled && IsNativeToolPayloadRejected(exception))
         {
             Console.Error.WriteLine($"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
             RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
+            List<RuntimeLlmStreamUpdate> updates = [];
             await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
                 conversation,
                 model,
@@ -724,9 +736,10 @@ public sealed class RuntimeLlm : IDisposable
                 cancellationToken))
             {
                 lastUpdate = update;
+                updates.Add(update);
             }
 
-            return new ToolRoundResult(lastUpdate, NativeToolsEnabled: false);
+            return new ToolRoundResult(lastUpdate, NativeToolsEnabled: false, updates);
         }
     }
 

@@ -129,30 +129,34 @@ public sealed class RuntimeVoice : IDisposable
 
     public void Speak(RuntimeEntity entity, string text, RuntimeVoiceOptions? options = null)
     {
+        RuntimeVoiceOptions effectiveOptions = options ?? new RuntimeVoiceOptions();
         if (_disposed)
         {
+            InvokeCompletion(effectiveOptions.OnCompleted);
             return;
         }
 
         if (!_settings.Enabled)
         {
             Console.Error.WriteLine($"Entity speech ignored for '{entity.Name}' because Voice.Enabled is false.");
+            InvokeCompletion(effectiveOptions.OnCompleted);
             return;
         }
 
         if (!entity.IsPmxModel)
         {
             Console.Error.WriteLine($"Entity speech ignored for '{entity.Name}' because it is not a PMX model.");
+            InvokeCompletion(effectiveOptions.OnCompleted);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(text))
         {
+            InvokeCompletion(effectiveOptions.OnCompleted);
             return;
         }
 
         string utteranceText = text.Trim();
-        RuntimeVoiceOptions effectiveOptions = options ?? new RuntimeVoiceOptions();
         int sceneVersion = Volatile.Read(ref _sceneVersion);
 
         _ = Task.Run(async () =>
@@ -168,6 +172,7 @@ public sealed class RuntimeVoice : IDisposable
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Entity speech failed for '{entity.Name}': {ex}");
+                _dispatcher.Post(() => InvokeCompletion(effectiveOptions.OnCompleted));
             }
         });
     }
