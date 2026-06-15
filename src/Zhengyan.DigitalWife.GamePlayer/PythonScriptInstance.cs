@@ -2354,6 +2354,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            "tools": normalized_tools
                        })
 
+                   def cancel_request(self, request_id):
+                       self._commands.append({
+                           "target": "llm",
+                           "action": "cancel_request",
+                           "requestId": request_id or ""
+                       })
+
+                   def cancel_all_requests(self):
+                       self._commands.append({
+                           "target": "llm",
+                           "action": "cancel_all_requests"
+                       })
+
                class RealtimeVoiceClient:
                    def __init__(self, scene, commands):
                        self._scene = scene
@@ -3291,14 +3304,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
     private static void ApplyLlmCommand(PythonCommand command, RuntimeEntity callbackEntity, RuntimeScene scene)
     {
-        if (string.IsNullOrWhiteSpace(command.Text))
-        {
-            return;
-        }
-
         switch (command.Action?.ToLowerInvariant())
         {
-            case "start_chat":
+            case "cancel_request" when !string.IsNullOrWhiteSpace(command.RequestId):
+                scene.Llm.CancelRequest(command.RequestId);
+                break;
+            case "cancel_all_requests":
+                scene.Llm.CancelAllRequests();
+                break;
+            case "start_chat" when !string.IsNullOrWhiteSpace(command.Text):
                 scene.Llm.StartChat(
                     callbackEntity,
                     command.Text,
@@ -3310,7 +3324,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     onCompletedCallback: command.OnCompleted,
                     onErrorCallback: command.OnError);
                 break;
-            case "start_chat_with_tools":
+            case "start_chat_with_tools" when !string.IsNullOrWhiteSpace(command.Text):
                 RuntimeLlmTool[] tools = (command.Tools ?? [])
                     .Where(tool => !string.IsNullOrWhiteSpace(tool.Name) && !string.IsNullOrWhiteSpace(tool.Callback))
                     .Select(tool => new RuntimeLlmScriptTool(

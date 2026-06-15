@@ -9,6 +9,7 @@ namespace Zhengyan.DigitalWife.GamePlayer;
 public sealed class RuntimeLlm : IDisposable
 {
     private const int DefaultMaxToolRounds = 4;
+    private const int NativeToolFirstUpdateTimeoutSeconds = 20;
     private const string TextToolCallStart = "<dw_tool_call>";
     private const string TextToolCallEnd = "</dw_tool_call>";
 
@@ -19,13 +20,28 @@ public sealed class RuntimeLlm : IDisposable
         bool NativeToolsEnabled,
         IReadOnlyList<RuntimeLlmStreamUpdate> Updates);
 
+    private sealed class ActiveLlmRequest
+    {
+        public ActiveLlmRequest(string requestId, CancellationTokenSource cancellation)
+        {
+            RequestId = requestId;
+            Cancellation = cancellation;
+        }
+
+        public string RequestId { get; }
+
+        public CancellationTokenSource Cancellation { get; }
+
+        public string CancelReason { get; set; } = "unknown";
+    }
+
     private readonly GameProjectLlmSettings _settings;
     private readonly string _projectDirectory;
     private readonly RuntimeLlmSkillTools _skillTools;
     private readonly MainThreadDispatcher _dispatcher;
     private readonly Action<RuntimeEntity, RuntimeLlmScriptEvent> _dispatchScriptEvent;
     private readonly object _sync = new();
-    private readonly List<CancellationTokenSource> _activeRequests = [];
+    private readonly List<ActiveLlmRequest> _activeRequests = [];
     private OpenAiCompatibleLlmClient? _client;
     private bool _disposed;
 
@@ -71,6 +87,50 @@ public sealed class RuntimeLlm : IDisposable
         => _skillTools.GetCharacterMemoryPath(characterName);
 
     internal GameProjectLlmSettings Settings => _settings;
+
+    public void CancelRequest(string requestId)
+    {
+        if (string.IsNullOrWhiteSpace(requestId))
+        {
+            return;
+        }
+
+        ActiveLlmRequest[] requests;
+        lock (_sync)
+        {
+            string normalizedRequestId = requestId.Trim();
+            requests = _activeRequests
+                .Where(request => string.Equals(request.RequestId, normalizedRequestId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            foreach (ActiveLlmRequest request in requests)
+            {
+                request.CancelReason = "cancel_request";
+            }
+        }
+
+        foreach (ActiveLlmRequest request in requests)
+        {
+            request.Cancellation.Cancel();
+        }
+    }
+
+    public void CancelAllRequests()
+    {
+        ActiveLlmRequest[] requests;
+        lock (_sync)
+        {
+            requests = _activeRequests.ToArray();
+            foreach (ActiveLlmRequest request in requests)
+            {
+                request.CancelReason = "cancel_all_requests";
+            }
+        }
+
+        foreach (ActiveLlmRequest request in requests)
+        {
+            request.Cancellation.Cancel();
+        }
+    }
 
     public async Task<string> ChatAsync(
         string userText,
@@ -377,17 +437,21 @@ public sealed class RuntimeLlm : IDisposable
         }
 
         _disposed = true;
-        CancellationTokenSource[] requests;
+        ActiveLlmRequest[] requests;
         lock (_sync)
         {
             requests = _activeRequests.ToArray();
             _activeRequests.Clear();
+            foreach (ActiveLlmRequest request in requests)
+            {
+                request.CancelReason = "dispose";
+            }
         }
 
-        foreach (CancellationTokenSource request in requests)
+        foreach (ActiveLlmRequest request in requests)
         {
-            request.Cancel();
-            request.Dispose();
+            request.Cancellation.Cancel();
+            request.Cancellation.Dispose();
         }
 
         _client?.Dispose();
@@ -427,9 +491,10 @@ public sealed class RuntimeLlm : IDisposable
                 $"[GamePlayer] LLM request start request={resolvedRequestId}, target={callbackTarget.Name}, " +
                 $"model={displayModel}, tools={capturedTools.Count}, messages={capturedMessages.Count}");
             CancellationTokenSource cts = new();
+            ActiveLlmRequest activeRequest = new(resolvedRequestId, cts);
             lock (_sync)
             {
-                _activeRequests.Add(cts);
+                _activeRequests.Add(activeRequest);
             }
 
             _ = Task.Run(async () =>
@@ -506,7 +571,9 @@ public sealed class RuntimeLlm : IDisposable
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested || _disposed)
                 {
-                    Console.WriteLine($"[GamePlayer] LLM request canceled request={resolvedRequestId}.");
+                    Console.WriteLine(
+                        $"[GamePlayer] LLM request canceled request={resolvedRequestId}, " +
+                        $"reason={activeRequest.CancelReason}.");
                 }
                 catch (Exception ex)
                 {
@@ -537,7 +604,7 @@ public sealed class RuntimeLlm : IDisposable
                 {
                     lock (_sync)
                     {
-                        _activeRequests.Remove(cts);
+                        _activeRequests.Remove(activeRequest);
                     }
 
                     cts.Dispose();
@@ -736,38 +803,119 @@ public sealed class RuntimeLlm : IDisposable
     {
         try
         {
-            RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
-            List<RuntimeLlmStreamUpdate> updates = [];
-            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+            return await ReadToolRoundCoreAsync(
                 conversation,
                 model,
                 temperature,
                 nativeToolsEnabled ? tools : null,
-                cancellationToken))
-            {
-                lastUpdate = update;
-                updates.Add(update);
-            }
-
-            return new ToolRoundResult(lastUpdate, nativeToolsEnabled, updates);
+                fallbackLastUpdate,
+                nativeToolsEnabled,
+                cancellationToken);
         }
         catch (HttpRequestException exception) when (nativeToolsEnabled && IsNativeToolPayloadRejected(exception))
         {
             Console.Error.WriteLine($"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
-            RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
-            List<RuntimeLlmStreamUpdate> updates = [];
-            await foreach (RuntimeLlmStreamUpdate update in StreamChatCoreAsync(
+            return await ReadToolRoundCoreAsync(
                 conversation,
                 model,
                 temperature,
                 tools: null,
-                cancellationToken))
+                fallbackLastUpdate,
+                nativeToolsEnabled: false,
+                cancellationToken);
+        }
+        catch (TimeoutException exception) when (nativeToolsEnabled)
+        {
+            Console.Error.WriteLine($"[GamePlayer] LLM native tool stream timed out before first update; retrying with text tool protocol. {exception.Message}");
+            return await ReadToolRoundCoreAsync(
+                conversation,
+                model,
+                temperature,
+                tools: null,
+                fallbackLastUpdate,
+                nativeToolsEnabled: false,
+                cancellationToken);
+        }
+    }
+
+    private async Task<ToolRoundResult> ReadToolRoundCoreAsync(
+        List<RuntimeLlmChatMessage> conversation,
+        string? model,
+        float? temperature,
+        IReadOnlyList<RuntimeLlmTool>? tools,
+        RuntimeLlmStreamUpdate fallbackLastUpdate,
+        bool nativeToolsEnabled,
+        CancellationToken cancellationToken)
+    {
+        RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
+        List<RuntimeLlmStreamUpdate> updates = [];
+        IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = StreamChatCoreAsync(
+            conversation,
+            model,
+            temperature,
+            tools,
+            cancellationToken);
+
+        if (nativeToolsEnabled)
+        {
+            await foreach (RuntimeLlmStreamUpdate update in ReadWithFirstUpdateTimeoutAsync(stream, cancellationToken))
             {
                 lastUpdate = update;
                 updates.Add(update);
             }
+        }
+        else
+        {
+            await foreach (RuntimeLlmStreamUpdate update in stream.WithCancellation(cancellationToken))
+            {
+                lastUpdate = update;
+                updates.Add(update);
+            }
+        }
 
-            return new ToolRoundResult(lastUpdate, NativeToolsEnabled: false, updates);
+        return new ToolRoundResult(lastUpdate, nativeToolsEnabled, updates);
+    }
+
+    private static async IAsyncEnumerable<RuntimeLlmStreamUpdate> ReadWithFirstUpdateTimeoutAsync(
+        IAsyncEnumerable<RuntimeLlmStreamUpdate> stream,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource firstUpdateTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        firstUpdateTimeout.CancelAfter(TimeSpan.FromSeconds(NativeToolFirstUpdateTimeoutSeconds));
+
+        var enumerator = stream.WithCancellation(firstUpdateTimeout.Token).GetAsyncEnumerator();
+        bool hasFirstUpdate = false;
+        try
+        {
+            while (true)
+            {
+                bool hasNext;
+                try
+                {
+                    hasNext = await enumerator.MoveNextAsync();
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !hasFirstUpdate)
+                {
+                    throw new TimeoutException($"No SSE update arrived within {NativeToolFirstUpdateTimeoutSeconds} seconds.");
+                }
+
+                if (!hasNext)
+                {
+                    yield break;
+                }
+
+                if (!hasFirstUpdate)
+                {
+                    hasFirstUpdate = true;
+                    firstUpdateTimeout.CancelAfter(Timeout.InfiniteTimeSpan);
+                }
+
+                yield return enumerator.Current;
+            }
+        }
+        finally
+        {
+            await enumerator.DisposeAsync();
         }
     }
 

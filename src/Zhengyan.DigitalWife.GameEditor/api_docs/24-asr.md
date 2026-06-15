@@ -830,6 +830,7 @@ Python ASR 唤醒事件字段使用 camelCase：
 - 项目里已有 `assets/motions/basic_stand.vmd` 和 `assets/motions/basic_wait.vmd`。
 - 显示只使用对话气泡，不依赖任何预先创建的 GUI 控件。
 - 唤醒词触发后人物从 StandMotion 过渡到 WaitMotion，说“我在，请说。”，随后打开一个短 ASR 问题窗口。窗口结束后用最终 ASR 文本请求 LLM，启用 skills 时会自动合并内置 `skill_*` 工具。
+- LLM 生成和 TTS 播放期间会重新打开唤醒词监听；再次说出唤醒词会取消当前 LLM 请求、停止当前 TTS、清空待播队列，并进入下一轮语音输入。
 
 ```csharp
 using System;
@@ -841,14 +842,14 @@ static class LocalWakeChatState
     public const string BubbleName = "local-asr-wake-chat";
     public const string StandMotion = "assets/motions/basic_stand.vmd";
     public const string WaitMotion = "assets/motions/basic_wait.vmd";
-    public const string TtsDoneCallback = "local_wake_tts_done";
+    public const string TtsDoneCallbackPrefix = "local_wake_tts_done_";
     public const float MotionBlendDurationSeconds = 0.35f;
     public const double QuestionCaptureSeconds = 9.0;
     public const double ConversationIdleSeconds = 30.0;
     public const int MaxSpeechSegmentLength = 70;
     public const int MaxConversationTurns = 8;
 
-    public static readonly string[] WakeWords = new[] { "小言", "你好小言" };
+    public static readonly string[] WakeWords = new[] { "晓雨", "小雨", "小玉", "小宇", "小鱼" };
     public static bool MotionBlendReady;
     public static float WaitLayerWeight;
     public static float TargetWaitLayerWeight;
@@ -857,13 +858,18 @@ static class LocalWakeChatState
     public static bool QuestionStopRequested;
     public static DateTimeOffset QuestionDeadlineUtc = DateTimeOffset.MinValue;
     public static string AsrRequestId = string.Empty;
+    public static string LlmRequestId = string.Empty;
     public static string CurrentUserText = string.Empty;
     public static string ActiveLlmUserText = string.Empty;
     public static string CurrentAssistantText = string.Empty;
     public static string PendingSpeechText = string.Empty;
+    public static string CurrentSpeechCallback = string.Empty;
     public static Queue<string> SpeakQueue = new();
     public static bool IsSpeaking;
+    public static bool ReplyInProgress;
     public static bool ReplyCompleted;
+    public static bool Interrupted;
+    public static int QuestionAsrRetryCount;
     public static List<RuntimeLlmChatMessage> ConversationHistory = new();
 }
 
@@ -1077,18 +1083,29 @@ void EnqueueSpeech(string text, bool flushTail)
 
 void TrySpeakNext()
 {
-    if (LocalWakeChatState.IsSpeaking || LocalWakeChatState.SpeakQueue.Count == 0)
+    if (LocalWakeChatState.Interrupted
+        || LocalWakeChatState.IsSpeaking
+        || LocalWakeChatState.SpeakQueue.Count == 0)
     {
         return;
     }
 
     string sentence = LocalWakeChatState.SpeakQueue.Dequeue();
     LocalWakeChatState.IsSpeaking = true;
+    LocalWakeChatState.CurrentSpeechCallback = LocalWakeChatState.TtsDoneCallbackPrefix
+        + (string.IsNullOrWhiteSpace(LocalWakeChatState.LlmRequestId)
+            ? Guid.NewGuid().ToString("N")
+            : LocalWakeChatState.LlmRequestId);
     ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, "语音回复中...");
-    Entity.SpeakWithCallback(sentence, LocalWakeChatState.TtsDoneCallback);
+    Entity.SpeakWithCallback(sentence, LocalWakeChatState.CurrentSpeechCallback);
 }
 
 void EnsureWakeMonitor()
+{
+    EnsureWakeMonitor("等待唤醒词...", "local_asr_wake_monitor", setStandState: true);
+}
+
+void EnsureWakeMonitor(string footer, string requestId, bool setStandState)
 {
     if (LocalWakeChatState.WakeWordMonitorStarted)
     {
@@ -1098,15 +1115,27 @@ void EnsureWakeMonitor()
     Scene.Asr.StartWakeWordMonitoring(
         Entity,
         LocalWakeChatState.WakeWords,
-        requestId: "local_asr_wake_monitor",
+        requestId: requestId,
         chunkDurationSeconds: 2.0f,
         extensionDurationSeconds: 1.2f,
         trailingSilencePaddingSeconds: 0.4f,
         onDetectedCallback: "local_wake_detected",
         onErrorCallback: "local_wake_error");
     LocalWakeChatState.WakeWordMonitorStarted = true;
-    SetStandState();
-    ShowBubble(string.Empty, string.Empty, "等待唤醒词...");
+    if (setStandState)
+    {
+        SetStandState();
+        ShowBubble(string.Empty, string.Empty, footer);
+    }
+    else
+    {
+        ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, footer);
+    }
+}
+
+void EnsureInterruptWakeMonitor()
+{
+    EnsureWakeMonitor("回复中，可再次说唤醒词打断...", "local_asr_interrupt_monitor", setStandState: false);
 }
 
 void StartQuestionAsr()
@@ -1116,10 +1145,20 @@ void StartQuestionAsr()
 
 void StartQuestionAsr(double captureSeconds, string footer)
 {
+    if (LocalWakeChatState.WakeWordMonitorStarted)
+    {
+        Scene.Asr.StopWakeWordMonitoring();
+        LocalWakeChatState.WakeWordMonitorStarted = false;
+    }
+
     LocalWakeChatState.CurrentUserText = string.Empty;
     LocalWakeChatState.WaitingForQuestion = true;
     LocalWakeChatState.QuestionStopRequested = false;
+    LocalWakeChatState.LlmRequestId = string.Empty;
+    LocalWakeChatState.CurrentSpeechCallback = string.Empty;
+    LocalWakeChatState.ReplyInProgress = false;
     LocalWakeChatState.ReplyCompleted = false;
+    LocalWakeChatState.Interrupted = false;
     LocalWakeChatState.QuestionDeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Max(1.0, captureSeconds));
     SetWaitState();
     ShowBubble(string.Empty, string.Empty, footer);
@@ -1131,20 +1170,72 @@ void StartQuestionAsr(double captureSeconds, string footer)
         onErrorCallback: "local_question_error");
 }
 
-void ReturnToWake(string footer)
+void RetryQuestionAsrAfterError()
 {
     LocalWakeChatState.WaitingForQuestion = false;
     LocalWakeChatState.QuestionStopRequested = false;
     LocalWakeChatState.QuestionDeadlineUtc = DateTimeOffset.MinValue;
     LocalWakeChatState.AsrRequestId = string.Empty;
-    LocalWakeChatState.ActiveLlmUserText = string.Empty;
+    LocalWakeChatState.LlmRequestId = string.Empty;
+    LocalWakeChatState.CurrentSpeechCallback = string.Empty;
     LocalWakeChatState.SpeakQueue.Clear();
     LocalWakeChatState.PendingSpeechText = string.Empty;
     LocalWakeChatState.IsSpeaking = false;
+    LocalWakeChatState.ReplyInProgress = false;
     LocalWakeChatState.ReplyCompleted = false;
+    LocalWakeChatState.Interrupted = false;
+    SetWaitState();
+    StartQuestionAsr(LocalWakeChatState.QuestionCaptureSeconds, "ASR 出错，正在重试收音...");
+}
+
+void ReturnToWake(string footer)
+{
+    if (LocalWakeChatState.WakeWordMonitorStarted)
+    {
+        Scene.Asr.StopWakeWordMonitoring();
+        LocalWakeChatState.WakeWordMonitorStarted = false;
+    }
+
+    LocalWakeChatState.WaitingForQuestion = false;
+    LocalWakeChatState.QuestionStopRequested = false;
+    LocalWakeChatState.QuestionDeadlineUtc = DateTimeOffset.MinValue;
+    LocalWakeChatState.AsrRequestId = string.Empty;
+    LocalWakeChatState.LlmRequestId = string.Empty;
+    LocalWakeChatState.ActiveLlmUserText = string.Empty;
+    LocalWakeChatState.SpeakQueue.Clear();
+    LocalWakeChatState.PendingSpeechText = string.Empty;
+    LocalWakeChatState.CurrentSpeechCallback = string.Empty;
+    LocalWakeChatState.IsSpeaking = false;
+    LocalWakeChatState.ReplyInProgress = false;
+    LocalWakeChatState.ReplyCompleted = false;
+    LocalWakeChatState.Interrupted = false;
+    LocalWakeChatState.QuestionAsrRetryCount = 0;
     SetStandState();
     EnsureWakeMonitor();
     ShowBubble(string.Empty, string.Empty, footer);
+}
+
+void InterruptReplyAndListenAgain(string wakeWord)
+{
+    Scene.Asr.StopWakeWordMonitoring();
+    LocalWakeChatState.WakeWordMonitorStarted = false;
+
+    if (!string.IsNullOrWhiteSpace(LocalWakeChatState.LlmRequestId))
+    {
+        Scene.Llm.CancelRequest(LocalWakeChatState.LlmRequestId);
+    }
+
+    Entity.StopSpeaking();
+    LocalWakeChatState.SpeakQueue.Clear();
+    LocalWakeChatState.PendingSpeechText = string.Empty;
+    LocalWakeChatState.CurrentSpeechCallback = string.Empty;
+    LocalWakeChatState.IsSpeaking = false;
+    LocalWakeChatState.ReplyInProgress = false;
+    LocalWakeChatState.ReplyCompleted = false;
+    LocalWakeChatState.Interrupted = true;
+    LocalWakeChatState.QuestionAsrRetryCount = 0;
+    LocalWakeChatState.LlmRequestId = string.Empty;
+    StartQuestionAsr(LocalWakeChatState.QuestionCaptureSeconds, $"已打断：{wakeWord}，请说新的问题...");
 }
 
 void StartReply(string userText)
@@ -1155,20 +1246,25 @@ void StartReply(string userText)
     LocalWakeChatState.PendingSpeechText = string.Empty;
     LocalWakeChatState.SpeakQueue.Clear();
     LocalWakeChatState.IsSpeaking = false;
+    LocalWakeChatState.ReplyInProgress = true;
     LocalWakeChatState.ReplyCompleted = false;
+    LocalWakeChatState.Interrupted = false;
+    LocalWakeChatState.QuestionAsrRetryCount = 0;
+    LocalWakeChatState.LlmRequestId = "local_asr_llm_" + Guid.NewGuid().ToString("N");
     ShowBubble(userText, string.Empty, "思考中...");
 
-    Scene.Llm.StartChatWithTools(
+    LocalWakeChatState.LlmRequestId = Scene.Llm.StartChatWithTools(
         Entity,
         BuildConversationMessages(userText),
         Array.Empty<RuntimeLlmTool>(),
-        requestId: "local_asr_llm",
+        requestId: LocalWakeChatState.LlmRequestId,
         onDeltaCallback: "local_llm_delta",
         onCompletedCallback: "local_llm_completed",
         onErrorCallback: "local_llm_error",
         onToolCallCallback: "local_llm_tool_call",
         onToolResultCallback: "local_llm_tool_result",
-        maxToolRounds: 4);
+        maxToolRounds: 1000);
+    EnsureInterruptWakeMonitor();
 }
 
 void FinishReplyIfIdle()
@@ -1205,6 +1301,12 @@ if (IsUpdate)
 
 if (IsAsrEvent && AsrCallbackName == "local_wake_detected")
 {
+    if (LocalWakeChatState.ReplyInProgress || LocalWakeChatState.IsSpeaking || LocalWakeChatState.SpeakQueue.Count > 0)
+    {
+        InterruptReplyAndListenAgain(AsrWakeWord);
+        return;
+    }
+
     Scene.Asr.StopWakeWordMonitoring();
     LocalWakeChatState.WakeWordMonitorStarted = false;
     SetWaitState();
@@ -1227,6 +1329,7 @@ if (IsAsrEvent && AsrCallbackName == "local_question_completed")
 {
     LocalWakeChatState.WaitingForQuestion = false;
     LocalWakeChatState.QuestionStopRequested = false;
+    LocalWakeChatState.QuestionAsrRetryCount = 0;
     string userText = AsrText.Trim();
     if (!IsMeaningfulText(userText))
     {
@@ -1241,46 +1344,84 @@ if (IsAsrEvent && AsrCallbackName == "local_question_completed")
 if (IsAsrEvent && (AsrCallbackName == "local_wake_error" || AsrCallbackName == "local_question_error"))
 {
     Console.Error.WriteLine(AsrError);
+    if (AsrCallbackName == "local_question_error" && LocalWakeChatState.QuestionAsrRetryCount == 0)
+    {
+        LocalWakeChatState.QuestionAsrRetryCount = 1;
+        RetryQuestionAsrAfterError();
+        return;
+    }
     ReturnToWake("ASR 出错，等待唤醒词...");
 }
 
 if (IsLlmEvent && LlmCallbackName == "local_llm_delta")
 {
+    if (LlmRequestId != LocalWakeChatState.LlmRequestId || LocalWakeChatState.Interrupted)
+    {
+        return;
+    }
+
     LocalWakeChatState.CurrentAssistantText = LlmText;
-    ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, "生成回复中...");
+    ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, "生成回复中，可说唤醒词打断...");
     EnqueueSpeech(LlmDelta, flushTail: false);
     TrySpeakNext();
 }
 
 if (IsLlmEvent && LlmCallbackName == "local_llm_completed")
 {
+    if (LlmRequestId != LocalWakeChatState.LlmRequestId || LocalWakeChatState.Interrupted)
+    {
+        return;
+    }
+
+    LocalWakeChatState.ReplyInProgress = false;
     LocalWakeChatState.ReplyCompleted = true;
     LocalWakeChatState.CurrentAssistantText = LlmText;
     AddConversationTurn(LocalWakeChatState.ActiveLlmUserText, LlmText);
     EnqueueSpeech(string.Empty, flushTail: true);
-    ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, "语音回复中...");
+    ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, "语音回复中，可说唤醒词打断...");
     TrySpeakNext();
     FinishReplyIfIdle();
 }
 
 if (IsLlmEvent && LlmCallbackName == "local_llm_tool_call")
 {
+    if (LlmRequestId != LocalWakeChatState.LlmRequestId || LocalWakeChatState.Interrupted)
+    {
+        return;
+    }
+
     ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, $"正在调用工具：{LlmToolName}");
 }
 
 if (IsLlmEvent && LlmCallbackName == "local_llm_tool_result")
 {
+    if (LlmRequestId != LocalWakeChatState.LlmRequestId || LocalWakeChatState.Interrupted)
+    {
+        return;
+    }
+
     ShowBubble(LocalWakeChatState.CurrentUserText, LocalWakeChatState.CurrentAssistantText, $"工具返回：{LlmToolName}");
 }
 
 if (IsLlmEvent && LlmCallbackName == "local_llm_error")
 {
+    if (LlmRequestId != LocalWakeChatState.LlmRequestId || LocalWakeChatState.Interrupted)
+    {
+        return;
+    }
+
     Console.Error.WriteLine(LlmError);
     ReturnToWake("LLM 出错，等待唤醒词...");
 }
 
-if (IsSpeechEvent && SpeechCallbackName == LocalWakeChatState.TtsDoneCallback)
+if (IsSpeechEvent && SpeechCallbackName.StartsWith(LocalWakeChatState.TtsDoneCallbackPrefix, StringComparison.Ordinal))
 {
+    if (LocalWakeChatState.Interrupted || SpeechCallbackName != LocalWakeChatState.CurrentSpeechCallback)
+    {
+        return;
+    }
+
+    LocalWakeChatState.CurrentSpeechCallback = string.Empty;
     LocalWakeChatState.IsSpeaking = false;
     TrySpeakNext();
     FinishReplyIfIdle();
@@ -1320,6 +1461,7 @@ pending_speech_text = ""
 speak_queue = []
 is_speaking = False
 reply_completed = False
+question_asr_retry_count = 0
 conversation_history = []
 
 def ensure_motion_blend_setup(entity):
@@ -1483,6 +1625,9 @@ def start_question_asr(entity, scene, capture_seconds=QUESTION_CAPTURE_SECONDS, 
     waiting_for_question = True
     question_stop_requested = False
     reply_completed = False
+    question_asr_retry_count = 0
+    question_asr_retry_count = 0
+    question_asr_retry_count = 0
     question_deadline = time.time() + max(1.0, capture_seconds)
     set_wait_state(entity)
     show_bubble(entity, scene, "", "", footer)
@@ -1493,9 +1638,23 @@ def start_question_asr(entity, scene, capture_seconds=QUESTION_CAPTURE_SECONDS, 
         on_completed="local_question_completed",
         on_error="local_question_error")
 
+def retry_question_asr_after_error(entity, scene):
+    global waiting_for_question, question_stop_requested, question_deadline, asr_request_id
+    global pending_speech_text, is_speaking, reply_completed, question_asr_retry_count
+    waiting_for_question = False
+    question_stop_requested = False
+    question_deadline = 0.0
+    asr_request_id = ""
+    speak_queue.clear()
+    pending_speech_text = ""
+    is_speaking = False
+    reply_completed = False
+    set_wait_state(entity)
+    start_question_asr(entity, scene, QUESTION_CAPTURE_SECONDS, "ASR 出错，正在重试收音...")
+
 def return_to_wake(entity, scene, footer):
     global waiting_for_question, question_stop_requested, question_deadline, asr_request_id
-    global active_llm_user_text, pending_speech_text, is_speaking, reply_completed
+    global active_llm_user_text, pending_speech_text, is_speaking, reply_completed, question_asr_retry_count
     waiting_for_question = False
     question_stop_requested = False
     question_deadline = 0.0
@@ -1505,13 +1664,14 @@ def return_to_wake(entity, scene, footer):
     pending_speech_text = ""
     is_speaking = False
     reply_completed = False
+    question_asr_retry_count = 0
     set_stand_state(entity)
     ensure_wake_monitor(entity, scene)
     show_bubble(entity, scene, "", "", footer)
 
 def start_reply(entity, scene, user_text):
     global active_llm_user_text, current_user_text, current_assistant_text
-    global pending_speech_text, is_speaking, reply_completed
+    global pending_speech_text, is_speaking, reply_completed, question_asr_retry_count
     active_llm_user_text = user_text
     current_user_text = user_text
     current_assistant_text = ""
@@ -1519,6 +1679,7 @@ def start_reply(entity, scene, user_text):
     speak_queue.clear()
     is_speaking = False
     reply_completed = False
+    question_asr_retry_count = 0
     show_bubble(entity, scene, user_text, "", "思考中...")
     scene.llm.start_chat_with_tools(
         build_user_prompt(user_text),
@@ -1565,9 +1726,10 @@ def local_question_partial(entity, scene, input, audio, event):
     show_bubble(entity, scene, current_user_text, "", "正在听...")
 
 def local_question_completed(entity, scene, input, audio, event):
-    global waiting_for_question, question_stop_requested
+    global waiting_for_question, question_stop_requested, question_asr_retry_count
     waiting_for_question = False
     question_stop_requested = False
+    question_asr_retry_count = 0
     user_text = event.get("text", "").strip()
     if not is_meaningful_text(user_text):
         return_to_wake(entity, scene, "没有听清，等待唤醒词...")
@@ -1579,7 +1741,12 @@ def local_wake_error(entity, scene, input, audio, event):
     return_to_wake(entity, scene, "ASR 出错，等待唤醒词...")
 
 def local_question_error(entity, scene, input, audio, event):
+    global question_asr_retry_count
     print("ASR question error:", event.get("error", ""))
+    if question_asr_retry_count == 0:
+        question_asr_retry_count = 1
+        retry_question_asr_after_error(entity, scene)
+        return
     return_to_wake(entity, scene, "ASR 出错，等待唤醒词...")
 
 def local_llm_delta(entity, scene, input, audio, event):

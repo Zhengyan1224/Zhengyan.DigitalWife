@@ -57,6 +57,7 @@ GamePlayer 通过 OpenAI-compatible `/v1/chat/completions` 调用 LLM。配置�
 - `await foreach (var update in Scene.Llm.StreamChatAsync(...))`：在当前脚本事件内同步读取流式输出。它会占用当前脚本事件，运行时 UI 更推荐用后台式 `StartChat`。
 - `Scene.Llm.StartChat(...)`：后台请求，delta/completed/error 会通过 `IsLlmEvent` 回到同一个实体脚本，适合运行时 UI 和对话。
 - `Scene.Llm.StartChatWithTools(...)`：后台 function call 请求，LLM 需要工具时会调用脚本工具或内置 skills 工具，再把结果继续发回模型。
+- `Scene.Llm.CancelRequest(...)` / `CancelAllRequests()`：取消后台 LLM 请求，适合在唤醒词打断、切换场景或关闭对话时停止继续生成和工具调用。`CancelRequest(requestId)` 会取消所有匹配该 `requestId` 的后台请求。
 
 | API | 说明 |
 | --- | --- |
@@ -78,6 +79,8 @@ GamePlayer 通过 OpenAI-compatible `/v1/chat/completions` 调用 LLM。配置�
 | `StreamChatWithToolsAsync(messages, tools, model, temperature, maxToolRounds)` | 带 function call 的流式请求。启用 skills 时会合并内置工具。 |
 | `StartChatWithTools(entity, text, tools, systemPrompt, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, maxToolRounds)` | 后台工具调用请求，适合运行时 UI。启用 skills 时会合并内置工具。 |
 | `StartChatWithTools(entity, messages, tools, model, temperature, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, maxToolRounds)` | 按消息列表发起后台工具调用请求，适合多轮对话。启用 skills 时会合并内置工具。 |
+| `CancelRequest(requestId)` | 取消所有匹配该 `requestId` 的后台 LLM 请求；请求取消后不会触发 completed 回调。 |
+| `CancelAllRequests()` | 取消全部后台 LLM 请求。 |
 
 ### C#：后台流式输出
 
@@ -194,6 +197,7 @@ if (IsLlmEvent && LlmCallbackName == "npc_tool_result")
 - `scene.llm.stream_chat(...)` / `stream_messages(...)`：在当前函数内同步流式迭代。注意：Python 同步调用由 Python worker 直接请求 HTTP，目前不会执行 GamePlayer 的内置 skills 工具；需要 skills 时请使用后台 `start_chat` / `start_chat_with_tools`。
 - `scene.llm.start_chat(...)`：后台请求，delta/completed/error 回调到指定 Python 函数。启用 skills 时会自动带内置工具。
 - `scene.llm.start_chat_with_tools(...)`：后台 function call 请求。启用 skills 时会合并内置工具。
+- `scene.llm.cancel_request(...)` / `cancel_all_requests()`：取消后台 LLM 请求。
 
 | API | 说明 |
 | --- | --- |
@@ -209,6 +213,8 @@ if (IsLlmEvent && LlmCallbackName == "npc_tool_result")
 | `scene.llm.start_chat(text, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error")` | 后台流式请求，通过 Python 函数回调。启用 skills 时会自动带内置工具。 |
 | `scene.llm.tool(name, description, parameters_json_schema, callback)` | 创建一个 function call 工具定义。`parameters_json_schema` 可以是 JSON 字符串或 Python dict。 |
 | `scene.llm.start_chat_with_tools(text, tools, system_prompt=None, model=None, temperature=None, request_id=None, on_delta="llm_delta", on_completed="llm_completed", on_error="llm_error", on_tool_call="llm_tool_call", on_tool_result="llm_tool_result", max_tool_rounds=4)` | 后台工具调用请求，通过 Python 函数回调执行脚本工具。启用 skills 时会合并内置工具。 |
+| `scene.llm.cancel_request(request_id)` | 取消所有匹配该 `request_id` 的后台 LLM 请求。 |
+| `scene.llm.cancel_all_requests()` | 取消全部后台 LLM 请求。 |
 
 ### Python：后台流式输出
 

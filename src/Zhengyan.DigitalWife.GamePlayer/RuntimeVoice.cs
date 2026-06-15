@@ -179,7 +179,7 @@ public sealed class RuntimeVoice : IDisposable
 
     public void Stop(RuntimeEntity entity)
     {
-        _dispatcher.Post(() =>
+        _ = _dispatcher.InvokeAsync(() =>
         {
             if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? updater))
             {
