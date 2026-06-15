@@ -20,6 +20,11 @@ public sealed class RuntimeLlm : IDisposable
         bool NativeToolsEnabled,
         IReadOnlyList<RuntimeLlmStreamUpdate> Updates);
 
+    private sealed record StreamBuffer(
+        RuntimeLlmStreamUpdate LastUpdate,
+        List<RuntimeLlmStreamUpdate> Updates,
+        bool SawToolCallDelta);
+
     private sealed class ActiveLlmRequest
     {
         public ActiveLlmRequest(string requestId, CancellationTokenSource cancellation)
@@ -397,7 +402,7 @@ public sealed class RuntimeLlm : IDisposable
             IReadOnlyList<RuntimeLlmToolCall> toolCalls = resolvedToolCalls.Calls;
             if (toolCalls.Count == 0)
             {
-                foreach (RuntimeLlmStreamUpdate update in roundResult.Updates)
+                foreach (RuntimeLlmStreamUpdate update in FilterVisibleUpdates(roundResult.Updates, toolCallsDetected: false))
                 {
                     yield return update;
                 }
@@ -409,6 +414,11 @@ public sealed class RuntimeLlm : IDisposable
                 }
 
                 yield break;
+            }
+
+            foreach (RuntimeLlmStreamUpdate update in FilterVisibleUpdates(roundResult.Updates, toolCallsDetected: true))
+            {
+                yield return update;
             }
 
             if (resolvedToolCalls.FromTextProtocol)
@@ -429,6 +439,66 @@ public sealed class RuntimeLlm : IDisposable
         }
 
         throw new InvalidOperationException($"LLM tool call loop exceeded maxToolRounds={maxToolRounds}.");
+    }
+
+    private static IEnumerable<RuntimeLlmStreamUpdate> FilterVisibleUpdates(
+        IReadOnlyList<RuntimeLlmStreamUpdate> updates,
+        bool toolCallsDetected)
+    {
+        if (!toolCallsDetected)
+        {
+            return updates;
+        }
+
+        return updates.Where(update =>
+            update.ToolCalls.Count == 0
+            && !LooksLikeTextToolCallPayload(update.AccumulatedText)
+            && !LooksLikeTextToolCallPayload(update.Delta));
+    }
+
+    private static bool IsVisibleToolRoundUpdate(RuntimeLlmStreamUpdate update)
+    {
+        return update.ToolCalls.Count == 0
+            && !LooksLikeTextToolCallPayload(update.AccumulatedText)
+            && !LooksLikeTextToolCallPayload(update.Delta);
+    }
+
+    private static bool CanStartVisibleToolStreaming(string accumulatedText)
+    {
+        if (string.IsNullOrWhiteSpace(accumulatedText))
+        {
+            return false;
+        }
+
+        return !CouldBeTextToolCallPayloadPrefix(accumulatedText)
+            && !LooksLikeTextToolCallPayload(accumulatedText);
+    }
+
+    private static bool CouldBeTextToolCallPayloadPrefix(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
+        }
+
+        string trimmed = text.TrimStart();
+        if (trimmed.Length == 0)
+        {
+            return true;
+        }
+
+        if (trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (trimmed.StartsWith("```", StringComparison.Ordinal)
+            || "```".StartsWith(trimmed, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return TextToolCallStart.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose()
@@ -504,21 +574,7 @@ public sealed class RuntimeLlm : IDisposable
                 string accumulated = string.Empty;
                 try
                 {
-                    IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = capturedTools.Count > 0
-                        ? StreamChatWithToolsForBackgroundAsync(
-                            callbackTarget,
-                            resolvedRequestId,
-                            capturedMessages,
-                            capturedTools,
-                            model,
-                            temperature,
-                            maxToolRounds,
-                            onToolCallCallback,
-                            onToolResultCallback,
-                            cts.Token)
-                        : StreamChatAsync(capturedMessages, model, temperature, cts.Token);
-
-                    await foreach (RuntimeLlmStreamUpdate update in stream)
+                    void DispatchDelta(RuntimeLlmStreamUpdate update)
                     {
                         accumulated = update.AccumulatedText;
                         RuntimeLlmStreamUpdate capturedUpdate = update;
@@ -543,6 +599,29 @@ public sealed class RuntimeLlm : IDisposable
                                     null,
                                     null));
                         });
+                    }
+
+                    if (capturedTools.Count > 0)
+                    {
+                        accumulated = await RunChatWithToolsForBackgroundAsync(
+                            callbackTarget,
+                            resolvedRequestId,
+                            capturedMessages,
+                            capturedTools,
+                            model,
+                            temperature,
+                            maxToolRounds,
+                            onToolCallCallback,
+                            onToolResultCallback,
+                            DispatchDelta,
+                            cts.Token);
+                    }
+                    else
+                    {
+                        await foreach (RuntimeLlmStreamUpdate update in StreamChatAsync(capturedMessages, model, temperature, cts.Token))
+                        {
+                            DispatchDelta(update);
+                        }
                     }
 
                     RuntimeLlmResult result = new(resolvedRequestId, accumulated);
@@ -637,7 +716,7 @@ public sealed class RuntimeLlm : IDisposable
         return resolvedRequestId;
     }
 
-    private async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamChatWithToolsForBackgroundAsync(
+    private async Task<string> RunChatWithToolsForBackgroundAsync(
         RuntimeEntity callbackTarget,
         string requestId,
         IEnumerable<RuntimeLlmChatMessage> messages,
@@ -647,7 +726,8 @@ public sealed class RuntimeLlm : IDisposable
         int maxToolRounds,
         string? onToolCallCallback,
         string? onToolResultCallback,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        Action<RuntimeLlmStreamUpdate> onVisibleUpdate,
+        CancellationToken cancellationToken)
     {
         List<RuntimeLlmChatMessage> conversation = CreateToolAwareConversation(messages, tools);
         RuntimeLlmStreamUpdate lastUpdate = new(string.Empty, string.Empty, false);
@@ -655,34 +735,111 @@ public sealed class RuntimeLlm : IDisposable
 
         for (int round = 0; round <= Math.Max(0, maxToolRounds); round++)
         {
-            ToolRoundResult roundResult = await ReadToolRoundAsync(
-                conversation,
-                model,
-                temperature,
-                tools,
-                nativeToolsEnabled,
-                lastUpdate,
-                cancellationToken);
+            RuntimeLlmStreamUpdate roundLastUpdate = lastUpdate;
+            List<RuntimeLlmStreamUpdate> pendingVisibleUpdates = [];
+            bool visibleStreamingStarted = false;
 
-            RuntimeLlmStreamUpdate roundLastUpdate = roundResult.LastUpdate;
+            while (true)
+            {
+                roundLastUpdate = lastUpdate;
+                pendingVisibleUpdates.Clear();
+                visibleStreamingStarted = false;
+
+                try
+                {
+                    IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = StreamChatCoreAsync(
+                        conversation,
+                        model,
+                        temperature,
+                        nativeToolsEnabled ? tools : null,
+                        cancellationToken);
+
+                    if (nativeToolsEnabled)
+                    {
+                        await foreach (RuntimeLlmStreamUpdate update in ReadWithFirstUpdateTimeoutAsync(stream, cancellationToken))
+                        {
+                            roundLastUpdate = update;
+                            if (!IsVisibleToolRoundUpdate(update))
+                            {
+                                continue;
+                            }
+
+                            if (!visibleStreamingStarted)
+                            {
+                                pendingVisibleUpdates.Add(update);
+                                if (CanStartVisibleToolStreaming(update.AccumulatedText))
+                                {
+                                    visibleStreamingStarted = true;
+                                    foreach (RuntimeLlmStreamUpdate pendingUpdate in pendingVisibleUpdates)
+                                    {
+                                        onVisibleUpdate(pendingUpdate);
+                                    }
+
+                                    pendingVisibleUpdates.Clear();
+                                }
+
+                                continue;
+                            }
+
+                            onVisibleUpdate(update);
+                        }
+                    }
+                    else
+                    {
+                        await foreach (RuntimeLlmStreamUpdate update in stream.WithCancellation(cancellationToken))
+                        {
+                            roundLastUpdate = update;
+                            if (!IsVisibleToolRoundUpdate(update))
+                            {
+                                continue;
+                            }
+
+                            if (!visibleStreamingStarted)
+                            {
+                                pendingVisibleUpdates.Add(update);
+                                if (CanStartVisibleToolStreaming(update.AccumulatedText))
+                                {
+                                    visibleStreamingStarted = true;
+                                    foreach (RuntimeLlmStreamUpdate pendingUpdate in pendingVisibleUpdates)
+                                    {
+                                        onVisibleUpdate(pendingUpdate);
+                                    }
+
+                                    pendingVisibleUpdates.Clear();
+                                }
+
+                                continue;
+                            }
+
+                            onVisibleUpdate(update);
+                        }
+                    }
+
+                    break;
+                }
+                catch (HttpRequestException exception) when (nativeToolsEnabled && IsNativeToolPayloadRejected(exception))
+                {
+                    Console.Error.WriteLine($"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
+                    nativeToolsEnabled = false;
+                }
+                catch (TimeoutException exception) when (nativeToolsEnabled)
+                {
+                    Console.Error.WriteLine($"[GamePlayer] LLM native tool stream timed out before first update; retrying with text tool protocol. {exception.Message}");
+                    nativeToolsEnabled = false;
+                }
+            }
+
             lastUpdate = roundLastUpdate;
-            nativeToolsEnabled = roundResult.NativeToolsEnabled;
             ResolvedToolCalls resolvedToolCalls = ResolveToolCalls(roundLastUpdate);
             IReadOnlyList<RuntimeLlmToolCall> toolCalls = resolvedToolCalls.Calls;
             if (toolCalls.Count == 0)
             {
-                foreach (RuntimeLlmStreamUpdate update in roundResult.Updates)
+                foreach (RuntimeLlmStreamUpdate update in pendingVisibleUpdates)
                 {
-                    yield return update;
+                    onVisibleUpdate(update);
                 }
 
-                if (roundResult.Updates.Count == 0
-                    && (!string.IsNullOrEmpty(roundLastUpdate.AccumulatedText) || !string.IsNullOrEmpty(roundLastUpdate.Delta)))
-                {
-                    yield return roundLastUpdate;
-                }
-
-                yield break;
+                return roundLastUpdate.AccumulatedText;
             }
 
             if (resolvedToolCalls.FromTextProtocol)
@@ -849,8 +1006,30 @@ public sealed class RuntimeLlm : IDisposable
         bool nativeToolsEnabled,
         CancellationToken cancellationToken)
     {
+        StreamBuffer buffer = await ReadToolRoundBufferAsync(
+            conversation,
+            model,
+            temperature,
+            tools,
+            fallbackLastUpdate,
+            nativeToolsEnabled,
+            cancellationToken);
+
+        return new ToolRoundResult(buffer.LastUpdate, nativeToolsEnabled, buffer.Updates);
+    }
+
+    private async Task<StreamBuffer> ReadToolRoundBufferAsync(
+        List<RuntimeLlmChatMessage> conversation,
+        string? model,
+        float? temperature,
+        IReadOnlyList<RuntimeLlmTool>? tools,
+        RuntimeLlmStreamUpdate fallbackLastUpdate,
+        bool nativeToolsEnabled,
+        CancellationToken cancellationToken)
+    {
         RuntimeLlmStreamUpdate lastUpdate = fallbackLastUpdate;
         List<RuntimeLlmStreamUpdate> updates = [];
+        bool sawToolCallDelta = false;
         IAsyncEnumerable<RuntimeLlmStreamUpdate> stream = StreamChatCoreAsync(
             conversation,
             model,
@@ -864,6 +1043,7 @@ public sealed class RuntimeLlm : IDisposable
             {
                 lastUpdate = update;
                 updates.Add(update);
+                sawToolCallDelta |= update.ToolCalls.Count > 0;
             }
         }
         else
@@ -872,10 +1052,11 @@ public sealed class RuntimeLlm : IDisposable
             {
                 lastUpdate = update;
                 updates.Add(update);
+                sawToolCallDelta |= update.ToolCalls.Count > 0;
             }
         }
 
-        return new ToolRoundResult(lastUpdate, nativeToolsEnabled, updates);
+        return new StreamBuffer(lastUpdate, updates, sawToolCallDelta);
     }
 
     private static async IAsyncEnumerable<RuntimeLlmStreamUpdate> ReadWithFirstUpdateTimeoutAsync(
@@ -1198,6 +1379,18 @@ public sealed class RuntimeLlm : IDisposable
         {
             return null;
         }
+    }
+
+    private static bool LooksLikeTextToolCallPayload(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        string trimmed = text.Trim();
+        return trimmed.Contains(TextToolCallStart, StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("{", StringComparison.Ordinal) && TryParseTextToolCall(trimmed) is not null;
     }
 
     private static string ExtractTextToolCallPayload(string text)
