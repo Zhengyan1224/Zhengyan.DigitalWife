@@ -23,7 +23,8 @@ internal sealed class RuntimeLlmSkillTools
     private readonly string _saveDirectory;
     private readonly string _skillsDirectory;
     private readonly string _memoryDirectory;
-    private readonly RuntimeLlmTool[] _tools;
+    private readonly RuntimeLlmTool[] _memoryTools;
+    private readonly RuntimeLlmTool[] _skillTools;
 
     public RuntimeLlmSkillTools(string projectDirectory, string? saveDirectory = null)
     {
@@ -33,7 +34,7 @@ internal sealed class RuntimeLlmSkillTools
             : saveDirectory);
         _skillsDirectory = Path.Combine(_projectDirectory, "skills");
         _memoryDirectory = Path.Combine(_saveDirectory, "memory");
-        _tools =
+        _memoryTools =
         [
             new RuntimeLlmTool(
                 "memory_search",
@@ -170,6 +171,9 @@ internal sealed class RuntimeLlmSkillTools
                 }
                 """,
                 ForgetMemoryAsync),
+        ];
+        _skillTools =
+        [
             new RuntimeLlmTool(
                 "skill_list",
                 "List skills in the project skills/ directory. Use this before reading a skill.",
@@ -375,7 +379,9 @@ internal sealed class RuntimeLlmSkillTools
         ];
     }
 
-    public IReadOnlyList<RuntimeLlmTool> Tools => _tools;
+    public IReadOnlyList<RuntimeLlmTool> MemoryTools => _memoryTools;
+
+    public IReadOnlyList<RuntimeLlmTool> SkillTools => _skillTools;
 
     public string SkillsDirectory => _skillsDirectory;
 

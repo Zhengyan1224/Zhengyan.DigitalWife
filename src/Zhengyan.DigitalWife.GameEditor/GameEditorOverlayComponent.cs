@@ -885,9 +885,20 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             llm.EnableSkills = enableSkills;
         }
 
+        bool enableMemory = llm.EnableMemory;
+        if (ImGui.Checkbox("Enable memory tools", ref enableMemory))
+        {
+            llm.EnableMemory = enableMemory;
+        }
+
         if (llm.EnableSkills)
         {
             ImGui.TextWrapped("Skills are loaded from the project skills/ directory. Built-in LLM tools can read skills, read/write project files, search text, and run shell commands inside the project directory.");
+        }
+
+        if (llm.EnableMemory)
+        {
+            ImGui.TextWrapped("Memory tools read and write long-term memory under the local save memory/ directory. Use this when the in-game agent should remember user preferences, identity, relationships, or ongoing tasks across turns.");
         }
 
         string provider = llm.Provider;

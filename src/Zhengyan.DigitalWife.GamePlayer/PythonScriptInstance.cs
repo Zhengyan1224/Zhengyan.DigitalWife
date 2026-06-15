@@ -2242,6 +2242,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        return bool(self._settings.get("skillsEnabled", False))
 
                    @property
+                   def memory_enabled(self):
+                       return bool(self._settings.get("memoryEnabled", False))
+
+                   @property
                    def skills_directory(self):
                        return self._settings.get("skillsDirectory", "")
 
@@ -4875,6 +4879,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool SkillsEnabled { get; set; }
 
+        public bool MemoryEnabled { get; set; }
+
         public string SkillsDirectory { get; set; } = string.Empty;
 
         public string MemoryDirectory { get; set; } = string.Empty;
@@ -4894,6 +4900,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 TimeoutSeconds = settings.TimeoutSeconds,
                 DefaultTemperature = settings.DefaultTemperature,
                 SkillsEnabled = llm.SkillsEnabled,
+                MemoryEnabled = llm.MemoryEnabled,
                 SkillsDirectory = llm.SkillsDirectory,
                 MemoryDirectory = llm.MemoryDirectory
             };

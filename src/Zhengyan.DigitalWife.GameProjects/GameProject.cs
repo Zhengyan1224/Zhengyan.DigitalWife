@@ -256,6 +256,8 @@ public sealed class GameProjectLlmSettings
 
     public bool EnableSkills { get; set; }
 
+    public bool EnableMemory { get; set; }
+
     public string Provider { get; set; } = "openai-compatible";
 
     public string BaseUrl { get; set; } = "https://api.openai.com";

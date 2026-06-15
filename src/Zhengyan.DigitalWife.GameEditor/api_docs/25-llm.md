@@ -39,7 +39,8 @@ GamePlayer 通过 OpenAI-compatible `/v1/chat/completions` 调用 LLM。配置�
 | 字段 | 说明 |
 | --- | --- |
 | `Enabled` | 是否启用脚本 LLM。未启用时调用会报错。 |
-| `EnableSkills` | 是否给 LLM 自动启用项目内置 skills 工具。开启后，GamePlayer 会把 `skills/` 目录、项目文件读写、文本搜索和命令执行工具注册给 LLM。 |
+| `EnableSkills` | 是否给 LLM 自动启用项目内置 `skill_*` 工具。开启后，GamePlayer 会把 `skills/` 目录、项目文件读写、文本搜索和命令执行工具注册给 LLM。 |
+| `EnableMemory` | 是否给 LLM 自动启用项目内置 `memory_*` 工具。开启后，GamePlayer 会把长期记忆读写工具注册给 LLM，记忆文件实际保存到本地 save 目录的 `memory/`。 |
 | `Provider` | Provider 名称，当前运行时按 OpenAI-compatible 协议处理。 |
 | `BaseUrl` | API 根地址，例如 `https://api.openai.com` 或私有兼容服务地址。 |
 | `ApiKeyEnvironmentVariable` | API Key 环境变量名，默认 `OPENAI_API_KEY`。推荐使用环境变量，避免把密钥写入工程文件。 |
@@ -68,6 +69,7 @@ GamePlayer 通过 OpenAI-compatible `/v1/chat/completions` 调用 LLM。配置�
 | `Scene.Llm.ChatCompletionsPath` | Chat Completions 路径。 |
 | `Scene.Llm.DefaultTemperature` | 默认温度，可能为 `null`。 |
 | `Scene.Llm.SkillsEnabled` | 是否启用项目 skills 内置工具。 |
+| `Scene.Llm.MemoryEnabled` | 是否启用项目 memory 内置工具。 |
 | `Scene.Llm.SkillsDirectory` | 当前项目的 skills 目录绝对路径。 |
 | `Scene.Llm.MemoryDirectory` | 当前项目长期记忆目录绝对路径；实际写入本地 save 目录的 `memory/`。 |
 | `Scene.Llm.GetCharacterMemoryPath(entityOrName)` | 返回角色长期记忆逻辑路径，例如 `character/<sanitized-name>.md`；实际文件仍由 `memory_*` 工具写入。 |
@@ -204,6 +206,7 @@ if (IsLlmEvent && LlmCallbackName == "npc_tool_result")
 | `scene.llm.enabled` | 当前项目是否启用 LLM。 |
 | `scene.llm.model` | 默认模型名。 |
 | `scene.llm.skills_enabled` | 是否启用项目 skills 内置工具。 |
+| `scene.llm.memory_enabled` | 是否启用项目 memory 内置工具。 |
 | `scene.llm.skills_directory` | 当前项目的 skills 目录绝对路径。 |
 | `scene.llm.memory_directory` | 当前项目长期记忆目录绝对路径；实际写入本地 save 目录的 `memory/`。 |
 | `scene.llm.get_character_memory_path(entity_or_name)` | 返回角色长期记忆逻辑路径，例如 `character/<sanitized-name>.md`；实际文件仍由 `memory_*` 工具写入。 |
@@ -1102,13 +1105,13 @@ def voice_chat_llm_error(entity, scene, input, audio, event):
 这个示例的关键点是：
 
 - ASR 录音和 LLM 请求都是后台式回调，避免阻塞主脚本事件。
-- `StartChatWithTools` 即使传入空工具列表，也会在项目启用 skills 时自动合并内置 `skill_*` 工具。
+- `StartChatWithTools` 即使传入空工具列表，也会按项目开关自动合并内置 `skill_*` / `memory_*` 工具。
 - TTS 使用队列和 `SpeakWithCallback` / `entity.speak(..., on_completed=...)` 串行播放，避免多段语音重叠。
 - 送入 TTS 前先清理 Markdown、链接和不稳定符号，并把长回复切成短片段。
 
 ## 内置 Skills / Memory 工具
 
-启用 `Project -> LLM / OpenAI-compatible -> Enable skills tools` 后，GamePlayer 会把一组 `skill_*` 和 `memory_*` 内置工具注册给 LLM。`skill_*` 用于读取项目技能、文件和本地命令能力；`memory_*` 用于读写本地长期记忆，文件实际保存到 `Scene.Llm.MemoryDirectory`，逻辑路径显示为 `memory/...`。
+启用 `Project -> LLM / OpenAI-compatible -> Enable skills tools` 后，GamePlayer 会注册一组 `skill_*` 内置工具；启用 `Enable memory tools` 后，会额外注册 `memory_*` 内置工具。`skill_*` 用于读取项目技能、文件和本地命令能力；`memory_*` 用于读写本地长期记忆，文件实际保存到 `Scene.Llm.MemoryDirectory`，逻辑路径显示为 `memory/...`。
 
 用户可以在游戏项目目录下创建 `skills/` 目录，并按功能创建子目录。每个 skill 建议使用主流 skills 目录规范：
 

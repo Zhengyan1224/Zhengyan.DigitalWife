@@ -73,6 +73,8 @@ public sealed class RuntimeLlm : IDisposable
 
     public bool SkillsEnabled => _settings.EnableSkills;
 
+    public bool MemoryEnabled => _settings.EnableMemory;
+
     public string SkillsDirectory => _skillTools.SkillsDirectory;
 
     public string MemoryDirectory => _skillTools.MemoryDirectory;
@@ -1071,9 +1073,20 @@ public sealed class RuntimeLlm : IDisposable
             }
         }
 
+        if (_settings.EnableMemory)
+        {
+            foreach (RuntimeLlmTool tool in _skillTools.MemoryTools)
+            {
+                if (!effectiveTools.ContainsKey(tool.Name))
+                {
+                    effectiveTools[tool.Name] = tool;
+                }
+            }
+        }
+
         if (_settings.EnableSkills)
         {
-            foreach (RuntimeLlmTool tool in _skillTools.Tools)
+            foreach (RuntimeLlmTool tool in _skillTools.SkillTools)
             {
                 if (!effectiveTools.ContainsKey(tool.Name))
                 {
