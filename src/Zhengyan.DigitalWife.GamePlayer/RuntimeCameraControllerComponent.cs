@@ -421,9 +421,10 @@ internal sealed class RuntimeCameraControllerComponent(
         if (Game.Input.IsKeyDown(Key.S)) target -= flatForward * step;
         if (Game.Input.IsKeyDown(Key.A)) target -= right * step;
         if (Game.Input.IsKeyDown(Key.D)) target += right * step;
-        if (Game.Input.ScrollDelta.Y != 0.0f)
+        float scrollY = GetEffectiveScrollDeltaY();
+        if (scrollY != 0.0f)
         {
-            Distance = Math.Max(1.0f, Distance - (Game.Input.ScrollDelta.Y * ZoomSensitivity));
+            Distance = Math.Max(1.0f, Distance - (scrollY * ZoomSensitivity));
         }
 
         Vector3 desiredPosition = target - (forward * Math.Max(Distance, 0.01f));
@@ -487,9 +488,10 @@ internal sealed class RuntimeCameraControllerComponent(
             return;
         }
 
-        if (Game.Input.ScrollDelta.Y != 0.0f)
+        float scrollY = GetEffectiveScrollDeltaY();
+        if (scrollY != 0.0f)
         {
-            _camera.Dolly(Game.Input.ScrollDelta.Y * ZoomSensitivity);
+            _camera.Dolly(scrollY * ZoomSensitivity);
         }
 
         bool canProcessMouseDrag = CanProcessMouseDrag?.Invoke() != false;
@@ -505,7 +507,7 @@ internal sealed class RuntimeCameraControllerComponent(
         }
         else
         {
-            Vector2 current = Game.Input.MousePosition;
+            Vector2 current = GetEffectiveMousePosition();
             if (_dragFirstMove)
             {
                 _lastMousePosition = current;
@@ -598,7 +600,7 @@ internal sealed class RuntimeCameraControllerComponent(
             return;
         }
 
-        Vector2 current = Game.Input.MousePosition;
+        Vector2 current = GetEffectiveMousePosition();
         if (_dragFirstMove)
         {
             _lastMousePosition = current;
@@ -617,9 +619,15 @@ internal sealed class RuntimeCameraControllerComponent(
 
     private void ApplyZoom()
     {
-        if (Game is not null && Game.Input.ScrollDelta.Y != 0.0f)
+        if (Game is null)
         {
-            Distance = Math.Max(0.1f, Distance - (Game.Input.ScrollDelta.Y * ZoomSensitivity));
+            return;
+        }
+
+        float scrollY = GetEffectiveScrollDeltaY();
+        if (scrollY != 0.0f)
+        {
+            Distance = Math.Max(0.1f, Distance - (scrollY * ZoomSensitivity));
         }
     }
 
@@ -675,12 +683,41 @@ internal sealed class RuntimeCameraControllerComponent(
 
     private bool IsMouseButtonEffectivelyDown(MouseButton button)
     {
-        if (Game is null || !Game.Input.IsMouseButtonDown(button))
+        if (Game is null)
         {
             return false;
         }
 
-        return !DesktopSpritePlatform.TryGetGlobalMouseButtonState(Game.Window, button, out bool globalDown) || globalDown;
+        return DesktopSpritePlatform.TryGetGlobalMouseButtonState(Game.Window, button, out bool globalDown)
+            ? globalDown
+            : Game.Input.IsMouseButtonDown(button);
+    }
+
+    private Vector2 GetEffectiveMousePosition()
+    {
+        if (Game is null)
+        {
+            return Vector2.Zero;
+        }
+
+        if (DesktopSpritePlatform.TryGetGlobalCursorPosition(Game.Window, out Vector2 globalPosition))
+        {
+            return globalPosition;
+        }
+
+        return Game.Input.MousePosition;
+    }
+
+    private float GetEffectiveScrollDeltaY()
+    {
+        if (Game is null)
+        {
+            return 0.0f;
+        }
+
+        float scrollY = Game.Input.ScrollDelta.Y;
+        float globalScrollY = DesktopSpritePlatform.ConsumeGlobalScrollDeltaY(Game.Window);
+        return scrollY != 0.0f ? scrollY : globalScrollY;
     }
 
     private static Vector3 CreateForward(float yawDegrees, float pitchDegrees)

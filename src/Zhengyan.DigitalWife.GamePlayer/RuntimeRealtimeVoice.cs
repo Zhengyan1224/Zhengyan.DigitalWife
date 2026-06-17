@@ -15,6 +15,8 @@ namespace Zhengyan.DigitalWife.GamePlayer;
 
 public sealed class RuntimeRealtimeVoice : IDisposable
 {
+    private const float WakeWordSpeechRmsThreshold = 0.008f;
+
     private readonly GamePlayerGame _game;
     private readonly string _projectDirectory;
     private readonly GameProjectRealtimeVoiceSettings _settings;
@@ -127,10 +129,24 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         {
             try
             {
+                AudioCaptureOptions captureOptions = CreateAudioCaptureOptions(_settings.WakeWord.Capture);
+                Console.WriteLine(
+                    $"[GamePlayer] RealtimeVoice wake word capture open target={callbackTarget.Name}, " +
+                    $"device={captureOptions.DeviceIndex?.ToString() ?? "default"}, " +
+                    $"sampleRate={captureOptions.SampleRate}, channels={captureOptions.Channels}, " +
+                    $"framesPerBuffer={captureOptions.FramesPerBuffer}");
+
+                await using var captureSession = new ContinuousAudioCaptureSession(
+                    _audioSource,
+                    captureOptions,
+                    cts.Token);
+
                 while (!cts.IsCancellationRequested)
                 {
                     string? requestId = Guid.NewGuid().ToString("N");
-                    OpenAiRealtimeTranscriptionResult? result = await CaptureAndRecognizeWakeWordAsync(cts.Token).ConfigureAwait(false);
+                    OpenAiRealtimeTranscriptionResult? result = await CaptureAndRecognizeWakeWordAsync(
+                        captureSession,
+                        cts.Token).ConfigureAwait(false);
                     if (result is null || string.IsNullOrWhiteSpace(result.Text))
                     {
                         continue;
@@ -862,15 +878,21 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         }
     }
 
-    private async Task<OpenAiRealtimeTranscriptionResult?> CaptureAndRecognizeWakeWordAsync(CancellationToken cancellationToken)
+    private async Task<OpenAiRealtimeTranscriptionResult?> CaptureAndRecognizeWakeWordAsync(
+        ContinuousAudioCaptureSession captureSession,
+        CancellationToken cancellationToken)
     {
-        AudioCaptureOptions options = CreateAudioCaptureOptions(_settings.WakeWord.Capture);
-        AudioData audio = await _audioSource.RecordAsync(
+        AudioData audio = await captureSession.ReadAsync(
             TimeSpan.FromSeconds(Math.Max(0.1f, _settings.WakeWord.ChunkDurationSeconds)),
-            options,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            discardBufferedAudio: true).ConfigureAwait(false);
 
         if (audio.Samples.Length == 0)
+        {
+            return null;
+        }
+
+        if (CalculateRms(audio.Samples) < WakeWordSpeechRmsThreshold)
         {
             return null;
         }
@@ -882,9 +904,8 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             return string.IsNullOrWhiteSpace(result.Text) ? null : result;
         }
 
-        AudioData extension = await _audioSource.RecordAsync(
+        AudioData extension = await captureSession.ReadAsync(
             TimeSpan.FromSeconds(Math.Max(0.0f, _settings.WakeWord.ExtensionDurationSeconds)),
-            options,
             cancellationToken).ConfigureAwait(false);
         if (extension.Samples.Length == 0)
         {
@@ -894,6 +915,22 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         AudioData combined = ConcatAudio(audio, extension);
         AudioData combinedPadded = AppendTrailingSilence(combined, TimeSpan.FromSeconds(Math.Max(0.0f, _settings.WakeWord.TrailingSilencePaddingSeconds)));
         return await GetClient(cancellationToken).TranscribeAsync(combinedPadded, deleteConversationItem: true, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static float CalculateRms(ReadOnlySpan<float> samples)
+    {
+        if (samples.Length == 0)
+        {
+            return 0f;
+        }
+
+        double sumSquares = 0.0;
+        foreach (float sample in samples)
+        {
+            sumSquares += sample * sample;
+        }
+
+        return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
     private RealtimeVoiceClient GetClient(CancellationToken cancellationToken)

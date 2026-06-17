@@ -15,6 +15,7 @@ public sealed class RuntimeAsr : IDisposable
     private const float DefaultWakeWordChunkDurationSeconds = 2.0f;
     private const float DefaultWakeWordExtensionDurationSeconds = 1.2f;
     private const float DefaultWakeWordTrailingSilencePaddingSeconds = 0.4f;
+    private const float WakeWordSpeechRmsThreshold = 0.008f;
 
     private readonly string _projectDirectory;
     private readonly GameProjectAsrSettings _settings;
@@ -232,9 +233,22 @@ public sealed class RuntimeAsr : IDisposable
         {
             try
             {
+                AudioCaptureOptions captureOptions = CreateCaptureOptions();
+                Console.WriteLine(
+                    $"[GamePlayer] ASR wake word capture open request={resolvedRequestId}, " +
+                    $"device={captureOptions.DeviceIndex?.ToString() ?? "default"}, " +
+                    $"sampleRate={captureOptions.SampleRate}, channels={captureOptions.Channels}, " +
+                    $"framesPerBuffer={captureOptions.FramesPerBuffer}");
+
+                await using var captureSession = new ContinuousAudioCaptureSession(
+                    _audioSource,
+                    captureOptions,
+                    cts.Token);
+
                 while (!cts.IsCancellationRequested)
                 {
                     SpeechRecognitionResult? result = await CaptureAndRecognizeWakeWordAsync(
+                        captureSession,
                         normalizedWakeWords,
                         resolvedChunkDurationSeconds,
                         resolvedExtensionDurationSeconds,
@@ -429,19 +443,24 @@ public sealed class RuntimeAsr : IDisposable
     }
 
     private async Task<SpeechRecognitionResult?> CaptureAndRecognizeWakeWordAsync(
+        ContinuousAudioCaptureSession captureSession,
         IReadOnlyList<string> wakeWords,
         float chunkDurationSeconds,
         float extensionDurationSeconds,
         float trailingSilencePaddingSeconds,
         CancellationToken cancellationToken)
     {
-        AudioCaptureOptions options = CreateCaptureOptions();
-        AudioData audio = await _audioSource.RecordAsync(
+        AudioData audio = await captureSession.ReadAsync(
             TimeSpan.FromSeconds(chunkDurationSeconds),
-            options,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            discardBufferedAudio: true).ConfigureAwait(false);
 
         if (audio.Samples.Length == 0)
+        {
+            return null;
+        }
+
+        if (CalculateRms(audio.Samples) < WakeWordSpeechRmsThreshold)
         {
             return null;
         }
@@ -460,9 +479,8 @@ public sealed class RuntimeAsr : IDisposable
             return result;
         }
 
-        AudioData extension = await _audioSource.RecordAsync(
+        AudioData extension = await captureSession.ReadAsync(
             TimeSpan.FromSeconds(extensionDurationSeconds),
-            options,
             cancellationToken).ConfigureAwait(false);
         if (extension.Samples.Length == 0)
         {
@@ -474,6 +492,22 @@ public sealed class RuntimeAsr : IDisposable
             combined,
             trailingSilencePaddingSeconds,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static float CalculateRms(ReadOnlySpan<float> samples)
+    {
+        if (samples.Length == 0)
+        {
+            return 0f;
+        }
+
+        double sumSquares = 0.0;
+        foreach (float sample in samples)
+        {
+            sumSquares += sample * sample;
+        }
+
+        return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
     private async Task<SpeechRecognitionResult> RecognizeWakeWordAudioAsync(

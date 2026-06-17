@@ -169,6 +169,8 @@ sudo apt install -y \
   alsa-utils
 ```
 
+其中 `libxi6` 提供 `libXi.so.6`。GamePlayer 在 Linux/X11 桌面精灵模式下会使用 XInput2 读取全局鼠标滚轮事件，缺少该库时会退回普通窗口输入路径，透明点击穿透场景下滚轮可能不稳定。
+
 常用排查：
 
 ```bash

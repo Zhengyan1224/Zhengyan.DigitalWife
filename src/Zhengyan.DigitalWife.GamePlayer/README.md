@@ -78,6 +78,16 @@ gtk-update-icon-cache ~/.local/share/icons/hicolor 2>/dev/null || true
 
 macOS 不使用 `.desktop`。正式分发时应打包为 `.app`，并在 bundle 的 `Info.plist` / `Resources` 中配置应用图标；`favicon.png` 可作为生成 `.icns` 的源图片。
 
+## Linux 运行依赖
+
+Linux 运行 3D / GUI / 桌面精灵入口时需要安装 OpenGL、X11、OpenAL、PortAudio 等运行库。桌面精灵在 X11 点击穿透模式下还会使用 `libXi.so.6` 读取全局鼠标滚轮事件；Debian / Ubuntu / Kali 系统对应包名是 `libxi6`。
+
+```bash
+sudo apt install -y libxi6
+```
+
+完整依赖列表见仓库根目录 [README.md](../../README.md#linux-运行依赖)。
+
 ## 加载界面
 
 启动加载和脚本调用 `Scene.LoadScene(...)` / `scene.load_scene(...)` 切换场景时，都会进入同一套加载流程：

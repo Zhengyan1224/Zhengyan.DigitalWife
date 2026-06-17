@@ -1,7 +1,12 @@
+using System.Diagnostics;
+
 namespace Zhengyan.DigitalWife.GamePlayer;
 
 internal sealed class MainThreadDispatcher
 {
+    private const int MaxActionsPerPump = 64;
+    private static readonly TimeSpan MaxPumpDuration = TimeSpan.FromMilliseconds(3);
+
     private readonly Queue<PendingAction> _queue = [];
     private readonly object _sync = new();
     private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
@@ -58,10 +63,24 @@ internal sealed class MainThreadDispatcher
         return completion.Task;
     }
 
-    public void Pump()
+    public int Pump()
     {
+        long startTimestamp = Stopwatch.GetTimestamp();
+        long maxElapsedTicks = (long)(MaxPumpDuration.TotalSeconds * Stopwatch.Frequency);
+        int processed = 0;
+
         while (true)
         {
+            if (processed >= MaxActionsPerPump)
+            {
+                return processed;
+            }
+
+            if (processed > 0 && Stopwatch.GetTimestamp() - startTimestamp >= maxElapsedTicks)
+            {
+                return processed;
+            }
+
             PendingAction? pending;
             lock (_sync)
             {
@@ -70,7 +89,7 @@ internal sealed class MainThreadDispatcher
 
             if (pending is null)
             {
-                return;
+                return processed;
             }
 
             try
@@ -83,6 +102,8 @@ internal sealed class MainThreadDispatcher
                 pending.Completion?.TrySetException(ex);
                 pending.OnError?.Invoke(ex);
             }
+
+            processed++;
         }
     }
 

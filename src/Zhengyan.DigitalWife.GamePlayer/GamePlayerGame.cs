@@ -210,10 +210,10 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     protected override void Update(GameTime gameTime)
     {
         _runtimePerformance.Update(gameTime);
-        _dispatcher.Pump();
 
         if (_isLoading)
         {
+            _dispatcher.Pump();
             ProcessLoadingStep();
             return;
         }
@@ -228,6 +228,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         if (_runtimeScene is null || _runtimeInput is null || _runtimeAudio is null)
         {
+            _dispatcher.Pump();
             return;
         }
 
@@ -248,6 +249,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 }
             }
         }
+
+        _dispatcher.Pump();
     }
 
     protected override void LateUpdate(GameTime gameTime)

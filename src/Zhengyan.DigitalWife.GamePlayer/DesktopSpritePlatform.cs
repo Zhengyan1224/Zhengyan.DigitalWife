@@ -14,13 +14,18 @@ internal static unsafe class DesktopSpritePlatform
     private const byte RegionAlphaThreshold = 8;
     private const byte X11RegionAlphaThreshold = 48;
     private static readonly object LogLock = new();
+    private static readonly object X11RawScrollLock = new();
     private static readonly HashSet<string> LoggedMessages = [];
     private static readonly Dictionary<IntPtr, WindowsClickThroughState> WindowsClickThroughStates = [];
     private static readonly Dictionary<nint, X11ClickThroughState> X11ClickThroughStates = [];
     private static readonly Dictionary<IntPtr, MacClickThroughState> MacClickThroughStatesByView = [];
     private static readonly MacHitTestDelegate MacHitTestCallback = MacHitTest;
+    private static IntPtr _x11RawScrollDisplay;
+    private static int _x11RawScrollOpcode;
     private static IntPtr _fallbackX11Display;
     private static nint _fallbackX11Window;
+    private static bool _x11RawScrollInitialized;
+    private static bool _x11RawScrollUnavailable;
     private static bool _glfwX11DisplayUnavailable;
     private static bool _glfwX11WindowUnavailable;
     private static bool _x11NativeUnavailable;
@@ -277,6 +282,63 @@ internal static unsafe class DesktopSpritePlatform
         return false;
     }
 
+    public static bool TryIsGlobalCursorOverVisiblePixel(IWindow window, out bool isVisible)
+    {
+        isVisible = false;
+
+        if (window is null || !TryGetGlobalCursorPosition(window, out System.Numerics.Vector2 globalPosition))
+        {
+            return false;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return TryHitTestX11VisiblePixel(window, globalPosition, out isVisible);
+        }
+
+        return false;
+    }
+
+    public static float ConsumeGlobalScrollDeltaY(IWindow window)
+    {
+        if (window is null || !OperatingSystem.IsLinux())
+        {
+            return 0.0f;
+        }
+
+        lock (X11RawScrollLock)
+        {
+            if (!TryEnsureX11RawScroll())
+            {
+                return 0.0f;
+            }
+
+            int pending = X11Native.XPending(_x11RawScrollDisplay);
+            if (pending <= 0)
+            {
+                return 0.0f;
+            }
+
+            bool canUseScroll = TryIsGlobalCursorOverVisiblePixel(window, out bool isVisible) && isVisible;
+            int scrollSteps = 0;
+            int eventCount = Math.Min(pending, X11Native.MaxRawScrollEventsPerFrame);
+            for (int i = 0; i < eventCount; i++)
+            {
+                if (!TryReadNextX11RawScrollStep(out int step))
+                {
+                    continue;
+                }
+
+                if (canUseScroll)
+                {
+                    scrollSteps += step;
+                }
+            }
+
+            return scrollSteps;
+        }
+    }
+
     private static double TryGetMacMainScreenHeight()
     {
         IntPtr nsScreen = MacNative.objc_getClass("NSScreen");
@@ -423,6 +485,183 @@ internal static unsafe class DesktopSpritePlatform
         X11Native.XFlush(display);
         state.LastWidth = width;
         state.LastHeight = height;
+    }
+
+    private static bool TryHitTestX11VisiblePixel(IWindow window, System.Numerics.Vector2 globalPosition, out bool isVisible)
+    {
+        isVisible = false;
+
+        if (!TryGetX11Handles(window, out _, out nint windowHandle, logFailure: false))
+        {
+            return false;
+        }
+
+        X11ClickThroughState? state;
+        lock (X11ClickThroughStates)
+        {
+            _ = X11ClickThroughStates.TryGetValue(windowHandle, out state);
+        }
+
+        if (state is null || !state.Enabled || state.LastWidth <= 0 || state.LastHeight <= 0)
+        {
+            return false;
+        }
+
+        byte[] pixels = state.FramebufferBytes;
+        int framebufferWidth = state.LastWidth;
+        int framebufferHeight = state.LastHeight;
+        if (pixels.Length < framebufferWidth * framebufferHeight * 4)
+        {
+            return false;
+        }
+
+        float localX = globalPosition.X - window.Position.X;
+        float localY = globalPosition.Y - window.Position.Y;
+        int windowWidth = Math.Max(window.Size.X, 1);
+        int windowHeight = Math.Max(window.Size.Y, 1);
+        if (localX < 0.0f || localY < 0.0f || localX >= windowWidth || localY >= windowHeight)
+        {
+            isVisible = false;
+            return true;
+        }
+
+        int pixelX = Math.Clamp((int)MathF.Floor(localX * framebufferWidth / windowWidth), 0, framebufferWidth - 1);
+        int windowPixelY = Math.Clamp((int)MathF.Floor(localY * framebufferHeight / windowHeight), 0, framebufferHeight - 1);
+        int sourceY = framebufferHeight - 1 - windowPixelY;
+        int alphaIndex = ((sourceY * framebufferWidth) + pixelX) * 4 + 3;
+        isVisible = pixels[alphaIndex] >= X11RegionAlphaThreshold;
+        return true;
+    }
+
+    private static bool TryEnsureX11RawScroll()
+    {
+        if (_x11RawScrollInitialized)
+        {
+            return true;
+        }
+
+        if (_x11RawScrollUnavailable)
+        {
+            return false;
+        }
+
+        try
+        {
+            IntPtr display = X11Native.XOpenDisplay(IntPtr.Zero);
+            if (display == IntPtr.Zero)
+            {
+                _x11RawScrollUnavailable = true;
+                return false;
+            }
+
+            if (X11Native.XQueryExtension(display, X11Native.XInputExtensionName, out int opcode, out _, out _) == 0)
+            {
+                _x11RawScrollUnavailable = true;
+                return false;
+            }
+
+            int major = 2;
+            int minor = 0;
+            if (X11Native.XIQueryVersion(display, ref major, ref minor) != X11Native.Success)
+            {
+                _x11RawScrollUnavailable = true;
+                return false;
+            }
+
+            nint root = X11Native.XDefaultRootWindow(display);
+            if (root == 0)
+            {
+                _x11RawScrollUnavailable = true;
+                return false;
+            }
+
+            byte* maskBytes = stackalloc byte[X11Native.XIEventMaskBytes];
+            for (int i = 0; i < X11Native.XIEventMaskBytes; i++)
+            {
+                maskBytes[i] = 0;
+            }
+
+            SetXInputEventMask(maskBytes, X11Native.XIRawButtonPress);
+            X11XIEventMask eventMask = new()
+            {
+                DeviceId = X11Native.XIAllMasterDevices,
+                MaskLen = X11Native.XIEventMaskBytes,
+                Mask = (IntPtr)maskBytes
+            };
+
+            if (X11Native.XISelectEvents(display, root, (IntPtr)(&eventMask), 1) != X11Native.Success)
+            {
+                _x11RawScrollUnavailable = true;
+                return false;
+            }
+
+            X11Native.XFlush(display);
+            _x11RawScrollDisplay = display;
+            _x11RawScrollOpcode = opcode;
+            _x11RawScrollInitialized = true;
+            return true;
+        }
+        catch (Exception ex) when (IsNativeBindingFailure(ex))
+        {
+            _x11RawScrollUnavailable = true;
+            return false;
+        }
+    }
+
+    private static bool TryReadNextX11RawScrollStep(out int step)
+    {
+        step = 0;
+
+        byte* eventBytes = stackalloc byte[X11Native.XEventBufferSize];
+        for (int i = 0; i < X11Native.XEventBufferSize; i++)
+        {
+            eventBytes[i] = 0;
+        }
+
+        if (X11Native.XNextEvent(_x11RawScrollDisplay, (IntPtr)eventBytes) != X11Native.Success)
+        {
+            return false;
+        }
+
+        X11GenericEventCookie cookie = Marshal.PtrToStructure<X11GenericEventCookie>((IntPtr)eventBytes);
+        if (cookie.Type != X11Native.GenericEvent)
+        {
+            return false;
+        }
+
+        if (X11Native.XGetEventData(_x11RawScrollDisplay, (IntPtr)eventBytes) == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            cookie = Marshal.PtrToStructure<X11GenericEventCookie>((IntPtr)eventBytes);
+            if (cookie.Extension != _x11RawScrollOpcode
+                || cookie.EvType != X11Native.XIRawButtonPress
+                || cookie.Data == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            X11RawEventHeader rawEvent = Marshal.PtrToStructure<X11RawEventHeader>(cookie.Data);
+            step = rawEvent.Detail switch
+            {
+                X11Native.X11WheelUpButton => 1,
+                X11Native.X11WheelDownButton => -1,
+                _ => 0
+            };
+            return step != 0;
+        }
+        finally
+        {
+            X11Native.XFreeEventData(_x11RawScrollDisplay, (IntPtr)eventBytes);
+        }
+    }
+
+    private static void SetXInputEventMask(byte* maskBytes, int eventType)
+    {
+        maskBytes[eventType >> 3] |= (byte)(1 << (eventType & 7));
     }
 
     private static void SyncMacClickThroughRegion(IWindow window, GL gl, int width, int height)
@@ -1343,6 +1582,7 @@ internal static unsafe class DesktopSpritePlatform
 
     private static class X11Native
     {
+        internal const int GenericEvent = 35;
         internal const int Success = 0;
         internal const nint AnyPropertyType = 0;
         internal const int ShapeSet = 0;
@@ -1351,6 +1591,14 @@ internal static unsafe class DesktopSpritePlatform
         internal const uint Button1Mask = 1 << 8;
         internal const uint Button2Mask = 1 << 9;
         internal const uint Button3Mask = 1 << 10;
+        internal const string XInputExtensionName = "XInputExtension";
+        internal const int XIAllMasterDevices = 1;
+        internal const int XIRawButtonPress = 15;
+        internal const int XIEventMaskBytes = 4;
+        internal const int X11WheelUpButton = 4;
+        internal const int X11WheelDownButton = 5;
+        internal const int XEventBufferSize = 192;
+        internal const int MaxRawScrollEventsPerFrame = 128;
 
         [DllImport("libglfw.so.3", EntryPoint = "glfwGetX11Display", CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr GetX11Display();
@@ -1366,6 +1614,26 @@ internal static unsafe class DesktopSpritePlatform
 
         [DllImport("libX11.so.6")]
         internal static extern int XUnionRectWithRegion(ref X11Rectangle rectangle, IntPtr sourceRegion, IntPtr destinationRegion);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XPending(IntPtr display);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XNextEvent(IntPtr display, IntPtr eventReturn);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XGetEventData(IntPtr display, IntPtr eventCookie);
+
+        [DllImport("libX11.so.6")]
+        internal static extern void XFreeEventData(IntPtr display, IntPtr eventCookie);
+
+        [DllImport("libX11.so.6")]
+        internal static extern int XQueryExtension(
+            IntPtr display,
+            string name,
+            out int majorOpcodeReturn,
+            out int firstEventReturn,
+            out int firstErrorReturn);
 
         [DllImport("libX11.so.6")]
         internal static extern int XFlush(IntPtr display);
@@ -1423,6 +1691,12 @@ internal static unsafe class DesktopSpritePlatform
 
         [DllImport("libXext.so.6")]
         internal static extern void XShapeCombineMask(IntPtr display, nint window, int destKind, int xOff, int yOff, IntPtr bitmap, int op);
+
+        [DllImport("libXi.so.6")]
+        internal static extern int XIQueryVersion(IntPtr display, ref int majorVersionInOut, ref int minorVersionInOut);
+
+        [DllImport("libXi.so.6")]
+        internal static extern int XISelectEvents(IntPtr display, nint window, IntPtr masks, int numMasks);
     }
 
     private static class MacNative
@@ -1491,6 +1765,62 @@ internal static unsafe class DesktopSpritePlatform
         public ushort Width;
 
         public ushort Height;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct X11XIEventMask
+    {
+        public int DeviceId;
+
+        public int MaskLen;
+
+        public IntPtr Mask;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct X11GenericEventCookie
+    {
+        public int Type;
+
+        public nuint Serial;
+
+        public int SendEvent;
+
+        public IntPtr Display;
+
+        public int Extension;
+
+        public int EvType;
+
+        public uint Cookie;
+
+        public IntPtr Data;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct X11RawEventHeader
+    {
+        public int Type;
+
+        public nuint Serial;
+
+        public int SendEvent;
+
+        public IntPtr Display;
+
+        public int Extension;
+
+        public int EvType;
+
+        public nuint Time;
+
+        public int DeviceId;
+
+        public int SourceId;
+
+        public int Detail;
+
+        public int Flags;
     }
 
     [StructLayout(LayoutKind.Sequential)]

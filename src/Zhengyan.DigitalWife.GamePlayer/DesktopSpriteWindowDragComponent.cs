@@ -31,15 +31,20 @@ internal sealed class DesktopSpriteWindowDragComponent(Func<GameWindowSettings> 
             return;
         }
 
-        if (!Game.Input.IsMouseButtonDown(configuredButton))
+        if (!IsDragButtonDown(configuredButton))
         {
             _dragging = false;
             return;
         }
 
-        System.Numerics.Vector2 currentMousePosition = Game.Input.MousePosition;
         if (!_dragging || _dragButton != configuredButton)
         {
+            if (!CanStartDrag(settings, configuredButton))
+            {
+                _dragging = false;
+                return;
+            }
+
             _dragging = true;
             _dragButton = configuredButton;
             _dragStartWindowPosition = Game.Window.Position;
@@ -51,6 +56,38 @@ internal sealed class DesktopSpriteWindowDragComponent(Func<GameWindowSettings> 
         Game.Window.Position = new Vector2D<int>(
             _dragStartWindowPosition.X + (int)MathF.Round(delta.X),
             _dragStartWindowPosition.Y + (int)MathF.Round(delta.Y));
+    }
+
+    private bool IsDragButtonDown(MouseButton button)
+    {
+        if (Game is null)
+        {
+            return false;
+        }
+
+        if (DesktopSpritePlatform.TryGetGlobalMouseButtonState(Game.Window, button, out bool globalDown))
+        {
+            return globalDown;
+        }
+
+        return Game.Input.IsMouseButtonDown(button);
+    }
+
+    private bool CanStartDrag(GameWindowSettings settings, MouseButton button)
+    {
+        if (Game is null)
+        {
+            return false;
+        }
+
+        if (Game.Input.IsMouseButtonDown(button))
+        {
+            return true;
+        }
+
+        return settings.DesktopSpriteClickThrough
+            && DesktopSpritePlatform.TryIsGlobalCursorOverVisiblePixel(Game.Window, out bool isVisible)
+            && isVisible;
     }
 
     private System.Numerics.Vector2 GetCursorScreenPosition()
