@@ -135,10 +135,11 @@ public sealed class MmdCharacterGroup
     public SpeechTransformUpdater AttachSpeech(
         MmdCharacter character,
         SpeechDictionarySet dictionaries,
-        IReadOnlyDictionary<string, string>? vowelMorphMap = null)
+        IReadOnlyDictionary<string, string>? vowelMorphMap = null,
+        string? noMatchFallbackVowel = null)
     {
         ArgumentNullException.ThrowIfNull(character);
-        return character.AttachSpeech(dictionaries, vowelMorphMap);
+        return character.AttachSpeech(dictionaries, vowelMorphMap, noMatchFallbackVowel);
     }
 
     private static Vector3 GetDefaultCharacterPosition(int index)

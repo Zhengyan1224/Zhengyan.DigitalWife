@@ -1,0 +1,252 @@
+# Common English -> kana dictionary for lip-sync.
+# Format:
+#   <text><tab><kana>
+# Multi-word entries should use a tab between key and value.
+
+hello	ハロー
+hi	ハイ
+hey	ヘイ
+bye	バイ
+goodbye	グッバイ
+welcome	ウェルカム
+please	プリーズ
+sorry	ソーリー
+thanks	サンクス
+thank you	サンキュー
+excuse me	エクスキューズミー
+good morning	グッドモーニング
+good afternoon	グッドアフタヌーン
+good evening	グッドイーブニング
+good night	グッドナイト
+see you	シーユー
+see you later	シーユーレイター
+take care	テイクケア
+come on	カムオン
+good job	グッドジョブ
+no problem	ノープロブレム
+all right	オールライト
+how are you	ハウアーユー
+what's up	ワッツアップ
+wake up	ウェイクアップ
+i love you	アイラブユー
+i'm sorry	アイムソーリー
+
+i	アイ
+me	ミー
+my	マイ
+mine	マイン
+you	ユー
+your	ユア
+yours	ユアーズ
+we	ウィー
+us	アス
+our	アワー
+ours	アワーズ
+they	ゼイ
+them	ゼム
+their	ゼア
+theirs	ゼアーズ
+he	ヒー
+him	ヒム
+his	ヒズ
+she	シー
+her	ハー
+hers	ハーズ
+it	イット
+its	イッツ
+this	ディス
+that	ザット
+these	ジーズ
+those	ゾウズ
+here	ヒア
+there	ゼア
+where	ウェア
+when	ウェン
+who	フー
+why	ワイ
+what	ワット
+how	ハウ
+
+am	アム
+is	イズ
+are	アー
+was	ワズ
+were	ワー
+be	ビー
+been	ビーン
+being	ビーイング
+have	ハブ
+has	ハズ
+had	ハド
+do	ドゥー
+does	ダズ
+did	ディド
+can	キャン
+could	クッド
+will	ウィル
+would	ウッド
+should	シュッド
+may	メイ
+might	マイト
+must	マスト
+don't	ドント
+can't	キャント
+won't	ウォント
+i'm	アイム
+you're	ユア
+we're	ウィア
+they're	ゼア
+it's	イッツ
+that's	ザッツ
+what's	ワッツ
+there's	ゼアズ
+let's	レッツ
+
+go	ゴー
+come	カム
+say	セイ
+tell	テル
+know	ノウ
+think	シンク
+want	ウォント
+need	ニード
+like	ライク
+love	ラブ
+help	ヘルプ
+wait	ウェイト
+see	シー
+look	ルック
+watch	ウォッチ
+hear	ヒア
+listen	リッスン
+eat	イート
+drink	ドリンク
+sleep	スリープ
+work	ワーク
+study	スタディ
+learn	ラーン
+start	スタート
+stop	ストップ
+finish	フィニッシュ
+open	オープン
+close	クローズ
+run	ラン
+walk	ウォーク
+sit	シット
+stand	スタンド
+buy	バイ
+sell	セル
+give	ギブ
+take	テイク
+use	ユーズ
+make	メイク
+play	プレイ
+read	リード
+write	ライト
+speak	スピーク
+talk	トーク
+call	コール
+try	トライ
+show	ショウ
+move	ムーブ
+change	チェンジ
+
+time	タイム
+day	デイ
+night	ナイト
+morning	モーニング
+afternoon	アフタヌーン
+evening	イーブニング
+today	トゥデイ
+tomorrow	トゥモロー
+yesterday	イエスタデイ
+now	ナウ
+later	レイター
+home	ホーム
+school	スクール
+office	オフィス
+friend	フレンド
+everyone	エブリワン
+someone	サムワン
+nobody	ノーバディ
+something	サムシング
+nothing	ナッシング
+everything	エブリシング
+problem	プロブレム
+question	クエスチョン
+answer	アンサー
+game	ゲーム
+player	プレイヤー
+editor	エディター
+project	プロジェクト
+voice	ボイス
+number	ナンバー
+english	イングリッシュ
+chinese	チャイニーズ
+japanese	ジャパニーズ
+lip	リップ
+sync	シンク
+lip sync	リップシンク
+audio	オーディオ
+model	モデル
+script	スクリプト
+scene	シーン
+camera	カメラ
+
+yes	イエス
+no	ノー
+okay	オーケー
+ok	オーケー
+maybe	メイビー
+really	リアリー
+very	ベリー
+again	アゲイン
+because	ビコーズ
+and	アンド
+but	バット
+or	オア
+if	イフ
+with	ウィズ
+without	ウィズアウト
+for	フォー
+from	フロム
+to	トゥー
+in	イン
+on	オン
+at	アット
+of	オブ
+as	アズ
+after	アフター
+before	ビフォー
+over	オーバー
+under	アンダー
+
+happy	ハッピー
+sad	サッド
+angry	アングリー
+cute	キュート
+beautiful	ビューティフル
+ready	レディ
+
+zero	ゼロ
+one	ワン
+two	トゥー
+three	スリー
+four	フォー
+five	ファイブ
+six	シックス
+seven	セブン
+eight	エイト
+nine	ナイン
+ten	テン
+hundred	ハンドレッド
+thousand	サウザンド
+point	ポイント
+dot	ドット
+
+ai	エーアイ
+api	エーピーアイ
+gpt	ジーピーティー
+chatgpt	チャットジーピーティー
+openai	オープンエーアイ
+mmd	エムエムディー

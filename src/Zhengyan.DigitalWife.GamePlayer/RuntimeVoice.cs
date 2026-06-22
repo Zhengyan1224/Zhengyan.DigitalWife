@@ -107,7 +107,10 @@ public sealed class RuntimeVoice : IDisposable
         try
         {
             SpeechDictionarySet dictionaries = EnsureSpeechDictionaries();
-            SpeechTransformUpdater updater = entity.CreateSpeechUpdater(dictionaries, _settings.LipSync.VowelMorphMap);
+            SpeechTransformUpdater updater = entity.CreateSpeechUpdater(
+                dictionaries,
+                _settings.LipSync.VowelMorphMap,
+                ResolveNoMatchFallbackVowel(_settings.LipSync));
             updater.Stop(resetFace: true);
             _speechUpdaters[entity.Id] = updater;
         }
@@ -302,7 +305,7 @@ public sealed class RuntimeVoice : IDisposable
 
         if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? updater))
         {
-            updater.Start(text, CalculateFramePeriod(text, audio.Duration), isLoop: false);
+            updater.Start(text, CalculateFramePeriod(updater, text, audio.Duration), isLoop: false);
         }
 
         WaitForSpeechCompletion(entity, activeSpeech, onCompleted);
@@ -373,24 +376,20 @@ public sealed class RuntimeVoice : IDisposable
         }
     }
 
-    private TimeSpan CalculateFramePeriod(string text, TimeSpan audioDuration)
+    private TimeSpan CalculateFramePeriod(SpeechTransformUpdater updater, string text, TimeSpan audioDuration)
     {
         try
         {
-            SpeechDictionarySet dictionaries = EnsureSpeechDictionaries();
-            string kanaText = dictionaries.Kana.ConvertText(text);
-            int vowelCount = 0;
-            foreach (char kana in kanaText)
-            {
-                string vowel = dictionaries.Vowel.GetVowel(kana);
-                if (_settings.LipSync.VowelMorphMap.ContainsKey(vowel))
-                {
-                    vowelCount++;
-                }
-            }
-
+            int vowelCount = updater.CountRecognizedVowels(text);
             if (vowelCount <= 0)
             {
+                if (!string.IsNullOrWhiteSpace(updater.NoMatchFallbackVowel))
+                {
+                    return TimeSpan.FromMilliseconds(Math.Max(
+                        Math.Max(1.0, audioDuration.TotalMilliseconds),
+                        Math.Max(1.0f, _settings.LipSync.MinFramePeriodMilliseconds)));
+                }
+
                 return TimeSpan.FromMilliseconds(180.0);
             }
 
@@ -404,6 +403,13 @@ public sealed class RuntimeVoice : IDisposable
         {
             return TimeSpan.FromMilliseconds(150.0);
         }
+    }
+
+    private static string? ResolveNoMatchFallbackVowel(GameProjectLipSyncSettings lipSync)
+    {
+        return lipSync.UseFallbackVowelOnNoMatch
+            ? lipSync.GetEffectiveNoMatchFallbackVowel()
+            : null;
     }
 
     private SherpaOnnxTextToSpeechSynthesizer EnsureSynthesizer()
@@ -506,16 +512,32 @@ public sealed class RuntimeVoice : IDisposable
 
             string dictionaryDirectory = ResolveOptionalPath(_settings.LipSync.DictionaryDirectory)
                 ?? Path.Combine(AppContext.BaseDirectory, "Resources", "SpeechLipSyncDictionaries");
-            SpeechDictionaryLanguage language = Enum.TryParse(
-                _settings.LipSync.DictionaryLanguage,
-                ignoreCase: true,
-                out SpeechDictionaryLanguage parsed)
-                ? parsed
-                : SpeechDictionaryLanguage.Chinese;
-
-            _dictionaries = SpeechDictionarySet.LoadFromDirectory(dictionaryDirectory, language);
+            _dictionaries = SpeechDictionarySet.LoadFromDirectory(
+                dictionaryDirectory,
+                ResolveDictionaryLanguages(_settings.LipSync));
             return _dictionaries;
         }
+    }
+
+    private static IReadOnlyList<SpeechDictionaryLanguage> ResolveDictionaryLanguages(GameProjectLipSyncSettings lipSync)
+    {
+        List<SpeechDictionaryLanguage> languages = [];
+        foreach (string value in lipSync.GetEffectiveDictionaryLanguages())
+        {
+            if (!Enum.TryParse(value, ignoreCase: true, out SpeechDictionaryLanguage parsed) || languages.Contains(parsed))
+            {
+                continue;
+            }
+
+            languages.Add(parsed);
+        }
+
+        if (languages.Count == 0)
+        {
+            languages.Add(SpeechDictionaryLanguage.Chinese);
+        }
+
+        return languages;
     }
 
     private string ResolveRequiredPath(string path, string settingName)

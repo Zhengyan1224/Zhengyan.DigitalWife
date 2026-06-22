@@ -137,7 +137,8 @@ public sealed class MmdCharacter
 
     public SpeechTransformUpdater AttachSpeech(
         SpeechDictionarySet dictionaries,
-        IReadOnlyDictionary<string, string>? vowelMorphMap = null)
+        IReadOnlyDictionary<string, string>? vowelMorphMap = null,
+        string? noMatchFallbackVowel = null)
     {
         ArgumentNullException.ThrowIfNull(dictionaries);
 
@@ -148,7 +149,7 @@ public sealed class MmdCharacter
             SpeechUpdater = null;
         }
 
-        SpeechUpdater = ModelComponent.CreateSpeechTransformUpdater(dictionaries.Kana, dictionaries.Vowel, vowelMorphMap);
+        SpeechUpdater = ModelComponent.CreateSpeechTransformUpdater(dictionaries.Kana, dictionaries.Vowel, vowelMorphMap, noMatchFallbackVowel);
         return SpeechUpdater;
     }
 

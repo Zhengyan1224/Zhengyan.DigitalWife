@@ -1428,14 +1428,15 @@ public sealed class RuntimeEntity
 
     internal SpeechTransformUpdater CreateSpeechUpdater(
         SpeechDictionarySet dictionaries,
-        IReadOnlyDictionary<string, string>? vowelMorphMap)
+        IReadOnlyDictionary<string, string>? vowelMorphMap,
+        string? noMatchFallbackVowel = null)
     {
         if (_model is null)
         {
             throw new InvalidOperationException($"Entity '{Name}' is not a PMX model.");
         }
 
-        return _model.CreateSpeechTransformUpdater(dictionaries.Kana, dictionaries.Vowel, vowelMorphMap);
+        return _model.CreateSpeechTransformUpdater(dictionaries.Kana, dictionaries.Vowel, vowelMorphMap, noMatchFallbackVowel);
     }
 
     internal bool TryGetBubbleAnchorWorldPosition(bool useModelTopAnchor, out Vector3 position)

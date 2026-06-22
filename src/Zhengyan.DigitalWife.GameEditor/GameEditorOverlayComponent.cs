@@ -1193,11 +1193,23 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             voice.LipSync.DictionaryDirectory = dictionaryDirectory;
         }
 
-        string[] dictionaryLanguages = ["Chinese", "Japanese"];
-        int dictionaryLanguageIndex = string.Equals(voice.LipSync.DictionaryLanguage, "Japanese", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        if (ImGui.Combo("Lip-sync language", ref dictionaryLanguageIndex, dictionaryLanguages, dictionaryLanguages.Length))
+        ImGui.Text("Lip-sync languages");
+        bool chineseLipSync = HasLipSyncLanguage(voice.LipSync, "Chinese");
+        if (ImGui.Checkbox("Chinese##LipSyncLanguage", ref chineseLipSync))
         {
-            voice.LipSync.DictionaryLanguage = dictionaryLanguages[dictionaryLanguageIndex];
+            SetLipSyncLanguageSelection(voice.LipSync, "Chinese", chineseLipSync);
+        }
+
+        bool japaneseLipSync = HasLipSyncLanguage(voice.LipSync, "Japanese");
+        if (ImGui.Checkbox("Japanese##LipSyncLanguage", ref japaneseLipSync))
+        {
+            SetLipSyncLanguageSelection(voice.LipSync, "Japanese", japaneseLipSync);
+        }
+
+        bool englishLipSync = HasLipSyncLanguage(voice.LipSync, "English");
+        if (ImGui.Checkbox("English##LipSyncLanguage", ref englishLipSync))
+        {
+            SetLipSyncLanguageSelection(voice.LipSync, "English", englishLipSync);
         }
 
         float minFrame = voice.LipSync.MinFramePeriodMilliseconds;
@@ -1212,8 +1224,71 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             voice.LipSync.MaxFramePeriodMilliseconds = Math.Max(voice.LipSync.MinFramePeriodMilliseconds, maxFrame);
         }
 
+        bool useFallbackVowelOnNoMatch = voice.LipSync.UseFallbackVowelOnNoMatch;
+        if (ImGui.Checkbox("Fallback vowel when no match", ref useFallbackVowelOnNoMatch))
+        {
+            voice.LipSync.UseFallbackVowelOnNoMatch = useFallbackVowelOnNoMatch;
+        }
+
+        if (voice.LipSync.UseFallbackVowelOnNoMatch)
+        {
+            string[] fallbackVowels = ["\u3042", "\u3044", "\u3046", "\u3048", "\u304A"];
+            string currentFallbackVowel = voice.LipSync.GetEffectiveNoMatchFallbackVowel();
+            int fallbackVowelIndex = Array.IndexOf(fallbackVowels, currentFallbackVowel);
+            if (fallbackVowelIndex < 0)
+            {
+                fallbackVowelIndex = 0;
+            }
+
+            if (ImGui.Combo("Fallback vowel", ref fallbackVowelIndex, fallbackVowels, fallbackVowels.Length))
+            {
+                voice.LipSync.NoMatchFallbackVowel = fallbackVowels[fallbackVowelIndex];
+            }
+        }
+
         ImGui.TextWrapped("Scripts call Entity.Speak(...) / entity.speak(...). The runtime uses this project-level TTS configuration.");
         ImGui.PopID();
+    }
+
+    private static bool HasLipSyncLanguage(GameProjectLipSyncSettings lipSync, string language)
+    {
+        foreach (string selectedLanguage in lipSync.GetEffectiveDictionaryLanguages())
+        {
+            if (string.Equals(selectedLanguage, language, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void SetLipSyncLanguageSelection(GameProjectLipSyncSettings lipSync, string language, bool enabled)
+    {
+        List<string> languages = [.. lipSync.GetEffectiveDictionaryLanguages()];
+        int existingIndex = -1;
+        for (int index = 0; index < languages.Count; index++)
+        {
+            if (string.Equals(languages[index], language, StringComparison.OrdinalIgnoreCase))
+            {
+                existingIndex = index;
+                break;
+            }
+        }
+
+        if (enabled)
+        {
+            if (existingIndex < 0)
+            {
+                languages.Add(language);
+            }
+        }
+        else if (existingIndex >= 0)
+        {
+            languages.RemoveAt(existingIndex);
+        }
+
+        lipSync.SetEffectiveDictionaryLanguages(languages);
     }
 
     private void DrawDesktopSpriteTrayMenuItems(GameWindowSettings window)

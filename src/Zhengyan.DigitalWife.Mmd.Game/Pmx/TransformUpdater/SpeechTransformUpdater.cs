@@ -12,6 +12,7 @@ public sealed class SpeechTransformUpdater : ITransformUpdater
     private readonly Dictionary<string, float> _vowelFaceTable;
     private readonly Dictionary<string, MMDMorph?> _cachedMorphs = new(StringComparer.Ordinal);
     private readonly List<string> _vowelSequence = [];
+    private readonly string? _noMatchFallbackVowel;
 
     private MMDModel? _cachedModel;
     private bool _isLoop;
@@ -22,12 +23,14 @@ public sealed class SpeechTransformUpdater : ITransformUpdater
     public SpeechTransformUpdater(
         KanaDictionary kanaDictionary,
         VowelDictionary vowelDictionary,
-        IReadOnlyDictionary<string, string>? vowelMorphMap = null)
+        IReadOnlyDictionary<string, string>? vowelMorphMap = null,
+        string? noMatchFallbackVowel = null)
     {
         _kanaDictionary = kanaDictionary ?? throw new ArgumentNullException(nameof(kanaDictionary));
         _vowelDictionary = vowelDictionary ?? throw new ArgumentNullException(nameof(vowelDictionary));
         _vowelMorphMap = CreateVowelMorphMap(vowelMorphMap);
         _vowelFaceTable = CreateFaceTable(_vowelMorphMap.Keys);
+        _noMatchFallbackVowel = NormalizeJapaneseVowel(noMatchFallbackVowel);
     }
 
     public TransformUpdaterStage Stage => TransformUpdaterStage.PreAnimation;
@@ -54,6 +57,8 @@ public sealed class SpeechTransformUpdater : ITransformUpdater
     }
 
     public IReadOnlyDictionary<string, string> VowelMorphMap => _vowelMorphMap;
+
+    public string? NoMatchFallbackVowel => _noMatchFallbackVowel;
 
     public bool UpdateTransform(PmxModelComponent component, float elapsedSeconds)
     {
@@ -136,6 +141,11 @@ public sealed class SpeechTransformUpdater : ITransformUpdater
         ResetVowelFaceTable();
         IsPlaying = _vowelSequence.Count > 0;
         _needsApplyFace = true;
+    }
+
+    public int CountRecognizedVowels(string text)
+    {
+        return BuildVowelSequence(text, includeNoMatchFallback: false).Count;
     }
 
     public void Start(bool reset = false)
@@ -245,7 +255,7 @@ public sealed class SpeechTransformUpdater : ITransformUpdater
         }
     }
 
-    private List<string> BuildVowelSequence(string sourceText)
+    private List<string> BuildVowelSequence(string sourceText, bool includeNoMatchFallback = true)
     {
         List<string> sequence = [];
         if (string.IsNullOrWhiteSpace(sourceText))
@@ -263,7 +273,33 @@ public sealed class SpeechTransformUpdater : ITransformUpdater
             }
         }
 
+        if (sequence.Count == 0
+            && includeNoMatchFallback
+            && !string.IsNullOrWhiteSpace(_noMatchFallbackVowel)
+            && _vowelFaceTable.ContainsKey(_noMatchFallbackVowel))
+        {
+            sequence.Add(_noMatchFallbackVowel);
+        }
+
         return sequence;
+    }
+
+    private static string? NormalizeJapaneseVowel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim() switch
+        {
+            "\u3042" => "\u3042",
+            "\u3044" => "\u3044",
+            "\u3046" => "\u3046",
+            "\u3048" => "\u3048",
+            "\u304A" => "\u304A",
+            _ => null
+        };
     }
 
     private void ApplyFace(PmxModelComponent component)

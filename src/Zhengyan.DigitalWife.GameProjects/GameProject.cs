@@ -347,9 +347,15 @@ public sealed class GameProjectLipSyncSettings
 
     public string DictionaryLanguage { get; set; } = "Chinese";
 
+    public List<string> DictionaryLanguages { get; set; } = [];
+
     public float MinFramePeriodMilliseconds { get; set; } = 70.0f;
 
     public float MaxFramePeriodMilliseconds { get; set; } = 320.0f;
+
+    public bool UseFallbackVowelOnNoMatch { get; set; }
+
+    public string NoMatchFallbackVowel { get; set; } = "\u3042";
 
     public Dictionary<string, string> VowelMorphMap { get; set; } = new()
     {
@@ -359,6 +365,128 @@ public sealed class GameProjectLipSyncSettings
         ["え"] = "え",
         ["お"] = "お"
     };
+
+    public IReadOnlyList<string> GetEffectiveDictionaryLanguages()
+    {
+        List<string> languages = [];
+        AddNormalizedLanguageValues(DictionaryLanguages, languages);
+        if (languages.Count == 0)
+        {
+            AddNormalizedLanguageValues(DictionaryLanguage, languages);
+        }
+
+        if (languages.Count == 0)
+        {
+            languages.Add("Chinese");
+        }
+
+        return languages;
+    }
+
+    public void SetEffectiveDictionaryLanguages(IEnumerable<string> languages)
+    {
+        ArgumentNullException.ThrowIfNull(languages);
+
+        List<string> normalized = [];
+        AddNormalizedLanguageValues(languages, normalized);
+        if (normalized.Count == 0)
+        {
+            normalized.Add("Chinese");
+        }
+
+        DictionaryLanguages = normalized;
+        DictionaryLanguage = normalized[0];
+    }
+
+    public string GetEffectiveNoMatchFallbackVowel()
+    {
+        return NormalizeJapaneseVowel(NoMatchFallbackVowel) ?? "\u3042";
+    }
+
+    private static void AddNormalizedLanguageValues(IEnumerable<string>? source, IList<string> target)
+    {
+        if (source is null)
+        {
+            return;
+        }
+
+        foreach (string value in source)
+        {
+            AddNormalizedLanguageValues(value, target);
+        }
+    }
+
+    private static void AddNormalizedLanguageValues(string? source, IList<string> target)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return;
+        }
+
+        string[] values = source.Split([',', ';', '|'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (values.Length == 0)
+        {
+            values = [source.Trim()];
+        }
+
+        foreach (string value in values)
+        {
+            string? normalized = NormalizeDictionaryLanguageName(value);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                continue;
+            }
+
+            bool alreadyExists = false;
+            foreach (string existing in target)
+            {
+                if (string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    alreadyExists = true;
+                    break;
+                }
+            }
+
+            if (!alreadyExists)
+            {
+                target.Add(normalized);
+            }
+        }
+    }
+
+    private static string? NormalizeDictionaryLanguageName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "zh" or "zh-cn" or "zh-hans" or "chinese" => "Chinese",
+            "ja" or "ja-jp" or "jp" or "japanese" => "Japanese",
+            "en" or "en-us" or "en-gb" or "english" => "English",
+            _ => null
+        };
+    }
+
+    private static string? NormalizeJapaneseVowel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim() switch
+        {
+            "\u3042" => "\u3042",
+            "\u3044" => "\u3044",
+            "\u3046" => "\u3046",
+            "\u3048" => "\u3048",
+            "\u304A" => "\u304A",
+            _ => null
+        };
+    }
 }
 
 public sealed class GameProjectScene

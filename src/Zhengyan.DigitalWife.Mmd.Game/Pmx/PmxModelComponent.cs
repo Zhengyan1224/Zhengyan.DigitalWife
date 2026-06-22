@@ -1327,9 +1327,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     public SpeechTransformUpdater CreateSpeechTransformUpdater(
         KanaDictionary kanaDictionary,
         VowelDictionary vowelDictionary,
-        IReadOnlyDictionary<string, string>? vowelMorphMap = null)
+        IReadOnlyDictionary<string, string>? vowelMorphMap = null,
+        string? noMatchFallbackVowel = null)
     {
-        SpeechTransformUpdater updater = new(kanaDictionary, vowelDictionary, vowelMorphMap);
+        SpeechTransformUpdater updater = new(kanaDictionary, vowelDictionary, vowelMorphMap, noMatchFallbackVowel);
         AddTransformUpdater(updater);
         return updater;
     }
