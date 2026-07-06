@@ -942,6 +942,22 @@ public sealed class WaterSurfaceSettings
 
     public bool MirrorReflectionEnabled { get; set; } = true;
 
+    public bool UnderwaterEffectEnabled { get; set; } = true;
+
+    public Vector3Dto UnderwaterTint { get; set; } = new(0.58f, 0.88f, 0.95f);
+
+    public Vector3Dto UnderwaterFogColor { get; set; } = new(0.02f, 0.20f, 0.28f);
+
+    public float UnderwaterFogDensity { get; set; } = 0.75f;
+
+    public float UnderwaterVisibilityDistance { get; set; } = 18.0f;
+
+    public float UnderwaterDistortionStrength { get; set; } = 0.010f;
+
+    public float UnderwaterCausticsStrength { get; set; } = 0.28f;
+
+    public float UnderwaterBubbleStrength { get; set; } = 0.18f;
+
     public bool EnableInteraction { get; set; }
 
     public float InteractionRadius { get; set; } = 0.8f;

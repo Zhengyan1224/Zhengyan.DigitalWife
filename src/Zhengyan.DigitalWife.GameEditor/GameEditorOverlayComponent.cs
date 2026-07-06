@@ -3993,6 +3993,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector3 reflectionTint = water.ReflectionTint.ToVector3();
         float skyReflectionStrength = water.SkyReflectionStrength;
         bool mirrorReflectionEnabled = water.MirrorReflectionEnabled;
+        bool underwaterEffectEnabled = water.UnderwaterEffectEnabled;
+        Vector3 underwaterTint = water.UnderwaterTint.ToVector3();
+        Vector3 underwaterFogColor = water.UnderwaterFogColor.ToVector3();
+        float underwaterFogDensity = water.UnderwaterFogDensity;
+        float underwaterVisibilityDistance = water.UnderwaterVisibilityDistance;
+        float underwaterDistortionStrength = water.UnderwaterDistortionStrength;
+        float underwaterCausticsStrength = water.UnderwaterCausticsStrength;
+        float underwaterBubbleStrength = water.UnderwaterBubbleStrength;
 
         changed |= ImGui.DragFloat("Water size", ref size, 0.5f, 0.1f, 10000.0f);
         changed |= ImGui.SliderFloat("Water alpha", ref alpha, 0.0f, 1.0f);
@@ -4002,6 +4010,18 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Mirror reflection", ref mirrorReflectionEnabled);
         changed |= ImGui.ColorEdit3("Reflection tint", ref reflectionTint);
         changed |= ImGui.SliderFloat("Sky reflection", ref skyReflectionStrength, 0.0f, 1.0f);
+        changed |= ImGui.Checkbox("Underwater effect", ref underwaterEffectEnabled);
+        if (underwaterEffectEnabled)
+        {
+            changed |= ImGui.ColorEdit3("Underwater tint", ref underwaterTint);
+            changed |= ImGui.ColorEdit3("Underwater fog color", ref underwaterFogColor);
+            changed |= ImGui.DragFloat("Underwater visibility", ref underwaterVisibilityDistance, 0.25f, 0.1f, 1000.0f, "%.2f");
+            changed |= ImGui.SliderFloat("Underwater fog density", ref underwaterFogDensity, 0.0f, 4.0f);
+            changed |= ImGui.SliderFloat("Underwater distortion", ref underwaterDistortionStrength, 0.0f, 0.05f, "%.3f");
+            changed |= ImGui.SliderFloat("Underwater caustics", ref underwaterCausticsStrength, 0.0f, 1.0f);
+            changed |= ImGui.SliderFloat("Underwater bubbles", ref underwaterBubbleStrength, 0.0f, 1.0f);
+        }
+
         bool enableInteraction = water.EnableInteraction;
         float interactionRadius = water.InteractionRadius;
         float interactionStrength = water.InteractionStrength;
@@ -4067,6 +4087,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.ReflectionTint = Vector3Dto.FromVector3(reflectionTint);
             water.SkyReflectionStrength = Math.Clamp(skyReflectionStrength, 0.0f, 1.0f);
             water.MirrorReflectionEnabled = mirrorReflectionEnabled;
+            water.UnderwaterEffectEnabled = underwaterEffectEnabled;
+            water.UnderwaterTint = Vector3Dto.FromVector3(underwaterTint);
+            water.UnderwaterFogColor = Vector3Dto.FromVector3(underwaterFogColor);
+            water.UnderwaterFogDensity = Math.Clamp(underwaterFogDensity, 0.0f, 4.0f);
+            water.UnderwaterVisibilityDistance = Math.Max(0.1f, underwaterVisibilityDistance);
+            water.UnderwaterDistortionStrength = Math.Clamp(underwaterDistortionStrength, 0.0f, 0.05f);
+            water.UnderwaterCausticsStrength = Math.Clamp(underwaterCausticsStrength, 0.0f, 1.0f);
+            water.UnderwaterBubbleStrength = Math.Clamp(underwaterBubbleStrength, 0.0f, 1.0f);
             water.EnableInteraction = enableInteraction;
             water.InteractionRadius = Math.Max(0.001f, interactionRadius);
             water.InteractionStrength = Math.Clamp(interactionStrength, 0.0f, 4.0f);

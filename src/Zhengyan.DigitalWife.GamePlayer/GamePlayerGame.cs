@@ -45,6 +45,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private SceneRenderTextureManager? _renderTextureManager;
     private PlanarReflectionRenderer? _planarReflectionRenderer;
     private ShadowMapRenderer? _shadowMapRenderer;
+    private UnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
     private SkyboxComponent? _skybox;
     private RuntimeScene? _runtimeScene;
     private RuntimeInput? _runtimeInput;
@@ -163,6 +164,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _shadowMapRenderer = new ShadowMapRenderer(this);
+        _underwaterPostProcessRenderer = new UnderwaterPostProcessRenderer(GraphicsDevice.Gl, "PlayerUnderwater");
 
         _desktopSpriteWindowDrag = AddComponent(new DesktopSpriteWindowDragComponent(() => Project.Window)
         {
@@ -274,9 +276,19 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        _camera.Width = width;
+        _camera.Height = height;
+        if (TryDrawUnderwaterCameraToBackBuffer(gameTime, _camera, 0, 0, width, height, scissorEnabled: false, GraphicsDevice.ClearColor))
+        {
+            _renderedSceneThisFrame = true;
+            return;
+        }
+
         ApplyRuntimeCamera(_camera);
-        RenderShadowMap(gameTime, GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
-        RenderPlanarWaterReflections(gameTime, _camera, GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
+        RenderShadowMap(gameTime, width, height);
+        RenderPlanarWaterReflections(gameTime, _camera, width, height);
     }
 
     private bool TryDrawCameraViewports(GameTime gameTime)
@@ -330,6 +342,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
             gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
             gl.Clear(Silk.NET.OpenGLES.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGLES.ClearBufferMask.DepthBufferBit | Silk.NET.OpenGLES.ClearBufferMask.StencilBufferBit);
+
+            if (TryDrawUnderwaterCameraToBackBuffer(gameTime, camera, x, y, width, height, scissorEnabled: true, clearColor))
+            {
+                continue;
+            }
 
             ApplyRuntimeCamera(camera);
             RenderShadowMap(
@@ -442,11 +459,172 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    private bool TryDrawUnderwaterCameraToBackBuffer(
+        GameTime gameTime,
+        OrbitCamera camera,
+        int x,
+        int y,
+        int width,
+        int height,
+        bool scissorEnabled,
+        Vector4 clearColor)
+    {
+        if (_underwaterPostProcessRenderer is null
+            || !TryResolveUnderwaterSettings(camera, out UnderwaterPostProcessSettings settings))
+        {
+            return false;
+        }
+
+        Silk.NET.OpenGLES.GL gl = GraphicsDevice.Gl;
+        DrawUnderwaterCamera(
+            gameTime,
+            camera,
+            width,
+            height,
+            settings,
+            clearColor,
+            () =>
+            {
+                gl.BindFramebuffer(Silk.NET.OpenGLES.GLEnum.Framebuffer, 0);
+                if (scissorEnabled)
+                {
+                    gl.Enable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+                    gl.Scissor(x, y, (uint)width, (uint)height);
+                }
+                else
+                {
+                    gl.Disable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+                }
+
+                gl.Viewport(x, y, (uint)width, (uint)height);
+            });
+        return true;
+    }
+
+    private void DrawUnderwaterCamera(
+        GameTime gameTime,
+        OrbitCamera camera,
+        int width,
+        int height,
+        UnderwaterPostProcessSettings settings,
+        Vector4 clearColor,
+        Action bindOutputTarget)
+    {
+        if (_underwaterPostProcessRenderer is null)
+        {
+            return;
+        }
+
+        Silk.NET.OpenGLES.GL gl = GraphicsDevice.Gl;
+        camera.Width = width;
+        camera.Height = height;
+
+        _underwaterPostProcessRenderer.BeginCapture(width, height);
+        gl.Disable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+        gl.Disable(Silk.NET.OpenGLES.GLEnum.StencilTest);
+        gl.ColorMask(true, true, true, true);
+        gl.DepthMask(true);
+        gl.StencilMask(0xFF);
+        gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
+        gl.Clear(Silk.NET.OpenGLES.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGLES.ClearBufferMask.DepthBufferBit | Silk.NET.OpenGLES.ClearBufferMask.StencilBufferBit);
+
+        ApplyRuntimeCamera(camera);
+        Action restoreCaptureTarget = () =>
+        {
+            _underwaterPostProcessRenderer.CaptureTarget.Bind();
+            gl.Disable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+        };
+        RenderShadowMap(gameTime, width, height, restoreCaptureTarget);
+        RenderPlanarWaterReflections(gameTime, camera, width, height, restoreCaptureTarget);
+        DrawSceneComponentsOnce(gameTime);
+
+        bindOutputTarget();
+        _underwaterPostProcessRenderer.Draw(camera, settings, gameTime.TotalSeconds, width, height);
+    }
+
+    private bool TryResolveUnderwaterSettings(OrbitCamera camera, out UnderwaterPostProcessSettings settings)
+    {
+        settings = default;
+        RuntimeWaterObject? activeWater = null;
+        float activeDepth = float.MaxValue;
+
+        foreach (RuntimeWaterObject waterObject in _waterObjects)
+        {
+            WaterSurfaceSettings water = waterObject.Definition.Water;
+            if (!water.UnderwaterEffectEnabled
+                || !waterObject.Component.Enabled
+                || !waterObject.Component.Visible
+                || !TryGetCameraWaterDepth(waterObject.Component, camera.Position, out float surfaceDepth))
+            {
+                continue;
+            }
+
+            if (surfaceDepth < activeDepth)
+            {
+                activeDepth = surfaceDepth;
+                activeWater = waterObject;
+            }
+        }
+
+        if (activeWater is null)
+        {
+            return false;
+        }
+
+        WaterSurfaceSettings settingsSource = activeWater.Definition.Water;
+        settings = CreateUnderwaterSettings(settingsSource, activeDepth);
+        return true;
+    }
+
+    private static bool TryGetCameraWaterDepth(WaterSurfaceComponent water, Vector3 cameraPosition, out float surfaceDepth)
+    {
+        surfaceDepth = 0.0f;
+        if (!Matrix4x4.Invert(water.World, out Matrix4x4 inverseWorld))
+        {
+            return false;
+        }
+
+        Vector3 localPosition = Vector3.Transform(cameraPosition, inverseWorld);
+        float halfSize = water.SurfaceSize * 0.5f;
+        if (MathF.Abs(localPosition.X) > halfSize
+            || MathF.Abs(localPosition.Z) > halfSize
+            || localPosition.Y >= -0.02f)
+        {
+            return false;
+        }
+
+        surfaceDepth = Math.Max(water.Position.Y - cameraPosition.Y, -localPosition.Y);
+        return surfaceDepth > 0.0f;
+    }
+
+    private static UnderwaterPostProcessSettings CreateUnderwaterSettings(WaterSurfaceSettings water, float surfaceDepth)
+    {
+        return new UnderwaterPostProcessSettings(
+            ClampVector3(water.UnderwaterTint.ToVector3(), 0.0f, 2.0f),
+            ClampVector3(water.UnderwaterFogColor.ToVector3(), 0.0f, 2.0f),
+            Math.Clamp(water.UnderwaterFogDensity, 0.0f, 4.0f),
+            Math.Max(water.UnderwaterVisibilityDistance, 0.1f),
+            Math.Clamp(water.UnderwaterDistortionStrength, 0.0f, 0.05f),
+            Math.Clamp(water.UnderwaterCausticsStrength, 0.0f, 1.0f),
+            Math.Clamp(water.UnderwaterBubbleStrength, 0.0f, 1.0f),
+            Math.Max(surfaceDepth, 0.0f));
+    }
+
+    private static Vector3 ClampVector3(Vector3 value, float min, float max)
+    {
+        return new Vector3(
+            Math.Clamp(value.X, min, max),
+            Math.Clamp(value.Y, min, max),
+            Math.Clamp(value.Z, min, max));
+    }
+
     protected override void UnloadContent()
     {
         ClearRuntimeScene();
         _shadowMapRenderer?.Dispose();
         _shadowMapRenderer = null;
+        _underwaterPostProcessRenderer?.Dispose();
+        _underwaterPostProcessRenderer = null;
         _planarReflectionRenderer?.Dispose();
         _planarReflectionRenderer = null;
         _renderTextureManager?.Dispose();
