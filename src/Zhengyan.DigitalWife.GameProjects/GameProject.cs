@@ -898,6 +898,8 @@ public sealed class ColliderSettings
 
     public string Shape { get; set; } = "capsule";
 
+    public string BoundBoneName { get; set; } = string.Empty;
+
     public Vector3Dto Position { get; set; } = new(0.0f, 1.0f, 0.0f);
 
     public Vector3Dto RotationDegrees { get; set; } = Vector3Dto.Zero;

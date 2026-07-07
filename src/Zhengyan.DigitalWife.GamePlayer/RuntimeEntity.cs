@@ -1670,6 +1670,18 @@ public sealed class RuntimeEntity
         return triangles.Count > 0;
     }
 
+    internal Matrix4x4 GetColliderParentWorld(ColliderSettings collider)
+    {
+        if (_model is not null
+            && !string.IsNullOrWhiteSpace(collider.BoundBoneName)
+            && _model.TryGetNodeWorld(collider.BoundBoneName, out Matrix4x4 boneWorld))
+        {
+            return boneWorld;
+        }
+
+        return CreateEntityWorld();
+    }
+
     internal void SyncFromModel()
     {
         if (_model is not null)
@@ -1744,6 +1756,13 @@ public sealed class RuntimeEntity
         return Matrix4x4.CreateScale(scale)
             * Matrix4x4.CreateFromQuaternion(ToQuaternion(collider.RotationDegrees.ToVector3()))
             * Matrix4x4.CreateTranslation(collider.Position.ToVector3());
+    }
+
+    private Matrix4x4 CreateEntityWorld()
+    {
+        return Matrix4x4.CreateScale(Scale)
+            * Matrix4x4.CreateFromQuaternion(Rotation)
+            * Matrix4x4.CreateTranslation(Position);
     }
 
     private static void AddTriangle(List<RuntimeMeshTriangle> triangles, Vector3 a, Vector3 b, Vector3 c)

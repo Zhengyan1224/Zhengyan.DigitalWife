@@ -1001,6 +1001,19 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         return true;
     }
 
+    public bool TryGetNodeWorld(string nodeName, out Matrix4x4 world)
+    {
+        world = default;
+        Zhengyan.DigitalWife.Mmd.MMDNode? node = FindNodeByName(nodeName);
+        if (node is null)
+        {
+            return false;
+        }
+
+        world = node.Global * World;
+        return true;
+    }
+
     public PmxNodeState GetNodeState(string nodeName)
     {
         if (!TryGetNodeState(nodeName, out PmxNodeState state))

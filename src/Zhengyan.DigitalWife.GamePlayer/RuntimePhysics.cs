@@ -66,7 +66,7 @@ public static class RuntimePhysics
                 continue;
             }
 
-            ColliderGeometry geometry = CollisionGeometry.CreateCollider(settings, entity.Position, entity.Rotation, entity.Scale);
+            ColliderGeometry geometry = CollisionGeometry.CreateCollider(settings, entity.GetColliderParentWorld(settings));
             yield return geometry.Shape == "box"
                 ? new RuntimeCollider(
                     geometry.Id,

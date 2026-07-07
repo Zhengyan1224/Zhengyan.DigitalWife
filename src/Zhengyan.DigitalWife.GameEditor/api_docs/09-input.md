@@ -13,6 +13,7 @@ keywords:
   - touch
   - gamepad
   - clipboard
+  - cursor
   - ray
 ---
 
@@ -24,9 +25,9 @@ keywords:
 | 模块 | Input 输入 |
 | 分类 | 输入 |
 | 主要对象 | ``RuntimeInput``, ``input``, ``TouchPoint`` |
-| C# 入口 | `Input.MouseX, Input.IsKeyDown, Input.PrimaryTouch, Scene.Camera.MousePointToRay` |
-| Python 入口 | `input.mouse_x, input.is_key_down, input.primary_touch, scene.camera.mouse_point_to_ray` |
-| 说明 | 键盘、鼠标、触屏、手柄、剪贴板，以及鼠标/触点生成射线。 |
+| C# 入口 | `Input.MouseX, Input.IsKeyDown, Input.SetCursorVisible, Scene.Camera.MousePointToRay` |
+| Python 入口 | `input.mouse_x, input.is_key_down, input.set_cursor_visible, scene.camera.mouse_point_to_ray` |
+| 说明 | 键盘、鼠标、鼠标光标显示、触屏、手柄、剪贴板，以及鼠标/触点生成射线。 |
 
 ## API 内容
 
@@ -42,6 +43,11 @@ Input.MouseDeltaX;
 Input.MouseDeltaY;
 Input.ScrollX;
 Input.ScrollY;
+Input.IsCursorVisible;
+Input.CursorVisible = false;
+Input.SetCursorVisible(true);
+Input.ShowCursor();
+Input.HideCursor();
 
 Input.IsAltDown;
 Input.IsControlDown;
@@ -86,6 +92,11 @@ input.mouse_delta_x
 input.mouse_delta_y
 input.scroll_x
 input.scroll_y
+input.is_cursor_visible
+input.cursor_visible
+input.set_cursor_visible(False)
+input.show_cursor()
+input.hide_cursor()
 
 input.alt_down
 input.control_down
@@ -130,6 +141,11 @@ input.set_clipboard_text("copied text")
 | `Input.MouseDeltaY` | `input.mouse_delta_y` | `float` | 当前帧与上一帧的鼠标 Y 位移。 |
 | `Input.ScrollX` | `input.scroll_x` | `float` | 当前帧横向滚轮增量。 |
 | `Input.ScrollY` | `input.scroll_y` | `float` | 当前帧纵向滚轮增量。 |
+| `Input.IsCursorVisible` | `input.is_cursor_visible` / `input.cursor_visible` | `bool` | 鼠标光标当前是否显示。 |
+| `Input.CursorVisible = value` | - | `bool` | C# 以属性形式显示或隐藏鼠标光标。 |
+| `Input.SetCursorVisible(value)` | `input.set_cursor_visible(value)` | `void` | 显示或隐藏鼠标光标。 |
+| `Input.TrySetCursorVisible(value)` | - | `bool` | C# 设置鼠标光标显示状态并返回是否成功。 |
+| `Input.ShowCursor()` / `Input.HideCursor()` | `input.show_cursor()` / `input.hide_cursor()` | `void` | 快捷显示或隐藏鼠标光标。 |
 | `Input.IsMouseButtonDown("left")` | `input.is_mouse_button_down("left")` | `bool` | 判断鼠标按钮是否按住。 |
 
 常用鼠标按钮名：
@@ -139,6 +155,30 @@ input.set_clipboard_text("copied text")
 - `middle` / `mousemiddle` / `button2` / `2`
 
 C# 也可以传入 Silk.NET `MouseButton` 枚举名称；Python 当前快照默认暴露 `left`、`right`、`middle`。
+
+鼠标光标显示控制会影响 GamePlayer 窗口内的系统鼠标光标，不改变鼠标坐标、按钮状态或 GUI 命中测试。Python 调用会提交运行时命令，并同步更新本次脚本对象中的 `input.is_cursor_visible` / `input.cursor_visible` 快照字段。
+
+### 鼠标光标显示示例
+```csharp
+if (IsStart)
+{
+    Input.HideCursor();
+}
+
+if (IsUpdate && Input.IsKeyDown("Escape"))
+{
+    Input.ShowCursor();
+}
+```
+
+```python
+def start(entity, scene, input, audio):
+    input.hide_cursor()
+
+def update(entity, scene, input, audio, delta_seconds):
+    if input.is_key_down("escape"):
+        input.show_cursor()
+```
 
 ### 鼠标射线示例
 ```csharp

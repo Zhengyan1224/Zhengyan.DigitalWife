@@ -78,6 +78,8 @@ public sealed class InputManager : IDisposable
 
     public bool IsTouchEnded { get; private set; }
 
+    public bool IsCursorVisible => GetCursorMode() is not CursorMode.Hidden and not CursorMode.Disabled and not CursorMode.Raw;
+
     public bool IsKeyDown(Key key) => _keyboard.IsKeyPressed(key);
 
     public bool IsMouseButtonDown(MouseButton button) => _mouse.IsButtonPressed(button);
@@ -104,6 +106,26 @@ public sealed class InputManager : IDisposable
         _cancelTouches = true;
     }
 
+    public bool TrySetCursorVisible(bool visible)
+    {
+        CursorMode mode = visible ? CursorMode.Normal : CursorMode.Hidden;
+        try
+        {
+            ICursor cursor = _mouse.Cursor;
+            if (!cursor.IsSupported(mode))
+            {
+                return false;
+            }
+
+            cursor.CursorMode = mode;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     internal void BeginFrame()
     {
         MousePosition = new Vector2(_mouse.Position.X, _mouse.Position.Y);
@@ -122,6 +144,18 @@ public sealed class InputManager : IDisposable
         _touchInputSource.Dispose();
         _inputContext.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private CursorMode GetCursorMode()
+    {
+        try
+        {
+            return _mouse.Cursor.CursorMode;
+        }
+        catch
+        {
+            return CursorMode.Normal;
+        }
     }
 
     private void CaptureGamepadState()

@@ -3058,6 +3058,58 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         return true;
     }
 
+    private bool DrawPmxBoneBindingCombo(GameEntity entity, ref string boundBoneName)
+    {
+        IReadOnlyList<string> bones = _editorGame.GetPmxBoneNames(entity);
+        string current = (boundBoneName ?? string.Empty).Trim();
+        bool hasMatchedBone = bones.Any(bone => string.Equals(bone, current, StringComparison.OrdinalIgnoreCase));
+        string preview = string.IsNullOrWhiteSpace(current)
+            ? "(entity transform)"
+            : hasMatchedBone ? current : $"Missing: {current}";
+        bool changed = false;
+
+        if (!ImGui.BeginCombo("Bound bone", preview))
+        {
+            return false;
+        }
+
+        bool entitySelected = string.IsNullOrWhiteSpace(current);
+        if (ImGui.Selectable("(entity transform)", entitySelected))
+        {
+            boundBoneName = string.Empty;
+            changed = !entitySelected;
+        }
+
+        if (entitySelected)
+        {
+            ImGui.SetItemDefaultFocus();
+        }
+
+        if (bones.Count == 0)
+        {
+            ImGui.TextDisabled("PMX bones unavailable.");
+        }
+
+        for (int i = 0; i < bones.Count; i++)
+        {
+            string bone = bones[i];
+            bool selected = string.Equals(bone, current, StringComparison.OrdinalIgnoreCase);
+            if (ImGui.Selectable($"{bone}##boundBone{i}", selected))
+            {
+                boundBoneName = bone;
+                changed = !selected;
+            }
+
+            if (selected)
+            {
+                ImGui.SetItemDefaultFocus();
+            }
+        }
+
+        ImGui.EndCombo();
+        return changed;
+    }
+
     private static string NormalizeChoice(string value, string fallback, string[] choices)
     {
         return choices.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? fallback;
@@ -3836,11 +3888,24 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 string shape = NormalizeChoice(collider.Shape, "capsule", ["capsule", "box", "mesh"]);
                 Vector3 position = collider.Position.ToVector3();
                 Vector3 rotation = collider.RotationDegrees.ToVector3();
+                string boundBoneName = collider.BoundBoneName;
                 bool changed = false;
 
                 changed |= ImGui.Checkbox("Enabled", ref enabled);
                 changed |= DrawTextInputWithPaste("Name", ref name, 256, "colliderName");
                 changed |= DrawStringCombo("Shape", ref shape, ["capsule", "box", "mesh"]);
+                bool canBindBone = string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(shape, "mesh", StringComparison.OrdinalIgnoreCase);
+                if (canBindBone)
+                {
+                    changed |= DrawPmxBoneBindingCombo(entity, ref boundBoneName);
+                }
+                else if (!string.IsNullOrWhiteSpace(boundBoneName))
+                {
+                    boundBoneName = string.Empty;
+                    changed = true;
+                }
+
                 changed |= ImGui.DragFloat3("Local position", ref position, 0.02f);
                 changed |= ImGui.DragFloat3("Local rotation", ref rotation, 0.5f);
 
@@ -3895,6 +3960,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     collider.Enabled = enabled;
                     collider.Name = string.IsNullOrWhiteSpace(name) ? $"Collider {i + 1}" : name;
                     collider.Shape = NormalizeChoice(shape, "capsule", ["capsule", "box", "mesh"]);
+                    collider.BoundBoneName = canBindBone ? boundBoneName.Trim() : string.Empty;
                     collider.Position = Vector3Dto.FromVector3(position);
                     collider.RotationDegrees = Vector3Dto.FromVector3(rotation);
                     _editorGame.ApplySelectedEntityToRuntime();
@@ -3917,7 +3983,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplySelectedEntityToRuntime();
         }
 
-        ImGui.TextWrapped("Colliders are local to the entity. Mesh Collider uses the entity mesh triangles for raycast, ground sampling and NavMesh baking.");
+        ImGui.TextWrapped("Colliders are local to the entity, or to a selected PMX bone when bone binding is set. Mesh Collider uses the entity mesh triangles for raycast, ground sampling and NavMesh baking.");
     }
 
     private void DrawRelationInspector(GameEntity entity)

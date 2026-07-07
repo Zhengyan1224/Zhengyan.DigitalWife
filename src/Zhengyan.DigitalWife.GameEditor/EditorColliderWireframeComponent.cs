@@ -102,7 +102,13 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
 
     private void RebuildGeometryIfNeeded()
     {
-        if (Game is null || _lastDebugDrawVersion == _editorGame.DebugDrawVersion)
+        if (Game is null)
+        {
+            return;
+        }
+
+        bool forceRebuild = _editorGame.HasBoneBoundColliders();
+        if (!forceRebuild && _lastDebugDrawVersion == _editorGame.DebugDrawVersion)
         {
             return;
         }
@@ -110,9 +116,6 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         List<float> vertices = [];
         foreach (GameEntity entity in _editorGame.Project.Scene.Entities)
         {
-            Vector3 position = entity.Transform.Position.ToVector3();
-            Quaternion rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
-            Vector3 scale = entity.Transform.Scale.ToVector3();
             foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(entity))
             {
                 if (!collider.Enabled)
@@ -120,20 +123,18 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
                     continue;
                 }
 
-                if (string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+                if (!_editorGame.TryCreateColliderGeometry(entity, collider, out ColliderGeometry geometry))
                 {
                     continue;
                 }
 
-                if (string.Equals(collider.Shape, "box", StringComparison.OrdinalIgnoreCase))
+                if (geometry.Shape == "box")
                 {
-                    BoxGeometry box = CollisionGeometry.CreateBox(collider, position, rotation, scale);
-                    AddBox(vertices, box, new Vector3(0.26f, 0.72f, 1.0f));
+                    AddBox(vertices, geometry.Box, new Vector3(0.26f, 0.72f, 1.0f));
                 }
                 else
                 {
-                    CapsuleGeometry capsule = CollisionGeometry.CreateCapsule(collider, position, rotation, scale);
-                    AddCapsule(vertices, capsule, new Vector3(1.0f, 0.84f, 0.16f));
+                    AddCapsule(vertices, geometry.Capsule, new Vector3(1.0f, 0.84f, 0.16f));
                 }
             }
         }
@@ -261,12 +262,6 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         vertices.Add(color.X);
         vertices.Add(color.Y);
         vertices.Add(color.Z);
-    }
-
-    private static Quaternion ToQuaternion(Vector3 degrees)
-    {
-        Vector3 radians = degrees * (MathF.PI / 180.0f);
-        return Quaternion.CreateFromYawPitchRoll(radians.Y, radians.X, radians.Z);
     }
 
     private const string VertexShaderSource = """

@@ -24,6 +24,14 @@ public sealed class RuntimeInput
 
     public float ScrollY => _game.Input.ScrollDelta.Y;
 
+    public bool IsCursorVisible => _game.Input.IsCursorVisible;
+
+    public bool CursorVisible
+    {
+        get => IsCursorVisible;
+        set => SetCursorVisible(value);
+    }
+
     public string ClipboardText
     {
         get => TryGetClipboardText(out string text) ? text : string.Empty;
@@ -87,6 +95,26 @@ public sealed class RuntimeInput
     public void SetClipboardText(string text)
     {
         _ = TrySetClipboardText(text);
+    }
+
+    public bool TrySetCursorVisible(bool visible)
+    {
+        return _game.Input.TrySetCursorVisible(visible);
+    }
+
+    public void SetCursorVisible(bool visible)
+    {
+        _ = TrySetCursorVisible(visible);
+    }
+
+    public void ShowCursor()
+    {
+        SetCursorVisible(true);
+    }
+
+    public void HideCursor()
+    {
+        SetCursorVisible(false);
     }
 
     public bool IsMouseButtonDown(string button)

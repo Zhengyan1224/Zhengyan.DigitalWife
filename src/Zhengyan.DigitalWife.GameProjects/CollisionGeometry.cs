@@ -58,6 +58,12 @@ public static class CollisionGeometry
             radius);
     }
 
+    public static CapsuleGeometry CreateCapsule(ColliderSettings settings, Matrix4x4 parentWorld)
+    {
+        DecomposeWorldTransform(parentWorld, out Vector3 position, out Quaternion rotation, out Vector3 scale);
+        return CreateCapsule(settings, position, rotation, scale);
+    }
+
     public static BoxGeometry CreateBox(
         ColliderSettings settings,
         Vector3 position,
@@ -81,6 +87,12 @@ public static class CollisionGeometry
             halfExtents);
     }
 
+    public static BoxGeometry CreateBox(ColliderSettings settings, Matrix4x4 parentWorld)
+    {
+        DecomposeWorldTransform(parentWorld, out Vector3 position, out Quaternion rotation, out Vector3 scale);
+        return CreateBox(settings, position, rotation, scale);
+    }
+
     public static ColliderGeometry CreateCollider(
         ColliderSettings settings,
         Vector3 position,
@@ -91,6 +103,12 @@ public static class CollisionGeometry
         return shape == "box"
             ? new ColliderGeometry(settings.Id, settings.Name, shape, default, CreateBox(settings, position, rotation, scale))
             : new ColliderGeometry(settings.Id, settings.Name, "capsule", CreateCapsule(settings, position, rotation, scale), default);
+    }
+
+    public static ColliderGeometry CreateCollider(ColliderSettings settings, Matrix4x4 parentWorld)
+    {
+        DecomposeWorldTransform(parentWorld, out Vector3 position, out Quaternion rotation, out Vector3 scale);
+        return CreateCollider(settings, position, rotation, scale);
     }
 
     public static bool TryRaycastCollider(
@@ -354,6 +372,26 @@ public static class CollisionGeometry
     private static Vector3 TransformDirection(Vector3 direction, Quaternion rotation, Vector3 scale)
     {
         return Vector3.Transform(direction * scale, rotation);
+    }
+
+    private static void DecomposeWorldTransform(Matrix4x4 world, out Vector3 position, out Quaternion rotation, out Vector3 scale)
+    {
+        if (!Matrix4x4.Decompose(world, out scale, out rotation, out position))
+        {
+            position = new Vector3(world.M41, world.M42, world.M43);
+            rotation = Quaternion.Identity;
+            scale = Vector3.One;
+            return;
+        }
+
+        if (rotation.LengthSquared() <= 0.000001f)
+        {
+            rotation = Quaternion.Identity;
+        }
+        else
+        {
+            rotation = Quaternion.Normalize(rotation);
+        }
     }
 
     private static Vector3 ResolveAxis(string axis)

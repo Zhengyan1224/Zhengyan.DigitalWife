@@ -1138,6 +1138,58 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ? Project.Scene.Entities[SelectedEntityIndex]
         : null;
 
+    public IReadOnlyList<string> GetPmxBoneNames(GameEntity entity)
+    {
+        return FindPmxRuntime(entity)?.Model.NodeNames ?? [];
+    }
+
+    internal bool TryCreateColliderGeometry(GameEntity entity, ColliderSettings collider, out ColliderGeometry geometry)
+    {
+        geometry = default;
+        if (string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        geometry = CollisionGeometry.CreateCollider(collider, GetColliderParentWorld(entity, collider));
+        return true;
+    }
+
+    internal Matrix4x4 GetColliderParentWorld(GameEntity entity, ColliderSettings collider)
+    {
+        if (string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(collider.BoundBoneName)
+            && FindPmxRuntime(entity)?.Model.TryGetNodeWorld(collider.BoundBoneName, out Matrix4x4 boneWorld) == true)
+        {
+            return boneWorld;
+        }
+
+        return CreateEntityWorld(entity);
+    }
+
+    internal bool HasBoneBoundColliders()
+    {
+        foreach (GameEntity entity in Project.Scene.Entities)
+        {
+            if (!string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (ColliderSettings collider in GameEntityCollision.GetEffectiveColliders(entity))
+            {
+                if (collider.Enabled
+                    && !string.IsNullOrWhiteSpace(collider.BoundBoneName)
+                    && !string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     public void RemoveSelectedEntity()
     {
         if (SelectedEntityIndex < 0 || SelectedEntityIndex >= Project.Scene.Entities.Count)
@@ -2352,19 +2404,15 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         return $"{waterEntity.Id}:{particleEntity.Id}:particle:{cellX}:{cellZ}";
     }
 
-    private static bool TryGetColliderApproximation(GameEntity entity, ColliderSettings collider, out Vector3 center, out float radius)
+    private bool TryGetColliderApproximation(GameEntity entity, ColliderSettings collider, out Vector3 center, out float radius)
     {
         center = default;
         radius = 0.0f;
-        if (string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+        if (!TryCreateColliderGeometry(entity, collider, out ColliderGeometry geometry))
         {
             return false;
         }
 
-        Vector3 position = entity.Transform.Position.ToVector3();
-        Quaternion rotation = ToQuaternion(entity.Transform.RotationDegrees.ToVector3());
-        Vector3 scale = entity.Transform.Scale.ToVector3();
-        ColliderGeometry geometry = CollisionGeometry.CreateCollider(collider, position, rotation, scale);
         if (geometry.Shape == "box")
         {
             center = geometry.Box.Center;
@@ -2375,6 +2423,18 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         center = geometry.Capsule.Center;
         radius = geometry.Capsule.Radius + (Vector3.Distance(geometry.Capsule.Start, geometry.Capsule.End) * 0.5f);
         return true;
+    }
+
+    private EditorPmxObject? FindPmxRuntime(GameEntity entity)
+    {
+        return _pmxObjects.FirstOrDefault(item => ReferenceEquals(item.Entity, entity));
+    }
+
+    private static Matrix4x4 CreateEntityWorld(GameEntity entity)
+    {
+        return Matrix4x4.CreateScale(entity.Transform.Scale.ToVector3())
+            * Matrix4x4.CreateFromQuaternion(ToQuaternion(entity.Transform.RotationDegrees.ToVector3()))
+            * Matrix4x4.CreateTranslation(entity.Transform.Position.ToVector3());
     }
 
     private void TryLoadAudioRuntime(AudioAsset audioAsset)

@@ -1285,6 +1285,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        if not collider.get("enabled", False):
                            continue
                        shape = str(collider.get("shape", "capsule")).lower()
+                       world = collider.get("world")
+                       if isinstance(world, dict):
+                           world_shape = str(world.get("shape", shape)).lower()
+                           if world_shape == "box" or world_shape == "capsule":
+                               result.append(world)
+                               continue
                        if shape == "box":
                            result.append(make_box(entity, collider))
                        elif shape == "mesh":
@@ -2943,6 +2949,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.mouse_delta_y = data.get("mouseDeltaY", 0)
                        self.scroll_x = data.get("scrollX", 0)
                        self.scroll_y = data.get("scrollY", 0)
+                       self.is_cursor_visible = bool(data.get("isCursorVisible", True))
+                       self.cursor_visible = self.is_cursor_visible
                        self.alt_down = bool(data.get("altDown", False))
                        self.control_down = bool(data.get("controlDown", False))
                        self.shift_down = bool(data.get("shiftDown", False))
@@ -2994,6 +3002,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.clipboard_text = value
                        self.has_clipboard_text = len(value) > 0
                        self._commands.append({"target": "input", "action": "set_clipboard_text", "text": value})
+
+                   def set_cursor_visible(self, visible):
+                       value = bool(visible)
+                       self.is_cursor_visible = value
+                       self.cursor_visible = value
+                       self._commands.append({"target": "input", "action": "set_cursor_visible", "flag": value})
+
+                   def show_cursor(self):
+                       self.set_cursor_visible(True)
+
+                   def hide_cursor(self):
+                       self.set_cursor_visible(False)
 
                class Audio:
                    def __init__(self, commands):
@@ -3811,6 +3831,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
         {
             case "set_clipboard_text" when command.Text is not null:
                 input.SetClipboardText(command.Text);
+                break;
+            case "set_cursor_visible" when command.Flag.HasValue:
+                input.SetCursorVisible(command.Flag.Value);
                 break;
         }
     }
@@ -4665,7 +4688,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public static PythonEntity FromRuntime(RuntimeEntity entity)
         {
-            PythonCollider[] colliders = entity.EffectiveColliders.Select(PythonCollider.FromSettings).ToArray();
+            PythonCollider[] colliders = entity.EffectiveColliders
+                .Select(collider => PythonCollider.FromRuntime(entity, collider))
+                .ToArray();
             return new PythonEntity
             {
                 Id = entity.Id,
@@ -4756,6 +4781,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string Shape { get; set; } = "capsule";
 
+        public string BoundBoneName { get; set; } = string.Empty;
+
         public float[] Center { get; set; } = [0.0f, 1.0f, 0.0f];
 
         public float[] Position { get; set; } = [0.0f, 1.0f, 0.0f];
@@ -4774,6 +4801,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float MaxSlopeDegrees { get; set; }
 
+        public PythonColliderGeometry? World { get; set; }
+
+        public static PythonCollider FromRuntime(RuntimeEntity entity, ColliderSettings collider)
+        {
+            PythonCollider snapshot = FromSettings(collider);
+            if (collider.Enabled && !string.Equals(collider.Shape, "mesh", StringComparison.OrdinalIgnoreCase))
+            {
+                ColliderGeometry geometry = CollisionGeometry.CreateCollider(collider, entity.GetColliderParentWorld(collider));
+                snapshot.World = PythonColliderGeometry.FromGeometry(geometry);
+            }
+
+            return snapshot;
+        }
+
         public static PythonCollider FromSettings(ColliderSettings collider)
         {
             return new PythonCollider
@@ -4782,6 +4823,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Name = collider.Name,
                 Enabled = collider.Enabled,
                 Shape = collider.Shape,
+                BoundBoneName = collider.BoundBoneName,
                 Center = [collider.Position.X, collider.Position.Y, collider.Position.Z],
                 Position = [collider.Position.X, collider.Position.Y, collider.Position.Z],
                 RotationDegrees = [collider.RotationDegrees.X, collider.RotationDegrees.Y, collider.RotationDegrees.Z],
@@ -4793,6 +4835,59 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 MaxSlopeDegrees = collider.MaxSlopeDegrees
             };
         }
+    }
+
+    private sealed class PythonColliderGeometry
+    {
+        public string Id { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string Shape { get; set; } = "capsule";
+
+        public float[] Center { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float[] Start { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float[] End { get; set; } = [0.0f, 0.0f, 0.0f];
+
+        public float Radius { get; set; }
+
+        public float[] AxisX { get; set; } = [1.0f, 0.0f, 0.0f];
+
+        public float[] AxisY { get; set; } = [0.0f, 1.0f, 0.0f];
+
+        public float[] AxisZ { get; set; } = [0.0f, 0.0f, 1.0f];
+
+        public float[] HalfExtents { get; set; } = [0.5f, 0.5f, 0.5f];
+
+        public static PythonColliderGeometry FromGeometry(ColliderGeometry geometry)
+        {
+            return geometry.Shape == "box"
+                ? new PythonColliderGeometry
+                {
+                    Id = geometry.Id,
+                    Name = geometry.Name,
+                    Shape = "box",
+                    Center = ToArray(geometry.Box.Center),
+                    AxisX = ToArray(geometry.Box.AxisX),
+                    AxisY = ToArray(geometry.Box.AxisY),
+                    AxisZ = ToArray(geometry.Box.AxisZ),
+                    HalfExtents = ToArray(geometry.Box.HalfExtents)
+                }
+                : new PythonColliderGeometry
+                {
+                    Id = geometry.Id,
+                    Name = geometry.Name,
+                    Shape = "capsule",
+                    Center = ToArray(geometry.Capsule.Center),
+                    Start = ToArray(geometry.Capsule.Start),
+                    End = ToArray(geometry.Capsule.End),
+                    Radius = geometry.Capsule.Radius
+                };
+        }
+
+        private static float[] ToArray(Vector3 value) => [value.X, value.Y, value.Z];
     }
 
     private sealed class PythonScene
@@ -5288,6 +5383,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float ScrollY { get; set; }
 
+        public bool IsCursorVisible { get; set; } = true;
+
         public bool AltDown { get; set; }
 
         public bool ControlDown { get; set; }
@@ -5349,6 +5446,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 MouseDeltaY = input.MouseDeltaY,
                 ScrollX = input.ScrollX,
                 ScrollY = input.ScrollY,
+                IsCursorVisible = input.IsCursorVisible,
                 AltDown = input.IsAltDown,
                 ControlDown = input.IsControlDown,
                 ShiftDown = input.IsShiftDown,
