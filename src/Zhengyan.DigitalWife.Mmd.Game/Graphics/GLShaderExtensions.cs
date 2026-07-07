@@ -11,10 +11,11 @@ public static unsafe class GLShaderExtensions
         gl.ShaderSource(shader, shaderSource);
         gl.CompileShader(shader);
 
-        string error = gl.GetShaderInfoLog(shader);
-        if (!string.IsNullOrEmpty(error))
+        gl.GetShader(shader, GLEnum.CompileStatus, out int status);
+        string log = gl.GetShaderInfoLog(shader);
+        if (status == 0)
         {
-            throw new InvalidOperationException($"{type}: {error}");
+            throw new InvalidOperationException($"{type}: {log}");
         }
 
         return shader;
@@ -30,10 +31,11 @@ public static unsafe class GLShaderExtensions
         gl.AttachShader(program, fragmentShader);
         gl.LinkProgram(program);
 
-        string error = gl.GetProgramInfoLog(program);
-        if (!string.IsNullOrEmpty(error))
+        gl.GetProgram(program, GLEnum.LinkStatus, out int status);
+        string log = gl.GetProgramInfoLog(program);
+        if (status == 0)
         {
-            throw new InvalidOperationException(error);
+            throw new InvalidOperationException(log);
         }
 
         gl.DetachShader(program, vertexShader);

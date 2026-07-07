@@ -737,6 +737,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private const string VertexShaderSource = """
 #version 300 es
 
+precision highp float;
+
 layout (location = 0) in vec3 in_Pos;
 layout (location = 1) in vec2 in_Uv;
 
@@ -813,9 +815,8 @@ void main()
 
     vec3 localPos = in_Pos + displacement;
     vec4 worldPos = u_World * vec4(localPos, 1.0);
-    mat3 normalMatrix = transpose(inverse(mat3(u_World)));
     vs_WorldPos = worldPos.xyz;
-    vs_GerstnerNormal = normalize(normalMatrix * localNormal);
+    vs_GerstnerNormal = normalize(mat3(u_World) * localNormal);
     vs_Uv = in_Uv * u_NormalTiling;
     vs_ReflectionClipPos = u_ReflectionViewProjection * worldPos;
     gl_Position = u_Projection * u_View * worldPos;
