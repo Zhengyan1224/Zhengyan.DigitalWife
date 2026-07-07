@@ -194,6 +194,7 @@ public sealed class RuntimeCamera
         _scene.MainCamera = camera.Name;
         _scene.Camera = camera.Camera;
         ApplyCameraSettings(_camera, camera.Camera);
+        _controller.ApplySettings(camera.Camera);
         _renderTextureManager?.SyncCameras(_camera);
     }
 
@@ -345,6 +346,16 @@ public sealed class RuntimeCamera
     public void UseFpsMode(string target, float eyeHeight = 1.65f, float smoothing = 18.0f)
     {
         UseFirstPersonMode(target, eyeHeight, smoothing);
+    }
+
+    public void UseFpsControlMode(string target, float eyeHeight = 1.65f, float smoothing = 18.0f, float mouseSensitivity = 0.15f)
+    {
+        _controller.FpsControl(target, eyeHeight, smoothing, mouseSensitivity);
+    }
+
+    public void UseLockedFpsMode(string target, float eyeHeight = 1.65f, float smoothing = 18.0f, float mouseSensitivity = 0.15f)
+    {
+        UseFpsControlMode(target, eyeHeight, smoothing, mouseSensitivity);
     }
 
     public void UseFreeFlyMode(float moveSpeed = 5.0f, float mouseSensitivity = 0.15f)

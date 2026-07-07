@@ -1617,6 +1617,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def use_first_person_mode(self, target, eye_height=1.65, smoothing=18.0):
                        self.use_fps_mode(target, eye_height, smoothing)
 
+                   def use_fps_control_mode(self, target, eye_height=1.65, smoothing=18.0, mouse_sensitivity=0.15):
+                       self._commands.append({"target": "camera", "action": "use_fps_control_mode", "targetEntity": target, "height": eye_height, "smoothing": smoothing, "mouseSensitivity": mouse_sensitivity})
+
+                   def use_locked_fps_mode(self, target, eye_height=1.65, smoothing=18.0, mouse_sensitivity=0.15):
+                       self.use_fps_control_mode(target, eye_height, smoothing, mouse_sensitivity)
+
                    def use_free_fly_mode(self, move_speed=5.0, mouse_sensitivity=0.15):
                        self._commands.append({"target": "camera", "action": "use_free_fly_mode", "moveSpeed": move_speed, "mouseSensitivity": mouse_sensitivity})
 
@@ -2951,6 +2957,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.scroll_y = data.get("scrollY", 0)
                        self.is_cursor_visible = bool(data.get("isCursorVisible", True))
                        self.cursor_visible = self.is_cursor_visible
+                       self.is_cursor_locked = bool(data.get("isCursorLocked", False))
+                       self.cursor_locked = self.is_cursor_locked
+                       self.is_raw_mouse_input = bool(data.get("isRawMouseInput", False))
+                       self.cursor_mode = str(data.get("cursorMode", "normal") or "normal")
                        self.alt_down = bool(data.get("altDown", False))
                        self.control_down = bool(data.get("controlDown", False))
                        self.shift_down = bool(data.get("shiftDown", False))
@@ -3007,6 +3017,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        value = bool(visible)
                        self.is_cursor_visible = value
                        self.cursor_visible = value
+                       self.is_cursor_locked = False
+                       self.cursor_locked = False
+                       self.is_raw_mouse_input = False
+                       self.cursor_mode = "normal" if value else "hidden"
                        self._commands.append({"target": "input", "action": "set_cursor_visible", "flag": value})
 
                    def show_cursor(self):
@@ -3014,6 +3028,23 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def hide_cursor(self):
                        self.set_cursor_visible(False)
+
+                   def set_cursor_locked(self, locked, raw_input=False):
+                       value = bool(locked)
+                       raw = bool(raw_input)
+                       self.is_cursor_locked = value
+                       self.cursor_locked = value
+                       self.is_cursor_visible = False if value else True
+                       self.cursor_visible = self.is_cursor_visible
+                       self.is_raw_mouse_input = value and raw
+                       self.cursor_mode = "raw" if value and raw else ("disabled" if value else "normal")
+                       self._commands.append({"target": "input", "action": "set_cursor_locked", "flag": value, "rawInput": raw})
+
+                   def lock_cursor(self, raw_input=False):
+                       self.set_cursor_locked(True, raw_input)
+
+                   def unlock_cursor(self):
+                       self.set_cursor_locked(False)
 
                class Audio:
                    def __init__(self, commands):
@@ -3329,6 +3360,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     command.TargetEntity!,
                     (float)(command.Height ?? 1.65),
                     (float)(command.Smoothing ?? 18.0));
+                break;
+            case "use_fps_control_mode" when !string.IsNullOrWhiteSpace(command.TargetEntity):
+            case "use_locked_fps_mode" when !string.IsNullOrWhiteSpace(command.TargetEntity):
+                camera.UseFpsControlMode(
+                    command.TargetEntity!,
+                    (float)(command.Height ?? 1.65),
+                    (float)(command.Smoothing ?? 18.0),
+                    (float)(command.MouseSensitivity ?? 0.15));
                 break;
             case "use_free_fly_mode":
                 camera.UseFreeFlyMode(
@@ -3834,6 +3873,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_cursor_visible" when command.Flag.HasValue:
                 input.SetCursorVisible(command.Flag.Value);
+                break;
+            case "set_cursor_locked" when command.Flag.HasValue:
+                input.SetCursorLocked(command.Flag.Value, command.RawInput ?? false);
                 break;
         }
     }
@@ -5385,6 +5427,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool IsCursorVisible { get; set; } = true;
 
+        public bool IsCursorLocked { get; set; }
+
+        public bool IsRawMouseInput { get; set; }
+
+        public string CursorMode { get; set; } = "normal";
+
         public bool AltDown { get; set; }
 
         public bool ControlDown { get; set; }
@@ -5447,6 +5495,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 ScrollX = input.ScrollX,
                 ScrollY = input.ScrollY,
                 IsCursorVisible = input.IsCursorVisible,
+                IsCursorLocked = input.IsCursorLocked,
+                IsRawMouseInput = input.IsRawMouseInput,
+                CursorMode = input.CursorMode,
                 AltDown = input.IsAltDown,
                 ControlDown = input.IsControlDown,
                 ShiftDown = input.IsShiftDown,
@@ -5645,6 +5696,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public bool? Flag { get; set; }
 
         public bool? RequireRightMouse { get; set; }
+
+        public bool? RawInput { get; set; }
 
         public string? Text { get; set; }
 

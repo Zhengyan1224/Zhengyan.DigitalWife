@@ -34,6 +34,23 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private bool _copyAssets = true;
     private int _preferredLanguageIndex;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] CameraControlModes =
+    [
+        "editor",
+        "fixed",
+        "first_person",
+        "fps_control",
+        "third_person",
+        "shoulder",
+        "lock_on",
+        "free_fly",
+        "top_down",
+        "isometric",
+        "side_scroller",
+        "cinematic_follow",
+        "orbital_follow",
+        "custom"
+    ];
 
     public bool CanInteractWithScenePointer => _isViewportHovered;
 
@@ -2057,6 +2074,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             cameraChanged = true;
         }
 
+        cameraChanged |= DrawCameraControlSettings(scene.Camera, "sceneCameraControl");
         cameraChanged |= ImGui.SliderFloat("FOV", ref fov, 10.0f, 90.0f);
         cameraChanged |= ImGui.DragFloat("Orthographic size", ref orthographicSize, 0.05f, 0.01f, 10000.0f);
         cameraChanged |= ImGui.DragFloat("Near clip", ref nearClipPlane, 0.01f, 0.001f, 10000.0f);
@@ -2157,6 +2175,19 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 {
                     Position = scene.Camera.Position,
                     Target = scene.Camera.Target,
+                    ControlMode = scene.Camera.ControlMode,
+                    TargetEntity = scene.Camera.TargetEntity,
+                    SubjectEntity = scene.Camera.SubjectEntity,
+                    Distance = scene.Camera.Distance,
+                    Height = scene.Camera.Height,
+                    ShoulderOffset = scene.Camera.ShoulderOffset,
+                    Smoothing = scene.Camera.Smoothing,
+                    MoveSpeed = scene.Camera.MoveSpeed,
+                    MouseSensitivity = scene.Camera.MouseSensitivity,
+                    SafeRadius = scene.Camera.SafeRadius,
+                    AutoOrbitSpeed = scene.Camera.AutoOrbitSpeed,
+                    EnableMouseLook = scene.Camera.EnableMouseLook,
+                    RequireRightMouseForMouseLook = scene.Camera.RequireRightMouseForMouseLook,
                     ProjectionMode = scene.Camera.ProjectionMode,
                     Fov = scene.Camera.Fov,
                     OrthographicSize = scene.Camera.OrthographicSize,
@@ -2199,6 +2230,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     changed = true;
                 }
 
+                changed |= DrawCameraControlSettings(camera.Camera, $"cameraControl{i}");
                 changed |= ImGui.SliderFloat("FOV", ref fov, 10.0f, 90.0f);
                 changed |= ImGui.DragFloat("Orthographic size", ref orthoSize, 0.05f, 0.01f, 10000.0f);
                 changed |= ImGui.DragFloat("Near clip", ref nearClip, 0.01f, 0.001f, 10000.0f);
@@ -2376,6 +2408,83 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         return normalized is "orthographic" or "ortho"
             ? "orthographic"
             : "perspective";
+    }
+
+    private bool DrawCameraControlSettings(CameraSettings camera, string id)
+    {
+        ImGui.PushID(id);
+        string controlMode = NormalizeCameraControlMode(camera.ControlMode);
+        string targetEntity = camera.TargetEntity;
+        string subjectEntity = camera.SubjectEntity;
+        float distance = camera.Distance;
+        float height = camera.Height;
+        float shoulderOffset = camera.ShoulderOffset;
+        float smoothing = camera.Smoothing;
+        float moveSpeed = camera.MoveSpeed;
+        float mouseSensitivity = camera.MouseSensitivity;
+        float safeRadius = camera.SafeRadius;
+        float autoOrbitSpeed = camera.AutoOrbitSpeed;
+        bool enableMouseLook = camera.EnableMouseLook;
+        bool requireRightMouse = camera.RequireRightMouseForMouseLook;
+        bool changed = false;
+
+        changed |= DrawStringCombo("Control mode", ref controlMode, CameraControlModes);
+        if (ImGui.TreeNode("Runtime control"))
+        {
+            changed |= DrawTextInputWithPaste("Target entity", ref targetEntity, 256, "cameraControlTarget");
+            changed |= DrawTextInputWithPaste("Subject entity", ref subjectEntity, 256, "cameraControlSubject");
+            changed |= ImGui.DragFloat("Distance", ref distance, 0.05f, 0.01f, 10000.0f);
+            changed |= ImGui.DragFloat("Height / eye height", ref height, 0.05f, -10000.0f, 10000.0f);
+            changed |= ImGui.DragFloat("Shoulder offset", ref shoulderOffset, 0.05f, -1000.0f, 1000.0f);
+            changed |= ImGui.DragFloat("Smoothing", ref smoothing, 0.05f, 0.0f, 120.0f);
+            changed |= ImGui.DragFloat("Move speed", ref moveSpeed, 0.05f, 0.0f, 1000.0f);
+            changed |= ImGui.DragFloat("Mouse sensitivity", ref mouseSensitivity, 0.005f, 0.0f, 10.0f);
+            changed |= ImGui.SliderFloat("Safe radius", ref safeRadius, 0.0f, 0.45f);
+            changed |= ImGui.DragFloat("Auto orbit speed", ref autoOrbitSpeed, 0.5f, -360.0f, 360.0f);
+            changed |= ImGui.Checkbox("Mouse look", ref enableMouseLook);
+            changed |= ImGui.Checkbox("Require right mouse", ref requireRightMouse);
+            ImGui.TreePop();
+        }
+
+        if (changed)
+        {
+            camera.ControlMode = NormalizeCameraControlMode(controlMode);
+            camera.TargetEntity = targetEntity.Trim();
+            camera.SubjectEntity = subjectEntity.Trim();
+            camera.Distance = Math.Max(0.01f, distance);
+            camera.Height = height;
+            camera.ShoulderOffset = shoulderOffset;
+            camera.Smoothing = Math.Max(0.0f, smoothing);
+            camera.MoveSpeed = Math.Max(0.0f, moveSpeed);
+            camera.MouseSensitivity = Math.Max(0.0f, mouseSensitivity);
+            camera.SafeRadius = Math.Clamp(safeRadius, 0.0f, 0.45f);
+            camera.AutoOrbitSpeed = autoOrbitSpeed;
+            camera.EnableMouseLook = enableMouseLook;
+            camera.RequireRightMouseForMouseLook = requireRightMouse;
+        }
+
+        ImGui.PopID();
+        return changed;
+    }
+
+    private static string NormalizeCameraControlMode(string controlMode)
+    {
+        string normalized = (controlMode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized switch
+        {
+            "firstperson" or "first_person" or "fp" or "fps" => "first_person",
+            "fpscontrol" or "fps_control" or "locked_fps" or "fps_locked" or "first_person_control" or "firstpersoncontrol" => "fps_control",
+            "thirdperson" or "third_person" or "third_person_follow" or "tps" or "tp" => "third_person",
+            "lockon" or "hard_lock" => "lock_on",
+            "fly" or "flycam" or "free" => "free_fly",
+            "topdown" => "top_down",
+            "side" or "side_scroller" or "sidescroller" or "side_scroll" => "side_scroller",
+            "cinematic" or "cinematic_follow" or "smooth_follow" => "cinematic_follow",
+            "orbital" or "orbital_follow" or "auto_orbit" => "orbital_follow",
+            "static" => "fixed",
+            "script" or "scripted" => "custom",
+            _ => CameraControlModes.Contains(normalized) ? normalized : "editor"
+        };
     }
 
     private void DrawLoadingScreenInspector(GameProjectScene scene)

@@ -14,8 +14,12 @@ public sealed class InputManager : IDisposable
     private readonly List<TouchPoint> _touches = [];
     private readonly ITouchInputSource _touchInputSource;
     private Vector2 _pendingScrollDelta;
+    private Vector2 _pendingMouseDelta;
     private Vector2 _lastMousePosition;
+    private Vector2 _eventMousePosition;
     private IGamepad? _gamepad;
+    private bool _hasPendingMouseDelta;
+    private bool _hasMouseMoveEvent;
     private bool _cancelTouches;
 
     public InputManager(IInputContext inputContext, IWindow window)
@@ -28,6 +32,24 @@ public sealed class InputManager : IDisposable
             ? inputContext.Keyboards[0]
             : throw new InvalidOperationException("No keyboard device is available.");
 
+        Vector2 initialMousePosition = new(_mouse.Position.X, _mouse.Position.Y);
+        MousePosition = initialMousePosition;
+        _lastMousePosition = initialMousePosition;
+        _eventMousePosition = initialMousePosition;
+        _hasMouseMoveEvent = true;
+
+        _mouse.MouseMove += (_, position) =>
+        {
+            Vector2 current = new(position.X, position.Y);
+            if (_hasMouseMoveEvent)
+            {
+                _pendingMouseDelta += current - _eventMousePosition;
+                _hasPendingMouseDelta = true;
+            }
+
+            _eventMousePosition = current;
+            _hasMouseMoveEvent = true;
+        };
         _mouse.Scroll += (_, wheel) => _pendingScrollDelta += new Vector2(wheel.X, wheel.Y);
         _touchInputSource = TouchInputSourceFactory.Create(window);
     }
@@ -80,6 +102,12 @@ public sealed class InputManager : IDisposable
 
     public bool IsCursorVisible => GetCursorMode() is not CursorMode.Hidden and not CursorMode.Disabled and not CursorMode.Raw;
 
+    public bool IsCursorLocked => GetCursorMode() is CursorMode.Disabled or CursorMode.Raw;
+
+    public bool IsRawMouseInput => GetCursorMode() is CursorMode.Raw;
+
+    public string CursorModeName => ToCursorModeName(GetCursorMode());
+
     public bool IsKeyDown(Key key) => _keyboard.IsKeyPressed(key);
 
     public bool IsMouseButtonDown(MouseButton button) => _mouse.IsButtonPressed(button);
@@ -108,16 +136,43 @@ public sealed class InputManager : IDisposable
 
     public bool TrySetCursorVisible(bool visible)
     {
-        CursorMode mode = visible ? CursorMode.Normal : CursorMode.Hidden;
+        CursorMode mode = visible ? Silk.NET.Input.CursorMode.Normal : Silk.NET.Input.CursorMode.Hidden;
+        return TrySetCursorMode(mode);
+    }
+
+    public bool TrySetCursorLocked(bool locked, bool rawInput = false)
+    {
+        if (!locked)
+        {
+            return TrySetCursorMode(Silk.NET.Input.CursorMode.Normal);
+        }
+
+        CursorMode mode = rawInput ? Silk.NET.Input.CursorMode.Raw : Silk.NET.Input.CursorMode.Disabled;
+        if (TrySetCursorMode(mode))
+        {
+            return true;
+        }
+
+        return rawInput && TrySetCursorMode(Silk.NET.Input.CursorMode.Disabled);
+    }
+
+    private bool TrySetCursorMode(CursorMode mode)
+    {
         try
         {
             ICursor cursor = _mouse.Cursor;
+            if (cursor.CursorMode == mode)
+            {
+                return true;
+            }
+
             if (!cursor.IsSupported(mode))
             {
                 return false;
             }
 
             cursor.CursorMode = mode;
+            ResetMouseTracking();
             return true;
         }
         catch
@@ -129,8 +184,11 @@ public sealed class InputManager : IDisposable
     internal void BeginFrame()
     {
         MousePosition = new Vector2(_mouse.Position.X, _mouse.Position.Y);
-        MouseDelta = MousePosition - _lastMousePosition;
+        Vector2 positionDelta = MousePosition - _lastMousePosition;
+        MouseDelta = _hasPendingMouseDelta ? _pendingMouseDelta : positionDelta;
         _lastMousePosition = MousePosition;
+        _pendingMouseDelta = Vector2.Zero;
+        _hasPendingMouseDelta = false;
 
         ScrollDelta = _pendingScrollDelta;
         _pendingScrollDelta = Vector2.Zero;
@@ -156,6 +214,30 @@ public sealed class InputManager : IDisposable
         {
             return CursorMode.Normal;
         }
+    }
+
+    private void ResetMouseTracking()
+    {
+        Vector2 current = new(_mouse.Position.X, _mouse.Position.Y);
+        MousePosition = current;
+        MouseDelta = Vector2.Zero;
+        _lastMousePosition = current;
+        _eventMousePosition = current;
+        _pendingMouseDelta = Vector2.Zero;
+        _hasPendingMouseDelta = false;
+        _hasMouseMoveEvent = true;
+    }
+
+    private static string ToCursorModeName(CursorMode mode)
+    {
+        return mode switch
+        {
+            CursorMode.Normal => "normal",
+            CursorMode.Hidden => "hidden",
+            CursorMode.Disabled => "disabled",
+            CursorMode.Raw => "raw",
+            _ => mode.ToString().ToLowerInvariant()
+        };
     }
 
     private void CaptureGamepadState()

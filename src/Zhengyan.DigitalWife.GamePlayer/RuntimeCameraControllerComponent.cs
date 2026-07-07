@@ -1,5 +1,6 @@
 using System.Numerics;
 using Silk.NET.Input;
+using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
@@ -19,6 +20,7 @@ internal sealed class RuntimeCameraControllerComponent(
     private float _pitchDegrees = 15.0f;
     private Vector3 _followOffset = new(0.0f, 1.8f, 5.0f);
     private float _autoOrbitSpeedDegrees = 30.0f;
+    private bool _cursorLockedByController;
 
     public string Mode { get; private set; } = "editor";
 
@@ -52,6 +54,10 @@ internal sealed class RuntimeCameraControllerComponent(
 
     public bool RequireRightMouseForMouseLook { get; set; } = true;
 
+    public bool LockCursorInFpsControl { get; set; } = true;
+
+    public bool UseRawMouseInputForFpsControl { get; set; }
+
     public Func<bool>? CanProcessMouseDrag { get; set; }
 
     public float YawDegrees => _yawDegrees;
@@ -73,8 +79,15 @@ internal sealed class RuntimeCameraControllerComponent(
     public void SetMode(string mode)
     {
         string normalized = NormalizeMode(mode);
+        string previous = Mode;
         Mode = normalized;
         SyncAnglesFromCamera();
+        if (!string.Equals(previous, normalized, StringComparison.Ordinal))
+        {
+            _dragFirstMove = true;
+            ApplyCursorLockForCurrentMode();
+        }
+
         if (normalized == "fixed")
         {
             _fixedPosition = _camera.Position;
@@ -155,6 +168,62 @@ internal sealed class RuntimeCameraControllerComponent(
         }
     }
 
+    public void ApplySettings(CameraSettings settings)
+    {
+        SetMouseLook(settings.EnableMouseLook, settings.RequireRightMouseForMouseLook);
+        string mode = NormalizeMode(settings.ControlMode);
+        switch (mode)
+        {
+            case "fps_control":
+                FpsControl(settings.TargetEntity, settings.Height, settings.Smoothing, settings.MouseSensitivity);
+                break;
+            case "fps":
+                FirstPerson(settings.TargetEntity, settings.Height, settings.Smoothing);
+                break;
+            case "tps":
+            case "third_person":
+                ThirdPerson(settings.TargetEntity, settings.Distance, settings.Height, settings.ShoulderOffset, settings.Smoothing);
+                break;
+            case "shoulder":
+                Shoulder(settings.TargetEntity, settings.Distance, settings.Height, settings.ShoulderOffset, settings.Smoothing);
+                break;
+            case "lock_on":
+            case "lockon":
+                LockOn(settings.SubjectEntity, settings.TargetEntity, settings.Distance, settings.Height, settings.Smoothing, settings.SafeRadius);
+                break;
+            case "free_fly":
+            case "fly":
+                FreeFly(settings.MoveSpeed, settings.MouseSensitivity);
+                SetMouseLook(settings.EnableMouseLook, settings.RequireRightMouseForMouseLook);
+                break;
+            case "top_down":
+                TopDown(settings.TargetEntity, settings.Height, settings.Smoothing);
+                break;
+            case "isometric":
+                Isometric(settings.TargetEntity, settings.Distance, settings.Height, settings.Smoothing);
+                break;
+            case "side_scroller":
+                SideScroller(settings.TargetEntity, settings.Distance, settings.Height, settings.Smoothing);
+                break;
+            case "cinematic_follow":
+                CinematicFollow(settings.TargetEntity, FollowOffset, settings.Height, settings.Smoothing);
+                break;
+            case "orbital_follow":
+                OrbitalFollow(settings.TargetEntity, settings.Distance, settings.Height, settings.AutoOrbitSpeed, settings.Smoothing);
+                break;
+            case "fixed":
+                SetMode("fixed");
+                break;
+            case "custom":
+                Custom();
+                break;
+            case "editor":
+            default:
+                EditorOrbit(OrbitSensitivity, PanSensitivity, ZoomSensitivity);
+                break;
+        }
+    }
+
     public void ThirdPerson(string target, float distance, float height, float shoulderOffset, float smoothing)
     {
         SetMode("tps");
@@ -182,6 +251,14 @@ internal sealed class RuntimeCameraControllerComponent(
         SetMode("fps");
         SetTarget(target);
         Configure(distance: 0.01f, height: eyeHeight, shoulderOffset: 0.0f, smoothing: smoothing);
+    }
+
+    public void FpsControl(string target, float eyeHeight, float smoothing, float mouseSensitivity)
+    {
+        SetMode("fps_control");
+        SetTarget(target);
+        Configure(distance: 0.01f, height: eyeHeight, shoulderOffset: 0.0f, smoothing: smoothing, mouseSensitivity: mouseSensitivity);
+        SetMouseLook(enabled: true, requireRightMouse: false);
     }
 
     public void FreeFly(float moveSpeed, float mouseSensitivity)
@@ -263,6 +340,7 @@ internal sealed class RuntimeCameraControllerComponent(
 
         _camera.Width = Math.Max(Game.GraphicsDevice.BackBufferSize.X, 1);
         _camera.Height = Math.Max(Game.GraphicsDevice.BackBufferSize.Y, 1);
+        ApplyCursorLockForCurrentMode();
 
         float dt = Math.Max(0.0f, (float)gameTime.ElapsedSeconds);
         switch (Mode)
@@ -276,6 +354,9 @@ internal sealed class RuntimeCameraControllerComponent(
             case "fps":
             case "first_person":
                 UpdateFirstPerson(dt);
+                return;
+            case "fps_control":
+                UpdateFpsControl(dt);
                 return;
             case "tps":
             case "third_person":
@@ -377,6 +458,20 @@ internal sealed class RuntimeCameraControllerComponent(
         }
 
         UpdateMouseLook(allowPitch: true);
+        Vector3 position = target.Position + new Vector3(0.0f, Height, 0.0f);
+        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
+        ApplyLookAt(position, position + forward, dt);
+    }
+
+    private void UpdateFpsControl(float dt)
+    {
+        RuntimeEntity? target = ResolveTarget();
+        if (target is null)
+        {
+            return;
+        }
+
+        UpdateMouseLook(allowPitch: true, requireRightMouse: false, preferRelativeDelta: true);
         Vector3 position = target.Position + new Vector3(0.0f, Height, 0.0f);
         Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
         ApplyLookAt(position, position + forward, dt);
@@ -586,7 +681,7 @@ internal sealed class RuntimeCameraControllerComponent(
         _camera.SetLookAt(position, target);
     }
 
-    private void UpdateMouseLook(bool allowPitch)
+    private void UpdateMouseLook(bool allowPitch, bool? requireRightMouse = null, bool preferRelativeDelta = false)
     {
         if (Game is null || !EnableMouseLook || CanProcessMouseDrag?.Invoke() == false)
         {
@@ -594,22 +689,38 @@ internal sealed class RuntimeCameraControllerComponent(
             return;
         }
 
-        if (RequireRightMouseForMouseLook && !IsMouseButtonEffectivelyDown(MouseButton.Right))
+        bool shouldRequireRightMouse = requireRightMouse ?? RequireRightMouseForMouseLook;
+        if (shouldRequireRightMouse && !IsMouseButtonEffectivelyDown(MouseButton.Right))
         {
             _dragFirstMove = true;
             return;
         }
 
-        Vector2 current = GetEffectiveMousePosition();
-        if (_dragFirstMove)
+        Vector2 delta;
+        if (preferRelativeDelta || Game.Input.IsCursorLocked)
         {
+            delta = Game.Input.MouseDelta;
+            if (_dragFirstMove)
+            {
+                _lastMousePosition = GetEffectiveMousePosition();
+                _dragFirstMove = false;
+                return;
+            }
+        }
+        else
+        {
+            Vector2 current = GetEffectiveMousePosition();
+            if (_dragFirstMove)
+            {
+                _lastMousePosition = current;
+                _dragFirstMove = false;
+                return;
+            }
+
+            delta = current - _lastMousePosition;
             _lastMousePosition = current;
-            _dragFirstMove = false;
-            return;
         }
 
-        Vector2 delta = current - _lastMousePosition;
-        _lastMousePosition = current;
         _yawDegrees += delta.X * MouseSensitivity;
         if (allowPitch)
         {
@@ -720,6 +831,28 @@ internal sealed class RuntimeCameraControllerComponent(
         return scrollY != 0.0f ? scrollY : globalScrollY;
     }
 
+    private void ApplyCursorLockForCurrentMode()
+    {
+        if (Game is null)
+        {
+            return;
+        }
+
+        bool shouldLock = Mode == "fps_control" && LockCursorInFpsControl && ResolveTarget() is not null;
+        if (shouldLock)
+        {
+            bool locked = Game.Input.TrySetCursorLocked(true, UseRawMouseInputForFpsControl);
+            _cursorLockedByController = locked || _cursorLockedByController;
+            return;
+        }
+
+        if (_cursorLockedByController)
+        {
+            _ = Game.Input.TrySetCursorLocked(false);
+            _cursorLockedByController = false;
+        }
+    }
+
     private static Vector3 CreateForward(float yawDegrees, float pitchDegrees)
     {
         float yaw = MathF.PI / 180.0f * yawDegrees;
@@ -745,6 +878,7 @@ internal sealed class RuntimeCameraControllerComponent(
         {
             "thirdperson" or "third_person" or "third_person_follow" or "tp" => "tps",
             "firstperson" or "first_person" or "fp" => "fps",
+            "fpscontrol" or "fps_control" or "first_person_control" or "firstpersoncontrol" or "locked_fps" or "fps_locked" or "first_person_locked" => "fps_control",
             "lockon" or "hard_lock" => "lock_on",
             "3dsmax" or "3ds_max" or "3dmax" or "editor_orbit" or "max" or "orbit" => "editor",
             "fly" or "flycam" or "free" => "free_fly",
@@ -759,6 +893,17 @@ internal sealed class RuntimeCameraControllerComponent(
             "" => "editor",
             _ => normalized
         };
+    }
+
+    public override void Dispose()
+    {
+        if (_cursorLockedByController && Game is not null)
+        {
+            _ = Game.Input.TrySetCursorLocked(false);
+            _cursorLockedByController = false;
+        }
+
+        base.Dispose();
     }
 
     private enum CameraDragMode

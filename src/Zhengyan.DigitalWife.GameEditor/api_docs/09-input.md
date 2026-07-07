@@ -44,10 +44,18 @@ Input.MouseDeltaY;
 Input.ScrollX;
 Input.ScrollY;
 Input.IsCursorVisible;
+Input.IsCursorLocked;
+Input.IsRawMouseInput;
+Input.CursorMode;
 Input.CursorVisible = false;
+Input.CursorLocked = true;
 Input.SetCursorVisible(true);
+Input.SetCursorLocked(true);
+Input.TrySetCursorLocked(true, rawInput: false);
 Input.ShowCursor();
 Input.HideCursor();
+Input.LockCursor();
+Input.UnlockCursor();
 
 Input.IsAltDown;
 Input.IsControlDown;
@@ -94,9 +102,16 @@ input.scroll_x
 input.scroll_y
 input.is_cursor_visible
 input.cursor_visible
+input.is_cursor_locked
+input.cursor_locked
+input.is_raw_mouse_input
+input.cursor_mode
 input.set_cursor_visible(False)
+input.set_cursor_locked(True)
 input.show_cursor()
 input.hide_cursor()
+input.lock_cursor()
+input.unlock_cursor()
 
 input.alt_down
 input.control_down
@@ -142,10 +157,17 @@ input.set_clipboard_text("copied text")
 | `Input.ScrollX` | `input.scroll_x` | `float` | 当前帧横向滚轮增量。 |
 | `Input.ScrollY` | `input.scroll_y` | `float` | 当前帧纵向滚轮增量。 |
 | `Input.IsCursorVisible` | `input.is_cursor_visible` / `input.cursor_visible` | `bool` | 鼠标光标当前是否显示。 |
+| `Input.IsCursorLocked` | `input.is_cursor_locked` / `input.cursor_locked` | `bool` | 鼠标当前是否被锁定到窗口，用于 FPS 鼠标视角。 |
+| `Input.IsRawMouseInput` | `input.is_raw_mouse_input` | `bool` | 当前是否处于 raw mouse 输入模式。 |
+| `Input.CursorMode` | `input.cursor_mode` | `string` | 当前光标模式：`normal`、`hidden`、`disabled` 或 `raw`。 |
 | `Input.CursorVisible = value` | - | `bool` | C# 以属性形式显示或隐藏鼠标光标。 |
+| `Input.CursorLocked = value` | - | `bool` | C# 以属性形式锁定或释放鼠标光标。 |
 | `Input.SetCursorVisible(value)` | `input.set_cursor_visible(value)` | `void` | 显示或隐藏鼠标光标。 |
+| `Input.SetCursorLocked(value, rawInput)` | `input.set_cursor_locked(value, raw_input=False)` | `void` | 锁定或释放鼠标；锁定后光标隐藏并使用相对移动。 |
 | `Input.TrySetCursorVisible(value)` | - | `bool` | C# 设置鼠标光标显示状态并返回是否成功。 |
+| `Input.TrySetCursorLocked(value, rawInput)` | - | `bool` | C# 设置鼠标锁定状态并返回是否成功。 |
 | `Input.ShowCursor()` / `Input.HideCursor()` | `input.show_cursor()` / `input.hide_cursor()` | `void` | 快捷显示或隐藏鼠标光标。 |
+| `Input.LockCursor()` / `Input.UnlockCursor()` | `input.lock_cursor()` / `input.unlock_cursor()` | `void` | 快捷锁定或释放鼠标。 |
 | `Input.IsMouseButtonDown("left")` | `input.is_mouse_button_down("left")` | `bool` | 判断鼠标按钮是否按住。 |
 
 常用鼠标按钮名：
@@ -156,7 +178,7 @@ input.set_clipboard_text("copied text")
 
 C# 也可以传入 Silk.NET `MouseButton` 枚举名称；Python 当前快照默认暴露 `left`、`right`、`middle`。
 
-鼠标光标显示控制会影响 GamePlayer 窗口内的系统鼠标光标，不改变鼠标坐标、按钮状态或 GUI 命中测试。Python 调用会提交运行时命令，并同步更新本次脚本对象中的 `input.is_cursor_visible` / `input.cursor_visible` 快照字段。
+鼠标光标显示控制会影响 GamePlayer 窗口内的系统鼠标光标，不改变鼠标坐标、按钮状态或 GUI 命中测试。鼠标锁定用于 FPS 类视角：光标会隐藏并由窗口捕获，`MouseDeltaX/Y` / `input.mouse_delta_x/y` 继续表示本帧移动量。`rawInput` / `raw_input=True` 会优先尝试 raw mouse 模式，不支持时会回退到普通锁定。Python 调用会提交运行时命令，并同步更新本次脚本对象中的 `input.is_cursor_visible`、`input.is_cursor_locked` 和 `input.cursor_mode` 快照字段。
 
 ### 鼠标光标显示示例
 ```csharp
@@ -178,6 +200,32 @@ def start(entity, scene, input, audio):
 def update(entity, scene, input, audio, delta_seconds):
     if input.is_key_down("escape"):
         input.show_cursor()
+```
+
+### 鼠标锁定示例
+```csharp
+if (IsStart)
+{
+    Input.LockCursor();
+    Scene.Camera.UseFpsControlMode(Entity.Name, eyeHeight: 1.65f, mouseSensitivity: 0.12f);
+}
+
+if (IsUpdate && Input.IsKeyDown("Escape"))
+{
+    Scene.Camera.UseEditorOrbitMode();
+    Input.UnlockCursor();
+}
+```
+
+```python
+def start(entity, scene, input, audio):
+    input.lock_cursor()
+    scene.camera.use_fps_control_mode(entity.name, eye_height=1.65, mouse_sensitivity=0.12)
+
+def update(entity, scene, input, audio, delta_seconds):
+    if input.is_key_down("escape"):
+        scene.camera.use_editor_orbit_mode()
+        input.unlock_cursor()
 ```
 
 ### 鼠标射线示例

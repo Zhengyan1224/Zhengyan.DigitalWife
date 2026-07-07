@@ -26,10 +26,22 @@ public sealed class RuntimeInput
 
     public bool IsCursorVisible => _game.Input.IsCursorVisible;
 
+    public bool IsCursorLocked => _game.Input.IsCursorLocked;
+
+    public bool IsRawMouseInput => _game.Input.IsRawMouseInput;
+
+    public string CursorMode => _game.Input.CursorModeName;
+
     public bool CursorVisible
     {
         get => IsCursorVisible;
         set => SetCursorVisible(value);
+    }
+
+    public bool CursorLocked
+    {
+        get => IsCursorLocked;
+        set => SetCursorLocked(value);
     }
 
     public string ClipboardText
@@ -115,6 +127,26 @@ public sealed class RuntimeInput
     public void HideCursor()
     {
         SetCursorVisible(false);
+    }
+
+    public bool TrySetCursorLocked(bool locked, bool rawInput = false)
+    {
+        return _game.Input.TrySetCursorLocked(locked, rawInput);
+    }
+
+    public void SetCursorLocked(bool locked, bool rawInput = false)
+    {
+        _ = TrySetCursorLocked(locked, rawInput);
+    }
+
+    public void LockCursor(bool rawInput = false)
+    {
+        SetCursorLocked(true, rawInput);
+    }
+
+    public void UnlockCursor()
+    {
+        SetCursorLocked(false);
     }
 
     public bool IsMouseButtonDown(string button)

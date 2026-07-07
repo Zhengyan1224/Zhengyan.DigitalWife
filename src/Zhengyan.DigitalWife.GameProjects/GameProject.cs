@@ -575,6 +575,32 @@ public sealed class CameraSettings
 
     public Vector3Dto Target { get; set; } = new(0.0f, 1.2f, 0.0f);
 
+    public string ControlMode { get; set; } = "editor";
+
+    public string TargetEntity { get; set; } = string.Empty;
+
+    public string SubjectEntity { get; set; } = string.Empty;
+
+    public float Distance { get; set; } = 5.0f;
+
+    public float Height { get; set; } = 1.5f;
+
+    public float ShoulderOffset { get; set; }
+
+    public float Smoothing { get; set; } = 12.0f;
+
+    public float MoveSpeed { get; set; } = 5.0f;
+
+    public float MouseSensitivity { get; set; } = 0.15f;
+
+    public float SafeRadius { get; set; } = 0.25f;
+
+    public float AutoOrbitSpeed { get; set; } = 30.0f;
+
+    public bool EnableMouseLook { get; set; } = true;
+
+    public bool RequireRightMouseForMouseLook { get; set; } = true;
+
     public string ProjectionMode { get; set; } = "perspective";
 
     public float Fov { get; set; } = 45.0f;

@@ -2612,7 +2612,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         Project.Scene.Camera = camera;
         Project.Scene.MainCamera = mainCamera.Name;
         _camera.SetLookAt(camera.Position.ToVector3(), camera.Target.ToVector3());
-        _cameraController?.EditorOrbit(0.2f, 1.0f, 1.0f);
         _camera.ProjectionMode = NormalizeProjectionMode(camera.ProjectionMode) == "orthographic"
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;
@@ -2620,6 +2619,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _camera.OrthographicSize = camera.OrthographicSize;
         _camera.NearClipPlane = camera.NearClipPlane;
         _camera.FarClipPlane = camera.FarClipPlane;
+        _cameraController?.ApplySettings(camera);
         _renderTextureManager?.SyncCameras(_camera);
     }
 

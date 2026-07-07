@@ -10,6 +10,8 @@ keywords:
   - viewport
   - ray
   - look_at
+  - fps
+  - cursor
 ---
 
 # Camera API
@@ -134,6 +136,8 @@ Scene.Camera.UseShoulderMode("Player", distance: 4.0f, height: 1.6f, shoulderOff
 Scene.Camera.UseLockOnMode("Player", "Enemy", distance: 5.0f, height: 1.6f, safeRadius: 0.25f);
 Scene.Camera.UseFirstPersonMode("Player", eyeHeight: 1.65f);
 Scene.Camera.UseFpsMode("Player", eyeHeight: 1.65f);
+Scene.Camera.UseFpsControlMode("Player", eyeHeight: 1.65f, mouseSensitivity: 0.12f);
+Scene.Camera.UseLockedFpsMode("Player", eyeHeight: 1.65f, mouseSensitivity: 0.12f);
 Scene.Camera.UseFreeFlyMode(moveSpeed: 5.0f, mouseSensitivity: 0.15f);
 Scene.Camera.UseRtsMode(height: 12.0f, pitch: 55.0f, moveSpeed: 8.0f);
 Scene.Camera.UseTopDownMode("Player", height: 12.0f);
@@ -154,6 +158,8 @@ scene.camera.use_shoulder_mode("Player", distance=4.0, height=1.6, shoulder_offs
 scene.camera.use_lock_on_mode("Player", "Enemy", distance=5.0, height=1.6, safe_radius=0.25)
 scene.camera.use_fps_mode("Player", eye_height=1.65)
 scene.camera.use_first_person_mode("Player", eye_height=1.65)
+scene.camera.use_fps_control_mode("Player", eye_height=1.65, mouse_sensitivity=0.12)
+scene.camera.use_locked_fps_mode("Player", eye_height=1.65, mouse_sensitivity=0.12)
 scene.camera.use_free_fly_mode(move_speed=5.0, mouse_sensitivity=0.15)
 scene.camera.use_rts_mode(height=12.0, pitch=55.0, move_speed=8.0)
 scene.camera.use_top_down_mode("Player", height=12.0)
@@ -163,6 +169,30 @@ scene.camera.use_fixed_mode(0, 3, 8, 0, 1, 0)
 scene.camera.use_cinematic_follow_mode("Player", offset_y=2, offset_z=6)
 scene.camera.use_orbital_follow_mode("Player", distance=6.0, height=1.5, yaw_speed=20.0)
 scene.camera.use_custom_mode()
+```
+
+`UseFirstPersonMode` / `UseFpsMode` 是第一人称跟随相机，鼠标视角是否需要右键由 `SetMouseLook(...)` 决定。`UseFpsControlMode` / `UseLockedFpsMode` 是 FPS 控制相机：GamePlayer 会自动锁定鼠标光标，并用 `MouseDeltaX/Y` 驱动视角旋转；切换到其它相机模式时会释放由相机控制器锁定的光标。
+
+### FPS 控制相机示例
+```csharp
+if (IsStart)
+{
+    Scene.Camera.UseFpsControlMode(Entity.Name, eyeHeight: 1.65f, mouseSensitivity: 0.12f);
+}
+
+if (IsUpdate && Input.IsKeyDown("Escape"))
+{
+    Scene.Camera.UseEditorOrbitMode();
+}
+```
+
+```python
+def start(entity, scene, input, audio):
+    scene.camera.use_fps_control_mode(entity.name, eye_height=1.65, mouse_sensitivity=0.12)
+
+def update(entity, scene, input, audio, delta_seconds):
+    if input.is_key_down("escape"):
+        scene.camera.use_editor_orbit_mode()
 ```
 
 自定义模式示例：
