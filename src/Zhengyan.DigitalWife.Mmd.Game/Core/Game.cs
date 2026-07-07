@@ -46,7 +46,14 @@ public abstract class Game : IDisposable
         _window.Update += OnUpdate;
         _window.Render += OnRender;
         _window.Closing += OnClosing;
-        _window.FocusChanged += isFocused => _isActive = isFocused;
+        _window.FocusChanged += isFocused =>
+        {
+            _isActive = isFocused;
+            if (!isFocused)
+            {
+                Input?.CancelTouches();
+            }
+        };
     }
 
     public GameOptions Options { get; }
@@ -189,7 +196,7 @@ public abstract class Game : IDisposable
 
         GL gl = _window.CreateOpenGLES();
         GraphicsDevice = new GraphicsDevice(gl, Options.ClearColor, _window.Size);
-        Input = new InputManager(_window.CreateInput());
+        Input = new InputManager(_window.CreateInput(), _window);
         if (Options.EnableAudio)
         {
             try

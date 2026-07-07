@@ -1,5 +1,6 @@
-﻿using System.Numerics;
+using System.Numerics;
 using Silk.NET.Input;
+using Silk.NET.Windowing;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Input;
 
@@ -9,11 +10,15 @@ public sealed class InputManager : IDisposable
     private readonly IMouse _mouse;
     private readonly IKeyboard _keyboard;
     private readonly HashSet<ButtonName> _gamepadButtonsDown = [];
+    private readonly Dictionary<int, TouchState> _activeTouches = [];
+    private readonly List<TouchPoint> _touches = [];
+    private readonly ITouchInputSource _touchInputSource;
     private Vector2 _pendingScrollDelta;
     private Vector2 _lastMousePosition;
     private IGamepad? _gamepad;
+    private bool _cancelTouches;
 
-    public InputManager(IInputContext inputContext)
+    public InputManager(IInputContext inputContext, IWindow window)
     {
         _inputContext = inputContext;
         _mouse = inputContext.Mice.Count > 0
@@ -24,6 +29,7 @@ public sealed class InputManager : IDisposable
             : throw new InvalidOperationException("No keyboard device is available.");
 
         _mouse.Scroll += (_, wheel) => _pendingScrollDelta += new Vector2(wheel.X, wheel.Y);
+        _touchInputSource = TouchInputSourceFactory.Create(window);
     }
 
     public Vector2 MousePosition { get; private set; }
@@ -54,11 +60,49 @@ public sealed class InputManager : IDisposable
 
     public IReadOnlyCollection<ButtonName> GamepadButtonsDown => _gamepadButtonsDown;
 
+    public IReadOnlyList<TouchPoint> Touches => _touches;
+
+    public TouchPoint? PrimaryTouch { get; private set; }
+
+    public bool IsTouchAvailable => _touchInputSource.IsAvailable;
+
+    public bool HasTouch => _touches.Count > 0;
+
+    public int TouchCount => _touches.Count;
+
+    public int ActiveTouchCount { get; private set; }
+
+    public bool IsTouchDown => ActiveTouchCount > 0;
+
+    public bool IsTouchStarted { get; private set; }
+
+    public bool IsTouchEnded { get; private set; }
+
     public bool IsKeyDown(Key key) => _keyboard.IsKeyPressed(key);
 
     public bool IsMouseButtonDown(MouseButton button) => _mouse.IsButtonPressed(button);
 
     public bool IsGamepadButtonDown(ButtonName button) => _gamepadButtonsDown.Contains(button);
+
+    public bool TryGetTouch(int id, out TouchPoint touch)
+    {
+        foreach (TouchPoint candidate in _touches)
+        {
+            if (candidate.Id == id)
+            {
+                touch = candidate;
+                return true;
+            }
+        }
+
+        touch = default;
+        return false;
+    }
+
+    public void CancelTouches()
+    {
+        _cancelTouches = true;
+    }
 
     internal void BeginFrame()
     {
@@ -70,10 +114,12 @@ public sealed class InputManager : IDisposable
         _pendingScrollDelta = Vector2.Zero;
 
         CaptureGamepadState();
+        CaptureTouchState();
     }
 
     public void Dispose()
     {
+        _touchInputSource.Dispose();
         _inputContext.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -122,5 +168,129 @@ public sealed class InputManager : IDisposable
             RightTrigger = _gamepad.Triggers[1].Position;
         }
     }
-}
 
+    private void CaptureTouchState()
+    {
+        foreach (TouchState state in _activeTouches.Values)
+        {
+            state.DeltaX = 0.0f;
+            state.DeltaY = 0.0f;
+            state.Phase = TouchPhase.Stationary;
+            state.RemoveAfterFrame = false;
+        }
+
+        foreach (TouchInputEvent touchEvent in _touchInputSource.ConsumeEvents())
+        {
+            ApplyTouchEvent(touchEvent);
+        }
+
+        if (_cancelTouches)
+        {
+            _cancelTouches = false;
+            foreach (TouchState state in _activeTouches.Values)
+            {
+                state.Phase = TouchPhase.Cancelled;
+                state.Pressure = 0.0f;
+                state.RemoveAfterFrame = true;
+            }
+        }
+
+        _touches.Clear();
+        foreach (TouchState state in _activeTouches.Values
+            .OrderBy(static state => state.IsActive ? 0 : 1)
+            .ThenBy(static state => state.Id))
+        {
+            _touches.Add(state.ToTouchPoint());
+        }
+
+        ActiveTouchCount = _touches.Count(static touch => touch.IsActive);
+        IsTouchStarted = _touches.Any(static touch => touch.Phase == TouchPhase.Started);
+        IsTouchEnded = _touches.Any(static touch => touch.IsEnded);
+        PrimaryTouch = _touches.Count == 0 ? null : _touches[0];
+
+        foreach (int id in _activeTouches
+            .Where(static item => item.Value.RemoveAfterFrame)
+            .Select(static item => item.Key)
+            .ToArray())
+        {
+            _activeTouches.Remove(id);
+        }
+    }
+
+    private void ApplyTouchEvent(TouchInputEvent touchEvent)
+    {
+        if (!_activeTouches.TryGetValue(touchEvent.Id, out TouchState? state))
+        {
+            state = new TouchState(touchEvent.Id, touchEvent.X, touchEvent.Y, touchEvent.Kind);
+            _activeTouches[touchEvent.Id] = state;
+        }
+
+        float oldX = state.X;
+        float oldY = state.Y;
+        state.X = touchEvent.X;
+        state.Y = touchEvent.Y;
+        state.DeltaX += touchEvent.X - oldX;
+        state.DeltaY += touchEvent.Y - oldY;
+        state.Kind = touchEvent.Kind;
+        state.Pressure = Math.Clamp(touchEvent.Pressure, 0.0f, 1.0f);
+
+        switch (touchEvent.Phase)
+        {
+            case TouchPhase.Started:
+                state.Phase = TouchPhase.Started;
+                state.RemoveAfterFrame = false;
+                break;
+            case TouchPhase.Moved:
+                if (state.Phase != TouchPhase.Started)
+                {
+                    state.Phase = MathF.Abs(state.DeltaX) > 0.001f || MathF.Abs(state.DeltaY) > 0.001f
+                        ? TouchPhase.Moved
+                        : TouchPhase.Stationary;
+                }
+
+                state.RemoveAfterFrame = false;
+                break;
+            case TouchPhase.Ended:
+                state.Phase = TouchPhase.Ended;
+                state.Pressure = 0.0f;
+                state.RemoveAfterFrame = true;
+                break;
+            case TouchPhase.Cancelled:
+                state.Phase = TouchPhase.Cancelled;
+                state.Pressure = 0.0f;
+                state.RemoveAfterFrame = true;
+                break;
+            case TouchPhase.Stationary:
+            default:
+                break;
+        }
+    }
+
+    private sealed class TouchState(int id, float x, float y, TouchInputKind kind)
+    {
+        public int Id { get; } = id;
+
+        public float X { get; set; } = x;
+
+        public float Y { get; set; } = y;
+
+        public float DeltaX { get; set; }
+
+        public float DeltaY { get; set; }
+
+        public TouchPhase Phase { get; set; } = TouchPhase.Started;
+
+        public TouchInputKind Kind { get; set; } = kind;
+
+        public float Pressure { get; set; } = 1.0f;
+
+        public bool RemoveAfterFrame { get; set; }
+
+        public bool IsActive => Phase is TouchPhase.Started or TouchPhase.Moved or TouchPhase.Stationary;
+
+        public TouchPoint ToTouchPoint()
+        {
+            return new TouchPoint(Id, X, Y, DeltaX, DeltaY, Phase, Kind, Pressure);
+        }
+    }
+}

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Silk.NET.Input;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 namespace Zhengyan.DigitalWife.GamePlayer;
@@ -1644,6 +1645,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def mouse_point_to_ray(self, input):
                        return self.screen_point_to_ray(input.mouse_x, input.mouse_y)
 
+                   def touch_point_to_ray(self, touch):
+                       return self.screen_point_to_ray(touch.x, touch.y)
+
                class Scene:
                    def __init__(self, data, commands):
                        self.name = data.get("name", "")
@@ -2791,6 +2795,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def contains_mouse(self, input):
                        return self.contains_point(input.mouse_x, input.mouse_y)
 
+                   def contains_touch(self, input):
+                       for touch in getattr(input, "touches", []):
+                           if getattr(touch, "is_active", False) and self.contains_point(touch.x, touch.y):
+                               return True
+                       return False
+
                    def show(self):
                        self.set_visible(True)
 
@@ -2878,6 +2888,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def replace_selection(self, text):
                        self._commands.append({"target": "gui", "control": self.id, "action": "replace_selection", "text": "" if text is None else str(text)})
 
+               class TouchPoint:
+                   def __init__(self, data):
+                       self.id = int(data.get("id", 0))
+                       self.x = float(data.get("x", 0.0))
+                       self.y = float(data.get("y", 0.0))
+                       self.delta_x = float(data.get("deltaX", 0.0))
+                       self.delta_y = float(data.get("deltaY", 0.0))
+                       self.phase = str(data.get("phase", "") or "").lower()
+                       self.kind = str(data.get("kind", "") or "").lower()
+                       self.pressure = float(data.get("pressure", 0.0))
+                       self.is_active = bool(data.get("isActive", False))
+                       self.is_ended = bool(data.get("isEnded", False))
+
                class Input:
                    def __init__(self, data, commands):
                        self._keys = set()
@@ -2909,6 +2932,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            value = str(button)
                            self._gamepad_buttons.add(value)
                            self._gamepad_buttons.add(value.lower())
+                       self.is_touch_available = bool(data.get("isTouchAvailable", False))
+                       self.has_touch = bool(data.get("hasTouch", False))
+                       self.touch_count = int(data.get("touchCount", 0))
+                       self.active_touch_count = int(data.get("activeTouchCount", 0))
+                       self.is_touch_down = bool(data.get("isTouchDown", False))
+                       self.is_touch_started = bool(data.get("isTouchStarted", False))
+                       self.is_touch_ended = bool(data.get("isTouchEnded", False))
+                       self.touches = [TouchPoint(item) for item in data.get("touches", [])]
+                       primary_touch = data.get("primaryTouch", None)
+                       self.primary_touch = TouchPoint(primary_touch) if primary_touch is not None else None
                        self.clipboard_text = str(data.get("clipboardText", "") or "")
                        self.has_clipboard_text = bool(data.get("hasClipboardText", False))
                        self._commands = commands
@@ -2921,6 +2954,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def is_gamepad_button_down(self, button):
                        return str(button) in self._gamepad_buttons or str(button).lower() in self._gamepad_buttons
+
+                   def get_touch(self, touch_id):
+                       for touch in self.touches:
+                           if touch.id == int(touch_id):
+                               return touch
+                       return None
 
                    def set_clipboard_text(self, text):
                        value = "" if text is None else str(text)
@@ -5205,6 +5244,24 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public string[] GamepadButtonsDown { get; set; } = [];
 
+        public bool IsTouchAvailable { get; set; }
+
+        public bool HasTouch { get; set; }
+
+        public int TouchCount { get; set; }
+
+        public int ActiveTouchCount { get; set; }
+
+        public bool IsTouchDown { get; set; }
+
+        public bool IsTouchStarted { get; set; }
+
+        public bool IsTouchEnded { get; set; }
+
+        public PythonTouchPoint[] Touches { get; set; } = [];
+
+        public PythonTouchPoint? PrimaryTouch { get; set; }
+
         public string ClipboardText { get; set; } = string.Empty;
 
         public bool HasClipboardText { get; set; }
@@ -5238,9 +5295,60 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     .Where(button => input.IsGamepadButtonDown(button.Name))
                     .Select(button => button.Name)
                     .ToArray(),
+                IsTouchAvailable = input.IsTouchAvailable,
+                HasTouch = input.HasTouch,
+                TouchCount = input.TouchCount,
+                ActiveTouchCount = input.ActiveTouchCount,
+                IsTouchDown = input.IsTouchDown,
+                IsTouchStarted = input.IsTouchStarted,
+                IsTouchEnded = input.IsTouchEnded,
+                Touches = input.Touches.Select(PythonTouchPoint.FromRuntime).ToArray(),
+                PrimaryTouch = input.PrimaryTouch is { } primaryTouch
+                    ? PythonTouchPoint.FromRuntime(primaryTouch)
+                    : null,
                 ClipboardText = clipboardText,
                 HasClipboardText = clipboardText.Length > 0
             };
+        }
+
+        public sealed class PythonTouchPoint
+        {
+            public int Id { get; set; }
+
+            public float X { get; set; }
+
+            public float Y { get; set; }
+
+            public float DeltaX { get; set; }
+
+            public float DeltaY { get; set; }
+
+            public string Phase { get; set; } = string.Empty;
+
+            public string Kind { get; set; } = string.Empty;
+
+            public float Pressure { get; set; }
+
+            public bool IsActive { get; set; }
+
+            public bool IsEnded { get; set; }
+
+            public static PythonTouchPoint FromRuntime(TouchPoint touch)
+            {
+                return new PythonTouchPoint
+                {
+                    Id = touch.Id,
+                    X = touch.X,
+                    Y = touch.Y,
+                    DeltaX = touch.DeltaX,
+                    DeltaY = touch.DeltaY,
+                    Phase = touch.Phase.ToString(),
+                    Kind = touch.Kind.ToString(),
+                    Pressure = touch.Pressure,
+                    IsActive = touch.IsActive,
+                    IsEnded = touch.IsEnded
+                };
+            }
         }
     }
 

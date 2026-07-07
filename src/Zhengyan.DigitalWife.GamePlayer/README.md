@@ -314,6 +314,26 @@ def update(entity, scene, input, audio, delta_seconds):
         entity.speak("手柄 A 被按住")
 ```
 
+### Touch input
+
+GamePlayer exposes the same touch API on every platform. Windows uses WM_POINTER, Linux/X11 uses XInput2 touch events, and macOS uses Cocoa touch events. Wayland currently reports `IsTouchAvailable == false`. `Touches` includes current-frame points and keeps `Ended` / `Cancelled` points for one frame.
+
+```csharp
+if (IsUpdate && Input.PrimaryTouch is { } touch && touch.IsActive)
+{
+    RuntimeRay ray = Scene.Camera.TouchPointToRay(touch);
+    Scene.Debug.DrawRay(ray.Origin, ray.Direction, 12.0f, durationSeconds: 0.05f);
+}
+```
+
+```python
+def update(entity, scene, input, audio, delta_seconds):
+    touch = input.primary_touch
+    if touch is not None and touch.is_active:
+        ray = scene.camera.touch_point_to_ray(touch)
+        scene.debug.draw_ray(ray.origin, ray.direction, length=12.0, duration=0.05)
+```
+
 ## 窗口、Timing 和 2D 精灵
 
 GamePlayer 会读取 `game.project.json` 的 `window` 节点并应用：

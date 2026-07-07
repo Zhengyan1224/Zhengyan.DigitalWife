@@ -1,6 +1,7 @@
 using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 
 namespace Zhengyan.DigitalWife.GamePlayer;
 
@@ -427,6 +428,11 @@ public sealed class RuntimeCamera
     public RuntimeRay MousePointToRay(RuntimeInput input)
     {
         return ScreenPointToRay(input.MouseX, input.MouseY);
+    }
+
+    public RuntimeRay TouchPointToRay(TouchPoint touch)
+    {
+        return ScreenPointToRay(touch.X, touch.Y);
     }
 
     public RuntimeEntity? PickEntity(float screenX, float screenY, float radius = 0.5f)

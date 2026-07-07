@@ -138,6 +138,20 @@ public sealed class RuntimeSpriteControl
         return ContainsPoint(input.MouseX, input.MouseY);
     }
 
+    public bool ContainsTouch(RuntimeInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        foreach (var touch in input.Touches)
+        {
+            if (touch.IsActive && ContainsPoint(touch.X, touch.Y))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public void Show()
     {
         Visible = true;

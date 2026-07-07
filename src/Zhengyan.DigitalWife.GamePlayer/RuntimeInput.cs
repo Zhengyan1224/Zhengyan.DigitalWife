@@ -1,4 +1,5 @@
 using Silk.NET.Input;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 
 namespace Zhengyan.DigitalWife.GamePlayer;
 
@@ -55,6 +56,24 @@ public sealed class RuntimeInput
 
     public float RightTrigger => _game.Input.RightTrigger;
 
+    public bool IsTouchAvailable => _game.Input.IsTouchAvailable;
+
+    public bool HasTouch => _game.Input.HasTouch;
+
+    public int TouchCount => _game.Input.TouchCount;
+
+    public int ActiveTouchCount => _game.Input.ActiveTouchCount;
+
+    public bool IsTouchDown => _game.Input.IsTouchDown;
+
+    public bool IsTouchStarted => _game.Input.IsTouchStarted;
+
+    public bool IsTouchEnded => _game.Input.IsTouchEnded;
+
+    public IReadOnlyList<TouchPoint> Touches => _game.Input.Touches;
+
+    public TouchPoint? PrimaryTouch => _game.Input.PrimaryTouch;
+
     public bool TryGetClipboardText(out string text)
     {
         return _game.TryGetClipboardText(out text);
@@ -88,6 +107,11 @@ public sealed class RuntimeInput
     public bool IsGamepadButtonDown(string button)
     {
         return TryParseGamepadButton(button, out ButtonName parsed) && _game.Input.IsGamepadButtonDown(parsed);
+    }
+
+    public bool TryGetTouch(int id, out TouchPoint touch)
+    {
+        return _game.Input.TryGetTouch(id, out touch);
     }
 
     private static bool TryParseMouseButton(string button, out MouseButton parsed)
