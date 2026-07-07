@@ -489,13 +489,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         surfaceDepth = 0.0f;
         if (!water.TryGetSurfaceHeight(cameraPosition, out float surfaceHeight)
-            || cameraPosition.Y >= surfaceHeight - 0.02f)
+            || cameraPosition.Y >= surfaceHeight + 0.03f)
         {
             return false;
         }
 
-        surfaceDepth = surfaceHeight - cameraPosition.Y;
-        return surfaceDepth > 0.0f;
+        surfaceDepth = Math.Max(surfaceHeight - cameraPosition.Y, 0.001f);
+        return true;
     }
 
     private static UnderwaterPostProcessSettings CreateUnderwaterSettings(WaterSurfaceSettings water, float surfaceDepth)
