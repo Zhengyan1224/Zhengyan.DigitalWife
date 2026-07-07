@@ -3989,6 +3989,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         float alpha = water.Alpha;
         float animationSpeed = water.AnimationSpeed;
         float normalTiling = water.NormalTiling;
+        bool gerstnerWavesEnabled = water.GerstnerWavesEnabled;
+        int gerstnerMeshResolution = water.GerstnerMeshResolution;
+        int gerstnerWaveCount = water.GerstnerWaveCount;
+        float gerstnerAmplitude = water.GerstnerAmplitude;
+        float gerstnerWavelength = water.GerstnerWavelength;
+        float gerstnerSpeed = water.GerstnerSpeed;
+        float gerstnerSteepness = water.GerstnerSteepness;
+        float gerstnerDirectionDegrees = water.GerstnerDirectionDegrees;
         Vector3 deepColor = water.DeepColor.ToVector3();
         Vector3 reflectionTint = water.ReflectionTint.ToVector3();
         float skyReflectionStrength = water.SkyReflectionStrength;
@@ -4004,8 +4012,19 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         changed |= ImGui.DragFloat("Water size", ref size, 0.5f, 0.1f, 10000.0f);
         changed |= ImGui.SliderFloat("Water alpha", ref alpha, 0.0f, 1.0f);
-        changed |= ImGui.DragFloat("Wave speed", ref animationSpeed, 0.001f, 0.0f, 10.0f, "%.3f");
+        changed |= ImGui.DragFloat("Normal animation speed", ref animationSpeed, 0.001f, 0.0f, 10.0f, "%.3f");
         changed |= ImGui.DragFloat("Normal tiling", ref normalTiling, 0.5f, 0.001f, 10000.0f);
+        changed |= ImGui.Checkbox("Gerstner waves", ref gerstnerWavesEnabled);
+        if (gerstnerWavesEnabled)
+        {
+            changed |= ImGui.SliderInt("Gerstner mesh resolution", ref gerstnerMeshResolution, 16, 192);
+            changed |= ImGui.SliderInt("Gerstner wave count", ref gerstnerWaveCount, 1, 4);
+            changed |= ImGui.DragFloat("Gerstner amplitude", ref gerstnerAmplitude, 0.01f, 0.0f, 10.0f, "%.2f");
+            changed |= ImGui.DragFloat("Gerstner wavelength", ref gerstnerWavelength, 0.1f, 0.1f, 1000.0f, "%.2f");
+            changed |= ImGui.DragFloat("Gerstner speed", ref gerstnerSpeed, 0.01f, 0.0f, 50.0f, "%.2f");
+            changed |= ImGui.SliderFloat("Gerstner steepness", ref gerstnerSteepness, 0.0f, 1.0f, "%.2f");
+            changed |= ImGui.DragFloat("Gerstner direction", ref gerstnerDirectionDegrees, 0.5f, -360.0f, 360.0f, "%.1f deg");
+        }
         changed |= ImGui.ColorEdit3("Deep color", ref deepColor);
         changed |= ImGui.Checkbox("Mirror reflection", ref mirrorReflectionEnabled);
         changed |= ImGui.ColorEdit3("Reflection tint", ref reflectionTint);
@@ -4083,6 +4102,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.Alpha = Math.Clamp(alpha, 0.0f, 1.0f);
             water.AnimationSpeed = Math.Max(animationSpeed, 0.0f);
             water.NormalTiling = Math.Max(normalTiling, 0.001f);
+            water.GerstnerWavesEnabled = gerstnerWavesEnabled;
+            water.GerstnerMeshResolution = Math.Clamp(gerstnerMeshResolution, 8, 256);
+            water.GerstnerWaveCount = Math.Clamp(gerstnerWaveCount, 1, 4);
+            water.GerstnerAmplitude = Math.Max(0.0f, gerstnerAmplitude);
+            water.GerstnerWavelength = Math.Max(0.1f, gerstnerWavelength);
+            water.GerstnerSpeed = Math.Max(0.0f, gerstnerSpeed);
+            water.GerstnerSteepness = Math.Clamp(gerstnerSteepness, 0.0f, 1.0f);
+            water.GerstnerDirectionDegrees = gerstnerDirectionDegrees;
             water.DeepColor = Vector3Dto.FromVector3(deepColor);
             water.ReflectionTint = Vector3Dto.FromVector3(reflectionTint);
             water.SkyReflectionStrength = Math.Clamp(skyReflectionStrength, 0.0f, 1.0f);

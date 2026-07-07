@@ -42,6 +42,13 @@ keywords:
   - `RippleWaveSpeed`
   - `RippleFrequency`
   - `RippleNormalStrength`
+  - `GerstnerWavesEnabled`
+  - `GerstnerWaveCount`
+  - `GerstnerAmplitude`
+  - `GerstnerWavelength`
+  - `GerstnerSpeed`
+  - `GerstnerSteepness`
+  - `GerstnerDirectionDegrees`
 
 只有粒子系统和水面双方都开启交互时，粒子触水才会出波纹。
 
@@ -62,6 +69,13 @@ if (rain is not null && pond is not null)
     pond.ParticleRippleMinIntervalSeconds = 0.08f;
     pond.ParticleRippleMergeDistance = 0.45f;
     pond.MirrorReflectionEnabled = true;
+    pond.GerstnerWavesEnabled = true;
+    pond.GerstnerWaveCount = 4;
+    pond.GerstnerAmplitude = 0.18f;
+    pond.GerstnerWavelength = 8.0f;
+    pond.GerstnerSpeed = 1.1f;
+    pond.GerstnerSteepness = 0.45f;
+    pond.GerstnerDirectionDegrees = 35.0f;
     pond.RippleLifetimeSeconds = 2.8f;
     pond.RippleWaveSpeed = 12.0f;
     pond.RippleFrequency = 16.0f;
@@ -85,11 +99,20 @@ if rain is not None and pond is not None:
     pond.set_particle_ripple_min_interval_seconds(0.08)
     pond.set_particle_ripple_merge_distance(0.45)
     pond.set_mirror_reflection_enabled(True)
+    pond.set_gerstner_waves_enabled(True)
+    pond.set_gerstner_wave_count(4)
+    pond.set_gerstner_amplitude(0.18)
+    pond.set_gerstner_wavelength(8.0)
+    pond.set_gerstner_speed(1.1)
+    pond.set_gerstner_steepness(0.45)
+    pond.set_gerstner_direction_degrees(35.0)
     pond.set_ripple_lifetime_seconds(2.8)
     pond.set_ripple_wave_speed(12.0)
     pond.set_ripple_frequency(16.0)
     pond.set_ripple_normal_strength(0.65)
 ```
+
+Gerstner 波用于基础水面起伏，会真实改变水面网格顶点高度；触水波纹仍由 `AddRipple` / 粒子触水生成，用于局部交互。GameEditor / GamePlayer 的触水检测和水下效果会查询当前 Gerstner 波面高度，因此相机下潜、粒子落水和 Collider 触水会跟随动态波面，而不是固定使用水面实体的 Y 坐标。
 
 调参建议：
 

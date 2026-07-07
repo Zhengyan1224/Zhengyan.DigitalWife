@@ -324,6 +324,24 @@ internal sealed class DemoOverlayComponent(DemoGame demoGame) : DrawableGameComp
                 _demoGame.WaterSurface.NormalTiling = waveTiling;
             }
 
+            bool gerstnerEnabled = _demoGame.WaterSurface.GerstnerWavesEnabled;
+            if (ImGui.Checkbox("Gerstner Waves", ref gerstnerEnabled))
+            {
+                _demoGame.WaterSurface.GerstnerWavesEnabled = gerstnerEnabled;
+            }
+
+            float gerstnerAmplitude = _demoGame.WaterSurface.GerstnerAmplitude;
+            if (ImGui.SliderFloat("Gerstner Amplitude", ref gerstnerAmplitude, 0.0f, 1.0f, "%.2f"))
+            {
+                _demoGame.WaterSurface.GerstnerAmplitude = gerstnerAmplitude;
+            }
+
+            float gerstnerSteepness = _demoGame.WaterSurface.GerstnerSteepness;
+            if (ImGui.SliderFloat("Gerstner Steepness", ref gerstnerSteepness, 0.0f, 1.0f, "%.2f"))
+            {
+                _demoGame.WaterSurface.GerstnerSteepness = gerstnerSteepness;
+            }
+
             Vector3 deepColor = _demoGame.WaterSurface.DeepColor;
             if (ImGui.ColorEdit3("Water Deep Color", ref deepColor))
             {

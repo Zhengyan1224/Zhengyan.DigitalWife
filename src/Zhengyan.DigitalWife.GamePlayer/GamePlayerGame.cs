@@ -579,21 +579,13 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private static bool TryGetCameraWaterDepth(WaterSurfaceComponent water, Vector3 cameraPosition, out float surfaceDepth)
     {
         surfaceDepth = 0.0f;
-        if (!Matrix4x4.Invert(water.World, out Matrix4x4 inverseWorld))
+        if (!water.TryGetSurfaceHeight(cameraPosition, out float surfaceHeight)
+            || cameraPosition.Y >= surfaceHeight - 0.02f)
         {
             return false;
         }
 
-        Vector3 localPosition = Vector3.Transform(cameraPosition, inverseWorld);
-        float halfSize = water.SurfaceSize * 0.5f;
-        if (MathF.Abs(localPosition.X) > halfSize
-            || MathF.Abs(localPosition.Z) > halfSize
-            || localPosition.Y >= -0.02f)
-        {
-            return false;
-        }
-
-        surfaceDepth = Math.Max(water.Position.Y - cameraPosition.Y, -localPosition.Y);
+        surfaceDepth = surfaceHeight - cameraPosition.Y;
         return surfaceDepth > 0.0f;
     }
 
@@ -1584,7 +1576,10 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         try
         {
-            WaterSurfaceComponent component = AddComponent(new WaterSurfaceComponent(_camera, Math.Max(entity.Water.Size, 0.1f))
+            WaterSurfaceComponent component = AddComponent(new WaterSurfaceComponent(
+                _camera,
+                Math.Max(entity.Water.Size, 0.1f),
+                meshResolution: Math.Clamp(entity.Water.GerstnerMeshResolution, 8, 256))
             {
                 DrawOrder = 120
             });
@@ -2394,6 +2389,13 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.Alpha = entity.Water.Alpha;
         component.AnimationSpeed = entity.Water.AnimationSpeed;
         component.NormalTiling = Math.Max(entity.Water.NormalTiling, 0.001f);
+        component.GerstnerWavesEnabled = entity.Water.GerstnerWavesEnabled;
+        component.GerstnerWaveCount = entity.Water.GerstnerWaveCount;
+        component.GerstnerAmplitude = entity.Water.GerstnerAmplitude;
+        component.GerstnerWavelength = entity.Water.GerstnerWavelength;
+        component.GerstnerSpeed = entity.Water.GerstnerSpeed;
+        component.GerstnerSteepness = entity.Water.GerstnerSteepness;
+        component.GerstnerDirectionDegrees = entity.Water.GerstnerDirectionDegrees;
         component.DeepColor = entity.Water.DeepColor.ToVector3();
         component.ReflectionTint = entity.Water.ReflectionTint.ToVector3();
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
@@ -2487,7 +2489,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 continue;
             }
 
-            float waterY = waterEntity.Transform.Position.Y;
             float waterHalfSize = Math.Max(waterEntity.Water.Size, 0.1f) * MathF.Max(MathF.Abs(waterEntity.Transform.Scale.X), MathF.Abs(waterEntity.Transform.Scale.Z));
             foreach (RuntimeEntity entity in _entitiesById.Values)
             {
@@ -2507,7 +2508,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                     RuntimeParticleObject? particleObject = _particleObjects.FirstOrDefault(item => string.Equals(item.Entity.Id, entity.Id, StringComparison.OrdinalIgnoreCase));
                     if (particleObject is not null)
                     {
-                        ProcessParticleWaterInteractions(waterObject, particleObject, waterEntity, waterY, waterHalfSize, now);
+                        ProcessParticleWaterInteractions(waterObject, particleObject, waterEntity, waterHalfSize, now);
                     }
 
                     continue;
@@ -2524,7 +2525,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                     float radius = collider.Shape == "box"
                         ? collider.Box.HalfExtents.Length()
                         : collider.Capsule.Radius + (Vector3.Distance(collider.Capsule.Start, collider.Capsule.End) * 0.5f);
-                    if (MathF.Abs(center.Y - waterY) > radius)
+                    if (!waterObject.Component.TryGetSurfaceHeight(center, out float surfaceY)
+                        || MathF.Abs(center.Y - surfaceY) > radius)
                     {
                         continue;
                     }
@@ -2536,7 +2538,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                         if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= 0.35)
                         {
                             _waterRippleTimes[rippleKey] = now;
-                            waterObject.Component.AddRipple(new Vector3(center.X, waterY, center.Z), waterEntity.Water.InteractionRadius, waterEntity.Water.InteractionStrength);
+                            waterObject.Component.AddRipple(new Vector3(center.X, surfaceY, center.Z), waterEntity.Water.InteractionRadius, waterEntity.Water.InteractionStrength);
                         }
                     }
                 }
@@ -2548,13 +2550,17 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         RuntimeWaterObject waterObject,
         RuntimeParticleObject particleObject,
         GameEntity waterEntity,
-        float waterY,
         float waterHalfSize,
         double now)
     {
         foreach (ParticleCollisionSample sample in particleObject.Component.GetCollisionSamples())
         {
-            float verticalDistance = sample.Position.Y - waterY;
+            if (!waterObject.Component.TryGetSurfaceHeight(sample.Position, out float surfaceY))
+            {
+                continue;
+            }
+
+            float verticalDistance = sample.Position.Y - surfaceY;
             if (verticalDistance > sample.Radius)
             {
                 continue;
@@ -2572,7 +2578,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             {
                 _waterRippleTimes[rippleKey] = now;
                 waterObject.Component.AddRipple(
-                    new Vector3(sample.Position.X, waterY, sample.Position.Z),
+                    new Vector3(sample.Position.X, surfaceY, sample.Position.Z),
                     waterEntity.Water.InteractionRadius,
                     waterEntity.Water.InteractionStrength,
                     waterEntity.Water.ParticleRippleMergeDistance);

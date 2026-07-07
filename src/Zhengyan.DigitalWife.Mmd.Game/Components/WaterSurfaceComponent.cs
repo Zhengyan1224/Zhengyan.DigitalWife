@@ -7,6 +7,8 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Components;
 public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 {
     private const int MaxRipples = 48;
+    private const int MaxGerstnerWaves = 4;
+    private const int DefaultMeshResolution = 96;
     private static readonly string[] DefaultNormalMapFileNames =
     [
         "Ocean0_N.dds",
@@ -20,22 +22,30 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private readonly string[] _normalMapPaths;
     private readonly string _skyTexturePath;
     private readonly float _surfaceSize;
+    private readonly int _meshResolution;
     private Texture2D[] _normalMaps = [];
     private Texture2D? _skyTexture;
 
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
+    private int _vertexCount;
     private float _elapsedSeconds;
     private float _alpha = 0.55f;
     private float _animationSpeed = 0.03f;
     private float _skyReflectionStrength = 0.85f;
+    private int _gerstnerWaveCount = MaxGerstnerWaves;
+    private float _gerstnerAmplitude = 0.18f;
+    private float _gerstnerWavelength = 8.0f;
+    private float _gerstnerSpeed = 1.1f;
+    private float _gerstnerSteepness = 0.45f;
 
     private int _uniformWorld = -1;
     private int _uniformView = -1;
     private int _uniformProjection = -1;
     private int _uniformEyePos = -1;
     private int _uniformTime = -1;
+    private int _uniformTimeSeconds = -1;
     private int _uniformTextureLerp = -1;
     private int _uniformAlpha = -1;
     private int _uniformDeepColor = -1;
@@ -57,6 +67,13 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private int _uniformRippleWaveSpeed = -1;
     private int _uniformRippleFrequency = -1;
     private int _uniformRippleNormalStrength = -1;
+    private int _uniformGerstnerEnabled = -1;
+    private int _uniformGerstnerWaveCount = -1;
+    private int _uniformGerstnerAmplitude = -1;
+    private int _uniformGerstnerWavelength = -1;
+    private int _uniformGerstnerSpeed = -1;
+    private int _uniformGerstnerSteepness = -1;
+    private int _uniformGerstnerDirection = -1;
     private uint _planarReflectionTextureId;
     private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
     private readonly RippleState[] _ripples = new RippleState[MaxRipples];
@@ -65,7 +82,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         OrbitCamera camera,
         float surfaceSize = 1000.0f,
         IReadOnlyList<string>? normalMapPaths = null,
-        string? skyTexturePath = null)
+        string? skyTexturePath = null,
+        int meshResolution = DefaultMeshResolution)
     {
         _camera = camera ?? throw new ArgumentNullException(nameof(camera));
         if (surfaceSize <= 0.0f)
@@ -74,6 +92,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         }
 
         _surfaceSize = surfaceSize;
+        _meshResolution = Math.Clamp(meshResolution, 8, 256);
         _normalMapPaths = ResolveNormalMapPaths(normalMapPaths);
         _skyTexturePath = ResolveSkyTexturePath(skyTexturePath);
         DrawOrder = 100;
@@ -94,6 +113,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     public Matrix4x4 World => Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateFromQuaternion(Rotation) * Matrix4x4.CreateTranslation(Position);
 
     public float SurfaceSize => _surfaceSize;
+
+    public int MeshResolution => _meshResolution;
 
     public IReadOnlyList<string> NormalMapPaths => _normalMapPaths;
 
@@ -124,6 +145,40 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     }
 
     public bool MirrorReflectionEnabled { get; set; } = true;
+
+    public bool GerstnerWavesEnabled { get; set; } = true;
+
+    public int GerstnerWaveCount
+    {
+        get => _gerstnerWaveCount;
+        set => _gerstnerWaveCount = Math.Clamp(value, 1, MaxGerstnerWaves);
+    }
+
+    public float GerstnerAmplitude
+    {
+        get => _gerstnerAmplitude;
+        set => _gerstnerAmplitude = Math.Max(0.0f, value);
+    }
+
+    public float GerstnerWavelength
+    {
+        get => _gerstnerWavelength;
+        set => _gerstnerWavelength = Math.Max(0.1f, value);
+    }
+
+    public float GerstnerSpeed
+    {
+        get => _gerstnerSpeed;
+        set => _gerstnerSpeed = Math.Max(0.0f, value);
+    }
+
+    public float GerstnerSteepness
+    {
+        get => _gerstnerSteepness;
+        set => _gerstnerSteepness = Math.Clamp(value, 0.0f, 1.0f);
+    }
+
+    public float GerstnerDirectionDegrees { get; set; } = 35.0f;
 
     public float RippleLifetimeSeconds { get; set; } = 1.8f;
 
@@ -213,6 +268,41 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         };
     }
 
+    public bool TryGetSurfaceHeight(Vector3 worldPosition, out float surfaceHeight)
+    {
+        surfaceHeight = Position.Y;
+        if (!Matrix4x4.Invert(World, out Matrix4x4 inverseWorld))
+        {
+            return false;
+        }
+
+        Vector3 localPosition = Vector3.Transform(worldPosition, inverseWorld);
+        if (MathF.Abs(localPosition.X) > _surfaceSize || MathF.Abs(localPosition.Z) > _surfaceSize)
+        {
+            return false;
+        }
+
+        Vector3 displacement = GerstnerWavesEnabled
+            ? EvaluateGerstnerDisplacement(localPosition.X, localPosition.Z, _elapsedSeconds)
+            : Vector3.Zero;
+        Vector3 localSurfacePosition = new(localPosition.X + displacement.X, displacement.Y, localPosition.Z + displacement.Z);
+        Vector3 worldSurfacePosition = Vector3.Transform(localSurfacePosition, World);
+        surfaceHeight = worldSurfacePosition.Y;
+        return true;
+    }
+
+    public bool TryGetSurfaceDepth(Vector3 worldPosition, out float surfaceDepth)
+    {
+        surfaceDepth = 0.0f;
+        if (!TryGetSurfaceHeight(worldPosition, out float surfaceHeight))
+        {
+            return false;
+        }
+
+        surfaceDepth = surfaceHeight - worldPosition.Y;
+        return surfaceDepth > 0.0f;
+    }
+
     protected override void Initialize()
     {
         if (Game is null)
@@ -225,7 +315,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _vao = gl.GenVertexArray();
         _vertexBuffer = gl.GenBuffer();
 
-        WaterVertex[] vertices = CreateVertices(_surfaceSize);
+        WaterVertex[] vertices = CreateVertices(_surfaceSize, _meshResolution);
+        _vertexCount = vertices.Length;
 
         gl.BindVertexArray(_vao);
         gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
@@ -248,6 +339,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _uniformProjection = gl.GetUniformLocation(_program, "u_Projection");
         _uniformEyePos = gl.GetUniformLocation(_program, "u_EyePos");
         _uniformTime = gl.GetUniformLocation(_program, "u_Time");
+        _uniformTimeSeconds = gl.GetUniformLocation(_program, "u_TimeSeconds");
         _uniformTextureLerp = gl.GetUniformLocation(_program, "u_TextureLerp");
         _uniformAlpha = gl.GetUniformLocation(_program, "u_Alpha");
         _uniformDeepColor = gl.GetUniformLocation(_program, "u_DeepColor");
@@ -269,6 +361,13 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _uniformRippleWaveSpeed = gl.GetUniformLocation(_program, "u_RippleWaveSpeed");
         _uniformRippleFrequency = gl.GetUniformLocation(_program, "u_RippleFrequency");
         _uniformRippleNormalStrength = gl.GetUniformLocation(_program, "u_RippleNormalStrength");
+        _uniformGerstnerEnabled = gl.GetUniformLocation(_program, "u_GerstnerEnabled");
+        _uniformGerstnerWaveCount = gl.GetUniformLocation(_program, "u_GerstnerWaveCount");
+        _uniformGerstnerAmplitude = gl.GetUniformLocation(_program, "u_GerstnerAmplitude");
+        _uniformGerstnerWavelength = gl.GetUniformLocation(_program, "u_GerstnerWavelength");
+        _uniformGerstnerSpeed = gl.GetUniformLocation(_program, "u_GerstnerSpeed");
+        _uniformGerstnerSteepness = gl.GetUniformLocation(_program, "u_GerstnerSteepness");
+        _uniformGerstnerDirection = gl.GetUniformLocation(_program, "u_GerstnerDirection");
 
         _normalMaps = LoadNormalMaps(gl, _normalMapPaths);
         _skyTexture = new Texture2D(gl, GLEnum.Repeat);
@@ -323,6 +422,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.SetUniform(_uniformProjection, _camera.Projection);
         gl.SetUniform(_uniformEyePos, _camera.Position);
         gl.SetUniform(_uniformTime, _elapsedSeconds * _animationSpeed);
+        gl.SetUniform(_uniformTimeSeconds, _elapsedSeconds);
         gl.SetUniform(_uniformTextureLerp, textureLerp);
         gl.SetUniform(_uniformAlpha, _alpha);
         gl.SetUniform(_uniformDeepColor, DeepColor);
@@ -340,6 +440,13 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.SetUniform(_uniformRippleWaveSpeed, RippleWaveSpeed);
         gl.SetUniform(_uniformRippleFrequency, RippleFrequency);
         gl.SetUniform(_uniformRippleNormalStrength, RippleNormalStrength);
+        gl.SetUniform(_uniformGerstnerEnabled, GerstnerWavesEnabled ? 1.0f : 0.0f);
+        gl.SetUniform(_uniformGerstnerWaveCount, (float)_gerstnerWaveCount);
+        gl.SetUniform(_uniformGerstnerAmplitude, _gerstnerAmplitude);
+        gl.SetUniform(_uniformGerstnerWavelength, _gerstnerWavelength);
+        gl.SetUniform(_uniformGerstnerSpeed, _gerstnerSpeed);
+        gl.SetUniform(_uniformGerstnerSteepness, _gerstnerSteepness);
+        gl.SetUniform(_uniformGerstnerDirection, GetGerstnerDirection());
         UploadRipples(gl);
 
         gl.ActiveTexture(TextureUnit.Texture0);
@@ -351,7 +458,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.ActiveTexture(TextureUnit.Texture3);
         gl.BindTexture(GLEnum.Texture2D, _planarReflectionTextureId != 0 ? _planarReflectionTextureId : _skyTexture.Id);
 
-        gl.DrawArrays(GLEnum.Triangles, 0, 6);
+        gl.DrawArrays(GLEnum.Triangles, 0, (uint)_vertexCount);
 
         gl.ActiveTexture(TextureUnit.Texture3);
         gl.BindTexture(GLEnum.Texture2D, 0);
@@ -391,17 +498,102 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         base.Dispose();
     }
 
-    private static WaterVertex[] CreateVertices(float size)
+    private static WaterVertex[] CreateVertices(float size, int resolution)
     {
-        return
-        [
-            new WaterVertex(new Vector3(-size, 0.0f, -size), new Vector2(0.0f, 0.0f)),
-            new WaterVertex(new Vector3( size, 0.0f, -size), new Vector2(1.0f, 0.0f)),
-            new WaterVertex(new Vector3(-size, 0.0f,  size), new Vector2(0.0f, 1.0f)),
-            new WaterVertex(new Vector3(-size, 0.0f,  size), new Vector2(0.0f, 1.0f)),
-            new WaterVertex(new Vector3( size, 0.0f, -size), new Vector2(1.0f, 0.0f)),
-            new WaterVertex(new Vector3( size, 0.0f,  size), new Vector2(1.0f, 1.0f))
-        ];
+        int clampedResolution = Math.Clamp(resolution, 1, 256);
+        WaterVertex[] vertices = new WaterVertex[clampedResolution * clampedResolution * 6];
+        int index = 0;
+        float step = (size * 2.0f) / clampedResolution;
+
+        for (int z = 0; z < clampedResolution; z++)
+        {
+            float z0 = -size + (step * z);
+            float z1 = z0 + step;
+            float v0 = (float)z / clampedResolution;
+            float v1 = (float)(z + 1) / clampedResolution;
+
+            for (int x = 0; x < clampedResolution; x++)
+            {
+                float x0 = -size + (step * x);
+                float x1 = x0 + step;
+                float u0 = (float)x / clampedResolution;
+                float u1 = (float)(x + 1) / clampedResolution;
+
+                vertices[index++] = new WaterVertex(new Vector3(x0, 0.0f, z0), new Vector2(u0, v0));
+                vertices[index++] = new WaterVertex(new Vector3(x1, 0.0f, z0), new Vector2(u1, v0));
+                vertices[index++] = new WaterVertex(new Vector3(x0, 0.0f, z1), new Vector2(u0, v1));
+                vertices[index++] = new WaterVertex(new Vector3(x0, 0.0f, z1), new Vector2(u0, v1));
+                vertices[index++] = new WaterVertex(new Vector3(x1, 0.0f, z0), new Vector2(u1, v0));
+                vertices[index++] = new WaterVertex(new Vector3(x1, 0.0f, z1), new Vector2(u1, v1));
+            }
+        }
+
+        return vertices;
+    }
+
+    private Vector2 GetGerstnerDirection()
+    {
+        float radians = GerstnerDirectionDegrees * (MathF.PI / 180.0f);
+        Vector2 direction = new(MathF.Cos(radians), MathF.Sin(radians));
+        return direction.LengthSquared() > 0.0001f ? Vector2.Normalize(direction) : Vector2.UnitX;
+    }
+
+    private Vector3 EvaluateGerstnerDisplacement(float x, float z, float timeSeconds)
+    {
+        Vector2 baseDirection = GetGerstnerDirection();
+        Vector3 displacement = Vector3.Zero;
+        int waveCount = Math.Clamp(_gerstnerWaveCount, 1, MaxGerstnerWaves);
+
+        for (int i = 0; i < MaxGerstnerWaves; i++)
+        {
+            if (i >= waveCount)
+            {
+                break;
+            }
+
+            GetGerstnerWaveParameters(i, baseDirection, out Vector2 direction, out float amplitude, out float wavelength, out float speed, out float steepness);
+            float waveNumber = (2.0f * MathF.PI) / Math.Max(wavelength, 0.1f);
+            float phase = waveNumber * ((direction.X * x) + (direction.Y * z) - (speed * timeSeconds));
+            float sin = MathF.Sin(phase);
+            float cos = MathF.Cos(phase);
+
+            displacement.X += direction.X * steepness * amplitude * cos;
+            displacement.Y += amplitude * sin;
+            displacement.Z += direction.Y * steepness * amplitude * cos;
+        }
+
+        return displacement;
+    }
+
+    private void GetGerstnerWaveParameters(
+        int index,
+        Vector2 baseDirection,
+        out Vector2 direction,
+        out float amplitude,
+        out float wavelength,
+        out float speed,
+        out float steepness)
+    {
+        float angle = (index - 1.5f) * 0.75f;
+        float cos = MathF.Cos(angle);
+        float sin = MathF.Sin(angle);
+        direction = new Vector2(
+            (baseDirection.X * cos) - (baseDirection.Y * sin),
+            (baseDirection.X * sin) + (baseDirection.Y * cos));
+        if (direction.LengthSquared() <= 0.0001f)
+        {
+            direction = Vector2.UnitX;
+        }
+        else
+        {
+            direction = Vector2.Normalize(direction);
+        }
+
+        float amplitudeScale = MathF.Pow(0.55f, index);
+        amplitude = _gerstnerAmplitude * amplitudeScale;
+        wavelength = _gerstnerWavelength / (1.0f + (index * 0.55f));
+        speed = _gerstnerSpeed * (1.0f + (index * 0.18f));
+        steepness = _gerstnerSteepness;
     }
 
     private static Texture2D[] LoadNormalMaps(GL gl, IReadOnlyList<string> normalMapPaths)
@@ -553,15 +745,77 @@ uniform mat4 u_View;
 uniform mat4 u_Projection;
 uniform float u_NormalTiling;
 uniform mat4 u_ReflectionViewProjection;
+uniform float u_TimeSeconds;
+uniform float u_GerstnerEnabled;
+uniform float u_GerstnerWaveCount;
+uniform float u_GerstnerAmplitude;
+uniform float u_GerstnerWavelength;
+uniform float u_GerstnerSpeed;
+uniform float u_GerstnerSteepness;
+uniform vec2 u_GerstnerDirection;
 
 out vec2 vs_Uv;
 out vec3 vs_WorldPos;
+out vec3 vs_GerstnerNormal;
 out vec4 vs_ReflectionClipPos;
+
+const float PI = 3.14159265359;
+const int MAX_GERSTNER_WAVES = 4;
+
+vec2 Rotate2D(vec2 value, float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return vec2((value.x * c) - (value.y * s), (value.x * s) + (value.y * c));
+}
+
+void EvaluateGerstner(vec3 localPos, out vec3 displacement, out vec3 normal)
+{
+    displacement = vec3(0.0);
+    vec2 gradient = vec2(0.0);
+    vec2 baseDirection = u_GerstnerDirection;
+    if (length(baseDirection) <= 0.0001)
+    {
+        baseDirection = vec2(1.0, 0.0);
+    }
+    baseDirection = normalize(baseDirection);
+    float enabled = step(0.5, u_GerstnerEnabled);
+    float waveCount = clamp(u_GerstnerWaveCount, 1.0, float(MAX_GERSTNER_WAVES));
+
+    for (int i = 0; i < MAX_GERSTNER_WAVES; i++)
+    {
+        float fi = float(i);
+        float active = enabled * step(fi + 0.5, waveCount);
+        float angle = (fi - 1.5) * 0.75;
+        vec2 direction = normalize(Rotate2D(baseDirection, angle));
+        float amplitude = u_GerstnerAmplitude * pow(0.55, fi);
+        float wavelength = max(u_GerstnerWavelength / (1.0 + (fi * 0.55)), 0.1);
+        float speed = u_GerstnerSpeed * (1.0 + (fi * 0.18));
+        float steepness = clamp(u_GerstnerSteepness, 0.0, 1.0);
+        float waveNumber = (2.0 * PI) / wavelength;
+        float phase = waveNumber * (dot(direction, localPos.xz) - (speed * u_TimeSeconds));
+        float waveSin = sin(phase);
+        float waveCos = cos(phase);
+
+        displacement.xz += direction * steepness * amplitude * waveCos * active;
+        displacement.y += amplitude * waveSin * active;
+        gradient += direction * amplitude * waveNumber * waveCos * active;
+    }
+
+    normal = normalize(vec3(-gradient.x, 1.0, -gradient.y));
+}
 
 void main()
 {
-    vec4 worldPos = u_World * vec4(in_Pos, 1.0);
+    vec3 displacement;
+    vec3 localNormal;
+    EvaluateGerstner(in_Pos, displacement, localNormal);
+
+    vec3 localPos = in_Pos + displacement;
+    vec4 worldPos = u_World * vec4(localPos, 1.0);
+    mat3 normalMatrix = transpose(inverse(mat3(u_World)));
     vs_WorldPos = worldPos.xyz;
+    vs_GerstnerNormal = normalize(normalMatrix * localNormal);
     vs_Uv = in_Uv * u_NormalTiling;
     vs_ReflectionClipPos = u_ReflectionViewProjection * worldPos;
     gl_Position = u_Projection * u_View * worldPos;
@@ -577,6 +831,7 @@ precision highp float;
 
 in vec2 vs_Uv;
 in vec3 vs_WorldPos;
+in vec3 vs_GerstnerNormal;
 in vec4 vs_ReflectionClipPos;
 
 uniform sampler2D u_NormalTex;
@@ -623,8 +878,9 @@ void main()
     vec3 normalTextureDetailB = texture(u_NormalTex2, vs_Uv * 2.0 + vec2(-u_Time, -u_Time * 2.0)).xyz;
     vec3 normalTextureDetail = mix(normalTextureDetailB, normalTextureDetailA, u_TextureLerp);
 
-    vec3 normal = normalize((((0.5 * normalTexture) + (0.5 * normalTextureDetail)) * 2.0) - 1.0);
-    normal = normal.xzy;
+    vec3 textureNormal = normalize((((0.5 * normalTexture) + (0.5 * normalTextureDetail)) * 2.0) - 1.0);
+    textureNormal = textureNormal.xzy;
+    vec3 normal = normalize(vs_GerstnerNormal + ((textureNormal - vec3(0.0, 1.0, 0.0)) * 0.68));
 
     float ripple = 0.0;
     float rippleHighlight = 0.0;

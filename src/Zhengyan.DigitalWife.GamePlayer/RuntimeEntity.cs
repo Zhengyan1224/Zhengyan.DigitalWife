@@ -497,6 +497,131 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool GerstnerWavesEnabled
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            && _definition.Water.GerstnerWavesEnabled;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerWavesEnabled = value;
+                if (_water is not null)
+                {
+                    _water.GerstnerWavesEnabled = value;
+                }
+            }
+        }
+    }
+
+    public int GerstnerWaveCount
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.GerstnerWaveCount
+            : 0;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerWaveCount = Math.Clamp(value, 1, 4);
+                if (_water is not null)
+                {
+                    _water.GerstnerWaveCount = _definition.Water.GerstnerWaveCount;
+                }
+            }
+        }
+    }
+
+    public float GerstnerAmplitude
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.GerstnerAmplitude
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerAmplitude = Math.Max(0.0f, value);
+                if (_water is not null)
+                {
+                    _water.GerstnerAmplitude = _definition.Water.GerstnerAmplitude;
+                }
+            }
+        }
+    }
+
+    public float GerstnerWavelength
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.GerstnerWavelength
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerWavelength = Math.Max(0.1f, value);
+                if (_water is not null)
+                {
+                    _water.GerstnerWavelength = _definition.Water.GerstnerWavelength;
+                }
+            }
+        }
+    }
+
+    public float GerstnerSpeed
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.GerstnerSpeed
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerSpeed = Math.Max(0.0f, value);
+                if (_water is not null)
+                {
+                    _water.GerstnerSpeed = _definition.Water.GerstnerSpeed;
+                }
+            }
+        }
+    }
+
+    public float GerstnerSteepness
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.GerstnerSteepness
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerSteepness = Math.Clamp(value, 0.0f, 1.0f);
+                if (_water is not null)
+                {
+                    _water.GerstnerSteepness = _definition.Water.GerstnerSteepness;
+                }
+            }
+        }
+    }
+
+    public float GerstnerDirectionDegrees
+    {
+        get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)
+            ? _definition.Water.GerstnerDirectionDegrees
+            : 0.0f;
+        set
+        {
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.GerstnerDirectionDegrees = value;
+                if (_water is not null)
+                {
+                    _water.GerstnerDirectionDegrees = value;
+                }
+            }
+        }
+    }
+
     public float RippleLifetimeSeconds
     {
         get => string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase)

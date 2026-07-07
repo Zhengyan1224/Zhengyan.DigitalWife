@@ -934,6 +934,22 @@ public sealed class WaterSurfaceSettings
 
     public float NormalTiling { get; set; } = 100.0f;
 
+    public bool GerstnerWavesEnabled { get; set; } = true;
+
+    public int GerstnerMeshResolution { get; set; } = 96;
+
+    public int GerstnerWaveCount { get; set; } = 4;
+
+    public float GerstnerAmplitude { get; set; } = 0.18f;
+
+    public float GerstnerWavelength { get; set; } = 8.0f;
+
+    public float GerstnerSpeed { get; set; } = 1.1f;
+
+    public float GerstnerSteepness { get; set; } = 0.45f;
+
+    public float GerstnerDirectionDegrees { get; set; } = 35.0f;
+
     public Vector3Dto DeepColor { get; set; } = new(0.02f, 0.10f, 0.22f);
 
     public Vector3Dto ReflectionTint { get; set; } = new(0.56f, 0.70f, 0.90f);

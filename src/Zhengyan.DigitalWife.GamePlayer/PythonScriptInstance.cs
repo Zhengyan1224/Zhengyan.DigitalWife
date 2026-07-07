@@ -507,6 +507,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.mirror_reflection_enabled = bool(data.get("mirrorReflectionEnabled", False))
                        self.plane_mirror_reflection_enabled = bool(data.get("planeMirrorReflectionEnabled", False))
                        self.plane_mirror_reflection_strength = float(data.get("planeMirrorReflectionStrength", 0.0))
+                       self.gerstner_waves_enabled = bool(data.get("gerstnerWavesEnabled", False))
+                       self.gerstner_wave_count = int(data.get("gerstnerWaveCount", 0))
+                       self.gerstner_amplitude = float(data.get("gerstnerAmplitude", 0.0))
+                       self.gerstner_wavelength = float(data.get("gerstnerWavelength", 0.0))
+                       self.gerstner_speed = float(data.get("gerstnerSpeed", 0.0))
+                       self.gerstner_steepness = float(data.get("gerstnerSteepness", 0.0))
+                       self.gerstner_direction_degrees = float(data.get("gerstnerDirectionDegrees", 0.0))
                        self.ripple_lifetime_seconds = float(data.get("rippleLifetimeSeconds", 0.0))
                        self.ripple_wave_speed = float(data.get("rippleWaveSpeed", 0.0))
                        self.ripple_frequency = float(data.get("rippleFrequency", 0.0))
@@ -581,6 +588,27 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_plane_mirror_reflection_strength(self, value):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_plane_mirror_reflection_strength", "value": value})
+
+                   def set_gerstner_waves_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_waves_enabled", "flag": bool(enabled)})
+
+                   def set_gerstner_wave_count(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_wave_count", "value": value})
+
+                   def set_gerstner_amplitude(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_amplitude", "value": value})
+
+                   def set_gerstner_wavelength(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_wavelength", "value": value})
+
+                   def set_gerstner_speed(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_speed", "value": value})
+
+                   def set_gerstner_steepness(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_steepness", "value": value})
+
+                   def set_gerstner_direction_degrees(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_gerstner_direction_degrees", "value": value})
 
                    def set_ripple_lifetime_seconds(self, value):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_ripple_lifetime_seconds", "value": value})
@@ -3897,6 +3925,27 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_plane_mirror_reflection_strength" when command.Value.HasValue:
                 entity.PlaneMirrorReflectionStrength = (float)command.Value.Value;
                 break;
+            case "set_gerstner_waves_enabled" when command.Flag.HasValue:
+                entity.GerstnerWavesEnabled = command.Flag.Value;
+                break;
+            case "set_gerstner_wave_count" when command.Value.HasValue:
+                entity.GerstnerWaveCount = (int)Math.Round(command.Value.Value);
+                break;
+            case "set_gerstner_amplitude" when command.Value.HasValue:
+                entity.GerstnerAmplitude = (float)command.Value.Value;
+                break;
+            case "set_gerstner_wavelength" when command.Value.HasValue:
+                entity.GerstnerWavelength = (float)command.Value.Value;
+                break;
+            case "set_gerstner_speed" when command.Value.HasValue:
+                entity.GerstnerSpeed = (float)command.Value.Value;
+                break;
+            case "set_gerstner_steepness" when command.Value.HasValue:
+                entity.GerstnerSteepness = (float)command.Value.Value;
+                break;
+            case "set_gerstner_direction_degrees" when command.Value.HasValue:
+                entity.GerstnerDirectionDegrees = (float)command.Value.Value;
+                break;
             case "set_ripple_lifetime_seconds" when command.Value.HasValue:
                 entity.RippleLifetimeSeconds = (float)command.Value.Value;
                 break;
@@ -4592,6 +4641,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float PlaneMirrorReflectionStrength { get; set; }
 
+        public bool GerstnerWavesEnabled { get; set; }
+
+        public int GerstnerWaveCount { get; set; }
+
+        public float GerstnerAmplitude { get; set; }
+
+        public float GerstnerWavelength { get; set; }
+
+        public float GerstnerSpeed { get; set; }
+
+        public float GerstnerSteepness { get; set; }
+
+        public float GerstnerDirectionDegrees { get; set; }
+
         public float RippleLifetimeSeconds { get; set; }
 
         public float RippleWaveSpeed { get; set; }
@@ -4634,6 +4697,13 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 MirrorReflectionEnabled = entity.MirrorReflectionEnabled,
                 PlaneMirrorReflectionEnabled = entity.PlaneMirrorReflectionEnabled,
                 PlaneMirrorReflectionStrength = entity.PlaneMirrorReflectionStrength,
+                GerstnerWavesEnabled = entity.GerstnerWavesEnabled,
+                GerstnerWaveCount = entity.GerstnerWaveCount,
+                GerstnerAmplitude = entity.GerstnerAmplitude,
+                GerstnerWavelength = entity.GerstnerWavelength,
+                GerstnerSpeed = entity.GerstnerSpeed,
+                GerstnerSteepness = entity.GerstnerSteepness,
+                GerstnerDirectionDegrees = entity.GerstnerDirectionDegrees,
                 RippleLifetimeSeconds = entity.RippleLifetimeSeconds,
                 RippleWaveSpeed = entity.RippleWaveSpeed,
                 RippleFrequency = entity.RippleFrequency,
