@@ -29,8 +29,9 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
+    private uint _indexBuffer;
     private WaterVertex[] _vertices = [];
-    private int _vertexCount;
+    private int _indexCount;
     private bool _uploadedGerstnerEnabled;
     private float _elapsedSeconds;
     private float _alpha = 0.55f;
@@ -308,10 +309,13 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
         _vao = gl.GenVertexArray();
         _vertexBuffer = gl.GenBuffer();
+        _indexBuffer = gl.GenBuffer();
 
-        _vertices = new WaterVertex[Math.Clamp(_meshResolution, 1, 256) * Math.Clamp(_meshResolution, 1, 256) * 6];
+        int clampedResolution = Math.Clamp(_meshResolution, 1, 256);
+        _vertices = new WaterVertex[(clampedResolution + 1) * (clampedResolution + 1)];
+        uint[] indices = CreateIndices(clampedResolution);
         FillVertices(_vertices, GerstnerWavesEnabled, _elapsedSeconds);
-        _vertexCount = _vertices.Length;
+        _indexCount = indices.Length;
         _uploadedGerstnerEnabled = GerstnerWavesEnabled;
 
         gl.BindVertexArray(_vao);
@@ -330,8 +334,15 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.VertexAttribPointer(2, 3, GLEnum.Float, false, (uint)sizeof(WaterVertex), (void*)(5 * sizeof(float)));
         gl.EnableVertexAttribArray(2);
 
+        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
+        fixed (uint* indexPtr = indices)
+        {
+            gl.BufferData(GLEnum.ElementArrayBuffer, (uint)(indices.Length * sizeof(uint)), indexPtr, GLEnum.StaticDraw);
+        }
+
         gl.BindBuffer(GLEnum.ArrayBuffer, 0);
         gl.BindVertexArray(0);
+        gl.BindBuffer(GLEnum.ElementArrayBuffer, 0);
 
         _uniformWorld = gl.GetUniformLocation(_program, "u_World");
         _uniformView = gl.GetUniformLocation(_program, "u_View");
@@ -446,7 +457,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         gl.ActiveTexture(TextureUnit.Texture3);
         gl.BindTexture(GLEnum.Texture2D, _planarReflectionTextureId != 0 ? _planarReflectionTextureId : _skyTexture.Id);
 
-        gl.DrawArrays(GLEnum.Triangles, 0, (uint)_vertexCount);
+        gl.DrawElements(GLEnum.Triangles, (uint)_indexCount, GLEnum.UnsignedInt, (void*)0);
 
         gl.ActiveTexture(TextureUnit.Texture3);
         gl.BindTexture(GLEnum.Texture2D, 0);
@@ -481,6 +492,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
+            gl.DeleteBuffer(_indexBuffer);
             gl.DeleteVertexArray(_vao);
             gl.DeleteProgram(_program);
         }
@@ -517,28 +529,47 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         int index = 0;
         float step = (_surfaceSize * 2.0f) / clampedResolution;
 
-        for (int z = 0; z < clampedResolution; z++)
+        for (int z = 0; z <= clampedResolution; z++)
         {
             float z0 = -_surfaceSize + (step * z);
-            float z1 = z0 + step;
             float v0 = (float)z / clampedResolution;
-            float v1 = (float)(z + 1) / clampedResolution;
 
-            for (int x = 0; x < clampedResolution; x++)
+            for (int x = 0; x <= clampedResolution; x++)
             {
                 float x0 = -_surfaceSize + (step * x);
-                float x1 = x0 + step;
                 float u0 = (float)x / clampedResolution;
-                float u1 = (float)(x + 1) / clampedResolution;
 
                 vertices[index++] = CreateVertex(x0, z0, u0, v0, gerstnerEnabled, timeSeconds);
-                vertices[index++] = CreateVertex(x1, z0, u1, v0, gerstnerEnabled, timeSeconds);
-                vertices[index++] = CreateVertex(x0, z1, u0, v1, gerstnerEnabled, timeSeconds);
-                vertices[index++] = CreateVertex(x0, z1, u0, v1, gerstnerEnabled, timeSeconds);
-                vertices[index++] = CreateVertex(x1, z0, u1, v0, gerstnerEnabled, timeSeconds);
-                vertices[index++] = CreateVertex(x1, z1, u1, v1, gerstnerEnabled, timeSeconds);
             }
         }
+    }
+
+    private static uint[] CreateIndices(int resolution)
+    {
+        int clampedResolution = Math.Clamp(resolution, 1, 256);
+        int rowStride = clampedResolution + 1;
+        uint[] indices = new uint[clampedResolution * clampedResolution * 6];
+        int index = 0;
+
+        for (int z = 0; z < clampedResolution; z++)
+        {
+            for (int x = 0; x < clampedResolution; x++)
+            {
+                uint topLeft = (uint)((z * rowStride) + x);
+                uint topRight = topLeft + 1;
+                uint bottomLeft = (uint)(((z + 1) * rowStride) + x);
+                uint bottomRight = bottomLeft + 1;
+
+                indices[index++] = topLeft;
+                indices[index++] = topRight;
+                indices[index++] = bottomLeft;
+                indices[index++] = bottomLeft;
+                indices[index++] = topRight;
+                indices[index++] = bottomRight;
+            }
+        }
+
+        return indices;
     }
 
     private WaterVertex CreateVertex(float x, float z, float u, float v, bool gerstnerEnabled, float timeSeconds)
