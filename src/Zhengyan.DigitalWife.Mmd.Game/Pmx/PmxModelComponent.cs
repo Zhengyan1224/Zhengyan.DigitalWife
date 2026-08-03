@@ -185,7 +185,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private uint _customShaderVao;
     private float _animationTime;
     private bool _isPlaying = true;
+    private bool _enablePhysical = true;
     private bool _skipPhysicsOnNextPlayFrame;
+    private bool _resetPhysicsOnNextPoseUpdate;
     private bool _defaultResetPhysicsOnMotionLoop = true;
     private double _lastPoseSolveTimeSeconds = double.NegativeInfinity;
     private Vector3[]? _resetPositions;
@@ -347,7 +349,25 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
-    public bool EnablePhysical { get; set; } = true;
+    public bool EnablePhysical
+    {
+        get => _enablePhysical;
+        set
+        {
+            if (_enablePhysical == value)
+            {
+                return;
+            }
+
+            _enablePhysical = value;
+            if (_loaded && _model is not null)
+            {
+                _resetPhysicsOnNextPoseUpdate = true;
+                _skipPhysicsOnNextPlayFrame = true;
+                MarkPoseDirty(includeMaterial: false);
+            }
+        }
+    }
 
     public bool EnableEdge { get; set; } = true;
 
@@ -1470,7 +1490,12 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _transformUpdaters.UpdateStage(TransformUpdaterStage.PreAnimation, this, updaterElapsed);
         _model.UpdateMorphAnimation();
         _model.UpdateNodeAnimation(false);
-        if (resetPhysicsOnLoopThisFrame && EnablePhysical)
+        if (_resetPhysicsOnNextPoseUpdate)
+        {
+            _model.ResetPhysics();
+            _resetPhysicsOnNextPoseUpdate = false;
+        }
+        else if (resetPhysicsOnLoopThisFrame && EnablePhysical)
         {
             _model.ResetPhysics();
         }

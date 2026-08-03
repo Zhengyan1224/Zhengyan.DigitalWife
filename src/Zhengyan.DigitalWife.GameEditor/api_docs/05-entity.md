@@ -10,6 +10,7 @@ keywords:
   - RuntimeEntity
   - Transform
   - PMX
+  - physics
   - collider
 ---
 
@@ -53,6 +54,7 @@ keywords:
 | `PlaybackSpeed` | 无直接快照字段 | PMX 动作或粒子模拟速度。 |
 | `LoopMotion` | 无直接快照字段 | PMX 动作是否循环。Python 用 `set_loop_motion` 修改。 |
 | `ResetPhysicsOnMotionLoop` | 无直接快照字段 | PMX 动作循环时是否重置物理。Python 用 `set_reset_physics_on_motion_loop` 修改。 |
+| `PhysicsEnabled` | `physics_enabled` | PMX 内置刚体与关节物理是否启用。Python 用 `set_physics_enabled` 动态修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
 | `EnableShadow` | 无直接快照字段 | PMX 是否参与 shadow map 阴影。开启时会投射并接收阴影；关闭时不参与。Python 用 `set_shadow_enabled` 修改。 |
 | `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
@@ -88,6 +90,7 @@ Entity.IsPlaying = true;
 Entity.PlaybackSpeed = 1.2f;
 Entity.LoopMotion = true;
 Entity.ResetPhysicsOnMotionLoop = true;
+Entity.PhysicsEnabled = true;
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
 Entity.EnableWaterInteraction = true;
@@ -119,6 +122,7 @@ entity.set_playing(True)
 entity.set_playback_speed(1.2)
 entity.set_loop_motion(True)
 entity.set_reset_physics_on_motion_loop(True)
+entity.set_physics_enabled(True)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
 entity.set_enable_water_interaction(True)
@@ -141,6 +145,7 @@ C# 额外可读/可写属性：
 | `IsPmxModel` | 当前实体是否有 PMX 运行时对象。 |
 | `LoopMotion` | PMX 动作是否循环。 |
 | `ResetPhysicsOnMotionLoop` | PMX 动作循环时是否重置物理。 |
+| `PhysicsEnabled` | PMX 内置刚体与关节物理是否启用；可在运行时读取或修改。 |
 | `EnableEdge` | PMX 是否绘制描边。 |
 | `EnableShadow` | PMX 是否参与 shadow map 阴影。 |
 | `EnableWaterInteraction` | 粒子系统是否参与水体交互。 |

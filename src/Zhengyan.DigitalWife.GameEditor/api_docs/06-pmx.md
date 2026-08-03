@@ -11,6 +11,7 @@ keywords:
   - node
   - material
   - motion
+  - physics
 ---
 
 # PMX 动作与材质
@@ -86,6 +87,7 @@ Entity.IsPlaying = true;
 Entity.PlaybackSpeed = 1.0f;
 Entity.LoopMotion = true;
 Entity.ResetPhysicsOnMotionLoop = true;
+Entity.PhysicsEnabled = true;
 
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
@@ -97,6 +99,7 @@ entity.set_playing(True)
 entity.set_playback_speed(1.0)
 entity.set_loop_motion(True)
 entity.set_reset_physics_on_motion_loop(True)
+entity.set_physics_enabled(True)
 
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
@@ -108,6 +111,9 @@ entity.set_draw_shadow_in_main_pass(False)
 - `IsPlaying` 只对当前实体的可播放能力生效。对 PMX 表示动作播放，对粒子/水面表示系统启停。
 - `PlaybackSpeed` 对 PMX 表示动作倍速，对粒子系统表示模拟速度。
 - `LoopMotion` 和 `ResetPhysicsOnMotionLoop` 仅对 PMX 有意义。
+- GameEditor 在 PMX 实体面板中提供 `Physics` 复选框，并把设置保存到场景；该开关只控制 PMX 文件内置的刚体与关节，不影响实体下方配置的 `Colliders`。
+- `PhysicsEnabled` / `physics_enabled` 表示 PMX 内置刚体与关节物理当前是否启用。C# 可直接读写 `Entity.PhysicsEnabled`；Python 读取 `entity.physics_enabled`，并用 `entity.set_physics_enabled(...)` 动态切换。
+- 关闭 PMX 物理后，模型继续播放 VMD 和计算骨骼姿态，但不会执行刚体模拟。重新开启时会清除关闭前遗留的刚体速度，并从当前动画姿态重新开始模拟。
 - `EnableWaterInteraction` 仅对粒子系统有意义。只有粒子实体和水面实体都开启水体交互时，系统才会按每个活跃粒子的位置和当前尺寸做近似球检测，并在接触水面时触发波纹。
 - `KillOnWaterContact` 仅对粒子系统有意义。开启后，接触水面的粒子会在当前帧结束；关闭时粒子会穿过水面继续运动。
 - `WaterInteractionEnabled`、`WaterInteractionRadius`、`WaterInteractionStrength`、`ParticleRippleMinIntervalSeconds`、`ParticleRippleMergeDistance`、`RippleLifetimeSeconds`、`RippleWaveSpeed`、`RippleFrequency`、`RippleNormalStrength` 仅对 `water_surface` 有意义。

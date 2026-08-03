@@ -495,6 +495,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.morph_save_anim_weights = data.get("morphSaveAnimWeights", {})
                        self.node_names = data.get("nodeNames", [])
                        self.nodes = data.get("nodes", {})
+                       self.physics_enabled = bool(data.get("physicsEnabled", False))
                        self.colliders = data.get("colliders", [])
                        self.collider = data.get("collider", {})
                        self.enable_water_interaction = bool(data.get("enableWaterInteraction", False))
@@ -552,6 +553,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_reset_physics_on_motion_loop(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_reset_physics_on_motion_loop", "flag": bool(enabled)})
+
+                   def set_physics_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_physics_enabled", "flag": bool(enabled)})
 
                    def set_edge_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_edge_enabled", "flag": bool(enabled)})
@@ -3954,6 +3958,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_reset_physics_on_motion_loop" when command.Flag.HasValue:
                 entity.ResetPhysicsOnMotionLoop = command.Flag.Value;
                 break;
+            case "set_physics_enabled" when command.Flag.HasValue:
+                entity.PhysicsEnabled = command.Flag.Value;
+                break;
             case "set_edge_enabled" when command.Flag.HasValue:
                 entity.EnableEdge = command.Flag.Value;
                 break;
@@ -4682,6 +4689,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public Dictionary<string, PythonNodeState> Nodes { get; set; } = [];
 
+        public bool PhysicsEnabled { get; set; }
+
         public PythonCollider Collider { get; set; } = new();
 
         public PythonCollider[] Colliders { get; set; } = [];
@@ -4752,6 +4761,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                         : (Name: name, State: null))
                     .Where(item => item.State is not null)
                     .ToDictionary(item => item.Name, item => item.State!, StringComparer.Ordinal),
+                PhysicsEnabled = entity.PhysicsEnabled,
                 Collider = colliders.FirstOrDefault() ?? new PythonCollider(),
                 Colliders = colliders,
                 EnableWaterInteraction = entity.EnableWaterInteraction,

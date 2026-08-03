@@ -322,6 +322,19 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool PhysicsEnabled
+    {
+        get => _model?.EnablePhysical ?? _definition.EnablePhysics;
+        set
+        {
+            _definition.EnablePhysics = value;
+            if (_model is not null)
+            {
+                _model.EnablePhysical = value;
+            }
+        }
+    }
+
     public bool EnableEdge
     {
         get => _model?.EnableEdge ?? _definition.EnableEdge;
@@ -1691,6 +1704,7 @@ public sealed class RuntimeEntity
             _definition.IsPlaying = _model.IsPlaying;
             _definition.PlaybackSpeed = _model.PlaybackSpeed;
             _definition.LoopMotion = _model.LoopMotion;
+            _definition.EnablePhysics = _model.EnablePhysical;
             _definition.ResetPhysicsOnMotionLoop = _model.ResetPhysicsOnMotionLoop;
             _definition.EnableEdge = _model.EnableEdge;
             _definition.EnableShadow = _model.EnableShadow;

@@ -715,6 +715,8 @@ public sealed class GameEntity
 
     public bool ResetPhysicsOnMotionLoop { get; set; } = true;
 
+    public bool EnablePhysics { get; set; } = true;
+
     public ParticleEntitySettings Particle { get; set; } = new();
 
     public WaterSurfaceSettings Water { get; set; } = new();

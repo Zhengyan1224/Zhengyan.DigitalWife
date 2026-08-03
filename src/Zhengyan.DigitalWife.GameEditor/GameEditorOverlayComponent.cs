@@ -1941,6 +1941,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         float playbackSpeed = entity.PlaybackSpeed;
         bool loopMotion = entity.LoopMotion;
         bool resetPhysicsOnMotionLoop = entity.ResetPhysicsOnMotionLoop;
+        bool enablePhysics = entity.EnablePhysics;
         bool changed = false;
         changed |= ImGui.DragFloat3("Position", ref position, 0.02f);
         changed |= ImGui.DragFloat3("Rotation", ref rotation, 0.5f);
@@ -1951,6 +1952,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             changed |= ImGui.DragFloat("Playback speed", ref playbackSpeed, 0.01f, 0.0f, 5.0f, "%.2f");
             changed |= ImGui.Checkbox("Loop motion", ref loopMotion);
+            changed |= ImGui.Checkbox("Physics", ref enablePhysics);
             changed |= ImGui.Checkbox("Reset physics on loop", ref resetPhysicsOnMotionLoop);
         }
 
@@ -1966,6 +1968,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             entity.IsPlaying = isPlaying;
             entity.PlaybackSpeed = playbackSpeed;
             entity.LoopMotion = loopMotion;
+            entity.EnablePhysics = enablePhysics;
             entity.ResetPhysicsOnMotionLoop = resetPhysicsOnMotionLoop;
             entity.EnableEdge = enableEdge;
             entity.EnableShadow = enableShadow;
