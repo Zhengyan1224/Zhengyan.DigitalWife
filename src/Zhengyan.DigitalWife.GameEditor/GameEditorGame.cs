@@ -26,6 +26,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly Dictionary<string, AudioClip> _audioClips = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioSource> _audioSources = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _resourceImportCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _statusLog = [];
 
     private SceneRenderTarget? _sceneRenderTarget;
     private OrbitCameraController? _cameraController;
@@ -72,6 +73,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public IReadOnlyList<EditorPlaneObject> PlaneObjects => _planeObjects;
 
     public string StatusMessage => _statusMessage;
+
+    public IReadOnlyList<string> StatusLog => _statusLog;
 
     public string ActiveScenePath => GameProjectStore.NormalizeScenePath(Project.EditorScene);
 
@@ -1810,7 +1813,45 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void UpdateStatus(string message)
     {
+        AddStatusEntry("Info", message);
+    }
+
+    public void UpdateWarning(string message)
+    {
+        AddStatusEntry("Warning", message);
+    }
+
+    public void UpdateError(string message)
+    {
+        AddStatusEntry("Error", message);
+    }
+
+    public void ClearStatusLog()
+    {
+        _statusLog.Clear();
+    }
+
+    private void AddStatusEntry(string level, string message)
+    {
         _statusMessage = message;
+        _statusLog.Add($"[{DateTime.Now:HH:mm:ss}] [{level}] {message}");
+        const int maxEntries = 200;
+        if (_statusLog.Count > maxEntries)
+        {
+            _statusLog.RemoveRange(0, _statusLog.Count - maxEntries);
+        }
+    }
+
+    private static string FormatException(Exception exception)
+    {
+        List<string> reasons = [];
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            string message = string.IsNullOrWhiteSpace(current.Message) ? "No error message." : current.Message.Trim();
+            reasons.Add($"{current.GetType().Name}: {message}");
+        }
+
+        return string.Join(" -> ", reasons);
     }
 
     public bool TryGetClipboardText(out string text)
@@ -1946,6 +1987,11 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             };
             _pmxObjects.Add(runtime);
             ApplyRelationToModel(entity, runtime);
+            foreach (string warning in model.LoadWarnings)
+            {
+                UpdateWarning($"PMX '{entity.Name}': {warning}");
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -1955,7 +2001,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 _ = RemoveComponent(model);
             }
 
-            UpdateStatus($"Failed to load PMX: {ex.Message}");
+            UpdateError($"Failed to load PMX '{entity.Name}'.\nPath: {fullPath}\nReason: {FormatException(ex)}");
             return false;
         }
     }

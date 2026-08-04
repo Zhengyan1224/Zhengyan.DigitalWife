@@ -231,6 +231,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public string ComputeBackend => _model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel ? pmxModel.ComputeBackend : "CPU";
 
+    public IReadOnlyList<string> LoadWarnings => _model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel ? pmxModel.LoadWarnings : [];
+
     public Zhengyan.DigitalWife.Mmd.VmdAnimation? Animation => _motionLayers.Count == 0 ? null : _motionLayers[0].Animation;
 
     public int MotionLayerCount => _motionLayers.Count;
@@ -2416,7 +2418,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         try
         {
             string modelDirectory = Path.GetDirectoryName(pmxPath) ?? string.Empty;
-            model.Load(pmxPath, modelDirectory);
+            if (!model.Load(pmxPath, modelDirectory))
+            {
+                throw new InvalidDataException($"Unsupported or invalid PMX header: {pmxPath}");
+            }
+
             model.InitializeAnimation();
 
             layers = CreateMotionLayers(model, motionLayers);

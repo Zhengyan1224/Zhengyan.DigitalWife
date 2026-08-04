@@ -195,6 +195,7 @@ public unsafe class PmxModel : MMDModel
     private readonly List<MaterialMorphData> _materialMorphDatas;
     private readonly List<BoneMorphData> _boneMorphDatas;
     private readonly List<GroupMorphData> _groupMorphDatas;
+    private readonly List<string> _loadWarnings;
 
     private FixedArray<Vector3> positions;
     private FixedArray<Vector3> normals;
@@ -258,6 +259,7 @@ public unsafe class PmxModel : MMDModel
         _materialMorphDatas = [];
         _boneMorphDatas = [];
         _groupMorphDatas = [];
+        _loadWarnings = [];
     }
 
     public override bool HasUvMorphs => _uvMorphDatas.Count != 0;
@@ -265,6 +267,8 @@ public unsafe class PmxModel : MMDModel
     public bool IsUsingOpenCL => kernel is not null;
 
     public string ComputeBackend => IsUsingOpenCL ? "OpenCL" : "CPU";
+
+    public IReadOnlyList<string> LoadWarnings => _loadWarnings;
 
     public override bool Load(string path, string mmdDataDir)
     {
@@ -395,8 +399,9 @@ public unsafe class PmxModel : MMDModel
 
         // 绾圭悊
         List<string> texturePaths = [];
-        foreach (PmxTexture texture in pmx.Textures)
+        for (int textureIndex = 0; textureIndex < pmx.Textures.Length; textureIndex++)
         {
+            PmxTexture texture = pmx.Textures[textureIndex];
             string texPath = Path.Combine(dir, texture.Name.FormatFilePath());
             if (File.Exists(texPath))
             {
@@ -404,7 +409,10 @@ public unsafe class PmxModel : MMDModel
             }
             else
             {
-                throw new FileNotFoundException($"Texture file not found: {texPath}");
+                AddLoadWarning(
+                    $"Texture file not found: {texPath}. Texture index: {textureIndex}. " +
+                    DescribeTextureReferences(pmx, textureIndex));
+                texturePaths.Add(string.Empty);
             }
         }
 
@@ -505,7 +513,7 @@ public unsafe class PmxModel : MMDModel
                     {
                         isLoop = true;
 
-                        Console.WriteLine($"This bone hierarchy is a loop: bone= {bone.Name}");
+                        AddLoadWarning($"Bone hierarchy contains a loop: {bone.Name}");
 
                         break;
                     }
@@ -518,7 +526,7 @@ public unsafe class PmxModel : MMDModel
             {
                 if (bone.ParentBoneIndex >= boneIndex)
                 {
-                    Console.WriteLine($"The parent index of this node is big: bone= {bone.Name}");
+                    AddLoadWarning($"Bone parent appears after its child in the PMX bone list: {bone.Name}");
                 }
             }
 
@@ -554,7 +562,7 @@ public unsafe class PmxModel : MMDModel
             {
                 if (bone.AppendBoneIndex >= boneIndex)
                 {
-                    Console.WriteLine($"The parent(morph assignment) index of this node is big: bone= {bone.Name}");
+                    AddLoadWarning($"Append-transform source appears after its target in the PMX bone list: {bone.Name}");
                 }
                 node.AppendNode = _nodes[bone.AppendBoneIndex];
                 node.IsAppendLocal = bone.BoneFlags.HasFlag(PmxBoneFlags.AppendLocal);
@@ -582,7 +590,7 @@ public unsafe class PmxModel : MMDModel
 
                 if (bone.IKTargetBoneIndex < 0 || bone.IKTargetBoneIndex >= _nodes.Count)
                 {
-                    Console.WriteLine($"IK target bone index is invalid: bone= {bone.Name}");
+                    AddLoadWarning($"IK target bone index is invalid: {bone.Name}");
 
                     continue;
                 }
@@ -706,7 +714,7 @@ public unsafe class PmxModel : MMDModel
             }
             else
             {
-                Console.WriteLine($"Not Supported Morp Type({pmxMorph.MorphType}): [{pmxMorph.Name}]");
+                AddLoadWarning($"Unsupported morph type {pmxMorph.MorphType}: {pmxMorph.Name}");
             }
 
             _morphs.Add(morph);
@@ -1218,6 +1226,7 @@ public unsafe class PmxModel : MMDModel
         _materialMorphDatas.Clear();
         _boneMorphDatas.Clear();
         _groupMorphDatas.Clear();
+        _loadWarnings.Clear();
 
         positions.Dispose();
         normals.Dispose();
@@ -1242,6 +1251,46 @@ public unsafe class PmxModel : MMDModel
         physicsManager?.Dispose();
 
         kernel?.Dispose();
+    }
+
+    private void AddLoadWarning(string warning)
+    {
+        _loadWarnings.Add(warning);
+        Console.Error.WriteLine($"PMX warning: {warning}");
+    }
+
+    private static string DescribeTextureReferences(PmxParsing pmx, int textureIndex)
+    {
+        List<string> references = [];
+        for (int materialIndex = 0; materialIndex < pmx.Materials.Length; materialIndex++)
+        {
+            PmxMaterial material = pmx.Materials[materialIndex];
+            string name = !string.IsNullOrWhiteSpace(material.Name)
+                ? material.Name
+                : !string.IsNullOrWhiteSpace(material.NameEn)
+                    ? material.NameEn
+                    : "<unnamed>";
+            string materialLabel = $"#{materialIndex} '{name}'";
+
+            if (material.TextureIndex == textureIndex)
+            {
+                references.Add($"{materialLabel} (main texture)");
+            }
+
+            if (material.SphereTextureIndex == textureIndex)
+            {
+                references.Add($"{materialLabel} (sphere texture: {material.SphereMode})");
+            }
+
+            if (material.ToonMode == PmxToonMode.Separate && material.ToonTextureIndex == textureIndex)
+            {
+                references.Add($"{materialLabel} (separate toon texture)");
+            }
+        }
+
+        return references.Count == 0
+            ? "Material references: none (unused texture table entry)."
+            : $"Material references (zero-based): {string.Join(", ", references)}. Affected materials will fall back to their base color.";
     }
 
     private static void ValidateOpenClInteropLayout()

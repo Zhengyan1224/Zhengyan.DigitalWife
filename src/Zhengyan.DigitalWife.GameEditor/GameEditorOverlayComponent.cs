@@ -3702,6 +3702,33 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         ImGui.TextWrapped(_editorGame.StatusMessage);
         ImGui.TextWrapped(_editorGame.AudioSummary);
         ImGui.TextWrapped("Camera: RMB orbit, MMB pan, wheel zoom.");
+
+        ImGui.SeparatorText("Log");
+        if (ImGui.SmallButton("Clear"))
+        {
+            _editorGame.ClearStatusLog();
+        }
+
+        ImGui.BeginChild("StatusLog", Vector2.Zero, ImGuiChildFlags.Borders);
+        IReadOnlyList<string> statusLog = _editorGame.StatusLog;
+        for (int i = statusLog.Count - 1; i >= 0; i--)
+        {
+            string entry = statusLog[i];
+            Vector4 color = entry.Contains("[Error]", StringComparison.Ordinal)
+                ? new Vector4(1.0f, 0.38f, 0.34f, 1.0f)
+                : entry.Contains("[Warning]", StringComparison.Ordinal)
+                    ? new Vector4(1.0f, 0.72f, 0.25f, 1.0f)
+                    : ImGui.GetStyle().Colors[(int)ImGuiCol.Text];
+            ImGui.PushStyleColor(ImGuiCol.Text, color);
+            ImGui.TextWrapped(entry);
+            ImGui.PopStyleColor();
+            if (i > 0)
+            {
+                ImGui.Separator();
+            }
+        }
+
+        ImGui.EndChild();
     }
 
     private void TryRun(Action action)
