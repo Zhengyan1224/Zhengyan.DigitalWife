@@ -34,6 +34,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private bool _copyAssets = true;
     private int _preferredLanguageIndex;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
+    private ScreenSpriteRenderer? _backgroundSpriteRenderer;
     private static readonly string[] CameraControlModes =
     [
         "editor",
@@ -62,6 +64,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             throw new InvalidOperationException("Game is not attached.");
         }
+
+        _backgroundSpriteRenderer = new ScreenSpriteRenderer(Game.GraphicsDevice.Gl);
 
         if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
         {
@@ -113,6 +117,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         _spriteTextures.Clear();
+        _backgroundSpriteRenderer?.Dispose();
+        _backgroundSpriteRenderer = null;
         _controller?.Dispose();
         _controller = null;
         base.Dispose();
@@ -211,7 +217,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         drawList.PushClipRect(viewportMin, viewportMin + viewportSize, true);
 
         foreach (SpriteSettings sprite in _editorGame.Project.Scene.Sprites
-            .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path))
+            .Where(sprite => sprite.Visible && sprite.DrawOrder >= 0 && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
             uint textureId = GetSpriteTextureId(sprite.Path);
@@ -228,6 +234,48 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         drawList.PopClipRect();
+    }
+
+    public void DrawBackgroundSprites(
+        int layoutWidth,
+        int layoutHeight,
+        int viewportX,
+        int viewportY,
+        int viewportWidth,
+        int viewportHeight)
+    {
+        if (_backgroundSpriteRenderer is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<SpriteSettings> sprites = _editorGame.Project.Scene.Sprites;
+        PruneSpriteTextureCache(sprites);
+        _backgroundSpriteCommands.Clear();
+
+        foreach (SpriteSettings sprite in sprites
+            .Where(sprite => sprite.Visible && sprite.DrawOrder < 0 && !string.IsNullOrWhiteSpace(sprite.Path))
+            .OrderBy(sprite => sprite.DrawOrder))
+        {
+            uint textureId = GetSpriteTextureId(sprite.Path);
+            if (textureId == 0)
+            {
+                continue;
+            }
+
+            LayoutRect rect = ResolveSpriteRect(sprite, new Vector2(layoutWidth, layoutHeight));
+            Vector2 min = new(rect.X - viewportX, rect.Y - viewportY);
+            Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
+            _backgroundSpriteCommands.Add(new ScreenSpriteDrawCommand(
+                textureId,
+                min,
+                max,
+                sprite.RotationDegrees,
+                sprite.Opacity,
+                IsRuntimeTextureReference(sprite.Path)));
+        }
+
+        _backgroundSpriteRenderer.Draw(_backgroundSpriteCommands, viewportWidth, viewportHeight);
     }
 
     private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)

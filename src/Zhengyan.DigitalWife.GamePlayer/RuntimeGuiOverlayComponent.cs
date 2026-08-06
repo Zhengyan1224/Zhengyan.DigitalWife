@@ -31,6 +31,8 @@ internal sealed class RuntimeGuiOverlayComponent(
     private readonly Action<GuiControlSettings, string> _dispatchEvent = dispatchEvent;
     private readonly Action<ContextMenuSettings, ContextMenuItemSettings> _dispatchContextMenuEvent = dispatchContextMenuEvent;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
+    private ScreenSpriteRenderer? _backgroundSpriteRenderer;
     private ImGuiController? _controller;
     private string _openContextMenuId = string.Empty;
     private Vector2 _contextMenuPopupPosition;
@@ -45,6 +47,8 @@ internal sealed class RuntimeGuiOverlayComponent(
         {
             throw new InvalidOperationException("Game is not attached.");
         }
+
+        _backgroundSpriteRenderer = new ScreenSpriteRenderer(Game.GraphicsDevice.Gl);
 
         if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
         {
@@ -99,6 +103,8 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
 
         _spriteTextures.Clear();
+        _backgroundSpriteRenderer?.Dispose();
+        _backgroundSpriteRenderer = null;
         _controller?.Dispose();
         _controller = null;
         base.Dispose();
@@ -120,7 +126,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         drawList.PushClipRect(origin, max, true);
 
         foreach (SpriteSettings sprite in sprites
-            .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path))
+            .Where(sprite => sprite.Visible && sprite.DrawOrder >= 0 && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
             uint textureId = GetSpriteTextureId(sprite.Path);
@@ -143,6 +149,54 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
 
         drawList.PopClipRect();
+    }
+
+    public void DrawBackgroundSprites(
+        int layoutWidth,
+        int layoutHeight,
+        int viewportX,
+        int viewportY,
+        int viewportWidth,
+        int viewportHeight)
+    {
+        if (_backgroundSpriteRenderer is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<SpriteSettings> sprites = _getSprites();
+        PruneSpriteTextureCache(sprites);
+        GameWindowSettings window = _getWindowSettings();
+        _backgroundSpriteCommands.Clear();
+
+        foreach (SpriteSettings sprite in sprites
+            .Where(sprite => sprite.Visible && sprite.DrawOrder < 0 && !string.IsNullOrWhiteSpace(sprite.Path))
+            .OrderBy(sprite => sprite.DrawOrder))
+        {
+            uint textureId = GetSpriteTextureId(sprite.Path);
+            if (textureId == 0)
+            {
+                continue;
+            }
+
+            LayoutRect rect = SpriteLayoutResolver.Resolve(
+                sprite,
+                layoutWidth,
+                layoutHeight,
+                window.Width,
+                window.Height);
+            Vector2 min = new(rect.X - viewportX, rect.Y - viewportY);
+            Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
+            _backgroundSpriteCommands.Add(new ScreenSpriteDrawCommand(
+                textureId,
+                min,
+                max,
+                sprite.RotationDegrees,
+                sprite.Opacity,
+                IsRuntimeTextureReference(sprite.Path)));
+        }
+
+        _backgroundSpriteRenderer.Draw(_backgroundSpriteCommands, viewportWidth, viewportHeight);
     }
 
     private void DrawBubbles()

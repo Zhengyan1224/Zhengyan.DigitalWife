@@ -64,6 +64,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private bool _loadingReadyToFinish;
     private bool _isLoading;
     private bool _renderedSceneThisFrame;
+    private bool _skyboxDrawnThisFrame;
     private string _hoveredSpriteId = string.Empty;
     private string _pressedSpriteId = string.Empty;
     private bool _wasLeftMouseDown;
@@ -267,6 +268,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     protected override void Draw(GameTime gameTime)
     {
+        _skyboxDrawnThisFrame = false;
         _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
         _renderedSceneThisFrame = false;
 
@@ -289,6 +291,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ApplyRuntimeCamera(_camera);
         RenderShadowMap(gameTime, width, height);
         RenderPlanarWaterReflections(gameTime, _camera, width, height);
+        GraphicsDevice.Gl.BindFramebuffer(Silk.NET.OpenGLES.GLEnum.Framebuffer, 0);
+        GraphicsDevice.Gl.Disable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
+        GraphicsDevice.Gl.Viewport(0, 0, (uint)width, (uint)height);
+        DrawSceneSkybox(gameTime);
+        _guiOverlay?.DrawBackgroundSprites(width, height, 0, 0, width, height);
     }
 
     private bool TryDrawCameraViewports(GameTime gameTime)
@@ -372,6 +379,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                     gl.Viewport(x, y, (uint)width, (uint)height);
                     gl.Scissor(x, y, (uint)width, (uint)height);
                 });
+            DrawSceneSkybox(gameTime);
+            _guiOverlay?.DrawBackgroundSprites(screenWidth, screenHeight, x, yTop, width, height);
             DrawSceneComponentsOnce(gameTime);
         }
 
@@ -386,7 +395,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         IReadOnlyList<DrawableGameComponent> overlays = GetOverlayComponents();
         foreach (DrawableGameComponent component in Components
             .OfType<DrawableGameComponent>()
-            .Where(component => component.Visible && !overlays.Contains(component))
+            .Where(component => component.Visible && !overlays.Contains(component) && !ReferenceEquals(component, _skybox))
             .OrderBy(component => component.DrawOrder))
         {
             component.Draw(gameTime);
@@ -476,11 +485,18 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         Silk.NET.OpenGLES.GL gl = GraphicsDevice.Gl;
+        int layoutWidth = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+        int layoutHeight = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        int viewportY = Math.Max(layoutHeight - y - height, 0);
         DrawUnderwaterCamera(
             gameTime,
             camera,
             width,
             height,
+            layoutWidth,
+            layoutHeight,
+            x,
+            viewportY,
             settings,
             clearColor,
             () =>
@@ -506,6 +522,10 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         OrbitCamera camera,
         int width,
         int height,
+        int layoutWidth,
+        int layoutHeight,
+        int viewportX,
+        int viewportY,
         UnderwaterPostProcessSettings settings,
         Vector4 clearColor,
         Action bindOutputTarget)
@@ -536,10 +556,29 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         };
         RenderShadowMap(gameTime, width, height, restoreCaptureTarget);
         RenderPlanarWaterReflections(gameTime, camera, width, height, restoreCaptureTarget);
+        DrawSceneSkybox(gameTime);
+        _guiOverlay?.DrawBackgroundSprites(
+            layoutWidth,
+            layoutHeight,
+            viewportX,
+            viewportY,
+            width,
+            height);
         DrawSceneComponentsOnce(gameTime);
 
         bindOutputTarget();
         _underwaterPostProcessRenderer.Draw(camera, settings, gameTime.TotalSeconds, width, height);
+    }
+
+    private void DrawSceneSkybox(GameTime gameTime)
+    {
+        if (_skybox is null || !_skybox.Visible)
+        {
+            return;
+        }
+
+        _skybox.Draw(gameTime);
+        _skyboxDrawnThisFrame = true;
     }
 
     private bool TryResolveUnderwaterSettings(OrbitCamera camera, out UnderwaterPostProcessSettings settings)
@@ -2710,6 +2749,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public override bool ShouldDrawComponent(DrawableGameComponent component)
     {
+        if (_skyboxDrawnThisFrame && ReferenceEquals(component, _skybox))
+        {
+            return false;
+        }
+
         if (!_renderedSceneThisFrame)
         {
             return true;
