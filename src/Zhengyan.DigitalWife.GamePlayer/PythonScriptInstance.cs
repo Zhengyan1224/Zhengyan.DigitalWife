@@ -2784,6 +2784,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.height = data.get("height", 1)
                        self.rotation_degrees = float(data.get("rotationDegrees", 0.0))
                        self.opacity = data.get("opacity", 1)
+                       self.draw_order = int(data.get("drawOrder", 500))
                        self.visible = bool(data.get("visible", True))
                        self._commands = commands
 
@@ -2804,6 +2805,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_opacity(self, opacity):
                        self.opacity = opacity
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_opacity", "value": opacity})
+
+                   def set_draw_order(self, draw_order):
+                       self.draw_order = int(draw_order)
+                       self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_draw_order", "index": self.draw_order})
 
                    def set_texture(self, texture):
                        self.texture = texture
@@ -3810,6 +3815,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_opacity" when command.Value.HasValue:
                 sprite.Opacity = (float)command.Value.Value;
+                break;
+            case "set_draw_order" when command.Index.HasValue:
+                sprite.DrawOrder = command.Index.Value;
                 break;
             case "set_texture" when command.Texture is not null:
                 sprite.Texture = command.Texture;
@@ -5311,6 +5319,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float Opacity { get; set; }
 
+        public int DrawOrder { get; set; }
+
         public bool Visible { get; set; }
 
         public static PythonSprite FromRuntime(RuntimeSpriteControl sprite)
@@ -5328,6 +5338,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Height = sprite.Height,
                 RotationDegrees = sprite.RotationDegrees,
                 Opacity = sprite.Opacity,
+                DrawOrder = sprite.DrawOrder,
                 Visible = sprite.Visible
             };
         }

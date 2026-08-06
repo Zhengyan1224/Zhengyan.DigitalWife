@@ -42,7 +42,7 @@ keywords:
 | `LayoutMode` | `layout_mode` | `absolute` 或 `relative`。相对布局时会像 GUI 控件一样基于项目窗口参考分辨率缩放位置和尺寸。 |
 | `RotationDegrees` | `rotation_degrees` | 旋转角度。Python 当前主要用于读取和命中判断。 |
 | `Opacity` | `opacity` | 透明度。 |
-| `DrawOrder` | 无 | 绘制顺序。小于 `0` 时在 3D 场景之前绘制，可作为背景图；大于等于 `0` 时在 3D 场景之后绘制。相同阶段内数值越大越靠前。 |
+| `DrawOrder` | `draw_order` | 绘制顺序。小于 `0` 时在 3D 场景之前绘制，可作为背景图；大于等于 `0` 时在 3D 场景之后绘制。相同阶段内数值越大越靠前。 |
 | `Visible` | `visible` | 是否显示。 |
 | `SetLayoutMode(value)` | `set_layout_mode(value)` | 切换布局模式。 |
 | `GetScreenRect()` | 无 | C# 获取当前已经换算到屏幕像素空间的矩形。 |
@@ -78,6 +78,7 @@ if portrait is not None:
     portrait.set_size(160, 160)
     portrait.set_layout_mode("relative")
     portrait.set_opacity(0.9)
+    portrait.set_draw_order(100)
     portrait.set_texture("assets/textures/portrait.png")
     portrait.show()
     if portrait.contains_mouse(input) and input.is_mouse_button_down("left"):
@@ -98,12 +99,21 @@ if mini_map is not None:
     mini_map.set_render_texture("MiniMapRT")
 ```
 
+Python 运行时调整绘制层级：
+
+```python
+background = scene.get_sprite("Background")
+if background is not None:
+    background.set_draw_order(-1)
+```
+
 说明：
 
 - `absolute`：`X / Y / Width / Height` 直接按当前屏幕像素使用。
 - `relative`：`X / Y / Width / Height` 会按 `Project.Window.Width / Height` 作为参考分辨率缩放，行为和 GUI 控件一致。
 - `DrawOrder < 0`：Sprite 写入场景颜色缓冲，绘制在天空盒之后、其他 3D 场景内容之前；它也会参与水下后处理，并按整张游戏画面布局后裁剪到各个相机视口。
 - `DrawOrder >= 0`：Sprite 保持原有 GUI 前景行为，显示在 3D 模型上方。
+- Python 可以使用 `set_draw_order(value)` 在运行时切换 Sprite 的背景/前景阶段；例如设置为 `-1` 即可变成场景背景。
 - `ContainsPoint(...)` / `contains_point(...)` 会把布局模式和旋转角度一起考虑进去，不是简单的未旋转矩形判断。
 
 自动 Sprite 事件：
