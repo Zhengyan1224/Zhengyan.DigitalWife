@@ -88,6 +88,14 @@ Entity.PlaybackSpeed = 1.0f;
 Entity.LoopMotion = true;
 Entity.ResetPhysicsOnMotionLoop = true;
 Entity.PhysicsEnabled = true;
+Entity.PhysicsGravity = new Vector3(0.0f, -49.0f, 0.0f);
+Entity.PhysicsGravityDirection = Vector3.Normalize(new Vector3(1.0f, -1.0f, 0.0f));
+Entity.PhysicsGravityMagnitude = 98.0f;
+
+// 等价方法；传入的是完整重力加速度向量。
+Entity.SetPhysicsGravity(0.0f, -98.0f, 0.0f);
+Entity.SetPhysicsGravityDirection(0.0f, -1.0f, 0.0f);
+Entity.SetPhysicsGravityMagnitude(49.0f);
 
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
@@ -100,6 +108,13 @@ entity.set_playback_speed(1.0)
 entity.set_loop_motion(True)
 entity.set_reset_physics_on_motion_loop(True)
 entity.set_physics_enabled(True)
+entity.set_physics_gravity(0.0, -49.0, 0.0)
+entity.set_physics_gravity_direction(1.0, -1.0, 0.0)
+entity.set_physics_gravity_magnitude(98.0)
+
+gravity = entity.physics_gravity
+gravity_direction = entity.physics_gravity_direction
+gravity_magnitude = entity.physics_gravity_magnitude
 
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
@@ -113,6 +128,11 @@ entity.set_draw_shadow_in_main_pass(False)
 - `LoopMotion` 和 `ResetPhysicsOnMotionLoop` 仅对 PMX 有意义。
 - GameEditor 在 PMX 实体面板中提供 `Physics` 复选框，并把设置保存到场景；该开关只控制 PMX 文件内置的刚体与关节，不影响实体下方配置的 `Colliders`。
 - `PhysicsEnabled` / `physics_enabled` 表示 PMX 内置刚体与关节物理当前是否启用。C# 可直接读写 `Entity.PhysicsEnabled`；Python 读取 `entity.physics_enabled`，并用 `entity.set_physics_enabled(...)` 动态切换。
+- 每个 PMX 拥有独立的重力向量。修改一个实体的重力不会影响场景中的其它 PMX，也不会影响实体 `Colliders`、粒子或水面。
+- `PhysicsGravity` / `physics_gravity` 是完整重力加速度向量，向量方向表示重力方向，向量长度表示重力大小。默认值为 `(0, -98, 0)`；MMD 物理使用 10 倍单位缩放，因此该值对应通常的向下重力效果。
+- `PhysicsGravityDirection` / `physics_gravity_direction` 是归一化方向；`PhysicsGravityMagnitude` / `physics_gravity_magnitude` 是非负大小。大小设为 `0` 可关闭该 PMX 的重力，但不会关闭刚体与关节模拟。
+- C# 可以读写上述三个属性，或调用 `SetPhysicsGravity(...)`、`SetPhysicsGravityDirection(...)`、`SetPhysicsGravityMagnitude(...)`。Python 快照属性只读，运行时修改使用对应的 `set_physics_gravity*` 方法。
+- 运行时修改重力会立即更新该 PMX 的 Bullet 物理世界并唤醒刚体，不会重建模型或重置当前物理姿态。
 - 关闭 PMX 物理后，模型继续播放 VMD 和计算骨骼姿态，但不会执行刚体模拟。重新开启时会清除关闭前遗留的刚体速度，并从当前动画姿态重新开始模拟。
 - `EnableWaterInteraction` 仅对粒子系统有意义。只有粒子实体和水面实体都开启水体交互时，系统才会按每个活跃粒子的位置和当前尺寸做近似球检测，并在接触水面时触发波纹。
 - `KillOnWaterContact` 仅对粒子系统有意义。开启后，接触水面的粒子会在当前帧结束；关闭时粒子会穿过水面继续运动。

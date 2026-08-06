@@ -2355,6 +2355,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         model.PlaybackSpeed = entity.PlaybackSpeed;
         model.LoopMotion = entity.LoopMotion;
         model.EnablePhysical = entity.EnablePhysics;
+        model.PhysicsGravity = entity.PhysicsGravity;
         model.ResetPhysicsOnMotionLoop = entity.ResetPhysicsOnMotionLoop;
         model.EnableEdge = entity.EnableEdge;
         model.EnableShadow = entity.EnableShadow;

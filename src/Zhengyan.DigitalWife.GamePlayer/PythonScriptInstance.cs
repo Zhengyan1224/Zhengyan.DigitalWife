@@ -496,6 +496,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.node_names = data.get("nodeNames", [])
                        self.nodes = data.get("nodes", {})
                        self.physics_enabled = bool(data.get("physicsEnabled", False))
+                       self.physics_gravity = data.get("physicsGravity", [0.0, -98.0, 0.0])
+                       self.physics_gravity_direction = data.get("physicsGravityDirection", [0.0, -1.0, 0.0])
+                       self.physics_gravity_magnitude = float(data.get("physicsGravityMagnitude", 98.0))
                        self.colliders = data.get("colliders", [])
                        self.collider = data.get("collider", {})
                        self.enable_water_interaction = bool(data.get("enableWaterInteraction", False))
@@ -556,6 +559,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_physics_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_physics_enabled", "flag": bool(enabled)})
+
+                   def set_physics_gravity(self, x, y, z):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_physics_gravity", "x": x, "y": y, "z": z})
+
+                   def set_physics_gravity_direction(self, x, y, z):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_physics_gravity_direction", "x": x, "y": y, "z": z})
+
+                   def set_physics_gravity_magnitude(self, value):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_physics_gravity_magnitude", "value": value})
 
                    def set_edge_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_edge_enabled", "flag": bool(enabled)})
@@ -3961,6 +3973,15 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_physics_enabled" when command.Flag.HasValue:
                 entity.PhysicsEnabled = command.Flag.Value;
                 break;
+            case "set_physics_gravity" when TryGetVector(command, out float x, out float y, out float z):
+                entity.SetPhysicsGravity(x, y, z);
+                break;
+            case "set_physics_gravity_direction" when TryGetVector(command, out float x, out float y, out float z):
+                entity.SetPhysicsGravityDirection(x, y, z);
+                break;
+            case "set_physics_gravity_magnitude" when command.Value.HasValue:
+                entity.SetPhysicsGravityMagnitude((float)command.Value.Value);
+                break;
             case "set_edge_enabled" when command.Flag.HasValue:
                 entity.EnableEdge = command.Flag.Value;
                 break;
@@ -4691,6 +4712,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool PhysicsEnabled { get; set; }
 
+        public float[] PhysicsGravity { get; set; } = [0.0f, -98.0f, 0.0f];
+
+        public float[] PhysicsGravityDirection { get; set; } = [0.0f, -1.0f, 0.0f];
+
+        public float PhysicsGravityMagnitude { get; set; } = 98.0f;
+
         public PythonCollider Collider { get; set; } = new();
 
         public PythonCollider[] Colliders { get; set; } = [];
@@ -4762,6 +4789,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     .Where(item => item.State is not null)
                     .ToDictionary(item => item.Name, item => item.State!, StringComparer.Ordinal),
                 PhysicsEnabled = entity.PhysicsEnabled,
+                PhysicsGravity = [entity.PhysicsGravity.X, entity.PhysicsGravity.Y, entity.PhysicsGravity.Z],
+                PhysicsGravityDirection = [entity.PhysicsGravityDirection.X, entity.PhysicsGravityDirection.Y, entity.PhysicsGravityDirection.Z],
+                PhysicsGravityMagnitude = entity.PhysicsGravityMagnitude,
                 Collider = colliders.FirstOrDefault() ?? new PythonCollider(),
                 Colliders = colliders,
                 EnableWaterInteraction = entity.EnableWaterInteraction,

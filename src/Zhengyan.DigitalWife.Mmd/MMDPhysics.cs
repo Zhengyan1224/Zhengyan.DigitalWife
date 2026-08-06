@@ -5,6 +5,8 @@ namespace Zhengyan.DigitalWife.Mmd;
 
 public class MMDPhysics : IDisposable
 {
+    public static readonly System.Numerics.Vector3 DefaultGravity = new(0.0f, -98.0f, 0.0f);
+
     private readonly BroadphaseInterface _broadphase;
     private readonly DefaultCollisionConfiguration _collisionConfig;
     private readonly CollisionDispatcher _dispatcher;
@@ -20,6 +22,24 @@ public class MMDPhysics : IDisposable
 
     public DiscreteDynamicsWorld DynamicsWorld { get; }
 
+    public System.Numerics.Vector3 Gravity
+    {
+        get
+        {
+            Vector3 gravity = DynamicsWorld.Gravity;
+            return new System.Numerics.Vector3(gravity.X, gravity.Y, gravity.Z);
+        }
+        set
+        {
+            if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity components must be finite.");
+            }
+
+            DynamicsWorld.Gravity = new Vector3(value.X, value.Y, value.Z);
+        }
+    }
+
     public MMDPhysics()
     {
         FPS = 120.0f;
@@ -31,10 +51,8 @@ public class MMDPhysics : IDisposable
 
         _solver = new SequentialImpulseConstraintSolver();
 
-        DynamicsWorld = new DiscreteDynamicsWorld(_dispatcher, _broadphase, _solver, _collisionConfig)
-        {
-            Gravity = new Vector3(0.0f, -9.8f * 10.0f, 0.0f)
-        };
+        DynamicsWorld = new DiscreteDynamicsWorld(_dispatcher, _broadphase, _solver, _collisionConfig);
+        Gravity = DefaultGravity;
 
         _groundShape = new StaticPlaneShape(Vector3.UnitY, 0.0f);
 

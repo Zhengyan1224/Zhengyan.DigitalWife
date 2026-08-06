@@ -1942,6 +1942,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool loopMotion = entity.LoopMotion;
         bool resetPhysicsOnMotionLoop = entity.ResetPhysicsOnMotionLoop;
         bool enablePhysics = entity.EnablePhysics;
+        Vector3 physicsGravityDirection = entity.PhysicsGravityDirection.ToVector3();
+        physicsGravityDirection = physicsGravityDirection.LengthSquared() > 1e-12f
+            ? Vector3.Normalize(physicsGravityDirection)
+            : -Vector3.UnitY;
+        float physicsGravityMagnitude = MathF.Max(0.0f, entity.PhysicsGravityMagnitude);
+        bool physicsGravityChanged = false;
         bool changed = false;
         changed |= ImGui.DragFloat3("Position", ref position, 0.02f);
         changed |= ImGui.DragFloat3("Rotation", ref rotation, 0.5f);
@@ -1953,6 +1959,29 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             changed |= ImGui.DragFloat("Playback speed", ref playbackSpeed, 0.01f, 0.0f, 5.0f, "%.2f");
             changed |= ImGui.Checkbox("Loop motion", ref loopMotion);
             changed |= ImGui.Checkbox("Physics", ref enablePhysics);
+            physicsGravityChanged = ImGui.DragFloat3(
+                "Gravity direction",
+                ref physicsGravityDirection,
+                0.01f,
+                -1.0f,
+                1.0f,
+                "%.3f");
+            physicsGravityChanged |= ImGui.DragFloat(
+                "Gravity magnitude",
+                ref physicsGravityMagnitude,
+                0.1f,
+                0.0f,
+                10000.0f,
+                "%.2f");
+            if (physicsGravityChanged)
+            {
+                physicsGravityMagnitude = Math.Clamp(physicsGravityMagnitude, 0.0f, 10000.0f);
+                physicsGravityDirection = physicsGravityDirection.LengthSquared() > 1e-12f
+                    ? Vector3.Normalize(physicsGravityDirection)
+                    : -Vector3.UnitY;
+                changed = true;
+            }
+
             changed |= ImGui.Checkbox("Reset physics on loop", ref resetPhysicsOnMotionLoop);
         }
 
@@ -1969,6 +1998,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             entity.PlaybackSpeed = playbackSpeed;
             entity.LoopMotion = loopMotion;
             entity.EnablePhysics = enablePhysics;
+            if (physicsGravityChanged)
+            {
+                entity.PhysicsGravityDirection = Vector3Dto.FromVector3(physicsGravityDirection);
+                entity.PhysicsGravityMagnitude = physicsGravityMagnitude;
+            }
+
             entity.ResetPhysicsOnMotionLoop = resetPhysicsOnMotionLoop;
             entity.EnableEdge = enableEdge;
             entity.EnableShadow = enableShadow;

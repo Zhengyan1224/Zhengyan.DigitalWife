@@ -717,6 +717,45 @@ public sealed class GameEntity
 
     public bool EnablePhysics { get; set; } = true;
 
+    public Vector3Dto PhysicsGravityDirection { get; set; } = new(0.0f, -1.0f, 0.0f);
+
+    public float PhysicsGravityMagnitude { get; set; } = 98.0f;
+
+    [JsonIgnore]
+    public Vector3 PhysicsGravity
+    {
+        get
+        {
+            Vector3 direction = PhysicsGravityDirection.ToVector3();
+            if (!float.IsFinite(direction.X)
+                || !float.IsFinite(direction.Y)
+                || !float.IsFinite(direction.Z)
+                || direction.LengthSquared() <= 1e-12f)
+            {
+                direction = -Vector3.UnitY;
+            }
+
+            float magnitude = float.IsFinite(PhysicsGravityMagnitude)
+                ? MathF.Max(0.0f, PhysicsGravityMagnitude)
+                : 98.0f;
+            return Vector3.Normalize(direction) * magnitude;
+        }
+        set
+        {
+            if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity components must be finite.");
+            }
+
+            float magnitude = value.Length();
+            PhysicsGravityMagnitude = magnitude;
+            if (magnitude > 1e-6f)
+            {
+                PhysicsGravityDirection = Vector3Dto.FromVector3(value / magnitude);
+            }
+        }
+    }
+
     public ParticleEntitySettings Particle { get; set; } = new();
 
     public WaterSurfaceSettings Water { get; set; } = new();

@@ -189,6 +189,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private bool _skipPhysicsOnNextPlayFrame;
     private bool _resetPhysicsOnNextPoseUpdate;
     private bool _defaultResetPhysicsOnMotionLoop = true;
+    private Vector3 _physicsGravity = MMDPhysics.DefaultGravity;
     private double _lastPoseSolveTimeSeconds = double.NegativeInfinity;
     private Vector3[]? _resetPositions;
     private Vector3[]? _resetNormals;
@@ -367,6 +368,24 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 _resetPhysicsOnNextPoseUpdate = true;
                 _skipPhysicsOnNextPlayFrame = true;
                 MarkPoseDirty(includeMaterial: false);
+            }
+        }
+    }
+
+    public Vector3 PhysicsGravity
+    {
+        get => _model is PmxModel pmxModel ? pmxModel.PhysicsGravity : _physicsGravity;
+        set
+        {
+            if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity components must be finite.");
+            }
+
+            _physicsGravity = value;
+            if (_model is PmxModel pmxModel)
+            {
+                pmxModel.PhysicsGravity = value;
             }
         }
     }
@@ -2423,6 +2442,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 throw new InvalidDataException($"Unsupported or invalid PMX header: {pmxPath}");
             }
 
+            model.PhysicsGravity = _physicsGravity;
             model.InitializeAnimation();
 
             layers = CreateMotionLayers(model, motionLayers);

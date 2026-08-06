@@ -196,6 +196,7 @@ public unsafe class PmxModel : MMDModel
     private readonly List<BoneMorphData> _boneMorphDatas;
     private readonly List<GroupMorphData> _groupMorphDatas;
     private readonly List<string> _loadWarnings;
+    private Vector3 _physicsGravity = MMDPhysics.DefaultGravity;
 
     private FixedArray<Vector3> positions;
     private FixedArray<Vector3> normals;
@@ -269,6 +270,30 @@ public unsafe class PmxModel : MMDModel
     public string ComputeBackend => IsUsingOpenCL ? "OpenCL" : "CPU";
 
     public IReadOnlyList<string> LoadWarnings => _loadWarnings;
+
+    public Vector3 PhysicsGravity
+    {
+        get => _physicsGravity;
+        set
+        {
+            if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity components must be finite.");
+            }
+
+            _physicsGravity = value;
+            if (physicsManager is null)
+            {
+                return;
+            }
+
+            physicsManager.Physics.Gravity = value;
+            foreach (MMDRigidBody rigidBody in physicsManager.RigidBodies)
+            {
+                rigidBody.SetActivation(true);
+            }
+        }
+    }
 
     public override bool Load(string path, string mmdDataDir)
     {
@@ -722,6 +747,7 @@ public unsafe class PmxModel : MMDModel
 
         // Physics
         physicsManager = new MMDPhysicsManager();
+        physicsManager.Physics.Gravity = _physicsGravity;
 
         foreach (PmxRigidBody pmxRB in pmx.RigidBodies)
         {

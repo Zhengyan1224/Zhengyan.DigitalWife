@@ -335,6 +335,82 @@ public sealed class RuntimeEntity
         }
     }
 
+    public Vector3 PhysicsGravity
+    {
+        get => _model?.PhysicsGravity ?? _definition.PhysicsGravity;
+        set
+        {
+            ValidatePhysicsGravity(value);
+            _definition.PhysicsGravity = value;
+            if (_model is not null)
+            {
+                _model.PhysicsGravity = value;
+            }
+        }
+    }
+
+    public Vector3 PhysicsGravityDirection
+    {
+        get
+        {
+            Vector3 direction = _definition.PhysicsGravityDirection.ToVector3();
+            return direction.LengthSquared() > 1e-12f ? Vector3.Normalize(direction) : -Vector3.UnitY;
+        }
+        set
+        {
+            ValidatePhysicsGravity(value);
+            if (value.LengthSquared() <= 1e-12f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity direction must not be zero.");
+            }
+
+            Vector3 direction = Vector3.Normalize(value);
+            _definition.PhysicsGravityDirection = Vector3Dto.FromVector3(direction);
+            if (_model is not null)
+            {
+                _model.PhysicsGravity = direction * PhysicsGravityMagnitude;
+            }
+        }
+    }
+
+    public float PhysicsGravityMagnitude
+    {
+        get => _model?.PhysicsGravity.Length() ?? MathF.Max(0.0f, _definition.PhysicsGravityMagnitude);
+        set
+        {
+            if (!float.IsFinite(value) || value < 0.0f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity magnitude must be finite and non-negative.");
+            }
+
+            _definition.PhysicsGravityMagnitude = value;
+            if (_model is not null)
+            {
+                _model.PhysicsGravity = PhysicsGravityDirection * value;
+            }
+        }
+    }
+
+    public void SetPhysicsGravity(float x, float y, float z)
+    {
+        PhysicsGravity = new Vector3(x, y, z);
+    }
+
+    public void SetPhysicsGravity(Vector3 gravity)
+    {
+        PhysicsGravity = gravity;
+    }
+
+    public void SetPhysicsGravityDirection(float x, float y, float z)
+    {
+        PhysicsGravityDirection = new Vector3(x, y, z);
+    }
+
+    public void SetPhysicsGravityMagnitude(float magnitude)
+    {
+        PhysicsGravityMagnitude = magnitude;
+    }
+
     public bool EnableEdge
     {
         get => _model?.EnableEdge ?? _definition.EnableEdge;
@@ -1705,6 +1781,7 @@ public sealed class RuntimeEntity
             _definition.PlaybackSpeed = _model.PlaybackSpeed;
             _definition.LoopMotion = _model.LoopMotion;
             _definition.EnablePhysics = _model.EnablePhysical;
+            _definition.PhysicsGravity = _model.PhysicsGravity;
             _definition.ResetPhysicsOnMotionLoop = _model.ResetPhysicsOnMotionLoop;
             _definition.EnableEdge = _model.EnableEdge;
             _definition.EnableShadow = _model.EnableShadow;
@@ -1742,6 +1819,14 @@ public sealed class RuntimeEntity
             _definition.Plane.ReceiveShadow = _plane.ReceiveShadow;
             _definition.Plane.MirrorReflectionEnabled = _plane.MirrorReflectionEnabled;
             _definition.Plane.MirrorReflectionStrength = _plane.MirrorReflectionStrength;
+        }
+    }
+
+    private static void ValidatePhysicsGravity(Vector3 value)
+    {
+        if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "Physics gravity components must be finite.");
         }
     }
 

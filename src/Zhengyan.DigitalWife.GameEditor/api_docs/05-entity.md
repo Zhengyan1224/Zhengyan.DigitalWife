@@ -55,6 +55,9 @@ keywords:
 | `LoopMotion` | 无直接快照字段 | PMX 动作是否循环。Python 用 `set_loop_motion` 修改。 |
 | `ResetPhysicsOnMotionLoop` | 无直接快照字段 | PMX 动作循环时是否重置物理。Python 用 `set_reset_physics_on_motion_loop` 修改。 |
 | `PhysicsEnabled` | `physics_enabled` | PMX 内置刚体与关节物理是否启用。Python 用 `set_physics_enabled` 动态修改。 |
+| `PhysicsGravity` | `physics_gravity` | PMX 完整重力加速度向量；方向是重力方向，长度是重力大小。Python 用 `set_physics_gravity` 修改。 |
+| `PhysicsGravityDirection` | `physics_gravity_direction` | PMX 归一化重力方向。Python 用 `set_physics_gravity_direction` 修改。 |
+| `PhysicsGravityMagnitude` | `physics_gravity_magnitude` | PMX 非负重力大小。Python 用 `set_physics_gravity_magnitude` 修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
 | `EnableShadow` | 无直接快照字段 | PMX 是否参与 shadow map 阴影。开启时会投射并接收阴影；关闭时不参与。Python 用 `set_shadow_enabled` 修改。 |
 | `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
@@ -91,6 +94,9 @@ Entity.PlaybackSpeed = 1.2f;
 Entity.LoopMotion = true;
 Entity.ResetPhysicsOnMotionLoop = true;
 Entity.PhysicsEnabled = true;
+Entity.SetPhysicsGravity(0.0f, -49.0f, 0.0f);
+Entity.PhysicsGravityDirection = -Vector3.UnitY;
+Entity.PhysicsGravityMagnitude = 98.0f;
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
 Entity.EnableWaterInteraction = true;
@@ -123,6 +129,9 @@ entity.set_playback_speed(1.2)
 entity.set_loop_motion(True)
 entity.set_reset_physics_on_motion_loop(True)
 entity.set_physics_enabled(True)
+entity.set_physics_gravity(0.0, -49.0, 0.0)
+entity.set_physics_gravity_direction(0.0, -1.0, 0.0)
+entity.set_physics_gravity_magnitude(98.0)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
 entity.set_enable_water_interaction(True)
@@ -146,6 +155,9 @@ C# 额外可读/可写属性：
 | `LoopMotion` | PMX 动作是否循环。 |
 | `ResetPhysicsOnMotionLoop` | PMX 动作循环时是否重置物理。 |
 | `PhysicsEnabled` | PMX 内置刚体与关节物理是否启用；可在运行时读取或修改。 |
+| `PhysicsGravity` | PMX 完整重力加速度向量，默认 `(0, -98, 0)`。 |
+| `PhysicsGravityDirection` | PMX 归一化重力方向。 |
+| `PhysicsGravityMagnitude` | PMX 非负重力大小，设为 `0` 时无重力。 |
 | `EnableEdge` | PMX 是否绘制描边。 |
 | `EnableShadow` | PMX 是否参与 shadow map 阴影。 |
 | `EnableWaterInteraction` | 粒子系统是否参与水体交互。 |
