@@ -9,6 +9,8 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
     private OrbitCamera _camera;
     private string _texturePath;
     private Texture2D? _texture;
+    private ITexture2D? _backendTexture;
+    private VeldridSkyboxRenderer? _vulkanRenderer;
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
@@ -37,7 +39,8 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
             _texturePath = value;
             if (Game is not null)
             {
-                ReloadTexture(Game.GraphicsDevice.Gl);
+                if (Game.GraphicsDevice.Renderer is OpenGlRenderer openGl) ReloadTexture(openGl.Gl);
+                else ReloadBackendTexture();
             }
         }
     }
@@ -57,6 +60,14 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
         if (Game is null)
         {
             throw new InvalidOperationException("Game is not attached.");
+        }
+
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            _backendTexture = Game.GraphicsDevice.CreateTexture2D();
+            ReloadBackendTexture();
+            _vulkanRenderer = new VeldridSkyboxRenderer(vulkan);
+            return;
         }
 
         GL gl = Game.GraphicsDevice.Gl;
@@ -96,7 +107,7 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
     public override void Draw(GameTime gameTime)
     {
         _ = gameTime;
-        if (Game is null || _texture is null)
+        if (Game is null)
         {
             return;
         }
@@ -110,6 +121,14 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
         {
             return;
         }
+
+        if (_vulkanRenderer is not null && _backendTexture is not null)
+        {
+            _vulkanRenderer.Draw(_backendTexture, inverseViewProjection, Tint, Exposure);
+            return;
+        }
+
+        if (_texture is null) return;
 
         GL gl = Game.GraphicsDevice.Gl;
         gl.Disable(GLEnum.DepthTest);
@@ -138,10 +157,14 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
     {
         _texture?.Dispose();
         _texture = null;
+        _vulkanRenderer?.Dispose();
+        _vulkanRenderer = null;
+        _backendTexture?.Dispose();
+        _backendTexture = null;
 
-        if (Game is not null)
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer openGl)
         {
-            GL gl = Game.GraphicsDevice.Gl;
+            GL gl = openGl.Gl;
             gl.DeleteBuffer(_vertexBuffer);
             gl.DeleteVertexArray(_vao);
             gl.DeleteProgram(_program);
@@ -162,6 +185,13 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
         {
             _texture.Fill(20, 28, 40, 255);
         }
+    }
+
+    private void ReloadBackendTexture()
+    {
+        if (_backendTexture is null) return;
+        if (!string.IsNullOrWhiteSpace(_texturePath) && File.Exists(_texturePath)) _backendTexture.LoadFromFile(_texturePath);
+        else _backendTexture.Fill(20, 28, 40, 255);
     }
 
     private const string VertexShaderSource = """

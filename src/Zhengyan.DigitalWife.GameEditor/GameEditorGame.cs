@@ -34,7 +34,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private SceneRenderTextureManager? _renderTextureManager;
     private PlanarReflectionRenderer? _planarReflectionRenderer;
     private ShadowMapRenderer? _shadowMapRenderer;
-    private UnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
+    private IUnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
     private SkyboxComponent? _skybox;
     private string _statusMessage = "Ready.";
     private bool _renderedSceneThisFrame;
@@ -130,7 +130,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _shadowMapRenderer = new ShadowMapRenderer(this);
-        _underwaterPostProcessRenderer = new UnderwaterPostProcessRenderer(GraphicsDevice.Gl, "EditorUnderwater");
+        _underwaterPostProcessRenderer = GraphicsDevice.Renderer switch
+        {
+            OpenGlRenderer => new UnderwaterPostProcessRenderer(GraphicsDevice.Gl, "EditorUnderwater"),
+            VulkanRenderer vulkan => new VeldridUnderwaterPostProcessRenderer(vulkan, "EditorUnderwater"),
+            _ => throw new NotSupportedException($"Underwater post-process is not available on {GraphicsDevice.Backend}.")
+        };
 
         ApplyCameraSettings();
         ApplySceneSettings();
@@ -187,14 +192,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
 
-        _sceneRenderTarget.Bind();
-        GraphicsDevice.Gl.Disable(GLEnum.ScissorTest);
-        GraphicsDevice.Gl.Disable(GLEnum.StencilTest);
-        GraphicsDevice.Gl.ColorMask(true, true, true, true);
-        GraphicsDevice.Gl.DepthMask(true);
-        GraphicsDevice.Gl.StencilMask(0xFF);
-        GraphicsDevice.Gl.ClearColor(Options.ClearColor.X, Options.ClearColor.Y, Options.ClearColor.Z, Options.ClearColor.W);
-        GraphicsDevice.Gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+        _sceneRenderTarget.BeginPass(Options.ClearColor);
 
         _camera.Width = _sceneRenderTarget.Width;
         _camera.Height = _sceneRenderTarget.Height;
@@ -224,7 +222,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _sceneRenderTarget.Height,
             () => _sceneRenderTarget.Bind());
         _sceneRenderTarget.Bind();
-        GraphicsDevice.Gl.Disable(GLEnum.ScissorTest);
+        if (GraphicsDevice.Renderer is OpenGlRenderer openGl)
+        {
+            GraphicsDevice.Gl.Disable(GLEnum.ScissorTest);
+        }
         DrawSceneSkybox(gameTime);
         _overlay?.DrawBackgroundSprites(
             _sceneRenderTarget.Width,
@@ -250,10 +251,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return false;
         }
 
-        GL gl = GraphicsDevice.Gl;
         int screenWidth = Math.Max(_sceneRenderTarget.Width, 1);
         int screenHeight = Math.Max(_sceneRenderTarget.Height, 1);
-        gl.Enable(GLEnum.ScissorTest);
 
         foreach (SceneCameraSettings settings in viewportCameras)
         {
@@ -277,13 +276,17 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             camera.Width = width;
             camera.Height = height;
 
-            gl.Viewport(x, y, (uint)width, (uint)height);
-            gl.Scissor(x, y, (uint)width, (uint)height);
-            gl.ColorMask(true, true, true, true);
-            gl.DepthMask(true);
+            GraphicsDevice.SetViewport(x, y, width, height);
+            GraphicsDevice.SetScissor(x, y, width, height);
             Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
-            gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
-            gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+            if (GraphicsDevice.Renderer is OpenGlRenderer)
+            {
+                GL clearGl = GraphicsDevice.Gl;
+                clearGl.ColorMask(true, true, true, true);
+                clearGl.DepthMask(true);
+                clearGl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
+                clearGl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+            }
 
             if (TryDrawUnderwaterCameraToSceneTarget(gameTime, camera, x, y, width, height, scissorEnabled: true))
             {
@@ -298,9 +301,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 () =>
                 {
                     _sceneRenderTarget.Bind();
-                    gl.Enable(GLEnum.ScissorTest);
-                    gl.Viewport(x, y, (uint)width, (uint)height);
-                    gl.Scissor(x, y, (uint)width, (uint)height);
+                    GraphicsDevice.SetViewport(x, y, width, height);
+                    GraphicsDevice.SetScissor(x, y, width, height);
                 });
             RenderPlanarWaterReflections(
                 gameTime,
@@ -310,17 +312,16 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 () =>
                 {
                     _sceneRenderTarget.Bind();
-                    gl.Enable(GLEnum.ScissorTest);
-                    gl.Viewport(x, y, (uint)width, (uint)height);
-                    gl.Scissor(x, y, (uint)width, (uint)height);
+                    GraphicsDevice.SetViewport(x, y, width, height);
+                    GraphicsDevice.SetScissor(x, y, width, height);
                 });
             DrawSceneSkybox(gameTime);
             _overlay?.DrawBackgroundSprites(screenWidth, screenHeight, x, yTop, width, height);
             DrawSceneComponentsOnce(gameTime);
         }
 
-        gl.Disable(GLEnum.ScissorTest);
-        gl.Viewport(0, 0, (uint)screenWidth, (uint)screenHeight);
+        GraphicsDevice.SetScissor(0, 0, screenWidth, screenHeight, false);
+        GraphicsDevice.SetViewport(0, 0, screenWidth, screenHeight);
         ApplyRuntimeCamera(_camera);
         return true;
     }
@@ -414,7 +415,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return false;
         }
 
-        GL gl = GraphicsDevice.Gl;
         int layoutWidth = Math.Max(_sceneRenderTarget.Width, 1);
         int layoutHeight = Math.Max(_sceneRenderTarget.Height, 1);
         int viewportY = Math.Max(layoutHeight - y - height, 0);
@@ -432,17 +432,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             () =>
             {
                 _sceneRenderTarget.Bind();
-                if (scissorEnabled)
-                {
-                    gl.Enable(GLEnum.ScissorTest);
-                    gl.Scissor(x, y, (uint)width, (uint)height);
-                }
-                else
-                {
-                    gl.Disable(GLEnum.ScissorTest);
-                }
-
-                gl.Viewport(x, y, (uint)width, (uint)height);
+                GraphicsDevice.SetScissor(x, y, width, height, scissorEnabled);
+                GraphicsDevice.SetViewport(x, y, width, height);
             });
         return true;
     }
@@ -465,24 +456,15 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
-        GL gl = GraphicsDevice.Gl;
         camera.Width = width;
         camera.Height = height;
 
-        _underwaterPostProcessRenderer.BeginCapture(width, height);
-        gl.Disable(GLEnum.ScissorTest);
-        gl.Disable(GLEnum.StencilTest);
-        gl.ColorMask(true, true, true, true);
-        gl.DepthMask(true);
-        gl.StencilMask(0xFF);
-        gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
-        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+        _underwaterPostProcessRenderer.BeginCapture(width, height, clearColor);
 
         ApplyRuntimeCamera(camera);
         Action restoreCaptureTarget = () =>
         {
-            _underwaterPostProcessRenderer.CaptureTarget.Bind();
-            gl.Disable(GLEnum.ScissorTest);
+            _underwaterPostProcessRenderer.ResumeCapture();
         };
         RenderShadowMap(gameTime, width, height, restoreCaptureTarget);
         RenderPlanarWaterReflections(gameTime, camera, width, height, restoreCaptureTarget);

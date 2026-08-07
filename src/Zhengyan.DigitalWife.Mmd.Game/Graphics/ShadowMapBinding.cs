@@ -3,9 +3,14 @@ using System.Numerics;
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 public readonly record struct ShadowMapBinding(
-    uint TextureId,
+    RuntimeTextureHandle Texture,
     Matrix4x4 LightViewProjection,
     float NearDistance,
     float FarDistance,
     float Strength,
-    float Bias);
+    float Bias)
+{
+    public uint TextureId => Texture.LegacyTextureId;
+    public object? NativeTexture => Texture.NativeResource;
+    public object? NativeSampler { get; init; }
+}

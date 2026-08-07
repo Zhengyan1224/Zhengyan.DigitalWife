@@ -333,6 +333,8 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     private ParticleVertex[] _vertices;
 
     private Texture2D? _texture;
+    private ITexture2D? _backendTexture;
+    private VeldridParticleRenderer? _vulkanRenderer;
     private IRuntimeTextureProvider? _runtimeTextureProvider;
     private uint _program;
     private uint _vao;
@@ -458,7 +460,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
             _particles = new ParticleState[_settings.ParticleCount];
             _vertices = new ParticleVertex[_settings.ParticleCount * 6];
 
-            if (Game is not null && _vertexBuffer != 0)
+            if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer && _vertexBuffer != 0)
             {
                 GL gl = Game.GraphicsDevice.Gl;
                 gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
@@ -467,11 +469,17 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
             }
         }
 
-        if (textureChanged && Game is not null)
+        if (textureChanged && Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             Texture2D? previous = _texture;
             _texture = CreateTexture(gl, _settings);
+            previous?.Dispose();
+        }
+        else if (textureChanged && Game is not null)
+        {
+            ITexture2D? previous = _backendTexture;
+            _backendTexture = CreateBackendTexture(Game.GraphicsDevice, _settings);
             previous?.Dispose();
         }
 
@@ -499,6 +507,14 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         if (sizeof(ParticleVertex) != ParticleVertex.StrideInBytes)
         {
             throw new InvalidOperationException($"ParticleVertex size mismatch: sizeof={sizeof(ParticleVertex)}, stride={ParticleVertex.StrideInBytes}");
+        }
+
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            _backendTexture = CreateBackendTexture(Game.GraphicsDevice, _settings);
+            _vulkanRenderer = new VeldridParticleRenderer(vulkan, checked((uint)(_vertices.Length * sizeof(ParticleVertex))));
+            ResetParticles(_settings.RandomizeInitialAge);
+            return;
         }
 
         GL gl = Game.GraphicsDevice.Gl;
@@ -559,7 +575,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     {
         _ = gameTime;
 
-        if (Game is null || (_texture is null && !IsRuntimeTextureReference(_settings.TexturePath)) || _program == 0 || _vao == 0)
+        if (Game is null)
         {
             return;
         }
@@ -569,6 +585,24 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         {
             return;
         }
+
+        if (_vulkanRenderer is not null && _backendTexture is not null)
+        {
+            _vulkanRenderer.Draw<ParticleVertex>(
+                new ReadOnlySpan<ParticleVertex>(_vertices),
+                vertexCount,
+                _backendTexture,
+                ResolveTextureHandle(),
+                _camera.View * _camera.Projection,
+                Opacity,
+                _settings.StartColor,
+                _settings.EndColor,
+                _settings.UseTextureColor,
+                _settings.PreventDarkening || _settings.BlendMode == ParticleBlendMode.Additive);
+            return;
+        }
+
+        if ((_texture is null && !IsRuntimeTextureReference(_settings.TexturePath)) || _program == 0 || _vao == 0) return;
 
         GL gl = Game.GraphicsDevice.Gl;
         // Reset fixed-function state explicitly to avoid inheriting unexpected blend/stencil modes
@@ -628,8 +662,12 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     {
         _texture?.Dispose();
         _texture = null;
+        _vulkanRenderer?.Dispose();
+        _vulkanRenderer = null;
+        _backendTexture?.Dispose();
+        _backendTexture = null;
 
-        if (Game is not null)
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
@@ -790,6 +828,42 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         };
         texture.Upload(bytes, 96, 96, TextureAlphaMode.Blend);
         return texture;
+    }
+
+    private static ITexture2D CreateBackendTexture(GraphicsDevice graphicsDevice, ParticleSystemSettings settings)
+    {
+        ITexture2D texture = graphicsDevice.CreateTexture2D();
+        if (!string.IsNullOrWhiteSpace(settings.TexturePath) && !IsRuntimeTextureReference(settings.TexturePath))
+        {
+            string? resolvedPath = TryResolveTexturePath(settings.TexturePath);
+            if (resolvedPath is not null)
+            {
+                texture.LoadFromFile(resolvedPath);
+                return texture;
+            }
+        }
+
+        byte[] bytes = settings.TexturePreset switch
+        {
+            ParticleTexturePreset.Streak => CreateStreakTexture(96, 96),
+            ParticleTexturePreset.Flame => CreateFlameTexture(96, 96),
+            _ => CreateSoftCircleTexture(96, 96)
+        };
+        texture.Upload(bytes, 96, 96, TextureAlphaMode.Blend);
+        return texture;
+    }
+
+    private RuntimeTextureHandle? ResolveTextureHandle()
+    {
+        if (_runtimeTextureProvider is not null
+            && _runtimeTextureProvider.TryGetTextureHandle(_settings.TexturePath ?? string.Empty, out RuntimeTextureHandle handle))
+        {
+            return handle;
+        }
+
+        return _backendTexture is null
+            ? null
+            : new RuntimeTextureHandle(_backendTexture.Backend, _backendTexture.LegacyTextureId, _backendTexture.NativeResource);
     }
 
     private static string? TryResolveTexturePath(string pathOrFileName)
@@ -1019,4 +1093,3 @@ void main()
 }
 """;
 }
-

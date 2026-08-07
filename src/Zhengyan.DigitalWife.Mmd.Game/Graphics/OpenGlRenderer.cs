@@ -80,6 +80,21 @@ public sealed class OpenGlRenderer : IRenderer
         Gl.Viewport(BackBufferSize);
     }
 
+    public void SetViewport(int x, int y, int width, int height)
+        => Gl.Viewport(x, y, (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
+
+    public void SetScissor(int x, int y, int width, int height, bool enabled)
+    {
+        if (!enabled)
+        {
+            Gl.Disable(GLEnum.ScissorTest);
+            return;
+        }
+
+        Gl.Enable(GLEnum.ScissorTest);
+        Gl.Scissor(x, y, (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
+    }
+
     public void Present()
     {
         // Silk.NET presents the OpenGL surface at the end of the window Render callback.

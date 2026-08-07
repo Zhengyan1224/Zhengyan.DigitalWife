@@ -16,6 +16,8 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
+    private VeldridLineRenderer? _vulkanLineRenderer;
+    private float[] _vulkanVertices = [];
     private int _bufferVertexCapacity;
     private int _vertexCount;
     private int _lastDebugDrawVersion = -1;
@@ -25,6 +27,12 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         if (Game is null)
         {
             throw new InvalidOperationException("Game is not attached.");
+        }
+
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            _vulkanLineRenderer = new VeldridLineRenderer(vulkan);
+            return;
         }
 
         GL gl = Game.GraphicsDevice.Gl;
@@ -61,6 +69,12 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
             return;
         }
 
+        if (_vulkanLineRenderer is not null)
+        {
+            _vulkanLineRenderer.Draw(_vulkanVertices, _vertexCount, _camera.View * _camera.Projection);
+            return;
+        }
+
         GL gl = Game.GraphicsDevice.Gl;
         int uniformLocation = gl.GetUniformLocation(_program, "u_WVP");
         gl.Disable(GLEnum.CullFace);
@@ -76,7 +90,9 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
 
     public override void Dispose()
     {
-        if (Game is not null)
+        _vulkanLineRenderer?.Dispose();
+        _vulkanLineRenderer = null;
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
@@ -89,7 +105,7 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
 
     private void EnsureBufferCapacity(int vertexCount)
     {
-        if (Game is null || vertexCount <= _bufferVertexCapacity)
+        if (Game is null || _vulkanLineRenderer is not null || vertexCount <= _bufferVertexCapacity)
         {
             return;
         }
@@ -140,6 +156,13 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         }
 
         _vertexCount = vertices.Count / FloatStride;
+        if (_vulkanLineRenderer is not null)
+        {
+            _vulkanVertices = [.. vertices];
+            _lastDebugDrawVersion = _editorGame.DebugDrawVersion;
+            return;
+        }
+
         EnsureBufferCapacity(_vertexCount);
 
         GL gl = Game.GraphicsDevice.Gl;

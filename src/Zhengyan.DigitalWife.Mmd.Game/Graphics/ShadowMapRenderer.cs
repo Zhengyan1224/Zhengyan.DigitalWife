@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
@@ -11,15 +10,19 @@ public sealed class ShadowMapRenderer : IDisposable
     private const float MinimumExtent = 6.0f;
     private const float DepthPadding = 18.0f;
     private const float BoundsPadding = 4.0f;
-    private readonly Game _game;
-    private readonly DepthRenderTexture _shadowTexture;
+    private readonly IShadowMapTarget _shadowTexture;
     private bool _disposed;
     private int _resolution = DefaultResolution;
 
     public ShadowMapRenderer(Game game)
     {
-        _game = game ?? throw new ArgumentNullException(nameof(game));
-        _shadowTexture = new DepthRenderTexture(game.GraphicsDevice.Gl, "DirectionalShadowMap");
+        ArgumentNullException.ThrowIfNull(game);
+        _shadowTexture = game.GraphicsDevice.Renderer switch
+        {
+            OpenGlRenderer openGl => new OpenGlShadowMapTarget(openGl.Gl, "DirectionalShadowMap"),
+            VulkanRenderer vulkan => new VeldridShadowMapTarget(vulkan, "DirectionalShadowMap"),
+            _ => throw new NotSupportedException($"Shadow maps are not implemented for {game.GraphicsDevice.Backend}.")
+        };
     }
 
     public int Resolution
@@ -58,31 +61,32 @@ public sealed class ShadowMapRenderer : IDisposable
         Bounds3 bounds = ComputeSceneBounds(casters, planeReceivers);
         Matrix4x4 lightViewProjection = CreateLightViewProjection(bounds, lightDirection, out float nearDistance, out float farDistance);
 
-        GL gl = _game.GraphicsDevice.Gl;
         _shadowTexture.EnsureSize(_resolution, _resolution);
-        _shadowTexture.Bind();
-        gl.Disable(GLEnum.ScissorTest);
-        gl.Disable(GLEnum.StencilTest);
-        gl.ColorMask(false, false, false, false);
-        gl.DepthMask(true);
-        gl.Enable(GLEnum.DepthTest);
-        gl.Clear(ClearBufferMask.DepthBufferBit);
-
-        foreach (PmxModelComponent model in casters)
+        _shadowTexture.BeginPass();
+        try
         {
-            model.DrawShadowDepthPass(lightViewProjection);
+            foreach (PmxModelComponent model in casters)
+            {
+                model.DrawShadowDepthPass(lightViewProjection);
+            }
+        }
+        finally
+        {
+            _shadowTexture.EndPass();
         }
 
-        gl.ColorMask(true, true, true, true);
         restoreRenderTarget();
 
         CurrentBinding = new ShadowMapBinding(
-            _shadowTexture.DepthTextureId,
+            _shadowTexture.Texture,
             lightViewProjection,
             nearDistance,
             farDistance,
             Math.Clamp(shadowColor.W, 0.0f, 1.0f),
-            0.0018f);
+            0.0018f)
+        {
+            NativeSampler = _shadowTexture.NativeSampler
+        };
     }
 
     public void Dispose()

@@ -14,6 +14,7 @@ internal sealed unsafe class RuntimeDebugDrawComponent(OrbitCamera camera) : Dra
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
+    private VeldridLineRenderer? _vulkanLineRenderer;
     private int _bufferVertexCapacity;
 
     public void DrawRay(Vector3 origin, Vector3 direction, float length, Vector4 color, float durationSeconds)
@@ -51,6 +52,12 @@ internal sealed unsafe class RuntimeDebugDrawComponent(OrbitCamera camera) : Dra
         if (Game is null)
         {
             throw new InvalidOperationException("Game is not attached.");
+        }
+
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            _vulkanLineRenderer = new VeldridLineRenderer(vulkan);
+            return;
         }
 
         GL gl = Game.GraphicsDevice.Gl;
@@ -91,6 +98,17 @@ internal sealed unsafe class RuntimeDebugDrawComponent(OrbitCamera camera) : Dra
             WriteVertex(vertices, vertexIndex++, line.End, line.Color);
         }
 
+        if (_vulkanLineRenderer is not null)
+        {
+            float[] rgbVertices = new float[vertexCount * 6];
+            for (int source = 0, target = 0; source < vertices.Length; source += 7, target += 6)
+            {
+                Array.Copy(vertices, source, rgbVertices, target, 6);
+            }
+            _vulkanLineRenderer.Draw(rgbVertices, vertexCount, _camera.View * _camera.Projection);
+            return;
+        }
+
         GL gl = Game.GraphicsDevice.Gl;
         int uniformLocation = gl.GetUniformLocation(_program, "u_WVP");
         gl.Disable(GLEnum.CullFace);
@@ -115,7 +133,9 @@ internal sealed unsafe class RuntimeDebugDrawComponent(OrbitCamera camera) : Dra
 
     public override void Dispose()
     {
-        if (Game is not null)
+        _vulkanLineRenderer?.Dispose();
+        _vulkanLineRenderer = null;
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
@@ -128,7 +148,7 @@ internal sealed unsafe class RuntimeDebugDrawComponent(OrbitCamera camera) : Dra
 
     private void EnsureBufferCapacity(int vertexCount)
     {
-        if (Game is null || vertexCount <= _bufferVertexCapacity)
+        if (Game is null || _vulkanLineRenderer is not null || vertexCount <= _bufferVertexCapacity)
         {
             return;
         }

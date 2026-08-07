@@ -12,7 +12,7 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 /// </summary>
 public static class VulkanShaderCompiler
 {
-    private static readonly Regex GlesVersion = new("^\\s*#version\\s+300\\s+es\\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex VersionDirective = new("^\\s*#version\\s+\\d+(?:\\s+es)?\\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
     private static readonly Regex PrecisionDeclaration = new("^\\s*precision\\s+(?:lowp|mediump|highp)\\s+float\\s*;\\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
 
     public static ShaderDescription CompileFile(string path, ShaderStages stage)
@@ -34,8 +34,8 @@ public static class VulkanShaderCompiler
 
         string vulkanGlsl = NormalizeSource(source);
         SpirvCompilationResult result = SpirvCompilation.CompileGlslToSpirv(
-            sourceName,
             vulkanGlsl,
+            sourceName,
             stage,
             GlslCompileOptions.Default);
         return new ShaderDescription(stage, result.SpirvBytes, "main");
@@ -54,7 +54,9 @@ public static class VulkanShaderCompiler
         StringBuilder builder = new(source.Length + 32);
         builder.AppendLine("#version 450");
 
-        string withoutVersion = GlesVersion.Replace(source, string.Empty);
+        // Normalize both legacy GLSL ES and portable GLSL 450 sources to one
+        // explicit Vulkan version directive.
+        string withoutVersion = VersionDirective.Replace(source, string.Empty);
         string withoutPrecision = PrecisionDeclaration.Replace(withoutVersion, string.Empty);
         builder.Append(withoutPrecision);
         return builder.ToString();

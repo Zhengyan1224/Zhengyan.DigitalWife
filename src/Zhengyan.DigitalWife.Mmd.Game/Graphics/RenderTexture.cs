@@ -81,8 +81,14 @@ public sealed unsafe class RenderTexture : IRenderTarget
         _gl.Disable(GLEnum.StencilTest);
         _gl.ColorMask(true, true, true, true);
         _gl.DepthMask(true);
+        _gl.StencilMask(0xFF);
         _gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
         _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    public void ResumePass()
+    {
+        Bind();
     }
 
     public void EndPass()

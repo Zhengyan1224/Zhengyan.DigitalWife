@@ -25,6 +25,9 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private readonly int _meshResolution;
     private Texture2D[] _normalMaps = [];
     private Texture2D? _skyTexture;
+    private ITexture2D[] _backendNormalMaps = [];
+    private ITexture2D? _backendSkyTexture;
+    private VeldridWaterRenderer? _vulkanRenderer;
 
     private uint _program;
     private uint _vao;
@@ -70,6 +73,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private int _uniformRippleFrequency = -1;
     private int _uniformRippleNormalStrength = -1;
     private uint _planarReflectionTextureId;
+    private RuntimeTextureHandle? _planarReflectionTextureHandle;
     private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
     private readonly RippleState[] _ripples = new RippleState[MaxRipples];
 
@@ -183,19 +187,30 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 
     public float RippleNormalStrength { get; set; } = 0.30f;
 
-    public bool HasPlanarReflection => _planarReflectionTextureId != 0;
+    public bool HasPlanarReflection => _planarReflectionTextureHandle is not null || _planarReflectionTextureId != 0;
 
     public void SetPlanarReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height)
     {
         _ = width;
         _ = height;
         _planarReflectionTextureId = textureId;
+        _planarReflectionTextureHandle = textureId == 0 ? null : new RuntimeTextureHandle(GraphicsBackend.OpenGL, textureId);
+        _planarReflectionViewProjection = reflectionViewProjection;
+    }
+
+    public void SetPlanarReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height)
+    {
+        _ = width;
+        _ = height;
+        _planarReflectionTextureHandle = texture;
+        _planarReflectionTextureId = texture.Backend == GraphicsBackend.OpenGL ? texture.LegacyTextureId : 0;
         _planarReflectionViewProjection = reflectionViewProjection;
     }
 
     public void ClearPlanarReflection()
     {
         _planarReflectionTextureId = 0;
+        _planarReflectionTextureHandle = null;
         _planarReflectionViewProjection = Matrix4x4.Identity;
     }
 
@@ -305,6 +320,24 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            int resolution = Math.Clamp(_meshResolution, 1, 256);
+            _vertices = new WaterVertex[(resolution + 1) * (resolution + 1)];
+            uint[] vulkanIndices = CreateIndices(resolution);
+            FillVertices(_vertices, GerstnerWavesEnabled, _elapsedSeconds);
+            _indexCount = vulkanIndices.Length;
+            _uploadedGerstnerEnabled = GerstnerWavesEnabled;
+            _backendNormalMaps = LoadBackendTextures(Game.GraphicsDevice, _normalMapPaths);
+            _backendSkyTexture = Game.GraphicsDevice.CreateTexture2D();
+            _backendSkyTexture.LoadFromFile(_skyTexturePath);
+            _vulkanRenderer = new VeldridWaterRenderer(
+                vulkan,
+                checked((uint)(_vertices.Length * sizeof(WaterVertex))),
+                vulkanIndices);
+            return;
+        }
+
         GL gl = Game.GraphicsDevice.Gl;
         _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
         _vao = gl.GenVertexArray();
@@ -399,10 +432,33 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     {
         _ = gameTime;
 
-        if (Game is null || _normalMaps.Length == 0 || _skyTexture is null)
+        if (Game is null)
         {
             return;
         }
+
+        if (_vulkanRenderer is not null && _backendNormalMaps.Length > 0 && _backendSkyTexture is not null)
+        {
+            int frame = ((int)_elapsedSeconds) % _backendNormalMaps.Length;
+            int next = (frame + 1) % _backendNormalMaps.Length;
+            float fraction = _elapsedSeconds - MathF.Floor(_elapsedSeconds);
+            float lerp = (((fraction * 2.0f) - 1.0f) * 0.5f) + 0.5f;
+            if (GerstnerWavesEnabled || _uploadedGerstnerEnabled != GerstnerWavesEnabled)
+            {
+                FillVertices(_vertices, GerstnerWavesEnabled, _elapsedSeconds);
+                _uploadedGerstnerEnabled = GerstnerWavesEnabled;
+            }
+            _vulkanRenderer.Draw<WaterVertex>(
+                new ReadOnlySpan<WaterVertex>(_vertices), (uint)_indexCount,
+                _backendNormalMaps[next], _backendNormalMaps[frame], _backendSkyTexture,
+                _planarReflectionTextureHandle, World, _camera.View, _camera.Projection,
+                _planarReflectionViewProjection, _camera.Position, DeepColor, ReflectionTint,
+                _elapsedSeconds * _animationSpeed, lerp, _alpha, NormalTiling,
+                _skyReflectionStrength, MirrorReflectionEnabled);
+            return;
+        }
+
+        if (_normalMaps.Length == 0 || _skyTexture is null) return;
 
         GL gl = Game.GraphicsDevice.Gl;
         int frameIndex = ((int)_elapsedSeconds) % _normalMaps.Length;
@@ -487,8 +543,14 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _normalMaps = [];
         _skyTexture?.Dispose();
         _skyTexture = null;
+        foreach (ITexture2D texture in _backendNormalMaps) texture.Dispose();
+        _backendNormalMaps = [];
+        _backendSkyTexture?.Dispose();
+        _backendSkyTexture = null;
+        _vulkanRenderer?.Dispose();
+        _vulkanRenderer = null;
 
-        if (Game is not null)
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
@@ -679,6 +741,25 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
                 texture?.Dispose();
             }
 
+            throw;
+        }
+    }
+
+    private static ITexture2D[] LoadBackendTextures(GraphicsDevice graphicsDevice, IReadOnlyList<string> paths)
+    {
+        ITexture2D[] textures = new ITexture2D[paths.Count];
+        try
+        {
+            for (int i = 0; i < paths.Count; i++)
+            {
+                textures[i] = graphicsDevice.CreateTexture2D();
+                textures[i].LoadFromFile(paths[i]);
+            }
+            return textures;
+        }
+        catch
+        {
+            foreach (ITexture2D? texture in textures) texture?.Dispose();
             throw;
         }
     }

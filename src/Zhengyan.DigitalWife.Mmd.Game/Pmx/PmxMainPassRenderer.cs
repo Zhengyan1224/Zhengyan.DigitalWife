@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.InteropServices;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Silk.NET.OpenGLES;
 using Veldrid;
@@ -26,7 +25,7 @@ internal interface IPmxMainPassRenderer : IDisposable
         float ambientLightStrength,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
-        Func<int, uint>? resolveOpenGlOverrideTexture,
+        Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
         int materialIndexOffset = 0);
 }
 
@@ -83,7 +82,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         float ambientLightStrength,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
-        Func<int, uint>? resolveOpenGlOverrideTexture,
+        Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
         int materialIndexOffset = 0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -124,19 +123,17 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         ApplyShadowMap(world, enableShadow ? shadowMap : null);
 
         int drawCount = 0;
-        int materialIndex = materialIndexOffset;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
         {
             Zhengyan.DigitalWife.Mmd.MMDMaterial material = mesh.Material;
             if (!materials.TryGetValue(material, out MaterialTextures? textures) || material.Alpha <= 0.0f)
             {
-                materialIndex++;
                 continue;
             }
 
-            DrawMaterial(resources, mesh, material, textures, materialIndex, resolveOpenGlOverrideTexture);
+            int materialIndex = materialIndexOffset + GetMaterialIndex(materials, material);
+            DrawMaterial(resources, mesh, material, textures, materialIndex, resolveTextureOverride);
             drawCount++;
-            materialIndex++;
         }
 
         _gl.BindVertexArray(0);
@@ -159,7 +156,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         Zhengyan.DigitalWife.Mmd.MMDMaterial material,
         MaterialTextures textures,
         int materialIndex,
-        Func<int, uint>? resolveOpenGlOverrideTexture)
+        Func<int, RuntimeTextureHandle?>? resolveTextureOverride)
     {
         float textureMode = GetTextureMode(textures.Texture);
         resources.UploadMaterialUniforms(new PmxGpuResources.PmxMaterialUniformData
@@ -173,7 +170,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
             SphereAdd = material.SpTextureAddFactor,
             ToonMultiply = material.ToonTextureMulFactor,
             ToonAdd = material.ToonTextureAddFactor,
-            Modes = new Vector4(textureMode, (float)material.SpTextureMode, textures.ToonTexture is null ? 0.0f : 1.0f, materialIndex)
+            Modes = new Vector4(textureMode, GetSphereTextureMode(material, textures), textures.ToonTexture is null ? 0.0f : 1.0f, materialIndex)
         });
 
         if (textures.DescriptorSet is not null)
@@ -188,7 +185,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniAlpha, material.Alpha);
 
         _gl.ActiveTexture(TextureUnit.Texture0);
-        uint overrideTextureId = resolveOpenGlOverrideTexture?.Invoke(materialIndex) ?? 0;
+        uint overrideTextureId = resolveTextureOverride?.Invoke(materialIndex)?.LegacyTextureId ?? 0;
         if (overrideTextureId != 0)
         {
             _gl.SetUniform(_shader.UniTexMode, 1);
@@ -201,12 +198,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
 
         _gl.SetUniform(_shader.UniTexMulFactor, material.TextureMulFactor);
         _gl.SetUniform(_shader.UniTexAddFactor, material.TextureAddFactor);
-        _gl.SetUniform(_shader.UniSphereTexMode, material.SpTextureMode switch
-        {
-            Zhengyan.DigitalWife.Mmd.SphereTextureMode.Mul => 1,
-            Zhengyan.DigitalWife.Mmd.SphereTextureMode.Add => 2,
-            _ => 0
-        });
+        _gl.SetUniform(_shader.UniSphereTexMode, (int)GetSphereTextureMode(material, textures));
         _gl.SetUniform(_shader.UniSphereTexMulFactor, material.SpTextureMulFactor);
         _gl.SetUniform(_shader.UniSphereTexAddFactor, material.SpTextureAddFactor);
         _gl.SetUniform(_shader.UniToonTexMode, textures.ToonTexture is null ? 0 : 1);
@@ -286,23 +278,51 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
                 _ => 1.0f
             };
     }
+
+    private static float GetSphereTextureMode(
+        Zhengyan.DigitalWife.Mmd.MMDMaterial material,
+        MaterialTextures textures)
+    {
+        if (textures.SphereTexture is null) return 0.0f;
+        return material.SpTextureMode switch
+        {
+            Zhengyan.DigitalWife.Mmd.SphereTextureMode.Mul => 1.0f,
+            Zhengyan.DigitalWife.Mmd.SphereTextureMode.Add => 2.0f,
+            _ => 0.0f
+        };
+    }
+
+    private static int GetMaterialIndex(
+        IReadOnlyDictionary<Zhengyan.DigitalWife.Mmd.MMDMaterial, MaterialTextures> materials,
+        Zhengyan.DigitalWife.Mmd.MMDMaterial material)
+    {
+        int index = 0;
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMaterial candidate in materials.Keys)
+        {
+            if (ReferenceEquals(candidate, material)) return index;
+            index++;
+        }
+
+        return -1;
+    }
 }
 
 /// <summary>
-/// Vulkan implementation of the PMX main material pass. The pass deliberately
-/// excludes edge, shadow-depth, and custom shader passes; those remain separate
-/// renderer features and can be migrated without changing this material layout.
+/// Vulkan implementation of the PMX main material pass. Edge and shadow passes
+/// are handled by the separate PMX auxiliary-pass renderer; custom user shaders
+/// retain their own contract and lifecycle.
 /// </summary>
 internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 {
     private readonly VulkanRenderer _renderer;
     private readonly ResourceLayout _frameLayout;
     private readonly ResourceLayout _materialLayout;
-    private readonly ResourceSet _frameSet;
-    private readonly Pipeline _culledPipeline;
-    private readonly Pipeline _doubleSidedPipeline;
+    private readonly Dictionary<FrameSetKey, ResourceSet> _frameSets = [];
+    private readonly FrameSetKey _fallbackFrameSetKey;
+    private readonly ShaderSetDescription _shaderSet;
     private readonly VeldridShader[] _shaders;
-    private readonly Dictionary<PmxMaterialDescriptorSet, ResourceSet> _materialSets = [];
+    private readonly Dictionary<MaterialSetKey, ResourceSet> _materialSets = [];
+    private readonly List<PipelineBundle> _pipelineBundles = [];
     private bool _disposed;
 
     public VeldridPmxMainPassRenderer(VulkanRenderer renderer, PmxGpuResources resources)
@@ -312,7 +332,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
         ResourceFactory factory = renderer.ResourceFactory;
         _frameLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("PmxFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment)));
+            new ResourceLayoutElementDescription("PmxFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("PmxShadowMap", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("PmxShadowSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         _materialLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("PmxMaterial", ResourceKind.UniformBuffer, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxBaseTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
@@ -321,9 +343,14 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             new ResourceLayoutElementDescription("PmxSphereSampler", ResourceKind.Sampler, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxToonTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxToonSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
-        _frameSet = factory.CreateResourceSet(new ResourceSetDescription(
+        TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
+        VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
+        _fallbackFrameSetKey = new FrameSetKey(fallbackTexture, fallbackSampler);
+        _frameSets[_fallbackFrameSetKey] = factory.CreateResourceSet(new ResourceSetDescription(
             _frameLayout,
-            RequireDeviceBuffer(resources.FrameUniformBuffer)));
+            RequireDeviceBuffer(resources.FrameUniformBuffer),
+            fallbackTexture,
+            fallbackSampler));
 
         ShaderDescription vertexShader = VulkanShaderCompiler.CompileSource(
             "pmx_main.vert", VertexShaderSource, ShaderStages.Vertex);
@@ -340,11 +367,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             new VertexLayoutDescription(new VertexElementDescription(
                 "TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2))
         ];
-        ShaderSetDescription shaderSet = new(vertexLayouts, _shaders);
-        _culledPipeline = factory.CreateGraphicsPipeline(CreatePipelineDescription(
-            shaderSet, [_frameLayout, _materialLayout], renderer.Device.SwapchainFramebuffer.OutputDescription, cullBack: true));
-        _doubleSidedPipeline = factory.CreateGraphicsPipeline(CreatePipelineDescription(
-            shaderSet, [_frameLayout, _materialLayout], renderer.Device.SwapchainFramebuffer.OutputDescription, cullBack: false));
+        _shaderSet = new ShaderSetDescription(vertexLayouts, _shaders);
+        _ = GetPipelineBundle(renderer.Device.SwapchainFramebuffer.OutputDescription);
     }
 
     public int Draw(
@@ -360,7 +384,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         float ambientLightStrength,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
-        Func<int, uint>? resolveOpenGlOverrideTexture,
+        Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
         int materialIndexOffset = 0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -372,6 +396,12 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         Matrix4x4 worldView = world * view;
         Matrix4x4 worldViewProjection = worldView * projection;
         Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(lightDirection, view));
+        TextureView? shadowTexture = shadowMap?.NativeTexture as TextureView;
+        VeldridSampler? shadowSampler = shadowMap?.NativeSampler as VeldridSampler;
+        bool shadowAvailable = enableShadow && shadowTexture is not null && shadowSampler is not null;
+        Matrix4x4 shadowLightViewProjection = shadowAvailable
+            ? world * shadowMap!.Value.LightViewProjection
+            : Matrix4x4.Identity;
         PmxGpuResources.PmxFrameUniformData frameData = new()
         {
             World = world,
@@ -381,7 +411,13 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             LightColor = new Vector4(lightColor, 1.0f),
             LightDirection = new Vector4(viewSpaceLightDirection, 0.0f),
             AmbientLightColor = new Vector4(ambientLightColor, 1.0f),
-            Parameters = new Vector4(ambientLightStrength, enableShadow ? 1.0f : 0.0f, 0.0f, 0.0f)
+            Parameters = new Vector4(ambientLightStrength, enableShadow ? 1.0f : 0.0f, 0.0f, 0.0f),
+            ShadowLightViewProjection = shadowLightViewProjection,
+            ShadowParameters = new Vector4(
+                shadowAvailable ? 1.0f : 0.0f,
+                shadowAvailable ? Math.Clamp(shadowMap!.Value.Strength, 0.0f, 1.0f) : 0.0f,
+                shadowAvailable ? Math.Max(0.0f, shadowMap!.Value.Bias) : 0.0f,
+                0.0f)
         };
 
         CommandList commands = _renderer.CommandList;
@@ -390,7 +426,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         commands.SetVertexBuffer(1, RequireDeviceBuffer(resources.NormalBuffer));
         commands.SetVertexBuffer(2, RequireDeviceBuffer(resources.UvBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        commands.SetGraphicsResourceSet(0, _frameSet);
+        commands.SetGraphicsResourceSet(0, GetFrameSet(resources, shadowTexture, shadowSampler));
+        PipelineBundle pipelines = GetPipelineBundle(_renderer.CurrentOutputDescription);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -401,6 +438,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 continue;
             }
 
+            int materialIndex = materialIndexOffset + GetMaterialIndex(materials, material);
+            TextureView? overrideTexture = resolveTextureOverride?.Invoke(materialIndex)?.NativeResource as TextureView;
             PmxGpuResources.PmxMaterialUniformData materialData = new()
             {
                 Ambient = new Vector4(material.Ambient, 1.0f),
@@ -413,20 +452,15 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 ToonMultiply = material.ToonTextureMulFactor,
                 ToonAdd = material.ToonTextureAddFactor,
                 Modes = new Vector4(
-                    GetTextureMode(textures.Texture),
-                    material.SpTextureMode switch
-                    {
-                        Zhengyan.DigitalWife.Mmd.SphereTextureMode.Mul => 1.0f,
-                        Zhengyan.DigitalWife.Mmd.SphereTextureMode.Add => 2.0f,
-                        _ => 0.0f
-                    },
+                    overrideTexture is null ? GetTextureMode(textures.Texture) : 1.0f,
+                    GetSphereTextureMode(material, textures),
                     textures.ToonTexture is null ? 0.0f : 1.0f,
-                    materialIndexOffset + GetMaterialIndex(materials, material))
+                    materialIndex)
             };
 
             commands.UpdateBuffer(RequireDeviceBuffer(resources.MaterialUniformBuffer), 0, materialData);
-            commands.SetPipeline(material.BothFace ? _doubleSidedPipeline : _culledPipeline);
-            commands.SetGraphicsResourceSet(1, GetMaterialSet(resources, textures.DescriptorSet));
+            commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
+            commands.SetGraphicsResourceSet(1, GetMaterialSet(resources, textures.DescriptorSet, overrideTexture));
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
             drawCount++;
         }
@@ -444,11 +478,21 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         }
 
         _materialSets.Clear();
-        _frameSet.Dispose();
+        foreach (ResourceSet resourceSet in _frameSets.Values)
+        {
+            resourceSet.Dispose();
+        }
+
+        _frameSets.Clear();
         _frameLayout.Dispose();
         _materialLayout.Dispose();
-        _culledPipeline.Dispose();
-        _doubleSidedPipeline.Dispose();
+        foreach (PipelineBundle bundle in _pipelineBundles)
+        {
+            bundle.Culled.Dispose();
+            bundle.DoubleSided.Dispose();
+        }
+
+        _pipelineBundles.Clear();
         foreach (VeldridShader shader in _shaders)
         {
             shader.Dispose();
@@ -457,9 +501,13 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         GC.SuppressFinalize(this);
     }
 
-    private ResourceSet GetMaterialSet(PmxGpuResources resources, PmxMaterialDescriptorSet descriptorSet)
+    private ResourceSet GetMaterialSet(
+        PmxGpuResources resources,
+        PmxMaterialDescriptorSet descriptorSet,
+        TextureView? overrideTexture)
     {
-        if (_materialSets.TryGetValue(descriptorSet, out ResourceSet? resourceSet))
+        MaterialSetKey key = new(descriptorSet, overrideTexture);
+        if (_materialSets.TryGetValue(key, out ResourceSet? resourceSet))
         {
             return resourceSet;
         }
@@ -470,14 +518,65 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         resourceSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
             _materialLayout,
             RequireDeviceBuffer(resources.MaterialUniformBuffer),
-            RequireTextureView(baseTexture.Texture),
+            overrideTexture ?? RequireTextureView(baseTexture.Texture),
             RequireSampler(baseTexture.Sampler),
             RequireTextureView(sphereTexture.Texture),
             RequireSampler(sphereTexture.Sampler),
             RequireTextureView(toonTexture.Texture),
             RequireSampler(toonTexture.Sampler)));
-        _materialSets[descriptorSet] = resourceSet;
+        _materialSets[key] = resourceSet;
         return resourceSet;
+    }
+
+    private ResourceSet GetFrameSet(
+        PmxGpuResources resources,
+        TextureView? shadowTexture,
+        VeldridSampler? shadowSampler)
+    {
+        TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
+        VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
+        FrameSetKey key = new(shadowTexture ?? fallbackTexture, shadowSampler ?? fallbackSampler);
+        if (_frameSets.TryGetValue(key, out ResourceSet? resourceSet))
+        {
+            return resourceSet;
+        }
+
+        foreach (FrameSetKey staleKey in _frameSets.Keys
+            .Where(existingKey => !existingKey.Equals(_fallbackFrameSetKey))
+            .ToArray())
+        {
+            _frameSets[staleKey].Dispose();
+            _frameSets.Remove(staleKey);
+        }
+
+        resourceSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
+            _frameLayout,
+            RequireDeviceBuffer(resources.FrameUniformBuffer),
+            key.Texture,
+            key.Sampler));
+        _frameSets[key] = resourceSet;
+        return resourceSet;
+    }
+
+    private PipelineBundle GetPipelineBundle(OutputDescription outputDescription)
+    {
+        foreach (PipelineBundle existing in _pipelineBundles)
+        {
+            if (existing.OutputDescription.Equals(outputDescription))
+            {
+                return existing;
+            }
+        }
+
+        ResourceLayout[] layouts = [_frameLayout, _materialLayout];
+        PipelineBundle created = new(
+            outputDescription,
+            _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
+                _shaderSet, layouts, outputDescription, cullBack: true)),
+            _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
+                _shaderSet, layouts, outputDescription, cullBack: false)));
+        _pipelineBundles.Add(created);
+        return created;
     }
 
     private static GraphicsPipelineDescription CreatePipelineDescription(
@@ -528,6 +627,19 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             };
     }
 
+    private static float GetSphereTextureMode(
+        Zhengyan.DigitalWife.Mmd.MMDMaterial material,
+        MaterialTextures textures)
+    {
+        if (textures.SphereTexture is null) return 0.0f;
+        return material.SpTextureMode switch
+        {
+            Zhengyan.DigitalWife.Mmd.SphereTextureMode.Mul => 1.0f,
+            Zhengyan.DigitalWife.Mmd.SphereTextureMode.Add => 2.0f,
+            _ => 0.0f
+        };
+    }
+
     private static DeviceBuffer RequireDeviceBuffer(IGpuBuffer buffer)
     {
         return buffer.NativeResource as DeviceBuffer
@@ -546,6 +658,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             ?? throw new InvalidOperationException("PMX Vulkan pass requires a Veldrid sampler.");
     }
 
+    private sealed record PipelineBundle(OutputDescription OutputDescription, Pipeline Culled, Pipeline DoubleSided);
+
+    private readonly record struct MaterialSetKey(PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
+    private readonly record struct FrameSetKey(TextureView Texture, VeldridSampler Sampler);
+
     private const string VertexShaderSource = """
         layout(set = 0, binding = 0, std140) uniform PmxFrame
         {
@@ -557,6 +674,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_LightDir;
             vec4 u_AmbientLightColor;
             vec4 u_Parameters;
+            mat4 u_ShadowWVP;
+            vec4 u_ShadowParameters;
         } u_Frame;
 
         layout(location = 0) in vec3 in_Pos;
@@ -565,6 +684,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         layout(location = 0) out vec3 vs_Pos;
         layout(location = 1) out vec3 vs_Nor;
         layout(location = 2) out vec2 vs_UV;
+        layout(location = 3) out vec4 vs_ShadowPos;
 
         void main()
         {
@@ -573,6 +693,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vs_Pos = (worldView * vec4(in_Pos, 1.0)).xyz;
             vs_Nor = mat3(worldView) * in_Nor;
             vs_UV = vec2(in_UV.x, -in_UV.y);
+            vs_ShadowPos = u_Frame.u_ShadowWVP * vec4(in_Pos, 1.0);
         }
         """;
 
@@ -587,7 +708,12 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_LightDir;
             vec4 u_AmbientLightColor;
             vec4 u_Parameters;
+            mat4 u_ShadowWVP;
+            vec4 u_ShadowParameters;
         } u_Frame;
+
+        layout(set = 0, binding = 1) uniform texture2D u_ShadowMap;
+        layout(set = 0, binding = 2) uniform sampler u_ShadowSampler;
 
         layout(set = 1, binding = 0, std140) uniform PmxMaterial
         {
@@ -613,6 +739,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         layout(location = 0) in vec3 vs_Pos;
         layout(location = 1) in vec3 vs_Nor;
         layout(location = 2) in vec2 vs_UV;
+        layout(location = 3) in vec4 vs_ShadowPos;
         layout(location = 0) out vec4 out_Color;
 
         vec3 ComputeTexMulFactor(vec3 color, vec4 factor)
@@ -626,14 +753,36 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             return value + factor.rgb;
         }
 
+        float SampleShadowMap()
+        {
+            vec3 ndc = vs_ShadowPos.xyz / max(abs(vs_ShadowPos.w), 0.0001);
+            vec2 uv = ndc.xy * 0.5 + 0.5;
+            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0)
+            {
+                return 1.0;
+            }
+
+            float depth = (ndc.z * 0.5 + 0.5) - u_Frame.u_ShadowParameters.z;
+            return texture(sampler2D(u_ShadowMap, u_ShadowSampler), uv).r >= depth ? 1.0 : 0.0;
+        }
+
         void main()
         {
             vec3 eyeDir = normalize(-vs_Pos);
             vec3 lightDir = normalize(-u_Frame.u_LightDir.xyz);
             vec3 normal = normalize(vs_Nor);
             float ndotl = clamp(dot(normal, lightDir), 0.0, 1.0);
+            float toonCoord = clamp(dot(normal, lightDir) * 0.5 + 0.5, 0.0, 1.0);
             vec3 albedo = u_Material.u_Diffuse.rgb;
             float alpha = u_Material.u_Diffuse.a;
+
+            if (u_Frame.u_ShadowParameters.x > 0.5)
+            {
+                float visibility = SampleShadowMap();
+                float shadowFactor = mix(1.0 - clamp(u_Frame.u_ShadowParameters.y, 0.0, 1.0), 1.0, visibility);
+                ndotl *= shadowFactor;
+                toonCoord = mix(0.0, toonCoord, shadowFactor);
+            }
 
             if (u_Material.u_Modes.x > 0.5)
             {
@@ -641,7 +790,14 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 texColor.rgb = ComputeTexMulFactor(texColor.rgb, u_Material.u_TexMulFactor);
                 texColor.rgb = ComputeTexAddFactor(texColor.rgb, u_Material.u_TexAddFactor);
                 albedo *= texColor.rgb;
-                if (u_Material.u_Modes.x > 1.5) alpha *= texColor.a;
+                if (u_Material.u_Modes.x > 3.5)
+                {
+                    alpha *= 1.0 - pow(1.0 - texColor.a, 1.5);
+                }
+                else if (u_Material.u_Modes.x > 1.5 && u_Material.u_Modes.x < 2.5)
+                {
+                    alpha *= texColor.a;
+                }
             }
 
             if (alpha < 0.01) discard;
@@ -657,7 +813,6 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 else baseColor += sphereColor;
             }
 
-            float toonCoord = clamp(dot(normal, lightDir) * 0.5 + 0.5, 0.0, 1.0);
             vec3 litColor = u_Frame.u_LightColor.rgb * ndotl;
             if (u_Material.u_Modes.z > 0.5)
             {

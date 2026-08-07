@@ -2,7 +2,6 @@ using System.Numerics;
 using System.Text.RegularExpressions;
 using ImGuiNET;
 using Silk.NET.OpenGLES;
-using Silk.NET.OpenGLES.Extensions.ImGui;
 using Zhengyan.DigitalWife.Audio;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
@@ -13,7 +12,7 @@ namespace Zhengyan.DigitalWife.GameEditor;
 internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : DrawableGameComponent
 {
     private readonly GameEditorGame _editorGame = editorGame;
-    private ImGuiController? _controller;
+    private IImGuiBackendController? _controller;
     private bool _isViewportHovered;
     private bool _isViewportFocused;
     private string _projectDirectory = editorGame.ProjectDirectory;
@@ -33,7 +32,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private string _particlePreset = "sakura";
     private bool _copyAssets = true;
     private int _preferredLanguageIndex;
-    private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ITexture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
     private IScreenSpriteRenderer? _backgroundSpriteRenderer;
     private static readonly string[] CameraControlModes =
@@ -67,25 +66,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         _backgroundSpriteRenderer = Game.GraphicsDevice.CreateScreenSpriteRenderer();
 
-        if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
-        {
-            try
-            {
-                _controller = new ImGuiController(
-                    Game.GraphicsDevice.Gl,
-                    Game.Window,
-                    Game.Input.Context,
-                    () => ConfigureIoFontAtlas(cjkFontPath));
-            }
-            catch
-            {
-                _controller = new ImGuiController(Game.GraphicsDevice.Gl, Game.Window, Game.Input.Context);
-            }
-        }
-        else
-        {
-            _controller = new ImGuiController(Game.GraphicsDevice.Gl, Game.Window, Game.Input.Context);
-        }
+        Action? configureFonts = ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath)
+            ? () => ConfigureIoFontAtlas(cjkFontPath)
+            : null;
+        _controller = ImGuiBackendController.Create(Game, configureFonts);
 
         ImGuiStylePtr style = ImGui.GetStyle();
         style.WindowRounding = 8.0f;
@@ -111,7 +95,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     public override void Dispose()
     {
-        foreach (Texture2D texture in _spriteTextures.Values)
+        foreach (ITexture2D texture in _spriteTextures.Values)
         {
             texture.Dispose();
         }
@@ -145,7 +129,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         Vector2 imageMin = ImGui.GetCursorScreenPos();
         ImGui.Image(
-            (nint)_editorGame.SceneRenderTarget.ColorTextureId,
+            _controller.GetTextureBinding(_editorGame.SceneRenderTarget.ColorTextureHandle),
             new Vector2(width, height),
             new Vector2(0.0f, 1.0f),
             new Vector2(1.0f, 0.0f));
@@ -230,7 +214,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 min = viewportMin + new Vector2(rect.X, rect.Y);
             Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, texture.LegacyTextureId, min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
+            AddSpriteImage(drawList, _controller!.GetTextureBinding(texture), min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
 
         drawList.PopClipRect();
@@ -278,7 +262,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         _backgroundSpriteRenderer.Draw(_backgroundSpriteCommands, viewportWidth, viewportHeight);
     }
 
-    private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
+    private static void AddSpriteImage(ImDrawListPtr drawList, nint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
     {
         Vector2 uv0 = flipV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
         Vector2 uv1 = flipV ? new Vector2(1.0f, 0.0f) : Vector2.One;
@@ -309,7 +293,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, uv0, uvTopRight, uv1, uvBottomLeft, tint);
     }
 
-    private Texture2D? GetSpriteTexture(string path)
+    private ITexture2D? GetSpriteTexture(string path)
     {
         if (Game is null)
         {
@@ -326,12 +310,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return null;
         }
 
-        if (_spriteTextures.TryGetValue(fullPath, out Texture2D? texture))
+        if (_spriteTextures.TryGetValue(fullPath, out ITexture2D? texture))
         {
             return texture;
         }
 
-        texture = new Texture2D(Game.GraphicsDevice.Gl, GLEnum.ClampToEdge);
+        texture = Game.GraphicsDevice.CreateTexture2D();
         texture.LoadFromFile(fullPath);
         _spriteTextures[fullPath] = texture;
         return texture;
@@ -350,10 +334,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return handle;
         }
 
-        Texture2D? texture = GetSpriteTexture(path);
+        ITexture2D? texture = GetSpriteTexture(path);
         return texture is null
             ? default
-            : new RuntimeTextureHandle(GraphicsBackend.OpenGL, texture.Id, texture.NativeResource);
+            : new RuntimeTextureHandle(texture.Backend, texture.LegacyTextureId, texture.NativeResource);
     }
 
     private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)

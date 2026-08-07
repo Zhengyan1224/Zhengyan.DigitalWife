@@ -17,5 +17,6 @@ public interface IRenderTarget : IDisposable
     object? NativeColorResource { get; }
     void EnsureSize(int width, int height);
     void BeginPass(Vector4 clearColor);
+    void ResumePass();
     void EndPass();
 }

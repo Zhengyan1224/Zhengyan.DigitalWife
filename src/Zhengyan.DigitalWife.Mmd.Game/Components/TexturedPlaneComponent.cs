@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
@@ -9,6 +10,9 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private OrbitCamera _camera;
     private string _texturePath;
     private Texture2D? _texture;
+    private ITexture2D? _backendTexture;
+    private IGpuBuffer? _backendVertexBuffer;
+    private VeldridTexturedPlanePassRenderer? _vulkanPassRenderer;
     private IRuntimeTextureProvider? _runtimeTextureProvider;
     private uint _program;
     private uint _vao;
@@ -30,6 +34,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformReflectionViewProjection = -1;
     private int _uniformMirrorReflectionStrength = -1;
     private uint _planarReflectionTextureId;
+    private RuntimeTextureHandle? _planarReflectionTextureHandle;
     private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
     private CustomShaderProgram? _customShader;
     private readonly Dictionary<string, CustomShaderUniformValue> _customShaderUniforms = new(StringComparer.Ordinal);
@@ -80,7 +85,14 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             _texturePath = value;
             if (Game is not null)
             {
-                ReloadTexture(Game.GraphicsDevice.Gl);
+                if (Game.GraphicsDevice.Renderer is OpenGlRenderer openGl)
+                {
+                    ReloadTexture(openGl.Gl);
+                }
+                else
+                {
+                    ReloadBackendTexture();
+                }
             }
         }
     }
@@ -104,12 +116,25 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _ = width;
         _ = height;
         _planarReflectionTextureId = textureId;
+        _planarReflectionTextureHandle = textureId == 0
+            ? null
+            : new RuntimeTextureHandle(GraphicsBackend.OpenGL, textureId);
+        _planarReflectionViewProjection = reflectionViewProjection;
+    }
+
+    public void SetPlanarReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height)
+    {
+        _ = width;
+        _ = height;
+        _planarReflectionTextureHandle = texture;
+        _planarReflectionTextureId = texture.Backend == GraphicsBackend.OpenGL ? texture.LegacyTextureId : 0;
         _planarReflectionViewProjection = reflectionViewProjection;
     }
 
     public void ClearPlanarReflection()
     {
         _planarReflectionTextureId = 0;
+        _planarReflectionTextureHandle = null;
         _planarReflectionViewProjection = Matrix4x4.Identity;
     }
 
@@ -122,18 +147,28 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        GL gl = Game.GraphicsDevice.Gl;
+        if (Game.GraphicsDevice.Renderer is not OpenGlRenderer openGl)
+        {
+            PortableShaderContract.ValidatePlane(vertexShaderPath, fragmentShaderPath);
+            throw new NotSupportedException("The portable GLSL contract was validated, but custom plane pipelines are not enabled on this backend yet.");
+        }
+
+        GL gl = openGl.Gl;
         CustomShaderProgram nextShader = new(gl, vertexShaderPath, fragmentShaderPath);
         _customShader?.Dispose();
         _customShader = nextShader;
         RebuildCustomShaderVao(gl);
     }
 
+    /// <summary>Validates a custom shader pair against the explicit cross-backend contract.</summary>
+    public static void ValidatePortableShaderContract(string vertexShaderPath, string fragmentShaderPath)
+        => PortableShaderContract.ValidatePlane(vertexShaderPath, fragmentShaderPath);
+
     public void ClearCustomShader()
     {
-        if (Game is not null)
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer openGl)
         {
-            DeleteCustomShaderVao(Game.GraphicsDevice.Gl);
+            DeleteCustomShaderVao(openGl.Gl);
         }
 
         _customShader?.Dispose();
@@ -227,6 +262,12 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            InitializeVulkan(vulkan);
+            return;
+        }
+
         GL gl = Game.GraphicsDevice.Gl;
         _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
         _vao = gl.GenVertexArray();
@@ -279,9 +320,49 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         }
     }
 
+    private void InitializeVulkan(VulkanRenderer renderer)
+    {
+        _backendTexture = Game!.GraphicsDevice.CreateTexture2D();
+        ReloadBackendTexture();
+
+        PlaneVertex[] vertices = CreateVertices();
+        _backendVertexBuffer = Game.GraphicsDevice.CreateBuffer(new GpuBufferDescription(
+            checked((uint)(vertices.Length * Marshal.SizeOf<PlaneVertex>())),
+            GpuBufferKind.Vertex));
+        _backendVertexBuffer.Update<PlaneVertex>(new ReadOnlySpan<PlaneVertex>(vertices));
+        _vulkanPassRenderer = new VeldridTexturedPlanePassRenderer(renderer, _backendVertexBuffer, _backendTexture);
+    }
+
     public override void Draw(GameTime gameTime)
     {
-        if (Game is null || (_texture is null && !IsRuntimeTextureReference(_texturePath)))
+        if (Game is null)
+        {
+            return;
+        }
+
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer
+            && _vulkanPassRenderer is not null
+            && _backendTexture is not null)
+        {
+            RuntimeTextureHandle? baseHandle = ResolveTextureHandle();
+            RuntimeTextureHandle? reflectionHandle = MirrorReflectionEnabled ? _planarReflectionTextureHandle : null;
+            _vulkanPassRenderer.Draw(
+                _backendTexture,
+                baseHandle,
+                Tint,
+                IsRuntimeTextureReference(_texturePath),
+                World,
+                _camera.View,
+                _camera.Projection,
+                ReceiveShadow,
+                ShadowMap,
+                reflectionHandle,
+                _planarReflectionViewProjection,
+                MirrorReflectionStrength);
+            return;
+        }
+
+        if (_texture is null && !IsRuntimeTextureReference(_texturePath))
         {
             return;
         }
@@ -335,10 +416,16 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     {
         _texture?.Dispose();
         _texture = null;
+        _vulkanPassRenderer?.Dispose();
+        _vulkanPassRenderer = null;
+        _backendVertexBuffer?.Dispose();
+        _backendVertexBuffer = null;
+        _backendTexture?.Dispose();
+        _backendTexture = null;
 
-        if (Game is not null)
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer openGl)
         {
-            GL gl = Game.GraphicsDevice.Gl;
+            GL gl = openGl.Gl;
             gl.DeleteBuffer(_vertexBuffer);
             gl.DeleteVertexArray(_vao);
             DeleteCustomShaderVao(gl);
@@ -368,6 +455,27 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         }
     }
 
+    private void ReloadBackendTexture()
+    {
+        if (_backendTexture is null)
+        {
+            return;
+        }
+
+        if (IsRuntimeTextureReference(_texturePath))
+        {
+            _backendTexture.Fill(255, 255, 255, 255);
+        }
+        else if (!string.IsNullOrWhiteSpace(_texturePath) && File.Exists(_texturePath))
+        {
+            _backendTexture.LoadFromFile(_texturePath);
+        }
+        else
+        {
+            _backendTexture.Fill(255, 255, 255, 255);
+        }
+    }
+
     private uint ResolveTextureId()
     {
         if (_runtimeTextureProvider is not null
@@ -377,6 +485,22 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         }
 
         return _texture?.Id ?? 0;
+    }
+
+    private RuntimeTextureHandle? ResolveTextureHandle()
+    {
+        if (_runtimeTextureProvider is not null
+            && _runtimeTextureProvider.TryGetTextureHandle(_texturePath, out RuntimeTextureHandle runtimeTexture))
+        {
+            return runtimeTexture;
+        }
+
+        if (_backendTexture is not null)
+        {
+            return new RuntimeTextureHandle(_backendTexture.Backend, _backendTexture.LegacyTextureId, _backendTexture.NativeResource);
+        }
+
+        return null;
     }
 
     private void ApplyShadowMapUniforms(GL gl)
@@ -515,6 +639,19 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     {
         public readonly Vector3 Position = position;
         public readonly Vector2 Uv = uv;
+    }
+
+    private static PlaneVertex[] CreateVertices()
+    {
+        return
+        [
+            new(new Vector3(-0.5f, -0.5f, 0.0f), new Vector2(0.0f, 1.0f)),
+            new(new Vector3( 0.5f, -0.5f, 0.0f), new Vector2(1.0f, 1.0f)),
+            new(new Vector3(-0.5f,  0.5f, 0.0f), new Vector2(0.0f, 0.0f)),
+            new(new Vector3(-0.5f,  0.5f, 0.0f), new Vector2(0.0f, 0.0f)),
+            new(new Vector3( 0.5f, -0.5f, 0.0f), new Vector2(1.0f, 1.0f)),
+            new(new Vector3( 0.5f,  0.5f, 0.0f), new Vector2(1.0f, 0.0f))
+        ];
     }
 
     private const string VertexShaderSource = """

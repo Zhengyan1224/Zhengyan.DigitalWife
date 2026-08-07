@@ -34,6 +34,14 @@ public sealed class VulkanRenderer : IRenderer
 
     internal bool IsFrameOpen => _frameOpen;
 
+    public Veldrid.GraphicsDevice NativeDevice => Device;
+
+    public CommandList NativeCommandList => CommandList;
+
+    public OutputDescription NativeOutputDescription => CurrentOutputDescription;
+
+    internal OutputDescription CurrentOutputDescription { get; private set; }
+
     public IRenderTarget CreateRenderTarget(string name)
     {
         if (_device is null)
@@ -89,7 +97,23 @@ public sealed class VulkanRenderer : IRenderer
         if (_frameOpen)
         {
             _commandList?.SetFramebuffer(Device.SwapchainFramebuffer);
+            CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+            _commandList?.SetFullViewports();
+            _commandList?.SetFullScissorRects();
         }
+    }
+
+    public void SetViewport(int x, int y, int width, int height)
+    {
+        if (_frameOpen)
+            _commandList!.SetViewport(0, new Viewport(x, y, Math.Max(width, 1), Math.Max(height, 1), 0, 1));
+    }
+
+    public void SetScissor(int x, int y, int width, int height, bool enabled)
+    {
+        if (!_frameOpen) return;
+        if (enabled) _commandList!.SetScissorRect(0, (uint)Math.Max(x, 0), (uint)Math.Max(y, 0), (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
+        else _commandList!.SetFullScissorRects();
     }
 
     internal void BeginRenderTarget(VeldridRenderTarget target, Vector4 clearColor)
@@ -101,13 +125,57 @@ public sealed class VulkanRenderer : IRenderer
         }
 
         _commandList!.SetFramebuffer(target.Framebuffer);
+        CurrentOutputDescription = target.Framebuffer.OutputDescription;
+        _commandList.SetFullViewports();
+        _commandList.SetFullScissorRects();
         _commandList.ClearColorTarget(0, new RgbaFloat(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W));
         _commandList.ClearDepthStencil(1f);
+    }
+
+    internal void ResumeRenderTarget(VeldridRenderTarget target)
+    {
+        if (!_frameOpen)
+        {
+            _commandList!.Begin();
+            _frameOpen = true;
+        }
+
+        _commandList!.SetFramebuffer(target.Framebuffer);
+        CurrentOutputDescription = target.Framebuffer.OutputDescription;
+        _commandList.SetFullViewports();
+        _commandList.SetFullScissorRects();
     }
 
     internal void EndRenderTarget(VeldridRenderTarget target)
     {
         _commandList?.SetFramebuffer(Device.SwapchainFramebuffer);
+        CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+        _commandList?.SetFullViewports();
+        _commandList?.SetFullScissorRects();
+    }
+
+    internal void BeginShadowMap(VeldridShadowMapTarget target)
+    {
+        if (!_frameOpen)
+        {
+            _commandList!.Begin();
+            _frameOpen = true;
+        }
+
+        _commandList!.SetFramebuffer(target.Framebuffer);
+        CurrentOutputDescription = target.Framebuffer.OutputDescription;
+        _commandList.SetFullViewports();
+        _commandList.SetFullScissorRects();
+        _commandList.ClearDepthStencil(1.0f);
+    }
+
+    internal void EndShadowMap(VeldridShadowMapTarget target)
+    {
+        _ = target;
+        _commandList?.SetFramebuffer(Device.SwapchainFramebuffer);
+        CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+        _commandList?.SetFullViewports();
+        _commandList?.SetFullScissorRects();
     }
 
     public static bool IsSupported(out string reason)
@@ -149,6 +217,7 @@ public sealed class VulkanRenderer : IRenderer
             options,
             Veldrid.GraphicsBackend.Vulkan);
         _commandList = _device.ResourceFactory.CreateCommandList();
+        CurrentOutputDescription = _device.SwapchainFramebuffer.OutputDescription;
         Resize(backBufferSize);
     }
 
@@ -181,6 +250,7 @@ public sealed class VulkanRenderer : IRenderer
 
         commands.Begin();
         commands.SetFramebuffer(device.SwapchainFramebuffer);
+        CurrentOutputDescription = device.SwapchainFramebuffer.OutputDescription;
         commands.ClearColorTarget(0, new RgbaFloat(color.X, color.Y, color.Z, color.W));
         commands.ClearDepthStencil(1.0f);
         _frameOpen = true;

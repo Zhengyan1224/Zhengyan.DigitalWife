@@ -13,7 +13,14 @@ public readonly record struct UnderwaterPostProcessSettings(
     float BubbleStrength,
     float SurfaceDepth);
 
-public sealed unsafe class UnderwaterPostProcessRenderer : IDisposable
+public interface IUnderwaterPostProcessRenderer : IDisposable
+{
+    void BeginCapture(int width, int height, Vector4 clearColor);
+    void ResumeCapture();
+    void Draw(OrbitCamera camera, UnderwaterPostProcessSettings settings, double timeSeconds, int viewportWidth, int viewportHeight);
+}
+
+public sealed unsafe class UnderwaterPostProcessRenderer : IUnderwaterPostProcessRenderer
 {
     private readonly GL _gl;
     private readonly SceneColorDepthRenderTarget _captureTarget;
@@ -94,6 +101,20 @@ public sealed unsafe class UnderwaterPostProcessRenderer : IDisposable
         _captureTarget.EnsureSize(width, height);
         _captureTarget.Bind();
     }
+
+    public void BeginCapture(int width, int height, Vector4 clearColor)
+    {
+        BeginCapture(width, height);
+        _gl.Disable(GLEnum.ScissorTest);
+        _gl.Disable(GLEnum.StencilTest);
+        _gl.ColorMask(true, true, true, true);
+        _gl.DepthMask(true);
+        _gl.StencilMask(0xFF);
+        _gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
+        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    public void ResumeCapture() => _captureTarget.Bind();
 
     public void Draw(OrbitCamera camera, UnderwaterPostProcessSettings settings, double timeSeconds, int viewportWidth, int viewportHeight)
     {

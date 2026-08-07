@@ -60,6 +60,13 @@ public sealed class VeldridRenderTarget : IRenderTarget
         _renderer.BeginRenderTarget(this, clearColor);
     }
 
+    public void ResumePass()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        EnsureSize(Width, Height);
+        _renderer.ResumeRenderTarget(this);
+    }
+
     public void EndPass()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

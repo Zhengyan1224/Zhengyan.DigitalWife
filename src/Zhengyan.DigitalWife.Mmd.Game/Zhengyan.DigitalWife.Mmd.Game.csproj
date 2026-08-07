@@ -8,11 +8,14 @@
         <PackageReference Include="Silk.NET.Input" />
         <PackageReference Include="Silk.NET.OpenAL" />
         <PackageReference Include="Silk.NET.OpenGLES" />
+        <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
         <PackageReference Include="Silk.NET.Vulkan" />
         <PackageReference Include="Silk.NET.Windowing" />
         <PackageReference Include="Silk.NET.Windowing.Extensions.Veldrid" />
         <PackageReference Include="Veldrid" />
         <PackageReference Include="Veldrid.SPIRV" />
+        <PackageReference Include="Veldrid.ImGui" />
+        <PackageReference Include="ImGui.NET" />
         <PackageReference Include="StbImageSharp" />
         <PackageReference Include="Pfim" />
         <PackageReference Include="NVorbis" />

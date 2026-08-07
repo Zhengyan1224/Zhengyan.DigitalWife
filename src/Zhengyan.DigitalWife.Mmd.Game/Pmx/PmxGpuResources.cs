@@ -26,6 +26,12 @@ internal sealed unsafe class PmxGpuResources : IDisposable
             (uint)Marshal.SizeOf<PmxFrameUniformData>(), GpuBufferKind.Uniform, Dynamic: true));
         MaterialUniformBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
             (uint)Marshal.SizeOf<PmxMaterialUniformData>(), GpuBufferKind.Uniform, Dynamic: true));
+        EdgeUniformBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
+            (uint)Marshal.SizeOf<PmxEdgeUniformData>(), GpuBufferKind.Uniform, Dynamic: true));
+        GroundShadowUniformBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
+            (uint)Marshal.SizeOf<PmxGroundShadowUniformData>(), GpuBufferKind.Uniform, Dynamic: true));
+        ShadowDepthUniformBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
+            (uint)Marshal.SizeOf<PmxShadowDepthUniformData>(), GpuBufferKind.Uniform, Dynamic: true));
         TextureSampler = graphicsDevice.CreateSampler(new GpuSamplerDescription());
         ToonTextureSampler = graphicsDevice.CreateSampler(new GpuSamplerDescription(
             GpuSamplerAddressMode.ClampToEdge,
@@ -41,6 +47,9 @@ internal sealed unsafe class PmxGpuResources : IDisposable
     public IGpuBuffer IndexBuffer { get; }
     public IGpuBuffer FrameUniformBuffer { get; }
     public IGpuBuffer MaterialUniformBuffer { get; }
+    public IGpuBuffer EdgeUniformBuffer { get; }
+    public IGpuBuffer GroundShadowUniformBuffer { get; }
+    public IGpuBuffer ShadowDepthUniformBuffer { get; }
     public IGpuSampler TextureSampler { get; }
     public IGpuSampler ToonTextureSampler { get; }
     public ITexture2D DefaultTexture { get; }
@@ -95,6 +104,9 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         IndexBuffer.Dispose();
         FrameUniformBuffer.Dispose();
         MaterialUniformBuffer.Dispose();
+        EdgeUniformBuffer.Dispose();
+        GroundShadowUniformBuffer.Dispose();
+        ShadowDepthUniformBuffer.Dispose();
         TextureSampler.Dispose();
         ToonTextureSampler.Dispose();
         DefaultTexture.Dispose();
@@ -112,6 +124,8 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         public Vector4 LightDirection;
         public Vector4 AmbientLightColor;
         public Vector4 Parameters;
+        public Matrix4x4 ShadowLightViewProjection;
+        public Vector4 ShadowParameters;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -127,5 +141,27 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         public Vector4 ToonMultiply;
         public Vector4 ToonAdd;
         public Vector4 Modes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PmxEdgeUniformData
+    {
+        public Matrix4x4 WorldView;
+        public Matrix4x4 WorldViewProjection;
+        public Vector4 ScreenAndEdgeSize;
+        public Vector4 EdgeColor;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PmxGroundShadowUniformData
+    {
+        public Matrix4x4 WorldViewProjection;
+        public Vector4 ShadowColor;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PmxShadowDepthUniformData
+    {
+        public Matrix4x4 WorldLightViewProjection;
     }
 }

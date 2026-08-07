@@ -30,6 +30,10 @@ public interface IRenderer : IDisposable
 
     void RestoreBackBuffer();
 
+    void SetViewport(int x, int y, int width, int height);
+
+    void SetScissor(int x, int y, int width, int height, bool enabled);
+
     void Present();
 }
 

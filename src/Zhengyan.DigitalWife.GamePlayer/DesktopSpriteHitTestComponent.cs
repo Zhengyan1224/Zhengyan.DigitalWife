@@ -1,4 +1,5 @@
 using Zhengyan.DigitalWife.Mmd.Game;
+using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GamePlayer;
 
@@ -11,6 +12,16 @@ internal sealed class DesktopSpriteHitTestComponent(Func<bool> isEnabled) : Draw
     {
         if (Game is null)
         {
+            return;
+        }
+
+        if (Game.GraphicsDevice.Renderer is not OpenGlRenderer)
+        {
+            if (_wasEnabled)
+            {
+                DesktopSpritePlatform.ApplyClickThrough(Game.Window, false);
+                _wasEnabled = false;
+            }
             return;
         }
 

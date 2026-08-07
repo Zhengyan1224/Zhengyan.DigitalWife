@@ -155,13 +155,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private string _initialModelPath;
 
-    private PmxEdgeShader? _edgeShader;
-    private PmxGroundShadowShader? _groundShadowShader;
-    private PmxShadowDepthShader? _shadowDepthShader;
     private EmbeddedToonTextureLibrary? _toonTextures;
     private ITexture2D? _defaultTexture;
     private PmxGpuResources? _gpuResources;
     private IPmxMainPassRenderer? _mainPassRenderer;
+    private IPmxAuxiliaryPassRenderer? _auxiliaryPassRenderer;
 
     private Zhengyan.DigitalWife.Mmd.MMDModel? _model;
     private readonly List<MotionLayerState> _motionLayers = [];
@@ -179,9 +177,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private uint _normalBuffer;
     private uint _uvBuffer;
     private uint _indexBuffer;
-    private uint _edgeVao;
-    private uint _groundShadowVao;
-    private uint _shadowDepthVao;
     private uint _customShaderVao;
     private float _animationTime;
     private bool _isPlaying = true;
@@ -488,13 +483,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        GL? gl = GetOpenGl();
-        if (gl is not null)
-        {
-            _edgeShader = new PmxEdgeShader(gl);
-            _groundShadowShader = new PmxGroundShadowShader(gl);
-            _shadowDepthShader = new PmxShadowDepthShader(gl);
-        }
         _toonTextures = new EmbeddedToonTextureLibrary(Game.GraphicsDevice);
 
         try
@@ -1555,43 +1543,22 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _lastEdgeMeshDrawCount = 0;
         _lastShadowMeshDrawCount = 0;
 
-        if (Game.GraphicsDevice.Backend == GraphicsBackend.Vulkan)
-        {
-            _lastOpaqueMeshDrawCount = _mainPassRenderer?.Draw(
-                _gpuResources,
-                _meshes,
-                _materials,
-                World,
-                Camera.View,
-                Camera.Projection,
-                LightColor,
-                LightDirection,
-                AmbientLightColor,
-                AmbientLightStrength,
-                EnableShadow,
-                ShadowMap,
-                resolveOpenGlOverrideTexture: null) ?? 0;
-            return;
-        }
-
-        if (_mainPassRenderer is null || _edgeShader is null || _groundShadowShader is null)
+        if (_mainPassRenderer is null || _auxiliaryPassRenderer is null)
         {
             return;
         }
-
-        GL gl = Game.GraphicsDevice.Gl;
-        Vector2 screenSize = new(Game.GraphicsDevice.BackBufferSize.X, Game.GraphicsDevice.BackBufferSize.Y);
 
         Matrix4x4 transform = World;
         Matrix4x4 worldView = transform * Camera.View;
         Matrix4x4 worldViewProjection = worldView * Camera.Projection;
+        Vector2 screenSize = new(Math.Max(Camera.Width, 1), Math.Max(Camera.Height, 1));
 
-        gl.Enable(GLEnum.DepthTest);
-        gl.Enable(GLEnum.Blend);
-        gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
-
-        if (_customShader is not null && _customShaderVao != 0)
+        if (Game.GraphicsDevice.Backend == GraphicsBackend.OpenGL && _customShader is not null && _customShaderVao != 0)
         {
+            GL gl = Game.GraphicsDevice.Gl;
+            gl.Enable(GLEnum.DepthTest);
+            gl.Enable(GLEnum.Blend);
+            gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
             DrawCustomShaderPass(gl, gameTime, transform, worldView, worldViewProjection);
         }
         else
@@ -1609,46 +1576,27 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 AmbientLightStrength,
                 EnableShadow,
                 ShadowMap,
-                ResolveMaterialOverrideTextureId);
+                ResolveMaterialOverrideTextureHandle);
         }
 
         if (EnableEdge)
         {
-            gl.Enable(GLEnum.CullFace);
-            gl.CullFace(GLEnum.Front);
-            gl.UseProgram(_edgeShader.Id);
-            gl.BindVertexArray(_edgeVao);
-            gl.SetUniform(_edgeShader.UniWVP, worldViewProjection);
-            gl.SetUniform(_edgeShader.UniWV, worldView);
-            gl.SetUniform(_edgeShader.UniScreenSize, screenSize);
-
-            foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
-            {
-                Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
-                if (mmdMaterial.EdgeFlag == 0 || mmdMaterial.Alpha == 0.0f)
-                {
-                    continue;
-                }
-
-                gl.SetUniform(_edgeShader.UniEdgeSize, mmdMaterial.EdgeSize);
-                gl.SetUniform(_edgeShader.UniEdgeColor, mmdMaterial.EdgeColor);
-                gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
-                _lastEdgeMeshDrawCount++;
-            }
-
-            gl.BindVertexArray(0);
-            gl.UseProgram(0);
+            _lastEdgeMeshDrawCount = _auxiliaryPassRenderer.DrawEdge(
+                _gpuResources, _meshes, transform, Camera.View, Camera.Projection, screenSize);
         }
 
         if (DrawShadowInMainPass && ShadowMap is not { TextureId: not 0 })
         {
-            DrawGroundShadowPassCore(gl, transform);
+            DrawGroundShadowPassCore(transform);
         }
 
-        gl.Disable(GLEnum.StencilTest);
-        gl.Disable(GLEnum.PolygonOffsetFill);
-        gl.Disable(GLEnum.Blend);
-        gl.Disable(GLEnum.DepthTest);
+        if (GetOpenGl() is GL cleanupGl)
+        {
+            cleanupGl.Disable(GLEnum.StencilTest);
+            cleanupGl.Disable(GLEnum.PolygonOffsetFill);
+            cleanupGl.Disable(GLEnum.Blend);
+            cleanupGl.Disable(GLEnum.DepthTest);
+        }
     }
 
     public void DrawGroundShadowPass()
@@ -1658,14 +1606,15 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             return;
         }
 
-        GL gl = Game!.GraphicsDevice.Gl;
-        gl.Enable(GLEnum.DepthTest);
-        DrawGroundShadowPassCore(gl, World);
-        gl.Disable(GLEnum.StencilTest);
-        gl.Disable(GLEnum.PolygonOffsetFill);
-        gl.DepthMask(true);
-        gl.Disable(GLEnum.Blend);
-        gl.Disable(GLEnum.DepthTest);
+        DrawGroundShadowPassCore(World);
+        if (GetOpenGl() is GL gl)
+        {
+            gl.Disable(GLEnum.StencilTest);
+            gl.Disable(GLEnum.PolygonOffsetFill);
+            gl.DepthMask(true);
+            gl.Disable(GLEnum.Blend);
+            gl.Disable(GLEnum.DepthTest);
+        }
     }
 
     public void DrawShadowDepthPass(Matrix4x4 lightViewProjection)
@@ -1675,42 +1624,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             return;
         }
 
-        GL gl = Game!.GraphicsDevice.Gl;
-        Matrix4x4 worldLightViewProjection = World * lightViewProjection;
-
-        gl.Enable(GLEnum.DepthTest);
-        gl.DepthMask(true);
-        gl.Disable(GLEnum.Blend);
-        gl.Enable(GLEnum.CullFace);
-        gl.CullFace(GLEnum.Back);
-        gl.UseProgram(_shadowDepthShader!.Id);
-        gl.BindVertexArray(_shadowDepthVao);
-        gl.SetUniform(_shadowDepthShader.UniWorldLightViewProjection, worldLightViewProjection);
-
-        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
-        {
-            Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
-            if (!mmdMaterial.ShadowCaster || mmdMaterial.Alpha <= 0.01f)
-            {
-                continue;
-            }
-
-            if (mmdMaterial.BothFace)
-            {
-                gl.Disable(GLEnum.CullFace);
-            }
-            else
-            {
-                gl.Enable(GLEnum.CullFace);
-                gl.CullFace(GLEnum.Back);
-            }
-
-            gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
-        }
-
-        gl.BindVertexArray(0);
-        gl.UseProgram(0);
-        gl.Disable(GLEnum.CullFace);
+        _ = _auxiliaryPassRenderer!.DrawShadowDepth(
+            _gpuResources!,
+            _meshes,
+            World * lightViewProjection);
     }
 
     private bool CanRenderShadowDepth()
@@ -1718,8 +1635,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         return _loaded
             && Game is not null
             && _model is not null
-            && _shadowDepthShader is not null
-            && _shadowDepthVao != 0
+            && _gpuResources is not null
+            && _auxiliaryPassRenderer is not null
             && EnableShadow;
     }
 
@@ -1729,61 +1646,23 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             && Game is not null
             && Camera is not null
             && _model is not null
-            && _groundShadowShader is not null
+            && _gpuResources is not null
+            && _auxiliaryPassRenderer is not null
             && EnableShadow
             && ShadowColor.W > 0.0f;
     }
 
-    private void DrawGroundShadowPassCore(GL gl, Matrix4x4 transform)
+    private void DrawGroundShadowPassCore(Matrix4x4 transform)
     {
         if (!CanRenderGroundShadow())
         {
             return;
         }
 
-        gl.Enable(GLEnum.PolygonOffsetFill);
-        gl.PolygonOffset(-1.0f, -1.0f);
-
         Matrix4x4 shadow = Matrix4x4.CreateShadow(-LightDirection, new Plane(0.0f, 1.0f, 0.0f, -GroundShadowPlaneHeight));
         Matrix4x4 shadowMatrix = transform * shadow * Camera!.View * Camera.Projection;
-        // Ground shadows are projected overlays. Keep depth testing for occlusion,
-        // but never write depth so later transparent surfaces (e.g. water) are not cut out.
-        gl.DepthMask(false);
-
-        if (ShadowColor.W < 1.0f)
-        {
-            gl.Enable(GLEnum.Blend);
-            gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
-            gl.Enable(GLEnum.StencilTest);
-            gl.StencilFuncSeparate(GLEnum.FrontAndBack, GLEnum.Notequal, 1, 1);
-            gl.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Replace);
-        }
-        else
-        {
-            gl.Disable(GLEnum.Blend);
-        }
-
-        gl.Disable(GLEnum.CullFace);
-        gl.UseProgram(_groundShadowShader!.Id);
-        gl.BindVertexArray(_groundShadowVao);
-        gl.SetUniform(_groundShadowShader.UniWVP, shadowMatrix);
-        gl.SetUniform(_groundShadowShader.UniShadowColor, ShadowColor);
-
-        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
-        {
-            Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
-            if (!mmdMaterial.GroundShadow || mmdMaterial.Alpha == 0.0f)
-            {
-                continue;
-            }
-
-            gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
-            _lastShadowMeshDrawCount++;
-        }
-
-        gl.BindVertexArray(0);
-        gl.UseProgram(0);
-        gl.DepthMask(true);
+        _lastShadowMeshDrawCount = _auxiliaryPassRenderer!.DrawGroundShadow(
+            _gpuResources!, _meshes, shadowMatrix, ShadowColor);
     }
 
     private void DrawCustomShaderPass(GL gl, GameTime gameTime, Matrix4x4 transform, Matrix4x4 worldView, Matrix4x4 worldViewProjection)
@@ -1981,18 +1860,23 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        GL gl = Game.GraphicsDevice.Gl;
+        GL gl = GetOpenGl() ?? throw new NotSupportedException(
+            "Custom PMX shaders use the legacy OpenGL contract. Validate an explicit GLSL 450 pair with PortableShaderContract before targeting Vulkan or another backend.");
         CustomShaderProgram nextShader = new(gl, vertexShaderPath, fragmentShaderPath);
         _customShader?.Dispose();
         _customShader = nextShader;
         RebuildCustomShaderVao(gl);
     }
 
+    /// <summary>Validates a custom shader pair against the explicit cross-backend contract.</summary>
+    public static void ValidatePortableShaderContract(string vertexShaderPath, string fragmentShaderPath)
+        => PortableShaderContract.ValidatePlane(vertexShaderPath, fragmentShaderPath);
+
     public void ClearCustomShader()
     {
-        if (Game is not null)
+        if (GetOpenGl() is GL gl)
         {
-            DeleteCustomShaderVao(Game.GraphicsDevice.Gl);
+            DeleteCustomShaderVao(gl);
         }
 
         _customShader?.Dispose();
@@ -2037,23 +1921,30 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private uint ResolveMaterialOverrideTextureId(int materialIndex)
     {
+        return ResolveMaterialOverrideTextureHandle(materialIndex)?.LegacyTextureId ?? 0;
+    }
+
+    private RuntimeTextureHandle? ResolveMaterialOverrideTextureHandle(int materialIndex)
+    {
         if (!_materialTextureOverrides.TryGetValue(materialIndex, out string? textureReference)
             || string.IsNullOrWhiteSpace(textureReference))
         {
-            return 0;
+            return null;
         }
 
-        if (RuntimeTextureProvider is not null && RuntimeTextureProvider.TryGetTexture(textureReference, out uint runtimeTextureId))
+        if (RuntimeTextureProvider is not null
+            && RuntimeTextureProvider.TryGetTextureHandle(textureReference, out RuntimeTextureHandle runtimeTexture))
         {
-            return runtimeTextureId;
+            return runtimeTexture;
         }
 
         if (Game is null || !File.Exists(textureReference))
         {
-            return 0;
+            return null;
         }
 
-        return GetTexture(textureReference, GLEnum.Repeat).LegacyTextureId;
+        ITexture2D texture = GetTexture(textureReference, GLEnum.Repeat);
+        return new RuntimeTextureHandle(texture.Backend, texture.LegacyTextureId, texture.NativeResource);
     }
 
     private int GetMaterialIndex(Zhengyan.DigitalWife.Mmd.MMDMaterial material)
@@ -2189,15 +2080,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _toonTextures?.Dispose();
         _toonTextures = null;
 
-        _edgeShader?.Dispose();
-        _edgeShader = null;
-
-        _groundShadowShader?.Dispose();
-        _groundShadowShader = null;
-
-        _shadowDepthShader?.Dispose();
-        _shadowDepthShader = null;
-
         _customShader?.Dispose();
         _customShader = null;
         _customShaderUniforms.Clear();
@@ -2210,6 +2092,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             DeleteCustomShaderVao(gl);
         }
 
+        _mainPassRenderer?.Dispose();
+        _mainPassRenderer = null;
+        _auxiliaryPassRenderer?.Dispose();
+        _auxiliaryPassRenderer = null;
+
         foreach (ITexture2D texture in _textures.Values)
         {
             texture.Dispose();
@@ -2219,25 +2106,13 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _materials.Clear();
         _meshes = [];
 
-        _mainPassRenderer?.Dispose();
-        _mainPassRenderer = null;
         _gpuResources?.Dispose();
         _gpuResources = null;
         _defaultTexture = null;
-        if (gl is not null)
-        {
-            gl.DeleteVertexArray(_edgeVao);
-            gl.DeleteVertexArray(_groundShadowVao);
-            gl.DeleteVertexArray(_shadowDepthVao);
-        }
-
         _positionBuffer = 0;
         _normalBuffer = 0;
         _uvBuffer = 0;
         _indexBuffer = 0;
-        _edgeVao = 0;
-        _groundShadowVao = 0;
-        _shadowDepthVao = 0;
         _customShaderVao = 0;
 
         DisposeMotionLayers(_motionLayers);
@@ -2919,6 +2794,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _meshes = _model.GetMeshes();
 
+        _mainPassRenderer?.Dispose();
+        _mainPassRenderer = null;
+        _auxiliaryPassRenderer?.Dispose();
+        _auxiliaryPassRenderer = null;
         _gpuResources?.Dispose();
         _gpuResources = new PmxGpuResources(Game!.GraphicsDevice, _model);
         _defaultTexture = _gpuResources.DefaultTexture;
@@ -2929,38 +2808,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         if (gl is not null)
         {
-            if (_edgeShader is null || _groundShadowShader is null || _shadowDepthShader is null)
-            {
-                throw new InvalidOperationException("The OpenGL PMX shaders have not been initialized.");
-            }
-
-            _edgeVao = gl.GenVertexArray();
-            gl.BindVertexArray(_edgeVao);
-            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-            gl.VertexAttribPointer(_edgeShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-            gl.EnableVertexAttribArray(_edgeShader.InPos);
-            gl.BindBuffer(GLEnum.ArrayBuffer, _normalBuffer);
-            gl.VertexAttribPointer(_edgeShader.InNor, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-            gl.EnableVertexAttribArray(_edgeShader.InNor);
-            gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-            gl.BindVertexArray(0);
-
-            _groundShadowVao = gl.GenVertexArray();
-            gl.BindVertexArray(_groundShadowVao);
-            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-            gl.VertexAttribPointer(_groundShadowShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-            gl.EnableVertexAttribArray(_groundShadowShader.InPos);
-            gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-            gl.BindVertexArray(0);
-
-            _shadowDepthVao = gl.GenVertexArray();
-            gl.BindVertexArray(_shadowDepthVao);
-            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-            gl.VertexAttribPointer(_shadowDepthShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-            gl.EnableVertexAttribArray(_shadowDepthShader.InPos);
-            gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-            gl.BindVertexArray(0);
-
             if (_customShader is not null)
             {
                 RebuildCustomShaderVao(gl);
@@ -2997,8 +2844,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _materials.Add(mmdMaterial, textures);
         }
 
-        _mainPassRenderer?.Dispose();
         _mainPassRenderer = PmxMainPassRendererFactory.Create(Game.GraphicsDevice, _gpuResources!);
+        _auxiliaryPassRenderer = PmxAuxiliaryPassRendererFactory.Create(Game.GraphicsDevice, _gpuResources!);
 
         UploadVertexBuffers(true);
         CaptureResetSnapshot();

@@ -15,6 +15,8 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
+    private VeldridLineRenderer? _vulkanLineRenderer;
+    private float[] _vulkanVertices = [];
     private int _vertexCount;
     private bool _geometryDirty = true;
     private float _axisLength = 3.0f;
@@ -57,6 +59,12 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
             throw new InvalidOperationException("Game is not attached.");
         }
 
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            _vulkanLineRenderer = new VeldridLineRenderer(vulkan, MaxVertexCount * FloatStride * sizeof(float));
+            return;
+        }
+
         GL gl = Game.GraphicsDevice.Gl;
         _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
 
@@ -87,6 +95,23 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
             return;
         }
 
+        if (_vulkanLineRenderer is not null)
+        {
+            if (_geometryDirty)
+            {
+                Span<float> vertices = stackalloc float[MaxVertexCount * FloatStride];
+                int vertexCount = 0;
+                AddAxes(vertices, ref vertexCount);
+                AddOriginMarker(vertices, ref vertexCount);
+                _vulkanVertices = vertices[..(vertexCount * FloatStride)].ToArray();
+                _vertexCount = vertexCount;
+                _geometryDirty = false;
+            }
+
+            _vulkanLineRenderer.Draw(_vulkanVertices, _vertexCount, _camera.View * _camera.Projection);
+            return;
+        }
+
         UploadGeometryIfNeeded();
 
         GL gl = Game.GraphicsDevice.Gl;
@@ -105,7 +130,9 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
 
     public override void Dispose()
     {
-        if (Game is not null)
+        _vulkanLineRenderer?.Dispose();
+        _vulkanLineRenderer = null;
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);

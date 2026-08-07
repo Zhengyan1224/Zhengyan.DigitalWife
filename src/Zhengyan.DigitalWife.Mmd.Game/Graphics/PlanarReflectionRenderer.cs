@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
@@ -8,7 +7,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
 {
     private sealed class ReflectionSurfaceState
     {
-        public required RenderTexture Texture { get; init; }
+        public required IRenderTarget Target { get; init; }
 
         public OrbitCamera Camera { get; } = new();
     }
@@ -88,7 +87,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
         HashSet<object> validSurfaces = [.. waterSurfaces.Cast<object>().Concat((mirrorPlanes ?? []).Cast<object>())];
         foreach (object stale in _surfaces.Keys.Where(surface => !validSurfaces.Contains(surface)).ToArray())
         {
-            _surfaces[stale].Texture.Dispose();
+            _surfaces[stale].Target.Dispose();
             _surfaces.Remove(stale);
         }
 
@@ -97,7 +96,6 @@ public sealed class PlanarReflectionRenderer : IDisposable
             return;
         }
 
-        GL gl = _game.GraphicsDevice.Gl;
         _isRendering = true;
         try
         {
@@ -113,22 +111,20 @@ public sealed class PlanarReflectionRenderer : IDisposable
             foreach (ReflectionSurface surface in activeSurfaces)
             {
                 ReflectionSurfaceState state = GetOrCreateSurfaceState(surface.Key);
-                RenderTexture texture = state.Texture;
-                texture.EnsureSize(textureWidth, textureHeight);
+                IRenderTarget target = state.Target;
+                target.EnsureSize(textureWidth, textureHeight);
 
-                ConfigureReflectionCamera(sourceCamera, state.Camera, surface.Normal, surface.Distance, texture.Width, texture.Height);
+                ConfigureReflectionCamera(sourceCamera, state.Camera, surface.Normal, surface.Distance, target.Width, target.Height);
 
-                texture.Bind();
-                gl.Disable(GLEnum.ScissorTest);
-                gl.Disable(GLEnum.StencilTest);
-                gl.ColorMask(true, true, true, true);
-                gl.DepthMask(true);
-                gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
-                gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+                target.BeginPass(clearColor);
 
                 applyCamera(state.Camera);
                 DrawReflectionScene(gameTime, excluded);
-                surface.SetReflection(texture.ColorTextureId, state.Camera.View * state.Camera.Projection, texture.Width, texture.Height);
+                surface.SetReflection(
+                    new RuntimeTextureHandle(target.Backend, target.LegacyColorTextureId, target.NativeColorResource),
+                    state.Camera.View * state.Camera.Projection,
+                    target.Width,
+                    target.Height);
             }
         }
         finally
@@ -140,8 +136,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
             }
             else
             {
-                gl.BindFramebuffer(GLEnum.Framebuffer, 0);
-                gl.Viewport(0, 0, (uint)targetWidth, (uint)targetHeight);
+                _game.GraphicsDevice.RestoreBackBuffer();
             }
 
             _isRendering = false;
@@ -158,7 +153,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
         _disposed = true;
         foreach (ReflectionSurfaceState state in _surfaces.Values)
         {
-            state.Texture.Dispose();
+            state.Target.Dispose();
         }
 
         _surfaces.Clear();
@@ -170,7 +165,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
         {
             state = new ReflectionSurfaceState
             {
-                Texture = new RenderTexture(_game.GraphicsDevice.Gl, $"PlanarReflection-{_surfaces.Count + 1}")
+                Target = _game.GraphicsDevice.CreateRenderTarget($"PlanarReflection-{_surfaces.Count + 1}")
             };
             _surfaces[key] = state;
         }
@@ -263,15 +258,15 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
         public static ReflectionSurface ForPlane(TexturedPlaneComponent plane, Vector3 normal, float distance) => new(plane, normal, distance);
 
-        public void SetReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height)
+        public void SetReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height)
         {
             if (_water is not null)
             {
-                _water.SetPlanarReflection(textureId, reflectionViewProjection, width, height);
+                _water.SetPlanarReflection(texture, reflectionViewProjection, width, height);
             }
             else
             {
-                _plane?.SetPlanarReflection(textureId, reflectionViewProjection, width, height);
+                _plane?.SetPlanarReflection(texture, reflectionViewProjection, width, height);
             }
         }
     }

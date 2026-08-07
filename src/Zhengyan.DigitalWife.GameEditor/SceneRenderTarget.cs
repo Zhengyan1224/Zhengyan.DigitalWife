@@ -19,6 +19,8 @@ internal sealed class SceneRenderTarget : IDisposable
 
     public uint ColorTextureId => _target.LegacyColorTextureId;
 
+    public RuntimeTextureHandle ColorTextureHandle => new(_target.Backend, _target.LegacyColorTextureId, _target.NativeColorResource);
+
     public uint DepthStencilRenderbufferId => _target is RenderTexture glTarget ? glTarget.DepthStencilRenderbufferId : 0;
 
     public int Width => _target.Width;
@@ -32,14 +34,12 @@ internal sealed class SceneRenderTarget : IDisposable
 
     public void Bind()
     {
-        if (_target is RenderTexture glTarget)
-        {
-            glTarget.Bind();
-        }
-        else
-        {
-            _target.BeginPass(Vector4.Zero);
-        }
+        _target.ResumePass();
+    }
+
+    public void BeginPass(Vector4 clearColor)
+    {
+        _target.BeginPass(clearColor);
     }
 
     public void Unbind(int backBufferWidth, int backBufferHeight)

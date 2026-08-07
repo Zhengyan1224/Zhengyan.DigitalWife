@@ -1,7 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
 using Silk.NET.OpenGLES;
-using Silk.NET.OpenGLES.Extensions.ImGui;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
@@ -30,10 +29,10 @@ internal sealed class RuntimeGuiOverlayComponent(
     private readonly Func<string, string> _resolvePath = resolvePath;
     private readonly Action<GuiControlSettings, string> _dispatchEvent = dispatchEvent;
     private readonly Action<ContextMenuSettings, ContextMenuItemSettings> _dispatchContextMenuEvent = dispatchContextMenuEvent;
-    private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ITexture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
     private IScreenSpriteRenderer? _backgroundSpriteRenderer;
-    private ImGuiController? _controller;
+    private IImGuiBackendController? _controller;
     private string _openContextMenuId = string.Empty;
     private Vector2 _contextMenuPopupPosition;
     private Vector2 _contextMenuRightPressPosition;
@@ -50,24 +49,10 @@ internal sealed class RuntimeGuiOverlayComponent(
 
         _backgroundSpriteRenderer = Game.GraphicsDevice.CreateScreenSpriteRenderer();
 
-        if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
-        {
-            try
-            {
-                _controller = new ImGuiController(
-                    Game.GraphicsDevice.Gl,
-                    Game.Window,
-                    Game.Input.Context,
-                    () => ConfigureIoFontAtlas(cjkFontPath));
-                return;
-            }
-            catch
-            {
-                // Fall through to the default font setup.
-            }
-        }
-
-        _controller = new ImGuiController(Game.GraphicsDevice.Gl, Game.Window, Game.Input.Context);
+        Action? configureFonts = ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath)
+            ? () => ConfigureIoFontAtlas(cjkFontPath)
+            : null;
+        _controller = ImGuiBackendController.Create(Game, configureFonts);
     }
 
     public override void Draw(GameTime gameTime)
@@ -97,7 +82,7 @@ internal sealed class RuntimeGuiOverlayComponent(
 
     public override void Dispose()
     {
-        foreach (Texture2D texture in _spriteTextures.Values)
+        foreach (ITexture2D texture in _spriteTextures.Values)
         {
             texture.Dispose();
         }
@@ -145,7 +130,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             Vector2 min = new(rect.X, rect.Y);
             Vector2 spriteMax = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, texture.LegacyTextureId, min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
+            AddSpriteImage(drawList, _controller!.GetTextureBinding(texture), min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
 
         drawList.PopClipRect();
@@ -351,7 +336,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         return true;
     }
 
-    private static void AddSpriteImage(ImDrawListPtr drawList, uint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
+    private static void AddSpriteImage(ImDrawListPtr drawList, nint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
     {
         Vector2 uv0 = flipV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
         Vector2 uv1 = flipV ? new Vector2(1.0f, 0.0f) : Vector2.One;
@@ -382,7 +367,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, uv0, uvTopRight, uv1, uvBottomLeft, tint);
     }
 
-    private Texture2D? GetSpriteTexture(string path)
+    private ITexture2D? GetSpriteTexture(string path)
     {
         if (Game is null)
         {
@@ -399,12 +384,12 @@ internal sealed class RuntimeGuiOverlayComponent(
             return null;
         }
 
-        if (_spriteTextures.TryGetValue(fullPath, out Texture2D? texture))
+        if (_spriteTextures.TryGetValue(fullPath, out ITexture2D? texture))
         {
             return texture;
         }
 
-        texture = new Texture2D(Game.GraphicsDevice.Gl, GLEnum.ClampToEdge);
+        texture = Game.GraphicsDevice.CreateTexture2D();
         texture.LoadFromFile(fullPath);
         _spriteTextures[fullPath] = texture;
         return texture;
@@ -423,10 +408,10 @@ internal sealed class RuntimeGuiOverlayComponent(
             return handle;
         }
 
-        Texture2D? texture = GetSpriteTexture(path);
+        ITexture2D? texture = GetSpriteTexture(path);
         return texture is null
             ? default
-            : new RuntimeTextureHandle(GraphicsBackend.OpenGL, texture.Id, texture.NativeResource);
+            : new RuntimeTextureHandle(texture.Backend, texture.LegacyTextureId, texture.NativeResource);
     }
 
     private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)

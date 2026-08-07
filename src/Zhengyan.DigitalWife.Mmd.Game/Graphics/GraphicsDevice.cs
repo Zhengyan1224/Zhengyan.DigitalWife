@@ -62,6 +62,11 @@ public sealed class GraphicsDevice
         _renderer.RestoreBackBuffer();
     }
 
+    public void SetViewport(int x, int y, int width, int height) => _renderer.SetViewport(x, y, width, height);
+
+    public void SetScissor(int x, int y, int width, int height, bool enabled = true)
+        => _renderer.SetScissor(x, y, width, height, enabled);
+
     public void Clear(ClearBufferMask mask = ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit)
     {
         ClearBufferMask defaultMask = ClearBufferMask.ColorBufferBit

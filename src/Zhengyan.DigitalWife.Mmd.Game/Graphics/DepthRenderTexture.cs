@@ -33,6 +33,8 @@ public sealed unsafe class DepthRenderTexture : IDisposable
 
     public uint ColorRenderbufferId { get; }
 
+    internal GL Gl => _gl;
+
     public int Width { get; private set; }
 
     public int Height { get; private set; }
