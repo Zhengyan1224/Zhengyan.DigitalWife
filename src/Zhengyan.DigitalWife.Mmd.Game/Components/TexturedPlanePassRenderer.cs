@@ -17,8 +17,8 @@ internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
     private readonly ResourceLayout _layout;
     private readonly ResourceFactory _factory;
     private readonly ResourceSet _fallbackSet;
-    private readonly VeldridShader[] _shaders;
-    private readonly ShaderSetDescription _shaderSet;
+    private VeldridShader[] _shaders = [];
+    private ShaderSetDescription _shaderSet;
     private readonly List<PipelineBundle> _pipelines = [];
     private readonly Dictionary<TextureSetKey, ResourceSet> _resourceSets = [];
     private readonly TextureView _fallbackTexture;
@@ -49,17 +49,13 @@ internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
         _fallbackSet = CreateResourceSet(_fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler);
         _resourceSets[new TextureSetKey(_fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler)] = _fallbackSet;
 
-        ShaderDescription vertexShader = VulkanShaderCompiler.CompileSource(
-            "textured_plane.vert", VertexShaderSource, ShaderStages.Vertex);
-        ShaderDescription fragmentShader = VulkanShaderCompiler.CompileSource(
-            "textured_plane.frag", FragmentShaderSource, ShaderStages.Fragment);
-        _shaders = _factory.CreateFromSpirv(vertexShader, fragmentShader);
-        _shaderSet = new ShaderSetDescription(
-            [new VertexLayoutDescription(
-                new VertexElementDescription("Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
-                new VertexElementDescription("TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2))],
-            _shaders);
+        SetShaderProgram(null, null);
     }
+
+    public void SetCustomShaders(string vertexSpirvPath, string fragmentSpirvPath)
+        => SetShaderProgram(vertexSpirvPath, fragmentSpirvPath);
+
+    public void ClearCustomShaders() => SetShaderProgram(null, null);
 
     public void Draw(
         ITexture2D baseTexture,
@@ -183,6 +179,36 @@ internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
             output));
         _pipelines.Add(new PipelineBundle(output, pipeline));
         return pipeline;
+    }
+
+    private void SetShaderProgram(string? vertexSpirvPath, string? fragmentSpirvPath)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        bool customSpirv = !string.IsNullOrWhiteSpace(vertexSpirvPath)
+            || !string.IsNullOrWhiteSpace(fragmentSpirvPath);
+        if (customSpirv && (string.IsNullOrWhiteSpace(vertexSpirvPath) || string.IsNullOrWhiteSpace(fragmentSpirvPath)))
+        {
+            throw new ArgumentException("Both Vulkan vertex and fragment SPIR-V paths are required.");
+        }
+
+        ShaderDescription vertexShader = customSpirv
+            ? VulkanShaderCompiler.LoadSpirvFile(vertexSpirvPath!, ShaderStages.Vertex)
+            : VulkanShaderCompiler.CompileSource("textured_plane.vert", VertexShaderSource, ShaderStages.Vertex);
+        ShaderDescription fragmentShader = customSpirv
+            ? VulkanShaderCompiler.LoadSpirvFile(fragmentSpirvPath!, ShaderStages.Fragment)
+            : VulkanShaderCompiler.CompileSource("textured_plane.frag", FragmentShaderSource, ShaderStages.Fragment);
+        VeldridShader[] nextShaders = _factory.CreateFromSpirv(vertexShader, fragmentShader);
+        ShaderSetDescription nextShaderSet = new(
+            [new VertexLayoutDescription(
+                new VertexElementDescription("Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
+                new VertexElementDescription("TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2))],
+            nextShaders);
+
+        foreach (PipelineBundle bundle in _pipelines) bundle.Pipeline.Dispose();
+        _pipelines.Clear();
+        foreach (VeldridShader shader in _shaders) shader.Dispose();
+        _shaders = nextShaders;
+        _shaderSet = nextShaderSet;
     }
 
     private static TextureView? ResolveTextureView(ITexture2D texture, RuntimeTextureHandle? runtimeTexture)

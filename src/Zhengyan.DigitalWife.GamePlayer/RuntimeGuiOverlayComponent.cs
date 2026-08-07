@@ -115,7 +115,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             .OrderBy(sprite => sprite.DrawOrder))
         {
             RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
-            if (texture.LegacyTextureId == 0)
+            if (!texture.IsValid)
             {
                 continue;
             }
@@ -159,7 +159,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             .OrderBy(sprite => sprite.DrawOrder))
         {
             RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
-            if (texture.LegacyTextureId == 0)
+            if (!texture.IsValid)
             {
                 continue;
             }

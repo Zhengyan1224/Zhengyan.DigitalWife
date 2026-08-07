@@ -51,6 +51,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             VSync = true,
             Samples = 4,
             UseOpenCL = true,
+            UseVulkanCompute = true,
             EnableAudio = true,
             ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
             AnimationTimingMode = AnimationTimingMode.TimeSynchronized
@@ -1390,20 +1391,31 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void ApplyRuntimeSettings()
     {
-        Options.UseOpenCL = Project.Runtime.UseOpenCL;
-        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = Project.Runtime.UseOpenCL;
+        bool useOpenCl = ActiveGraphicsBackend == GraphicsBackend.OpenGL && Project.Runtime.UseOpenCL;
+        bool useVulkanCompute = ActiveGraphicsBackend == GraphicsBackend.Vulkan && Project.Runtime.UseVulkanCompute;
+        Options.UseOpenCL = useOpenCl;
+        Options.UseVulkanCompute = useVulkanCompute;
+        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = useOpenCl;
         Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
-        bool openClRequested = Project.Runtime.UseOpenCL;
-        bool openClActive = openClRequested && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely();
-        Console.WriteLine(openClRequested
-            ? openClActive
-                ? "[GameEditor] PMX compute backend: OpenCL"
-                : "[GameEditor] OpenCL requested but unavailable; falling back to CPU"
-            : "[GameEditor] OpenCL disabled by project/runtime setting; using CPU");
+        if (ActiveGraphicsBackend == GraphicsBackend.Vulkan)
+        {
+            Console.WriteLine(useVulkanCompute
+                ? "[GameEditor] PMX compute backend: Vulkan Compute"
+                : "[GameEditor] Vulkan Compute disabled by project/runtime setting; using CPU");
+        }
+        else
+        {
+            bool openClActive = useOpenCl && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely();
+            Console.WriteLine(useOpenCl
+                ? openClActive
+                    ? "[GameEditor] PMX compute backend: OpenCL"
+                    : "[GameEditor] OpenCL requested but unavailable; falling back to CPU"
+                : "[GameEditor] OpenCL disabled by project/runtime setting; using CPU");
+        }
 
         foreach (EditorPmxObject pmxObject in _pmxObjects.ToArray())
         {
-            pmxObject.Model.ReloadForCurrentOpenClSetting();
+            pmxObject.Model.ReloadForCurrentComputeSetting();
         }
     }
 
@@ -3338,7 +3350,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             Runtime = new GameRuntimeSettings
             {
                 GraphicsBackend = GraphicsBackend.Auto.ToSettingValue(),
-                UseOpenCL = true
+                UseOpenCL = true,
+                UseVulkanCompute = true
             },
             Scene = new GameProjectScene
             {

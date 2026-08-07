@@ -31,12 +31,17 @@ internal interface IPmxMainPassRenderer : IDisposable
 
 internal static class PmxMainPassRendererFactory
 {
-    public static IPmxMainPassRenderer Create(EngineGraphicsDevice graphicsDevice, PmxGpuResources resources)
+    public static IPmxMainPassRenderer Create(
+        EngineGraphicsDevice graphicsDevice,
+        PmxGpuResources resources,
+        string? vulkanVertexSpirvPath = null,
+        string? vulkanFragmentSpirvPath = null)
     {
         return graphicsDevice.Renderer switch
         {
             OpenGlRenderer openGl => new OpenGlPmxMainPassRenderer(openGl.Gl, resources),
-            VulkanRenderer vulkan => new VeldridPmxMainPassRenderer(vulkan, resources),
+            VulkanRenderer vulkan => new VeldridPmxMainPassRenderer(
+                vulkan, resources, vulkanVertexSpirvPath, vulkanFragmentSpirvPath),
             _ => throw new NotSupportedException($"PMX main pass is not implemented for {graphicsDevice.Backend}.")
         };
     }
@@ -325,7 +330,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
     private readonly List<PipelineBundle> _pipelineBundles = [];
     private bool _disposed;
 
-    public VeldridPmxMainPassRenderer(VulkanRenderer renderer, PmxGpuResources resources)
+    public VeldridPmxMainPassRenderer(
+        VulkanRenderer renderer,
+        PmxGpuResources resources,
+        string? vertexSpirvPath = null,
+        string? fragmentSpirvPath = null)
     {
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
         ArgumentNullException.ThrowIfNull(resources);
@@ -352,10 +361,19 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             fallbackTexture,
             fallbackSampler));
 
-        ShaderDescription vertexShader = VulkanShaderCompiler.CompileSource(
-            "pmx_main.vert", VertexShaderSource, ShaderStages.Vertex);
-        ShaderDescription fragmentShader = VulkanShaderCompiler.CompileSource(
-            "pmx_main.frag", FragmentShaderSource, ShaderStages.Fragment);
+        bool customSpirv = !string.IsNullOrWhiteSpace(vertexSpirvPath)
+            || !string.IsNullOrWhiteSpace(fragmentSpirvPath);
+        if (customSpirv && (string.IsNullOrWhiteSpace(vertexSpirvPath) || string.IsNullOrWhiteSpace(fragmentSpirvPath)))
+        {
+            throw new ArgumentException("Both Vulkan vertex and fragment SPIR-V paths are required.");
+        }
+
+        ShaderDescription vertexShader = customSpirv
+            ? VulkanShaderCompiler.LoadSpirvFile(vertexSpirvPath!, ShaderStages.Vertex)
+            : VulkanShaderCompiler.CompileSource("pmx_main.vert", VertexShaderSource, ShaderStages.Vertex);
+        ShaderDescription fragmentShader = customSpirv
+            ? VulkanShaderCompiler.LoadSpirvFile(fragmentSpirvPath!, ShaderStages.Fragment)
+            : VulkanShaderCompiler.CompileSource("pmx_main.frag", FragmentShaderSource, ShaderStages.Fragment);
         _shaders = factory.CreateFromSpirv(vertexShader, fragmentShader);
 
         VertexLayoutDescription[] vertexLayouts =
@@ -426,8 +444,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         commands.SetVertexBuffer(1, RequireDeviceBuffer(resources.NormalBuffer));
         commands.SetVertexBuffer(2, RequireDeviceBuffer(resources.UvBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        commands.SetGraphicsResourceSet(0, GetFrameSet(resources, shadowTexture, shadowSampler));
         PipelineBundle pipelines = GetPipelineBundle(_renderer.CurrentOutputDescription);
+        commands.SetPipeline(pipelines.Culled);
+        ResourceSet frameSet = GetFrameSet(resources, shadowTexture, shadowSampler);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -460,6 +479,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
             commands.UpdateBuffer(RequireDeviceBuffer(resources.MaterialUniformBuffer), 0, materialData);
             commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
+            commands.SetGraphicsResourceSet(0, frameSet);
             commands.SetGraphicsResourceSet(1, GetMaterialSet(resources, textures.DescriptorSet, overrideTexture));
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
             drawCount++;

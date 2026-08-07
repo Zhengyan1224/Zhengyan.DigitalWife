@@ -178,6 +178,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private uint _uvBuffer;
     private uint _indexBuffer;
     private uint _customShaderVao;
+    private string? _vulkanCustomVertexShaderPath;
+    private string? _vulkanCustomFragmentShaderPath;
     private float _animationTime;
     private bool _isPlaying = true;
     private bool _enablePhysical = true;
@@ -393,7 +395,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public Matrix4x4 World => Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateFromQuaternion(Rotation) * Matrix4x4.CreateTranslation(Position);
 
-    public bool HasCustomShader => _customShader is not null;
+    public bool HasCustomShader => _customShader is not null || _vulkanCustomVertexShaderPath is not null;
 
     private bool IsPoseDirty => (_dirtyFlags & DirtyFlags.Pose) != 0;
 
@@ -401,7 +403,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private bool IsMaterialDirty => (_dirtyFlags & DirtyFlags.Material) != 0;
 
-    public bool ReloadForCurrentOpenClSetting()
+    public bool ReloadForCurrentComputeSetting()
     {
         if (Game is null || !_loaded || _model is null || string.IsNullOrWhiteSpace(ModelPath))
         {
@@ -475,6 +477,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         MarkPoseDirty();
         return true;
     }
+
+    [Obsolete("Use ReloadForCurrentComputeSetting().")]
+    public bool ReloadForCurrentOpenClSetting() => ReloadForCurrentComputeSetting();
 
     protected override void Initialize()
     {
@@ -1868,6 +1873,38 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         RebuildCustomShaderVao(gl);
     }
 
+    public void SetCustomShader(
+        string openGlVertexShaderPath,
+        string openGlFragmentShaderPath,
+        string vulkanVertexSpirvPath,
+        string vulkanFragmentSpirvPath)
+    {
+        if (Game is null)
+        {
+            throw new InvalidOperationException("Game is not attached.");
+        }
+
+        if (Game.GraphicsDevice.Backend == GraphicsBackend.OpenGL)
+        {
+            SetCustomShader(openGlVertexShaderPath, openGlFragmentShaderPath);
+            return;
+        }
+
+        if (Game.GraphicsDevice.Renderer is not VulkanRenderer || _gpuResources is null)
+        {
+            throw new NotSupportedException($"Custom PMX shaders are not supported on {Game.GraphicsDevice.Backend}.");
+        }
+
+        string vertexPath = Path.GetFullPath(vulkanVertexSpirvPath);
+        string fragmentPath = Path.GetFullPath(vulkanFragmentSpirvPath);
+        IPmxMainPassRenderer next = PmxMainPassRendererFactory.Create(
+            Game.GraphicsDevice, _gpuResources, vertexPath, fragmentPath);
+        _mainPassRenderer?.Dispose();
+        _mainPassRenderer = next;
+        _vulkanCustomVertexShaderPath = vertexPath;
+        _vulkanCustomFragmentShaderPath = fragmentPath;
+    }
+
     /// <summary>Validates a custom shader pair against the explicit cross-backend contract.</summary>
     public static void ValidatePortableShaderContract(string vertexShaderPath, string fragmentShaderPath)
         => PortableShaderContract.ValidatePlane(vertexShaderPath, fragmentShaderPath);
@@ -1881,6 +1918,17 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         _customShader?.Dispose();
         _customShader = null;
+        if (Game?.GraphicsDevice.Backend == GraphicsBackend.Vulkan
+            && _gpuResources is not null
+            && _vulkanCustomVertexShaderPath is not null)
+        {
+            IPmxMainPassRenderer next = PmxMainPassRendererFactory.Create(Game.GraphicsDevice, _gpuResources);
+            _mainPassRenderer?.Dispose();
+            _mainPassRenderer = next;
+        }
+
+        _vulkanCustomVertexShaderPath = null;
+        _vulkanCustomFragmentShaderPath = null;
         _customShaderUniforms.Clear();
     }
 
@@ -2191,6 +2239,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private void LoadModel(string pmxPath, IReadOnlyList<MotionLayerConfig> motionLayers)
     {
         Zhengyan.DigitalWife.Mmd.PmxModel model = new();
+        if (Game?.GraphicsDevice.Renderer is VulkanRenderer vulkan && Game.Options.UseVulkanCompute)
+        {
+            model.SkinningComputeFactory = (vertexCount, boneCount) =>
+                new VulkanPmxSkinningCompute(vulkan, vertexCount, boneCount);
+        }
         List<MotionLayerState> layers = [];
 
         try
@@ -2844,7 +2897,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _materials.Add(mmdMaterial, textures);
         }
 
-        _mainPassRenderer = PmxMainPassRendererFactory.Create(Game.GraphicsDevice, _gpuResources!);
+        _mainPassRenderer = PmxMainPassRendererFactory.Create(
+            Game.GraphicsDevice,
+            _gpuResources!,
+            _vulkanCustomVertexShaderPath,
+            _vulkanCustomFragmentShaderPath);
         _auxiliaryPassRenderer = PmxAuxiliaryPassRendererFactory.Create(Game.GraphicsDevice, _gpuResources!);
 
         UploadVertexBuffers(true);

@@ -365,9 +365,9 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         if (!_renderer.IsFrameOpen) return 0;
         CommandList commands = _renderer.CommandList;
         DepthPipelineBundle pipelines = GetDepthPipelines(_renderer.CurrentOutputDescription);
+        commands.SetPipeline(pipelines.Culled);
         commands.SetVertexBuffer(0, RequireDeviceBuffer(resources.PositionBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        commands.SetGraphicsResourceSet(0, _depthSet);
         PmxGpuResources.PmxShadowDepthUniformData data = new() { WorldLightViewProjection = worldLightViewProjection };
         commands.UpdateBuffer(RequireDeviceBuffer(resources.ShadowDepthUniformBuffer), 0, data);
 
@@ -377,6 +377,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
             Zhengyan.DigitalWife.Mmd.MMDMaterial material = mesh.Material;
             if (!material.ShadowCaster || material.Alpha <= 0.01f) continue;
             commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
+            commands.SetGraphicsResourceSet(0, _depthSet);
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
             count++;
         }

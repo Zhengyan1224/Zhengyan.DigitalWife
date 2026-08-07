@@ -33,11 +33,25 @@ public sealed class RuntimeProjectControl
 
     public bool IsUsingOpenCL => _game.IsUsingOpenClRuntime;
 
+    public bool UseVulkanCompute
+    {
+        get => _game.Project.Runtime.UseVulkanCompute;
+        set => SetUseVulkanCompute(value);
+    }
+
+    public bool IsUsingVulkanCompute => _game.IsUsingVulkanComputeRuntime;
+
     public string ComputeBackend => _game.CurrentComputeBackend;
 
     public void SetUseOpenCL(bool useOpenCl)
     {
         _game.Project.Runtime.UseOpenCL = useOpenCl;
+        _game.ApplyRuntimeSettings();
+    }
+
+    public void SetUseVulkanCompute(bool useVulkanCompute)
+    {
+        _game.Project.Runtime.UseVulkanCompute = useVulkanCompute;
         _game.ApplyRuntimeSettings();
     }
 

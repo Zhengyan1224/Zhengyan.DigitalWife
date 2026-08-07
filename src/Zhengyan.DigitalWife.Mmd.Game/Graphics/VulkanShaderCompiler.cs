@@ -27,6 +27,24 @@ public static class VulkanShaderCompiler
         return CompileSource(Path.GetFileName(fullPath), File.ReadAllText(fullPath), stage);
     }
 
+    public static ShaderDescription LoadSpirvFile(string path, ShaderStages stage, string entryPoint = "main")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        string fullPath = Path.GetFullPath(path);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException("SPIR-V shader file not found.", fullPath);
+        }
+
+        byte[] bytes = File.ReadAllBytes(fullPath);
+        if (bytes.Length < 20 || (bytes.Length & 3) != 0 || BitConverter.ToUInt32(bytes, 0) != 0x07230203)
+        {
+            throw new InvalidDataException($"'{fullPath}' is not a valid SPIR-V module.");
+        }
+
+        return new ShaderDescription(stage, bytes, string.IsNullOrWhiteSpace(entryPoint) ? "main" : entryPoint);
+    }
+
     public static ShaderDescription CompileSource(string sourceName, string source, ShaderStages stage)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);

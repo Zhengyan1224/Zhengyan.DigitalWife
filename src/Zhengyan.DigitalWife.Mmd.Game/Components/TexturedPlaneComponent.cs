@@ -34,6 +34,8 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformReflectionViewProjection = -1;
     private int _uniformMirrorReflectionStrength = -1;
     private uint _planarReflectionTextureId;
+    private string? _vulkanCustomVertexShaderPath;
+    private string? _vulkanCustomFragmentShaderPath;
     private RuntimeTextureHandle? _planarReflectionTextureHandle;
     private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
     private CustomShaderProgram? _customShader;
@@ -138,7 +140,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _planarReflectionViewProjection = Matrix4x4.Identity;
     }
 
-    public bool HasCustomShader => _customShader is not null;
+    public bool HasCustomShader => _customShader is not null || _vulkanCustomVertexShaderPath is not null;
 
     public void SetCustomShader(string vertexShaderPath, string fragmentShaderPath)
     {
@@ -160,6 +162,35 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         RebuildCustomShaderVao(gl);
     }
 
+    public void SetCustomShader(
+        string openGlVertexShaderPath,
+        string openGlFragmentShaderPath,
+        string vulkanVertexSpirvPath,
+        string vulkanFragmentSpirvPath)
+    {
+        if (Game is null)
+        {
+            throw new InvalidOperationException("Game is not attached.");
+        }
+
+        if (Game.GraphicsDevice.Backend == GraphicsBackend.OpenGL)
+        {
+            SetCustomShader(openGlVertexShaderPath, openGlFragmentShaderPath);
+            return;
+        }
+
+        if (_vulkanPassRenderer is null)
+        {
+            throw new NotSupportedException($"Custom plane shaders are not supported on {Game.GraphicsDevice.Backend}.");
+        }
+
+        string vertexPath = Path.GetFullPath(vulkanVertexSpirvPath);
+        string fragmentPath = Path.GetFullPath(vulkanFragmentSpirvPath);
+        _vulkanPassRenderer.SetCustomShaders(vertexPath, fragmentPath);
+        _vulkanCustomVertexShaderPath = vertexPath;
+        _vulkanCustomFragmentShaderPath = fragmentPath;
+    }
+
     /// <summary>Validates a custom shader pair against the explicit cross-backend contract.</summary>
     public static void ValidatePortableShaderContract(string vertexShaderPath, string fragmentShaderPath)
         => PortableShaderContract.ValidatePlane(vertexShaderPath, fragmentShaderPath);
@@ -173,6 +204,13 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
         _customShader?.Dispose();
         _customShader = null;
+        if (_vulkanPassRenderer is not null && _vulkanCustomVertexShaderPath is not null)
+        {
+            _vulkanPassRenderer.ClearCustomShaders();
+        }
+
+        _vulkanCustomVertexShaderPath = null;
+        _vulkanCustomFragmentShaderPath = null;
         _customShaderUniforms.Clear();
     }
 

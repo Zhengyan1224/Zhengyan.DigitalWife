@@ -887,14 +887,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def clear_material_texture_overrides(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "clear_material_texture_overrides"})
 
-                   def set_custom_shader(self, vertex_shader, fragment_shader):
-                       self._commands.append({
+                   def set_custom_shader(self, vertex_shader, fragment_shader, spirv_vertex_shader=None, spirv_fragment_shader=None):
+                       command = {
                            "target": "entity",
                            "entity": self.id,
                            "action": "set_custom_shader",
                            "vertexShader": str(vertex_shader),
                            "fragmentShader": str(fragment_shader)
-                       })
+                       }
+                       if spirv_vertex_shader is not None and spirv_fragment_shader is not None:
+                           command["spirvVertexShader"] = str(spirv_vertex_shader)
+                           command["spirvFragmentShader"] = str(spirv_fragment_shader)
+                       self._commands.append(command)
 
                    def clear_custom_shader(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "clear_custom_shader"})
@@ -2752,12 +2756,18 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def __init__(self, data, commands):
                        self.use_opencl = bool(data.get("useOpenCl", True))
                        self.is_using_opencl = bool(data.get("isUsingOpenCl", False))
+                       self.use_vulkan_compute = bool(data.get("useVulkanCompute", True))
+                       self.is_using_vulkan_compute = bool(data.get("isUsingVulkanCompute", False))
                        self.compute_backend = data.get("computeBackend", "CPU")
                        self._commands = commands
 
                    def set_use_opencl(self, enabled):
                        self.use_opencl = bool(enabled)
                        self._commands.append({"target": "runtime", "action": "set_use_opencl", "flag": self.use_opencl})
+
+                   def set_use_vulkan_compute(self, enabled):
+                       self.use_vulkan_compute = bool(enabled)
+                       self._commands.append({"target": "runtime", "action": "set_use_vulkan_compute", "flag": self.use_vulkan_compute})
 
                    def execute_command(self, file_name, args=None, timeout_seconds=30, working_directory=None, shell=False):
                        command_args = [] if args is None else args
@@ -3783,6 +3793,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_use_opencl" when command.Flag.HasValue:
                 scene.Runtime.SetUseOpenCL(command.Flag.Value);
                 break;
+            case "set_use_vulkan_compute" when command.Flag.HasValue:
+                scene.Runtime.SetUseVulkanCompute(command.Flag.Value);
+                break;
         }
     }
 
@@ -4198,7 +4211,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 entity.ClearMaterialTextureOverrides();
                 break;
             case "set_custom_shader" when !string.IsNullOrWhiteSpace(command.VertexShader) && !string.IsNullOrWhiteSpace(command.FragmentShader):
-                entity.SetCustomShader(command.VertexShader, command.FragmentShader);
+                if (!string.IsNullOrWhiteSpace(command.SpirvVertexShader)
+                    && !string.IsNullOrWhiteSpace(command.SpirvFragmentShader))
+                {
+                    entity.SetCustomShader(
+                        command.VertexShader,
+                        command.FragmentShader,
+                        command.SpirvVertexShader,
+                        command.SpirvFragmentShader);
+                }
+                else
+                {
+                    entity.SetCustomShader(command.VertexShader, command.FragmentShader);
+                }
                 break;
             case "clear_custom_shader":
                 entity.ClearCustomShader();
@@ -5113,6 +5138,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool IsUsingOpenCl { get; set; }
 
+        public bool UseVulkanCompute { get; set; }
+
+        public bool IsUsingVulkanCompute { get; set; }
+
         public string ComputeBackend { get; set; } = "CPU";
 
         public static PythonRuntime FromRuntime(RuntimeProjectControl runtime)
@@ -5121,6 +5150,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
             {
                 UseOpenCl = runtime.UseOpenCL,
                 IsUsingOpenCl = runtime.IsUsingOpenCL,
+                UseVulkanCompute = runtime.UseVulkanCompute,
+                IsUsingVulkanCompute = runtime.IsUsingVulkanCompute,
                 ComputeBackend = runtime.ComputeBackend
             };
         }
@@ -5645,6 +5676,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public string? VertexShader { get; set; }
 
         public string? FragmentShader { get; set; }
+
+        public string? SpirvVertexShader { get; set; }
+
+        public string? SpirvFragmentShader { get; set; }
 
         public string? Path { get; set; }
 

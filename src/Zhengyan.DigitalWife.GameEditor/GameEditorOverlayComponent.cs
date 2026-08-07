@@ -205,7 +205,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             .OrderBy(sprite => sprite.DrawOrder))
         {
             RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
-            if (texture.LegacyTextureId == 0)
+            if (!texture.IsValid)
             {
                 continue;
             }
@@ -242,7 +242,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             .OrderBy(sprite => sprite.DrawOrder))
         {
             RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
-            if (texture.LegacyTextureId == 0)
+            if (!texture.IsValid)
             {
                 continue;
             }
@@ -1058,6 +1058,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         string graphicsBackend = GraphicsBackendNames.Parse(
             _editorGame.Project.Runtime.GraphicsBackend).ToSettingValue();
         bool useOpenCl = _editorGame.Project.Runtime.UseOpenCL;
+        bool useVulkanCompute = _editorGame.Project.Runtime.UseVulkanCompute;
         bool changed = false;
         changed |= ImGui.Checkbox("Desktop sprite mode", ref desktopSpriteMode);
         if (!desktopSpriteMode)
@@ -1105,7 +1106,18 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextDisabled($"Active: {_editorGame.ActiveGraphicsBackend.ToSettingValue()}");
-        changed |= ImGui.Checkbox("Use OpenCL", ref useOpenCl);
+        GraphicsBackend configuredBackend = GraphicsBackendNames.Parse(graphicsBackend);
+        GraphicsBackend computeBackend = configuredBackend == GraphicsBackend.Auto
+            ? _editorGame.ActiveGraphicsBackend
+            : configuredBackend;
+        if (computeBackend == GraphicsBackend.Vulkan)
+        {
+            changed |= ImGui.Checkbox("Use Vulkan Compute for PMX skinning", ref useVulkanCompute);
+        }
+        else
+        {
+            changed |= ImGui.Checkbox("Use OpenCL for PMX skinning", ref useOpenCl);
+        }
 
         if (changed)
         {
@@ -1123,6 +1135,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             window.Resizable = resizable;
             window.TimingMode = NormalizeChoice(timingMode, "time_synchronized", ["time_synchronized", "frame_rate_dependent"]);
             _editorGame.Project.Runtime.UseOpenCL = useOpenCl;
+            _editorGame.Project.Runtime.UseVulkanCompute = useVulkanCompute;
             _editorGame.ApplyRuntimeSettings();
         }
 
@@ -1131,7 +1144,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplyWindowSettings();
         }
 
-        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. 'Use OpenCL' controls whether PMX skinning prefers the OpenCL path and falls back to CPU if initialization fails. The button above only previews regular window settings in the editor.");
+        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. OpenGL can use OpenCL for PMX skinning; Vulkan can use Vulkan Compute. Either path falls back to CPU if initialization fails. The button above only previews regular window settings in the editor.");
         ImGui.PopID();
     }
 

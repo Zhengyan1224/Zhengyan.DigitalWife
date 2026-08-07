@@ -115,6 +115,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             VSync = true,
             Samples = 4,
             UseOpenCL = false,
+            UseVulkanCompute = true,
             EnableAudio = true,
             ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
             AnimationTimingMode = AnimationTimingMode.TimeSynchronized
@@ -132,6 +133,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             GameProject project = GameProjectStore.Load(projectDirectory);
             options.GraphicsBackend = graphicsBackendOverride
                 ?? GraphicsBackendNames.Parse(project.Runtime.GraphicsBackend);
+            options.UseOpenCL = project.Runtime.UseOpenCL;
+            options.UseVulkanCompute = project.Runtime.UseVulkanCompute;
             options.Title = string.IsNullOrWhiteSpace(project.Window.Title) ? options.Title : project.Window.Title;
             options.WindowSize = new Silk.NET.Maths.Vector2D<int>(
                 Math.Max(320, project.Window.Width),
@@ -1321,30 +1324,45 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     internal void ApplyRuntimeSettings()
     {
-        Options.UseOpenCL = Project.Runtime.UseOpenCL;
-        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = Project.Runtime.UseOpenCL;
+        bool useOpenCl = GraphicsDevice.Backend == GraphicsBackend.OpenGL && Project.Runtime.UseOpenCL;
+        bool useVulkanCompute = GraphicsDevice.Backend == GraphicsBackend.Vulkan && Project.Runtime.UseVulkanCompute;
+        Options.UseOpenCL = useOpenCl;
+        Options.UseVulkanCompute = useVulkanCompute;
+        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = useOpenCl;
         Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
-        bool openClRequested = Project.Runtime.UseOpenCL;
-        bool openClActive = openClRequested && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely();
-        Console.WriteLine(openClRequested
-            ? openClActive
-                ? "[GamePlayer] PMX compute backend: OpenCL"
-                : "[GamePlayer] OpenCL requested but unavailable; falling back to CPU"
-            : "[GamePlayer] OpenCL disabled by project/runtime setting; using CPU");
+        if (GraphicsDevice.Backend == GraphicsBackend.Vulkan)
+        {
+            Console.WriteLine(useVulkanCompute
+                ? "[GamePlayer] PMX compute backend: Vulkan Compute"
+                : "[GamePlayer] Vulkan Compute disabled by project/runtime setting; using CPU");
+        }
+        else
+        {
+            bool openClActive = useOpenCl && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely();
+            Console.WriteLine(useOpenCl
+                ? openClActive
+                    ? "[GamePlayer] PMX compute backend: OpenCL"
+                    : "[GamePlayer] OpenCL requested but unavailable; falling back to CPU"
+                : "[GamePlayer] OpenCL disabled by project/runtime setting; using CPU");
+        }
 
         foreach (PlayerPmxObject pmxObject in _pmxObjects.ToArray())
         {
-            pmxObject.Model.ReloadForCurrentOpenClSetting();
+            pmxObject.Model.ReloadForCurrentComputeSetting();
         }
     }
 
     internal bool IsUsingOpenClRuntime => string.Equals(CurrentComputeBackend, "OpenCL", StringComparison.Ordinal);
 
+    internal bool IsUsingVulkanComputeRuntime => string.Equals(CurrentComputeBackend, "Vulkan Compute", StringComparison.Ordinal);
+
     internal string CurrentComputeBackend => _pmxObjects.Count != 0
         ? _pmxObjects[0].Model.ComputeBackend
-        : Project.Runtime.UseOpenCL && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely()
-            ? "OpenCL"
-            : "CPU";
+        : GraphicsDevice.Backend == GraphicsBackend.Vulkan
+            ? Project.Runtime.UseVulkanCompute ? "Vulkan Compute" : "CPU"
+            : Project.Runtime.UseOpenCL && Zhengyan.DigitalWife.Mmd.Kernel.CanUseOpenClSafely()
+                ? "OpenCL"
+                : "CPU";
 
     internal void SetConfiguredTitle(string title)
     {

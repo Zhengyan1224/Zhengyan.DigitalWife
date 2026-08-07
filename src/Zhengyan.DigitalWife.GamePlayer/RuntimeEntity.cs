@@ -1438,6 +1438,39 @@ public sealed class RuntimeEntity
         return false;
     }
 
+    public bool SetCustomShader(
+        string openGlVertexShaderPath,
+        string openGlFragmentShaderPath,
+        string vulkanVertexSpirvPath,
+        string vulkanFragmentSpirvPath)
+    {
+        string resolvedOpenGlVertexPath = ResolveRuntimeShaderPath(openGlVertexShaderPath);
+        string resolvedOpenGlFragmentPath = ResolveRuntimeShaderPath(openGlFragmentShaderPath);
+        string resolvedVulkanVertexPath = ResolveRuntimeShaderPath(vulkanVertexSpirvPath);
+        string resolvedVulkanFragmentPath = ResolveRuntimeShaderPath(vulkanFragmentSpirvPath);
+        if (_model is not null)
+        {
+            _model.SetCustomShader(
+                resolvedOpenGlVertexPath,
+                resolvedOpenGlFragmentPath,
+                resolvedVulkanVertexPath,
+                resolvedVulkanFragmentPath);
+            return true;
+        }
+
+        if (_plane is not null)
+        {
+            _plane.SetCustomShader(
+                resolvedOpenGlVertexPath,
+                resolvedOpenGlFragmentPath,
+                resolvedVulkanVertexPath,
+                resolvedVulkanFragmentPath);
+            return true;
+        }
+
+        return false;
+    }
+
     public void ClearCustomShader()
     {
         _model?.ClearCustomShader();

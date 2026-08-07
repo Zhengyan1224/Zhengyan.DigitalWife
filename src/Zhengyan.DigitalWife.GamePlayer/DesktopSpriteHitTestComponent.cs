@@ -39,8 +39,8 @@ internal sealed class DesktopSpriteHitTestComponent(Func<bool> isEnabled) : Draw
 
         if (!Game.GraphicsDevice.TryReadBackBufferRgba(_framebufferBytes))
         {
-            DesktopSpritePlatform.ApplyClickThrough(Game.Window, false);
-            _wasEnabled = false;
+            // Asynchronous backends can legitimately need a few frames before the
+            // next completed staging image is available. Preserve the last region.
             return;
         }
 

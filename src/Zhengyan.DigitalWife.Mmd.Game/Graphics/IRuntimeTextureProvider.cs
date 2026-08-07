@@ -3,7 +3,15 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 public readonly record struct RuntimeTextureHandle(
     GraphicsBackend Backend,
     uint LegacyTextureId,
-    object? NativeResource = null);
+    object? NativeResource = null)
+{
+    public bool IsValid => Backend switch
+    {
+        GraphicsBackend.OpenGL => LegacyTextureId != 0,
+        GraphicsBackend.Vulkan => NativeResource is not null,
+        _ => LegacyTextureId != 0 || NativeResource is not null
+    };
+}
 
 public interface IRuntimeTextureProvider
 {
@@ -18,7 +26,7 @@ public interface IRuntimeTextureProvider
         if (TryGetTexture(textureReference, out uint textureId))
         {
             handle = new RuntimeTextureHandle(GraphicsBackend.OpenGL, textureId);
-            return textureId != 0;
+            return handle.IsValid;
         }
 
         handle = default;
