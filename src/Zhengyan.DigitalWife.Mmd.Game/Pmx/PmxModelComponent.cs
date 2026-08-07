@@ -155,13 +155,13 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private string _initialModelPath;
 
-    private PmxShader? _mmdShader;
     private PmxEdgeShader? _edgeShader;
     private PmxGroundShadowShader? _groundShadowShader;
     private PmxShadowDepthShader? _shadowDepthShader;
     private EmbeddedToonTextureLibrary? _toonTextures;
     private ITexture2D? _defaultTexture;
     private PmxGpuResources? _gpuResources;
+    private IPmxMainPassRenderer? _mainPassRenderer;
 
     private Zhengyan.DigitalWife.Mmd.MMDModel? _model;
     private readonly List<MotionLayerState> _motionLayers = [];
@@ -179,7 +179,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private uint _normalBuffer;
     private uint _uvBuffer;
     private uint _indexBuffer;
-    private uint _modelVao;
     private uint _edgeVao;
     private uint _groundShadowVao;
     private uint _shadowDepthVao;
@@ -428,7 +427,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         float animationTime = _animationTime;
 
         List<MotionLayerConfig> currentMotionLayers = CloneCurrentMotionLayerConfigs();
-        LoadResources(Game.GraphicsDevice.Gl, ModelPath, currentMotionLayers);
+        LoadResources(GetOpenGl(), ModelPath, currentMotionLayers);
         _manualMorphWeights.Clear();
         foreach ((string key, float value) in manualMorphWeights)
         {
@@ -489,11 +488,13 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        GL gl = Game.GraphicsDevice.Gl;
-        _mmdShader = new PmxShader(gl);
-        _edgeShader = new PmxEdgeShader(gl);
-        _groundShadowShader = new PmxGroundShadowShader(gl);
-        _shadowDepthShader = new PmxShadowDepthShader(gl);
+        GL? gl = GetOpenGl();
+        if (gl is not null)
+        {
+            _edgeShader = new PmxEdgeShader(gl);
+            _groundShadowShader = new PmxGroundShadowShader(gl);
+            _shadowDepthShader = new PmxShadowDepthShader(gl);
+        }
         _toonTextures = new EmbeddedToonTextureLibrary(Game.GraphicsDevice);
 
         try
@@ -1333,7 +1334,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             return;
         }
 
-        LoadResources(Game.GraphicsDevice.Gl, normalizedModelPath, normalizedMotionLayers);
+        LoadResources(GetOpenGl(), normalizedModelPath, normalizedMotionLayers);
     }
 
     private void SetMotionLayersCore(IReadOnlyList<MotionLayerConfig> normalizedMotionLayers)
@@ -1350,7 +1351,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             return;
         }
 
-        ApplyMotionResources(Game.GraphicsDevice.Gl, normalizedMotionLayers);
+        ApplyMotionResources(GetOpenGl(), normalizedMotionLayers);
     }
 
     public TransformUpdaterManager TransformUpdaters => _transformUpdaters;
@@ -1399,7 +1400,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         if (Game is not null && _loaded && !string.IsNullOrWhiteSpace(ModelPath) && _motionLayers.Count != 0)
         {
             List<MotionLayerConfig> currentMotionLayers = CloneCurrentMotionLayerConfigs();
-            LoadResources(Game.GraphicsDevice.Gl, ModelPath, currentMotionLayers);
+            LoadResources(GetOpenGl(), ModelPath, currentMotionLayers);
             IsPlaying = false;
             _animationTime = 0.0f;
             _skipPhysicsOnNextPlayFrame = true;
@@ -1432,7 +1433,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         if (Game is not null && _model is not null)
         {
-            UploadVertexBuffers(Game.GraphicsDevice.Gl, true);
+            UploadVertexBuffers(true);
             ClearDirty(DirtyFlags.Pose | DirtyFlags.Uv | DirtyFlags.Material);
             return;
         }
@@ -1530,13 +1531,13 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         if (poseDirty || shouldUpdatePose)
         {
             _model.Update();
-            UploadVertexBuffers(Game!.GraphicsDevice.Gl, uploadUv: uvDirty);
+            UploadVertexBuffers(uploadUv: uvDirty);
             _lastPoseSolveTimeSeconds = gameTime.TotalSeconds;
         }
         else if (uvDirty)
         {
             UpdateUvsOnly(_model);
-            UploadUvBuffer(Game!.GraphicsDevice.Gl);
+            UploadUvBuffer();
         }
 
         ClearDirty(DirtyFlags.Pose | DirtyFlags.Uv | DirtyFlags.Material);
@@ -1545,33 +1546,45 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public override void Draw(GameTime gameTime)
     {
-        if (!_loaded || Game is null || Camera is null || _model is null || _mmdShader is null || _edgeShader is null || _groundShadowShader is null || _defaultTexture is null)
+        if (!_loaded || Game is null || Camera is null || _model is null || _defaultTexture is null || _gpuResources is null)
+        {
+            return;
+        }
+
+        _lastOpaqueMeshDrawCount = 0;
+        _lastEdgeMeshDrawCount = 0;
+        _lastShadowMeshDrawCount = 0;
+
+        if (Game.GraphicsDevice.Backend == GraphicsBackend.Vulkan)
+        {
+            _lastOpaqueMeshDrawCount = _mainPassRenderer?.Draw(
+                _gpuResources,
+                _meshes,
+                _materials,
+                World,
+                Camera.View,
+                Camera.Projection,
+                LightColor,
+                LightDirection,
+                AmbientLightColor,
+                AmbientLightStrength,
+                EnableShadow,
+                ShadowMap,
+                resolveOpenGlOverrideTexture: null) ?? 0;
+            return;
+        }
+
+        if (_mainPassRenderer is null || _edgeShader is null || _groundShadowShader is null)
         {
             return;
         }
 
         GL gl = Game.GraphicsDevice.Gl;
         Vector2 screenSize = new(Game.GraphicsDevice.BackBufferSize.X, Game.GraphicsDevice.BackBufferSize.Y);
-        _lastOpaqueMeshDrawCount = 0;
-        _lastEdgeMeshDrawCount = 0;
-        _lastShadowMeshDrawCount = 0;
 
         Matrix4x4 transform = World;
         Matrix4x4 worldView = transform * Camera.View;
         Matrix4x4 worldViewProjection = worldView * Camera.Projection;
-        Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(LightDirection, Camera.View));
-        _gpuResources?.UploadFrameUniforms(new PmxGpuResources.PmxFrameUniformData
-        {
-            World = transform,
-            View = Camera.View,
-            Projection = Camera.Projection,
-            WorldViewProjection = worldViewProjection,
-            LightColor = new Vector4(LightColor, 1.0f),
-            LightDirection = new Vector4(viewSpaceLightDirection, 0.0f),
-            AmbientLightColor = new Vector4(AmbientLightColor, 1.0f),
-            Parameters = new Vector4(AmbientLightStrength, (float)gameTime.TotalSeconds,
-                (float)gameTime.ElapsedSeconds, Math.Min(gameTime.FrameCount, int.MaxValue))
-        });
 
         gl.Enable(GLEnum.DepthTest);
         gl.Enable(GLEnum.Blend);
@@ -1583,41 +1596,20 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
         else
         {
-            gl.UseProgram(_mmdShader.Id);
-            gl.BindVertexArray(_modelVao);
-            gl.SetUniform(_mmdShader.UniWVP, worldViewProjection);
-            gl.SetUniform(_mmdShader.UniWV, worldView);
-            gl.SetUniform(_mmdShader.UniTex, 0);
-            gl.SetUniform(_mmdShader.UniSphereTex, 1);
-            gl.SetUniform(_mmdShader.UniToonTex, 2);
-            gl.SetUniform(_mmdShader.UniLightColor, LightColor);
-            // The shader evaluates normals in view space, so transform the configured
-            // world-space light direction into view space before uploading it.
-            gl.SetUniform(_mmdShader.UniLightDir, viewSpaceLightDirection);
-            gl.SetUniform(_mmdShader.UniAmbientLightColor, AmbientLightColor);
-            gl.SetUniform(_mmdShader.UniAmbientLightStrength, AmbientLightStrength);
-            gl.SetUniform(_mmdShader.UniShadowMap0, 3);
-            gl.SetUniform(_mmdShader.UniShadowMap1, 4);
-            gl.SetUniform(_mmdShader.UniShadowMap2, 5);
-            gl.SetUniform(_mmdShader.UniShadowMap3, 6);
-            ApplyShadowMapUniforms(gl, transform);
-
-            gl.DepthMask(true);
-            foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
-            {
-                Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial = mesh.Material;
-                if (!_materials.TryGetValue(mmdMaterial, out MaterialTextures? materialTextures) || mmdMaterial.Alpha == 0.0f)
-                {
-                    continue;
-                }
-
-                DrawMesh(gl, mesh, mmdMaterial, materialTextures, GetMaterialIndex(mmdMaterial));
-
-                _lastOpaqueMeshDrawCount++;
-            }
-
-            gl.BindVertexArray(0);
-            gl.UseProgram(0);
+            _lastOpaqueMeshDrawCount = _mainPassRenderer.Draw(
+                _gpuResources,
+                _meshes,
+                _materials,
+                transform,
+                Camera.View,
+                Camera.Projection,
+                LightColor,
+                LightDirection,
+                AmbientLightColor,
+                AmbientLightStrength,
+                EnableShadow,
+                ShadowMap,
+                ResolveMaterialOverrideTextureId);
         }
 
         if (EnableEdge)
@@ -1794,132 +1786,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         gl.DepthMask(true);
     }
 
-    private void DrawMesh(GL gl, Zhengyan.DigitalWife.Mmd.MMDMesh mesh, Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial, MaterialTextures materialTextures, int materialIndex)
-    {
-        if (_mmdShader is null || _defaultTexture is null)
-        {
-            return;
-        }
-
-        _gpuResources?.UploadMaterialUniforms(new PmxGpuResources.PmxMaterialUniformData
-        {
-            Ambient = new Vector4(mmdMaterial.Ambient, 1.0f),
-            Diffuse = new Vector4(mmdMaterial.Diffuse, mmdMaterial.Alpha),
-            Specular = new Vector4(mmdMaterial.Specular, mmdMaterial.SpecularPower),
-            TextureMultiply = mmdMaterial.TextureMulFactor,
-            TextureAdd = mmdMaterial.TextureAddFactor,
-            SphereMultiply = mmdMaterial.SpTextureMulFactor,
-            SphereAdd = mmdMaterial.SpTextureAddFactor,
-            ToonMultiply = mmdMaterial.ToonTextureMulFactor,
-            ToonAdd = mmdMaterial.ToonTextureAddFactor,
-            Modes = new Vector4(
-                materialTextures.Texture is null ? 0.0f : 1.0f,
-                mmdMaterial.SpTextureMode == Zhengyan.DigitalWife.Mmd.SphereTextureMode.Mul ? 1.0f
-                    : mmdMaterial.SpTextureMode == Zhengyan.DigitalWife.Mmd.SphereTextureMode.Add ? 2.0f : 0.0f,
-                materialTextures.ToonTexture is null ? 0.0f : 1.0f,
-                materialIndex)
-        });
-
-        if (materialTextures.DescriptorSet is not null)
-        {
-            BindMaterialDescriptorSet(gl, materialTextures.DescriptorSet);
-        }
-
-        gl.SetUniform(_mmdShader.UniAmbient, mmdMaterial.Ambient);
-        gl.SetUniform(_mmdShader.UniDiffuse, mmdMaterial.Diffuse);
-        gl.SetUniform(_mmdShader.UniSpecular, mmdMaterial.Specular);
-        gl.SetUniform(_mmdShader.UniSpecularPower, mmdMaterial.SpecularPower);
-        gl.SetUniform(_mmdShader.UniAlpha, mmdMaterial.Alpha);
-
-        gl.ActiveTexture(TextureUnit.Texture0);
-        uint overrideTextureId = ResolveMaterialOverrideTextureId(materialIndex);
-        if (overrideTextureId != 0)
-        {
-            gl.SetUniform(_mmdShader.UniTexMode, 1);
-            gl.SetUniform(_mmdShader.UniTexMulFactor, mmdMaterial.TextureMulFactor);
-            gl.SetUniform(_mmdShader.UniTexAddFactor, mmdMaterial.TextureAddFactor);
-            gl.BindTexture(GLEnum.Texture2D, overrideTextureId);
-        }
-        else if (materialTextures.Texture is not null)
-        {
-            int texMode = materialTextures.Texture.AlphaMode switch
-            {
-                TextureAlphaMode.Blend => 2,
-                TextureAlphaMode.ColorMask => 3,
-                TextureAlphaMode.BlendMaskColor => 4,
-                _ => 1
-            };
-            gl.SetUniform(_mmdShader.UniTexMode, texMode);
-            gl.SetUniform(_mmdShader.UniTexMulFactor, mmdMaterial.TextureMulFactor);
-            gl.SetUniform(_mmdShader.UniTexAddFactor, mmdMaterial.TextureAddFactor);
-            gl.BindTexture(GLEnum.Texture2D, materialTextures.Texture.LegacyTextureId);
-        }
-        else
-        {
-            gl.SetUniform(_mmdShader.UniTexMode, 0);
-            gl.BindTexture(GLEnum.Texture2D, _defaultTexture.LegacyTextureId);
-        }
-
-        gl.ActiveTexture(TextureUnit.Texture1);
-        if (materialTextures.SphereTexture is not null)
-        {
-            gl.SetUniform(_mmdShader.UniSphereTexMode, mmdMaterial.SpTextureMode switch
-            {
-                Zhengyan.DigitalWife.Mmd.SphereTextureMode.Mul => 1,
-                Zhengyan.DigitalWife.Mmd.SphereTextureMode.Add => 2,
-                _ => 0
-            });
-            gl.SetUniform(_mmdShader.UniSphereTexMulFactor, mmdMaterial.SpTextureMulFactor);
-            gl.SetUniform(_mmdShader.UniSphereTexAddFactor, mmdMaterial.SpTextureAddFactor);
-            gl.BindTexture(GLEnum.Texture2D, materialTextures.SphereTexture.LegacyTextureId);
-        }
-        else
-        {
-            gl.SetUniform(_mmdShader.UniSphereTexMode, 0);
-            gl.BindTexture(GLEnum.Texture2D, _defaultTexture.LegacyTextureId);
-        }
-
-        gl.ActiveTexture(TextureUnit.Texture2);
-        if (materialTextures.ToonTexture is not null)
-        {
-            gl.SetUniform(_mmdShader.UniToonTexMode, 1);
-            gl.SetUniform(_mmdShader.UniToonTexMulFactor, mmdMaterial.ToonTextureMulFactor);
-            gl.SetUniform(_mmdShader.UniToonTexAddFactor, mmdMaterial.ToonTextureAddFactor);
-            gl.BindTexture(GLEnum.Texture2D, materialTextures.ToonTexture.LegacyTextureId);
-        }
-        else
-        {
-            gl.SetUniform(_mmdShader.UniToonTexMode, 0);
-            gl.BindTexture(GLEnum.Texture2D, _defaultTexture.LegacyTextureId);
-        }
-
-        if (mmdMaterial.BothFace)
-        {
-            gl.Disable(GLEnum.CullFace);
-        }
-        else
-        {
-            gl.Enable(GLEnum.CullFace);
-            gl.CullFace(GLEnum.Back);
-        }
-
-        gl.DrawElements(GLEnum.Triangles, mesh.VertexCount, GLEnum.UnsignedInt, (void*)(mesh.BeginIndex * sizeof(uint)));
-    }
-
-    private static void BindMaterialDescriptorSet(GL gl, PmxMaterialDescriptorSet descriptorSet)
-    {
-        foreach (PmxTextureDescriptor binding in descriptorSet.Bindings)
-        {
-            TextureUnit unit = (TextureUnit)((int)TextureUnit.Texture0 + binding.Binding);
-            gl.ActiveTexture(unit);
-            gl.BindTexture(GLEnum.Texture2D, binding.Texture.LegacyTextureId);
-            if (binding.Sampler.LegacySamplerId != 0)
-            {
-                gl.BindSampler(binding.Binding, binding.Sampler.LegacySamplerId);
-            }
-        }
-    }
-
     private void DrawCustomShaderPass(GL gl, GameTime gameTime, Matrix4x4 transform, Matrix4x4 worldView, Matrix4x4 worldViewProjection)
     {
         if (_customShader is null || Camera is null || _defaultTexture is null)
@@ -2052,44 +1918,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture4);
         BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture5);
         BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture6);
-    }
-
-    private void ApplyShadowMapUniforms(GL gl, Matrix4x4 transform)
-    {
-        if (_mmdShader is null || !EnableShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
-        {
-            if (_mmdShader is not null)
-            {
-                gl.SetUniform(_mmdShader.UniShadowMapEnabled, 0);
-            }
-
-            return;
-        }
-
-        Matrix4x4 lightWvp = transform * shadowMap.LightViewProjection;
-        gl.SetUniform(_mmdShader.UniShadowMapEnabled, 1);
-        gl.SetUniform(_mmdShader.UniShadowMapStrength, Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
-        gl.SetUniform(_mmdShader.UniShadowMapBias, Math.Max(0.0f, shadowMap.Bias));
-        gl.SetUniform(_mmdShader.UniLightWvp0, lightWvp);
-        gl.SetUniform(_mmdShader.UniLightWvp1, lightWvp);
-        gl.SetUniform(_mmdShader.UniLightWvp2, lightWvp);
-        gl.SetUniform(_mmdShader.UniLightWvp3, lightWvp);
-
-        Span<float> splits = stackalloc float[5];
-        splits[0] = Math.Max(0.0f, shadowMap.NearDistance);
-        splits[1] = Math.Max(splits[0] + 0.001f, shadowMap.FarDistance);
-        splits[2] = splits[1] + 0.001f;
-        splits[3] = splits[2] + 0.001f;
-        splits[4] = splits[3] + 0.001f;
-        fixed (float* splitPtr = splits)
-        {
-            gl.Uniform1(_mmdShader.UniShadowMapSplitPosition0, 5, splitPtr);
-        }
-
-        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture3);
-        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture4);
-        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture5);
-        BindShadowTexture(gl, shadowMap.TextureId, TextureUnit.Texture6);
     }
 
     private static void BindShadowTexture(GL gl, uint textureId, TextureUnit unit)
@@ -2253,14 +2081,19 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     {
         if (Game is not null)
         {
-            DisposeModelResources(Game.GraphicsDevice.Gl);
+            DisposeModelResources(GetOpenGl());
         }
 
         DisposeSharedResources();
         base.Dispose();
     }
 
-    private void LoadResources(GL gl, string pmxPath, IReadOnlyList<MotionLayerConfig> motionLayers)
+    private GL? GetOpenGl()
+    {
+        return Game?.GraphicsDevice.Renderer is OpenGlRenderer renderer ? renderer.Gl : null;
+    }
+
+    private void LoadResources(GL? gl, string pmxPath, IReadOnlyList<MotionLayerConfig> motionLayers)
     {
         DisposeModelResources(gl);
 
@@ -2284,7 +2117,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
-    private void ApplyMotionResources(GL gl, IReadOnlyList<MotionLayerConfig> motionLayers)
+    private void ApplyMotionResources(GL? gl, IReadOnlyList<MotionLayerConfig> motionLayers)
     {
         if (_model is null || !_loaded)
         {
@@ -2356,9 +2189,6 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _toonTextures?.Dispose();
         _toonTextures = null;
 
-        _mmdShader?.Dispose();
-        _mmdShader = null;
-
         _edgeShader?.Dispose();
         _edgeShader = null;
 
@@ -2373,9 +2203,12 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _customShaderUniforms.Clear();
     }
 
-    private void DisposeModelResources(GL gl)
+    private void DisposeModelResources(GL? gl)
     {
-        DeleteCustomShaderVao(gl);
+        if (gl is not null)
+        {
+            DeleteCustomShaderVao(gl);
+        }
 
         foreach (ITexture2D texture in _textures.Values)
         {
@@ -2386,19 +2219,22 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _materials.Clear();
         _meshes = [];
 
+        _mainPassRenderer?.Dispose();
+        _mainPassRenderer = null;
         _gpuResources?.Dispose();
         _gpuResources = null;
         _defaultTexture = null;
-        gl.DeleteVertexArray(_modelVao);
-        gl.DeleteVertexArray(_edgeVao);
-        gl.DeleteVertexArray(_groundShadowVao);
-        gl.DeleteVertexArray(_shadowDepthVao);
+        if (gl is not null)
+        {
+            gl.DeleteVertexArray(_edgeVao);
+            gl.DeleteVertexArray(_groundShadowVao);
+            gl.DeleteVertexArray(_shadowDepthVao);
+        }
 
         _positionBuffer = 0;
         _normalBuffer = 0;
         _uvBuffer = 0;
         _indexBuffer = 0;
-        _modelVao = 0;
         _edgeVao = 0;
         _groundShadowVao = 0;
         _shadowDepthVao = 0;
@@ -3074,9 +2910,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
-    private void Setup(GL gl)
+    private void Setup(GL? gl)
     {
-        if (_model is null || _mmdShader is null || _edgeShader is null || _groundShadowShader is null || _shadowDepthShader is null)
+        if (_model is null || Game is null)
         {
             return;
         }
@@ -3091,50 +2927,48 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _uvBuffer = _gpuResources.UvBuffer.LegacyBufferId;
         _indexBuffer = _gpuResources.IndexBuffer.LegacyBufferId;
 
-        _modelVao = gl.GenVertexArray();
-        gl.BindVertexArray(_modelVao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-        gl.VertexAttribPointer(_mmdShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-        gl.EnableVertexAttribArray(_mmdShader.InPos);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _normalBuffer);
-        gl.VertexAttribPointer(_mmdShader.InNor, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-        gl.EnableVertexAttribArray(_mmdShader.InNor);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _uvBuffer);
-        gl.VertexAttribPointer(_mmdShader.InUV, 2, GLEnum.Float, false, (uint)sizeof(Vector2), (void*)0);
-        gl.EnableVertexAttribArray(_mmdShader.InUV);
-        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-        gl.BindVertexArray(0);
-
-        _edgeVao = gl.GenVertexArray();
-        gl.BindVertexArray(_edgeVao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-        gl.VertexAttribPointer(_edgeShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-        gl.EnableVertexAttribArray(_edgeShader.InPos);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _normalBuffer);
-        gl.VertexAttribPointer(_edgeShader.InNor, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-        gl.EnableVertexAttribArray(_edgeShader.InNor);
-        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-        gl.BindVertexArray(0);
-
-        _groundShadowVao = gl.GenVertexArray();
-        gl.BindVertexArray(_groundShadowVao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-        gl.VertexAttribPointer(_groundShadowShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-        gl.EnableVertexAttribArray(_groundShadowShader.InPos);
-        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-        gl.BindVertexArray(0);
-
-        _shadowDepthVao = gl.GenVertexArray();
-        gl.BindVertexArray(_shadowDepthVao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-        gl.VertexAttribPointer(_shadowDepthShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
-        gl.EnableVertexAttribArray(_shadowDepthShader.InPos);
-        gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
-        gl.BindVertexArray(0);
-
-        if (_customShader is not null)
+        if (gl is not null)
         {
-            RebuildCustomShaderVao(gl);
+            if (_edgeShader is null || _groundShadowShader is null || _shadowDepthShader is null)
+            {
+                throw new InvalidOperationException("The OpenGL PMX shaders have not been initialized.");
+            }
+
+            _edgeVao = gl.GenVertexArray();
+            gl.BindVertexArray(_edgeVao);
+            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
+            gl.VertexAttribPointer(_edgeShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+            gl.EnableVertexAttribArray(_edgeShader.InPos);
+            gl.BindBuffer(GLEnum.ArrayBuffer, _normalBuffer);
+            gl.VertexAttribPointer(_edgeShader.InNor, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+            gl.EnableVertexAttribArray(_edgeShader.InNor);
+            gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
+            gl.BindVertexArray(0);
+
+            _groundShadowVao = gl.GenVertexArray();
+            gl.BindVertexArray(_groundShadowVao);
+            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
+            gl.VertexAttribPointer(_groundShadowShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+            gl.EnableVertexAttribArray(_groundShadowShader.InPos);
+            gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
+            gl.BindVertexArray(0);
+
+            _shadowDepthVao = gl.GenVertexArray();
+            gl.BindVertexArray(_shadowDepthVao);
+            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
+            gl.VertexAttribPointer(_shadowDepthShader.InPos, 3, GLEnum.Float, false, (uint)sizeof(Vector3), (void*)0);
+            gl.EnableVertexAttribArray(_shadowDepthShader.InPos);
+            gl.BindBuffer(GLEnum.ElementArrayBuffer, _indexBuffer);
+            gl.BindVertexArray(0);
+
+            if (_customShader is not null)
+            {
+                RebuildCustomShaderVao(gl);
+            }
+        }
+        else if (Game.GraphicsDevice.Backend != GraphicsBackend.Vulkan)
+        {
+            throw new NotSupportedException($"PMX rendering is not implemented for {Game.GraphicsDevice.Backend}.");
         }
 
         foreach (Zhengyan.DigitalWife.Mmd.MMDMaterial mmdMaterial in _model.GetMaterials())
@@ -3163,7 +2997,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _materials.Add(mmdMaterial, textures);
         }
 
-        UploadVertexBuffers(gl, true);
+        _mainPassRenderer?.Dispose();
+        _mainPassRenderer = PmxMainPassRendererFactory.Create(Game.GraphicsDevice, _gpuResources!);
+
+        UploadVertexBuffers(true);
         CaptureResetSnapshot();
         _dirtyFlags = DirtyFlags.None;
     }
@@ -3186,7 +3023,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         return texture;
     }
 
-    private void UploadVertexBuffers(GL gl, bool uploadUv)
+    private void UploadVertexBuffers(bool uploadUv)
     {
         if (_model is null || _gpuResources is null)
         {
@@ -3196,7 +3033,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _gpuResources.UploadPose(_model, uploadUv);
     }
 
-    private void UploadUvBuffer(GL gl)
+    private void UploadUvBuffer()
     {
         if (_model is null || _gpuResources is null)
         {
@@ -3263,32 +3100,16 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _resetUVs = new ReadOnlySpan<Vector2>(_model.GetUpdateUVs(), vertexCount).ToArray();
     }
 
-    private bool RestoreResetSnapshot(GL gl)
+    private bool RestoreResetSnapshot(GL? gl)
     {
-        if (_resetPositions is null || _resetNormals is null || _resetUVs is null)
+        if (_resetPositions is null || _resetNormals is null || _resetUVs is null || _gpuResources is null)
         {
             return false;
         }
 
-        fixed (Vector3* positions = _resetPositions)
-        {
-            gl.BindBuffer(GLEnum.ArrayBuffer, _positionBuffer);
-            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(sizeof(Vector3) * _resetPositions.Length), positions);
-        }
-
-        fixed (Vector3* normals = _resetNormals)
-        {
-            gl.BindBuffer(GLEnum.ArrayBuffer, _normalBuffer);
-            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(sizeof(Vector3) * _resetNormals.Length), normals);
-        }
-
-        fixed (Vector2* uvs = _resetUVs)
-        {
-            gl.BindBuffer(GLEnum.ArrayBuffer, _uvBuffer);
-            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(sizeof(Vector2) * _resetUVs.Length), uvs);
-        }
-
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        _gpuResources.PositionBuffer.Update<Vector3>(_resetPositions);
+        _gpuResources.NormalBuffer.Update<Vector3>(_resetNormals);
+        _gpuResources.UvBuffer.Update<Vector2>(_resetUVs);
         return true;
     }
 
