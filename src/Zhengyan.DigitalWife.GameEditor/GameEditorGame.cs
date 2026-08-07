@@ -419,8 +419,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             || _underwaterPostProcessRenderer is null
             || !TryResolveUnderwaterSettings(
                 camera,
-                out UnderwaterPostProcessSettings settings,
-                out WaterSurfaceComponent activeWaterSurface))
+                out UnderwaterPostProcessSettings settings))
         {
             return false;
         }
@@ -438,7 +437,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             x,
             viewportY,
             settings,
-            activeWaterSurface,
             Project.Scene.Lighting.ClearColor.ToVector4(),
             () =>
             {
@@ -459,7 +457,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         int viewportX,
         int viewportY,
         UnderwaterPostProcessSettings settings,
-        WaterSurfaceComponent activeWaterSurface,
         Vector4 clearColor,
         Action bindOutputTarget)
     {
@@ -488,7 +485,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             viewportY,
             width,
             height);
-        DrawSceneComponentsOnce(gameTime, activeWaterSurface);
+        // The water surface must remain in the captured scene: when the camera
+        // is below it, the surface is a visible object above the camera.
+        DrawSceneComponentsOnce(gameTime);
 
         bindOutputTarget();
         _underwaterPostProcessRenderer.Draw(camera, settings, gameTime.TotalSeconds, width, height);
@@ -507,11 +506,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     private bool TryResolveUnderwaterSettings(
         OrbitCamera camera,
-        out UnderwaterPostProcessSettings settings,
-        out WaterSurfaceComponent activeWaterSurface)
+        out UnderwaterPostProcessSettings settings)
     {
         settings = default;
-        activeWaterSurface = null!;
         EditorWaterObject? activeWater = null;
         float activeDepth = float.MaxValue;
 
@@ -540,7 +537,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         WaterSurfaceSettings settingsSource = activeWater.Entity.Water;
         settings = CreateUnderwaterSettings(settingsSource, activeDepth);
-        activeWaterSurface = activeWater.Component;
         return true;
     }
 
