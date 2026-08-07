@@ -43,7 +43,9 @@ Scene.Window.SetVisible(true);
 
 Console.WriteLine(Scene.Runtime.ComputeBackend);
 Console.WriteLine(Scene.Runtime.IsUsingOpenCL);
+Console.WriteLine(Scene.Runtime.IsUsingVulkanCompute);
 Scene.Runtime.SetUseOpenCL(true);
+Scene.Runtime.SetUseVulkanCompute(true);
 
 RuntimeCommandResult result = Scene.Runtime.ExecuteShellCommand("echo hello");
 Console.WriteLine(result.StandardOutput);
@@ -61,7 +63,9 @@ scene.window.set_visible(True)
 
 print(scene.runtime.compute_backend)
 print(scene.runtime.is_using_opencl)
+print(scene.runtime.is_using_vulkan_compute)
 scene.runtime.set_use_opencl(True)
+scene.runtime.set_use_vulkan_compute(True)
 
 result = scene.runtime.execute_shell_command("echo hello")
 print(result["stdout"])
@@ -73,8 +77,11 @@ Runtime 设置：
 | --- | --- | --- |
 | `Scene.Runtime.UseOpenCL` | `scene.runtime.use_opencl` | 项目/运行时是否请求使用 OpenCL。它表示“希望启用”，不代表当前一定已经使用。 |
 | `Scene.Runtime.IsUsingOpenCL` | `scene.runtime.is_using_opencl` | 当前已加载 PMX 是否实际使用 OpenCL 后端。OpenCL 不可用或初始化失败时为 `false`。 |
-| `Scene.Runtime.ComputeBackend` | `scene.runtime.compute_backend` | 当前实际计算后端，通常为 `OpenCL` 或 `CPU`。 |
+| `Scene.Runtime.UseVulkanCompute` | `scene.runtime.use_vulkan_compute` | Vulkan 后端是否请求使用 Vulkan Compute 蒙皮。 |
+| `Scene.Runtime.IsUsingVulkanCompute` | `scene.runtime.is_using_vulkan_compute` | 当前已加载 PMX 是否实际使用 Vulkan Compute。 |
+| `Scene.Runtime.ComputeBackend` | `scene.runtime.compute_backend` | 当前实际计算后端：`OpenCL`、`Vulkan Compute` 或 `CPU`。 |
 | `Scene.Runtime.SetUseOpenCL(value)` | `scene.runtime.set_use_opencl(value)` | 切换是否请求 OpenCL；GamePlayer 会重新应用运行时设置，失败时自动回退 CPU。 |
+| `Scene.Runtime.SetUseVulkanCompute(value)` | `scene.runtime.set_use_vulkan_compute(value)` | 切换是否请求 Vulkan Compute；GamePlayer 会重新应用运行时设置，失败时自动回退 CPU。 |
 | `Scene.Runtime.ExecuteCommand(fileName, arguments, timeoutMilliseconds, workingDirectory)` | `scene.runtime.execute_command(file_name, args=None, timeout_seconds=30, working_directory=None, shell=False)` | 执行系统命令并返回退出码、标准输出、标准错误和是否超时。默认不经过 shell。 |
 | `Scene.Runtime.ExecuteShellCommand(command, timeoutMilliseconds, workingDirectory)` | `scene.runtime.execute_shell_command(command, timeout_seconds=30, working_directory=None)` | 通过系统 shell 执行命令。Windows 使用 `cmd.exe /c`，Linux/macOS 使用 `/bin/sh -c`。 |
 
@@ -117,8 +124,10 @@ Runtime 设置：
 
 窗口尺寸最小会被限制到 `320 x 240`。
 
-OpenCL 说明：
+PMX 计算后端说明：
 
-- `UseOpenCL` 是偏好设置；实际后端以 `IsUsingOpenCL` / `ComputeBackend` 为准。
+- OpenGL 只读取 `UseOpenCL`；Vulkan 只读取 `UseVulkanCompute`，选择 Vulkan 时不会探测或加载 OpenCL。
+- 两个字段都是偏好设置；实际后端以 `IsUsingOpenCL`、`IsUsingVulkanCompute` 和 `ComputeBackend` 为准。
 - 如果机器没有可用 OpenCL GPU、驱动枚举失败、`skinned_animation.cl` 编译失败或初始化失败，GamePlayer 会回退到 CPU。
-- 切换 OpenCL 会让已加载 PMX 重新加载当前模型以应用后端变化，运行中切换可能有短暂停顿。
+- Vulkan Compute pipeline 创建或 dispatch 失败时同样回退 CPU。
+- 切换计算选项会让已加载 PMX 重新加载当前模型以应用后端变化，运行中切换可能有短暂停顿。

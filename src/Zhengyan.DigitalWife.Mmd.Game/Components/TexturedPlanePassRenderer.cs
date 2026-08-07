@@ -169,16 +169,21 @@ internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
     {
         PipelineBundle? existing = _pipelines.FirstOrDefault(item => item.Output.Equals(output));
         if (existing is not null) return existing.Pipeline;
-        Pipeline pipeline = _factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
+        Pipeline pipeline = CreatePipeline(output, _shaderSet);
+        _pipelines.Add(new PipelineBundle(output, pipeline));
+        return pipeline;
+    }
+
+    private Pipeline CreatePipeline(OutputDescription output, ShaderSetDescription shaderSet)
+    {
+        return _factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
             BlendStateDescription.SingleAlphaBlend,
             new DepthStencilStateDescription(true, true, ComparisonKind.LessEqual),
             RasterizerStateDescription.CullNone,
             PrimitiveTopology.TriangleList,
-            _shaderSet,
+            shaderSet,
             [_layout],
             output));
-        _pipelines.Add(new PipelineBundle(output, pipeline));
-        return pipeline;
     }
 
     private void SetShaderProgram(string? vertexSpirvPath, string? fragmentSpirvPath)
@@ -204,11 +209,23 @@ internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
                 new VertexElementDescription("TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2))],
             nextShaders);
 
+        Pipeline nextPipeline;
+        try
+        {
+            nextPipeline = CreatePipeline(_renderer.Device.SwapchainFramebuffer.OutputDescription, nextShaderSet);
+        }
+        catch
+        {
+            foreach (VeldridShader shader in nextShaders) shader.Dispose();
+            throw;
+        }
+
         foreach (PipelineBundle bundle in _pipelines) bundle.Pipeline.Dispose();
         _pipelines.Clear();
         foreach (VeldridShader shader in _shaders) shader.Dispose();
         _shaders = nextShaders;
         _shaderSet = nextShaderSet;
+        _pipelines.Add(new PipelineBundle(_renderer.Device.SwapchainFramebuffer.OutputDescription, nextPipeline));
     }
 
     private static TextureView? ResolveTextureView(ITexture2D texture, RuntimeTextureHandle? runtimeTexture)

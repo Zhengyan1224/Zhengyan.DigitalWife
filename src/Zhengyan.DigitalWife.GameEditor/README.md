@@ -188,7 +188,7 @@ dotnet run --project src/Zhengyan.DigitalWife.GamePlayer/Zhengyan.DigitalWife.Ga
 
 ## 窗口、相机和加载界面
 
-`Project -> Window / Runtime` 可设置运行器窗口标题、图标、分辨率、全屏、可拉伸、Timing Mode，以及 `Use OpenCL`。`Use OpenCL` 控制 GamePlayer 的 PMX 蒙皮是否优先使用 OpenCL；如果初始化失败，会自动回退 CPU 路径。
+`Project -> Window / Runtime` 可设置运行器窗口标题、图标、分辨率、全屏、可拉伸和 Timing Mode。OpenGL 后端显示 `Use OpenCL for PMX skinning`，Vulkan 后端显示 `Use Vulkan Compute for PMX skinning`；Vulkan 不会探测或加载 OpenCL，两种 GPU 计算路径初始化失败时都会自动回退 CPU。
 
 场景 Inspector 可设置：
 

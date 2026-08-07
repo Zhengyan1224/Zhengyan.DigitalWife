@@ -49,10 +49,10 @@ texture/framebuffer implementation. Scene-level restore callbacks now use
 `IRenderTarget.ResumePass()` and `GraphicsDevice.RestoreBackBuffer()`, including
 the Editor and Player shadow rendering callbacks. `TexturedPlaneComponent` has
 a Vulkan fixed pass with backend-neutral base textures, manual depth shadow
-sampling, and optional reflection resources. Arbitrary user-provided custom
-GLSL remains an OpenGL compatibility feature, while `PortableShaderContract`
-validates the explicit GLSL 450 resource contract intended for Vulkan and
-future backends.
+sampling, and optional reflection resources. Custom components can provide a
+GLSL vertex/fragment pair for OpenGL and a separately compiled SPIR-V
+vertex/fragment pair for Vulkan. Vulkan loads the `.spv` modules directly and
+does not compile the user GLSL path.
 
 `VeldridScreenSpriteRenderer` now provides that Vulkan implementation: it owns a
 dynamic vertex buffer, uniform buffer, sampler, descriptor layouts, SPIR-V
@@ -73,9 +73,13 @@ and preserve the Silk controller on OpenGL; overlay images use backend-native
 ImGui texture bindings.
 The loading screen also has a Vulkan quad renderer. Desktop sprite click-through
 uses the backend-neutral `IRenderer.TryReadBackBufferRgba` contract: OpenGL uses
-`ReadPixels`, while Vulkan copies the swapchain image to a staging texture and
-normalizes it to the same bottom-left RGBA layout before native window regions
-are updated.
+`ReadPixels`, while Vulkan records the swapchain copy into a three-slot staging
+ring. Fences allow a completed image from an earlier frame to be mapped without
+calling `WaitForIdle()` every frame. The mapped image is normalized to the same
+bottom-left RGBA layout before native window regions are updated. Windows,
+macOS, and X11 have native window-region implementations. Native Wayland input
+regions are not implemented yet; Linux desktop-sprite click-through currently
+requires an X11 session or `GLFW_PLATFORM=x11`.
 
 ## Selecting a backend
 
@@ -92,6 +96,25 @@ Project files store the setting at `runtime.graphicsBackend`:
 Accepted values are `Auto`, `OpenGL`, and `Vulkan` (case-insensitive; `GL` and
 `VK` are accepted aliases by the parser).
 
+PMX compute preferences are stored independently:
+
+```json
+{
+  "runtime": {
+    "graphicsBackend": "Vulkan",
+    "useOpenCL": true,
+    "useVulkanCompute": true
+  }
+}
+```
+
+The active graphics backend determines which preference is legal. OpenGL may
+use OpenCL skinning when `useOpenCL` is enabled. Vulkan never probes or loads
+OpenCL; it may use the Vulkan compute pipeline when `useVulkanCompute` is
+enabled. Both GPU paths fall back to CPU skinning when initialization or a
+dispatch fails. The Editor displays only the compute option applicable to the
+selected graphics backend.
+
 The GameEditor setting is also written to `GameEditor.settings.json` beside the
 editor executable. This is needed because a window's graphics API is selected
 before the project preview window is created. Changing the setting takes effect
@@ -107,17 +130,23 @@ pin the setting to `OpenGL`. Vulkan supports PMX, skybox, water, particles,
 screen sprites, textured planes, post-process, debug lines, reflections, loading
 screens, and ImGui overlays.
 
-The portable custom-shader contract requires `#version 450`, explicit vertex
-attribute/varying locations, a `PlaneFrame` block at `set=0,binding=0`, and
-sampled texture/sampler resources at bindings 1 through 6. Call
-`PortableShaderContract.ValidatePlane(...)` (or the component helper) to get
-actionable diagnostics before loading a shader. The contract deliberately
-avoids implicit uniform locations so a future Direct3D backend can consume the
-same reflected resources. The plane resource map is: binding 1 base texture,
-2 base sampler, 3 shadow texture, 4 shadow sampler, 5 reflection texture, and
-6 reflection sampler. Legacy `#version 300 es` shaders continue to work only
-through the OpenGL compatibility API.
+The four-path custom shader API is:
 
-Legacy custom GLSL components remain an OpenGL compatibility feature unless they
-use the portable GLSL 450 contract. OpenGL remains the compatibility fallback,
-including macOS.
+```csharp
+Entity.SetCustomShader(
+    "assets/shaders/model.vert",
+    "assets/shaders/model.frag",
+    "assets/shaders/model.vert.spv",
+    "assets/shaders/model.frag.spv");
+```
+
+The first pair is GLSL for OpenGL; the second pair is precompiled SPIR-V for
+Vulkan. Every SPIR-V module must use entry point `main` and match the engine
+pipeline layout. Plane shaders use vertex locations 0 (position) and 1 (UV),
+with `PlaneFrame` at set 0 binding 0 and base/shadow/reflection texture-sampler
+pairs at bindings 1 through 6. PMX shaders use vertex locations 0 (position),
+1 (normal), and 2 (UV). PMX set 0 contains the frame block, shadow texture, and
+shadow sampler at bindings 0 through 2. Set 1 contains the material block at
+binding 0 and base/sphere/toon texture-sampler pairs at bindings 1 through 6.
+Arbitrary Vulkan uniforms outside these declared blocks are not reflected or
+bound by the engine. OpenGL remains the compatibility fallback on macOS.

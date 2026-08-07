@@ -229,6 +229,7 @@ if input.is_key_down("d"):
 | C# 方法 | Python 方法 | 参数 | 说明 |
 | --- | --- | --- | --- |
 | `SetCustomShader(vertexShaderPath, fragmentShaderPath)` | `set_custom_shader(vertex_shader, fragment_shader)` | vertex/fragment shader 文件路径 | 编译并启用自定义 shader。 |
+| `SetCustomShader(glVertex, glFragment, vkVertexSpv, vkFragmentSpv)` | `set_custom_shader(gl_vertex, gl_fragment, vk_vertex_spv, vk_fragment_spv)` | OpenGL GLSL 与 Vulkan SPIR-V 两套 vertex/fragment 文件 | OpenGL 选择 GLSL，Vulkan 直接加载 SPIR-V。SPIR-V 必须匹配组件 descriptor 和 vertex-layout 契约。 |
 | `ClearCustomShader()` | `clear_custom_shader()` | 无 | 恢复内置 shader，并清空自定义 uniform。 |
 | `SetCustomShaderFloat(name, value)` | `set_custom_shader_float(name, value)` | `name`: uniform 名称；`value`: float | 设置 `float` uniform。 |
 | `SetCustomShaderInt(name, value)` | `set_custom_shader_int(name, value)` | `name`: uniform 名称；`value`: int | 设置 `int` uniform。 |
@@ -238,6 +239,8 @@ if input.is_key_down("d"):
 | `SetCustomShaderColor(name, r, g, b, a)` | `set_custom_shader_color(name, r, g, b, a=1.0)` | `name`, RGBA | 设置颜色型 `vec4` uniform。 |
 | `ClearCustomShaderUniform(name)` | `clear_custom_shader_uniform(name)` | `name`: uniform 名称 | 删除单个脚本设置的 uniform。 |
 | `ClearCustomShaderUniforms()` | `clear_custom_shader_uniforms()` | 无 | 删除所有脚本设置的 uniform。 |
+
+`SetCustomShaderFloat/Int/Vector/Color` 使用 OpenGL 的按名称 uniform 机制。Vulkan 不会按名称反射任意 uniform；SPIR-V 参数必须放入引擎固定的 descriptor/uniform block 契约中。
 
 ### 顶点属性
 
@@ -345,7 +348,11 @@ C#：
 ```csharp
 if (IsStart)
 {
-    Entity.SetCustomShader("assets/shaders/wave_plane.vert", "assets/shaders/wave_plane.frag");
+    Entity.SetCustomShader(
+        "assets/shaders/wave_plane.vert",
+        "assets/shaders/wave_plane.frag",
+        "assets/shaders/wave_plane.vert.spv",
+        "assets/shaders/wave_plane.frag.spv");
     Entity.SetCustomShaderColor("u_ColorBoost", 0.6f, 1.0f, 1.4f, 1.0f);
 }
 
@@ -360,7 +367,11 @@ Python：
 
 ```python
 def start(entity, scene, input, audio):
-    entity.set_custom_shader("assets/shaders/wave_plane.vert", "assets/shaders/wave_plane.frag")
+    entity.set_custom_shader(
+        "assets/shaders/wave_plane.vert",
+        "assets/shaders/wave_plane.frag",
+        "assets/shaders/wave_plane.vert.spv",
+        "assets/shaders/wave_plane.frag.spv")
     entity.set_custom_shader_color("u_ColorBoost", 0.6, 1.0, 1.4, 1.0)
 
 def update(entity, scene, input, audio, delta_seconds):
@@ -427,7 +438,11 @@ C#：
 if (IsStart)
 {
     Entity.EnableEdge = false;
-    Entity.SetCustomShader("assets/shaders/pmx_tint.vert", "assets/shaders/pmx_tint.frag");
+    Entity.SetCustomShader(
+        "assets/shaders/pmx_tint.vert",
+        "assets/shaders/pmx_tint.frag",
+        "assets/shaders/pmx_tint.vert.spv",
+        "assets/shaders/pmx_tint.frag.spv");
     Entity.SetCustomShaderColor("u_TintColor", 1.0f, 0.75f, 0.55f, 1.0f);
 }
 ```
@@ -437,6 +452,10 @@ Python：
 ```python
 def start(entity, scene, input, audio):
     entity.set_edge_enabled(False)
-    entity.set_custom_shader("assets/shaders/pmx_tint.vert", "assets/shaders/pmx_tint.frag")
+    entity.set_custom_shader(
+        "assets/shaders/pmx_tint.vert",
+        "assets/shaders/pmx_tint.frag",
+        "assets/shaders/pmx_tint.vert.spv",
+        "assets/shaders/pmx_tint.frag.spv")
     entity.set_custom_shader_color("u_TintColor", 1.0, 0.75, 0.55, 1.0)
 ```
