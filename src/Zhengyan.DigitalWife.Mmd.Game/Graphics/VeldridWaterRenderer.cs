@@ -5,7 +5,7 @@ using Veldrid.SPIRV;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
-internal sealed class VeldridWaterRenderer : IDisposable
+internal sealed class VeldridWaterRenderer : IWaterPassRenderer
 {
     private const int MaxRipples = 48;
     private readonly VulkanRenderer _renderer;

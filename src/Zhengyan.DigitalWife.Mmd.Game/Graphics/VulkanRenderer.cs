@@ -22,11 +22,20 @@ public sealed class VulkanRenderer : IRenderer
     private int _readbackWidth;
     private int _readbackHeight;
     private PixelFormat _readbackFormat;
+    private VeldridUtilityPassRenderer? _utilityPasses;
     private bool _frameOpen;
+    private readonly IRenderBackendServices _services;
+
+    public VulkanRenderer()
+    {
+        _services = new VulkanRenderBackendServices(this);
+    }
 
     public GraphicsBackend Backend => GraphicsBackend.Vulkan;
 
     public string Name => _device is null ? "Vulkan" : $"Vulkan ({_device.DeviceName})";
+
+    public IRenderBackendServices Services => _services;
 
     public Vector2D<int> BackBufferSize { get; private set; }
 
@@ -369,6 +378,18 @@ public sealed class VulkanRenderer : IRenderer
         _frameOpen = true;
     }
 
+    public void ClearViewport(int x, int y, int width, int height, Vector4 color)
+    {
+        _utilityPasses ??= new VeldridUtilityPassRenderer(this);
+        _utilityPasses.ClearViewport(x, y, width, height, color);
+    }
+
+    internal void ForceOpaqueAlpha(VeldridRenderTarget target)
+    {
+        _utilityPasses ??= new VeldridUtilityPassRenderer(this);
+        _utilityPasses.ForceOpaqueAlpha(target);
+    }
+
     public void Present()
     {
         VeldridDevice device = _device ?? throw new InvalidOperationException("The Vulkan renderer has not been initialized.");
@@ -414,6 +435,8 @@ public sealed class VulkanRenderer : IRenderer
         finally
         {
             _commandList?.Dispose();
+            _utilityPasses?.Dispose();
+            _utilityPasses = null;
             foreach (ReadbackSlot slot in _readbackSlots) slot.Dispose();
             _readbackSlots.Clear();
             _device.Dispose();

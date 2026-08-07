@@ -10,6 +10,8 @@ public interface IRenderer : IDisposable
 
     string Name { get; }
 
+    IRenderBackendServices Services { get; }
+
     Vector2D<int> BackBufferSize { get; }
 
     void Initialize(IWindow window, Vector2D<int> backBufferSize);
@@ -17,6 +19,8 @@ public interface IRenderer : IDisposable
     void Resize(Vector2D<int> backBufferSize);
 
     void Clear(Vector4 color);
+
+    void ClearViewport(int x, int y, int width, int height, Vector4 color);
 
     IRenderTarget CreateRenderTarget(string name);
 

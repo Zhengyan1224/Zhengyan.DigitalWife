@@ -334,7 +334,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
 
     private Texture2D? _texture;
     private ITexture2D? _backendTexture;
-    private VeldridParticleRenderer? _vulkanRenderer;
+    private IParticlePassRenderer? _backendRenderer;
     private IRuntimeTextureProvider? _runtimeTextureProvider;
     private uint _program;
     private uint _vao;
@@ -509,10 +509,11 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
             throw new InvalidOperationException($"ParticleVertex size mismatch: sizeof={sizeof(ParticleVertex)}, stride={ParticleVertex.StrideInBytes}");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        _backendRenderer = Game.GraphicsDevice.Renderer.Services.CreateParticlePassRenderer(
+            checked((uint)(_vertices.Length * sizeof(ParticleVertex))));
+        if (_backendRenderer is not null)
         {
             _backendTexture = CreateBackendTexture(Game.GraphicsDevice, _settings);
-            _vulkanRenderer = new VeldridParticleRenderer(vulkan, checked((uint)(_vertices.Length * sizeof(ParticleVertex))));
             ResetParticles(_settings.RandomizeInitialAge);
             return;
         }
@@ -586,9 +587,9 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
             return;
         }
 
-        if (_vulkanRenderer is not null && _backendTexture is not null)
+        if (_backendRenderer is not null && _backendTexture is not null)
         {
-            _vulkanRenderer.Draw<ParticleVertex>(
+            _backendRenderer.Draw<ParticleVertex>(
                 new ReadOnlySpan<ParticleVertex>(_vertices),
                 vertexCount,
                 _backendTexture,
@@ -662,8 +663,8 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     {
         _texture?.Dispose();
         _texture = null;
-        _vulkanRenderer?.Dispose();
-        _vulkanRenderer = null;
+        _backendRenderer?.Dispose();
+        _backendRenderer = null;
         _backendTexture?.Dispose();
         _backendTexture = null;
 

@@ -98,6 +98,16 @@ public sealed unsafe class RenderTexture : IRenderTarget
         _gl.BindFramebuffer(GLEnum.Framebuffer, 0);
     }
 
+    public void ForceOpaqueAlpha()
+    {
+        Bind();
+        _gl.Disable(GLEnum.ScissorTest);
+        _gl.ColorMask(false, false, false, true);
+        _gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        _gl.Clear(ClearBufferMask.ColorBufferBit);
+        _gl.ColorMask(true, true, true, true);
+    }
+
     public void Dispose()
     {
         if (_disposed)

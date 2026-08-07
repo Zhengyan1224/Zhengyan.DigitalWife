@@ -18,7 +18,12 @@ public sealed class GraphicsDevice
 
     public GraphicsBackend Backend => _renderer.Backend;
 
-    // Compatibility bridge while individual rendering components move to backend-neutral resources.
+    /// <summary>
+    /// Legacy OpenGL compatibility bridge. New scene code must use
+    /// <see cref="Renderer"/> and <see cref="IRenderBackendServices"/> instead.
+    /// This remains public temporarily for the OpenGL-only loading and material
+    /// compatibility paths and is deliberately unavailable on Vulkan.
+    /// </summary>
     public GL Gl => _renderer is OpenGlRenderer openGl
         ? openGl.Gl
         : throw new NotSupportedException($"{_renderer.Backend} does not expose an OpenGL API.");
@@ -66,6 +71,9 @@ public sealed class GraphicsDevice
 
     public void SetScissor(int x, int y, int width, int height, bool enabled = true)
         => _renderer.SetScissor(x, y, width, height, enabled);
+
+    public void ClearViewport(int x, int y, int width, int height, Vector4 color)
+        => _renderer.ClearViewport(x, y, width, height, color);
 
     public bool TryReadBackBufferRgba(Span<byte> destination)
         => _renderer.TryReadBackBufferRgba(destination);

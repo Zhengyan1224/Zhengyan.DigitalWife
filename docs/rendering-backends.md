@@ -130,6 +130,21 @@ pin the setting to `OpenGL`. Vulkan supports PMX, skybox, water, particles,
 screen sprites, textured planes, post-process, debug lines, reflections, loading
 screens, and ImGui overlays.
 
+Viewport rendering now uses `IRenderer.ClearViewport` for every camera on both
+backends. Vulkan clears the selected color/depth/stencil rectangle through a
+small utility pass, so overlapping camera viewports cannot inherit depth from a
+previous camera. `IRenderTarget.ForceOpaqueAlpha` is also implemented by both
+backends; the Editor uses it when compositing a preview whose clear alpha is not
+opaque.
+
+Backend-specific scene pass allocation is centralized in
+`IRenderBackendServices`. Skybox, water, particle, loading-screen, line/debug,
+textured-plane, underwater, ImGui, and shadow-map targets are requested from
+that service rather than selected by scene code. OpenGL may still return a null
+optional pass while its legacy compatibility implementation is active; a new
+backend must provide these pass interfaces and does not need to be referenced
+by the shared components.
+
 The four-path custom shader API is:
 
 ```csharp
@@ -148,5 +163,15 @@ pairs at bindings 1 through 6. PMX shaders use vertex locations 0 (position),
 1 (normal), and 2 (UV). PMX set 0 contains the frame block, shadow texture, and
 shadow sampler at bindings 0 through 2. Set 1 contains the material block at
 binding 0 and base/sphere/toon texture-sampler pairs at bindings 1 through 6.
-Arbitrary Vulkan uniforms outside these declared blocks are not reflected or
-bound by the engine. OpenGL remains the compatibility fallback on macOS.
+`VulkanShaderContract.ValidatePair` runs before Vulkan pipeline creation. It
+checks the SPIR-V magic/word alignment, cross-stage interface validity, and
+rejects descriptor names outside the pass layout, producing an actionable
+`InvalidDataException` instead of a deferred driver error. Descriptor member
+names inside uniform blocks are still intentionally not inferred from SPIR-V;
+custom named uniforms therefore remain an OpenGL-only setter contract until a
+future explicit uniform metadata format is added. OpenGL remains the
+compatibility fallback on macOS.
+
+`GraphicsDevice.Gl` is retained only as a documented compatibility bridge for
+the remaining OpenGL legacy paths. It is not touched by Vulkan execution and
+should not be used by new rendering components.

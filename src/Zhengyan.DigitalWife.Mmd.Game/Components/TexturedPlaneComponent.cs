@@ -12,7 +12,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private Texture2D? _texture;
     private ITexture2D? _backendTexture;
     private IGpuBuffer? _backendVertexBuffer;
-    private VeldridTexturedPlanePassRenderer? _vulkanPassRenderer;
+    private ITexturedPlanePassRenderer? _backendPassRenderer;
     private IRuntimeTextureProvider? _runtimeTextureProvider;
     private uint _program;
     private uint _vao;
@@ -179,14 +179,14 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             return;
         }
 
-        if (_vulkanPassRenderer is null)
+        if (_backendPassRenderer is null)
         {
             throw new NotSupportedException($"Custom plane shaders are not supported on {Game.GraphicsDevice.Backend}.");
         }
 
         string vertexPath = Path.GetFullPath(vulkanVertexSpirvPath);
         string fragmentPath = Path.GetFullPath(vulkanFragmentSpirvPath);
-        _vulkanPassRenderer.SetCustomShaders(vertexPath, fragmentPath);
+        _backendPassRenderer.SetCustomShaders(vertexPath, fragmentPath);
         _vulkanCustomVertexShaderPath = vertexPath;
         _vulkanCustomFragmentShaderPath = fragmentPath;
     }
@@ -204,9 +204,9 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
         _customShader?.Dispose();
         _customShader = null;
-        if (_vulkanPassRenderer is not null && _vulkanCustomVertexShaderPath is not null)
+        if (_backendPassRenderer is not null && _vulkanCustomVertexShaderPath is not null)
         {
-            _vulkanPassRenderer.ClearCustomShaders();
+            _backendPassRenderer.ClearCustomShaders();
         }
 
         _vulkanCustomVertexShaderPath = null;
@@ -300,9 +300,9 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        if (Game.GraphicsDevice.Renderer.Services.Capabilities.SupportsSpirv)
         {
-            InitializeVulkan(vulkan);
+            InitializeBackend();
             return;
         }
 
@@ -358,7 +358,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         }
     }
 
-    private void InitializeVulkan(VulkanRenderer renderer)
+    private void InitializeBackend()
     {
         _backendTexture = Game!.GraphicsDevice.CreateTexture2D();
         ReloadBackendTexture();
@@ -368,7 +368,9 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             checked((uint)(vertices.Length * Marshal.SizeOf<PlaneVertex>())),
             GpuBufferKind.Vertex));
         _backendVertexBuffer.Update<PlaneVertex>(new ReadOnlySpan<PlaneVertex>(vertices));
-        _vulkanPassRenderer = new VeldridTexturedPlanePassRenderer(renderer, _backendVertexBuffer, _backendTexture);
+        _backendPassRenderer = Game.GraphicsDevice.Renderer.Services
+            .CreateTexturedPlanePassRenderer(_backendVertexBuffer, _backendTexture)
+            ?? throw new NotSupportedException($"Textured plane pass is unavailable on {Game.GraphicsDevice.Backend}.");
     }
 
     public override void Draw(GameTime gameTime)
@@ -378,13 +380,12 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             return;
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer
-            && _vulkanPassRenderer is not null
+        if (_backendPassRenderer is not null
             && _backendTexture is not null)
         {
             RuntimeTextureHandle? baseHandle = ResolveTextureHandle();
             RuntimeTextureHandle? reflectionHandle = MirrorReflectionEnabled ? _planarReflectionTextureHandle : null;
-            _vulkanPassRenderer.Draw(
+            _backendPassRenderer.Draw(
                 _backendTexture,
                 baseHandle,
                 Tint,
@@ -454,8 +455,8 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     {
         _texture?.Dispose();
         _texture = null;
-        _vulkanPassRenderer?.Dispose();
-        _vulkanPassRenderer = null;
+        _backendPassRenderer?.Dispose();
+        _backendPassRenderer = null;
         _backendVertexBuffer?.Dispose();
         _backendVertexBuffer = null;
         _backendTexture?.Dispose();

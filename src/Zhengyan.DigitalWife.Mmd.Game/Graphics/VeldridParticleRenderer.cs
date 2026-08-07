@@ -5,7 +5,7 @@ using Veldrid.SPIRV;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
-internal sealed class VeldridParticleRenderer : IDisposable
+internal sealed class VeldridParticleRenderer : IParticlePassRenderer
 {
     private readonly VulkanRenderer _renderer;
     private DeviceBuffer _vertices;

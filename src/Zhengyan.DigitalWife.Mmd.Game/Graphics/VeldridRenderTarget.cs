@@ -74,6 +74,12 @@ public sealed class VeldridRenderTarget : IRenderTarget
         _renderer.EndRenderTarget(this);
     }
 
+    public void ForceOpaqueAlpha()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _renderer.ForceOpaqueAlpha(this);
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

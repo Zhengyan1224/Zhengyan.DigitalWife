@@ -8,7 +8,7 @@ using VeldridTexture = Veldrid.Texture;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
-internal interface IShadowMapTarget : IDisposable
+public interface IShadowMapTarget : IDisposable
 {
     int Width { get; }
     int Height { get; }

@@ -9,7 +9,7 @@ using EngineGraphicsBackend = Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBac
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Components;
 
-internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
+internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRenderer
 {
     private readonly VulkanRenderer _renderer;
     private readonly IGpuBuffer _vertexBuffer;
@@ -194,6 +194,19 @@ internal sealed class VeldridTexturedPlanePassRenderer : IDisposable
         if (customSpirv && (string.IsNullOrWhiteSpace(vertexSpirvPath) || string.IsNullOrWhiteSpace(fragmentSpirvPath)))
         {
             throw new ArgumentException("Both Vulkan vertex and fragment SPIR-V paths are required.");
+        }
+
+        if (customSpirv)
+        {
+            VulkanShaderContract.ValidatePair(
+                vertexSpirvPath!,
+                fragmentSpirvPath!,
+                new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "PlaneFrame", "PlaneBaseTexture", "PlaneBaseSampler",
+                    "PlaneShadowTexture", "PlaneShadowSampler",
+                    "PlaneReflectionTexture", "PlaneReflectionSampler"
+                });
         }
 
         ShaderDescription vertexShader = customSpirv

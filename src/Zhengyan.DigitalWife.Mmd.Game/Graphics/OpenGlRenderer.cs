@@ -8,10 +8,18 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 public sealed class OpenGlRenderer : IRenderer
 {
     private GL? _gl;
+    private readonly IRenderBackendServices _services;
+
+    public OpenGlRenderer()
+    {
+        _services = new OpenGlRenderBackendServices(this);
+    }
 
     public GraphicsBackend Backend => GraphicsBackend.OpenGL;
 
     public string Name => "OpenGL ES 3.0";
+
+    public IRenderBackendServices Services => _services;
 
     public Vector2D<int> BackBufferSize { get; private set; }
 
@@ -42,6 +50,18 @@ public sealed class OpenGlRenderer : IRenderer
         gl.Viewport(BackBufferSize);
         gl.Disable(GLEnum.ScissorTest);
         gl.Disable(GLEnum.StencilTest);
+        gl.ColorMask(true, true, true, true);
+        gl.DepthMask(true);
+        gl.StencilMask(0xFF);
+        gl.ClearColor(color.X, color.Y, color.Z, color.W);
+        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    public void ClearViewport(int x, int y, int width, int height, Vector4 color)
+    {
+        GL gl = Gl;
+        gl.Enable(GLEnum.ScissorTest);
+        gl.Scissor(x, y, (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
         gl.ColorMask(true, true, true, true);
         gl.DepthMask(true);
         gl.StencilMask(0xFF);

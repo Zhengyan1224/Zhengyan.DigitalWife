@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GameEditor;
@@ -57,18 +56,7 @@ internal sealed class SceneRenderTarget : IDisposable
 
     public void ForceOpaqueAlpha()
     {
-        if (_target is not RenderTexture glTarget)
-        {
-            return;
-        }
-
-        GL gl = _graphicsDevice.Gl;
-        gl.BindFramebuffer(GLEnum.Framebuffer, glTarget.FramebufferId);
-        gl.Disable(GLEnum.ScissorTest);
-        gl.ColorMask(false, false, false, true);
-        gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        gl.Clear(ClearBufferMask.ColorBufferBit);
-        gl.ColorMask(true, true, true, true);
+        _target.ForceOpaqueAlpha();
     }
 
     public void Dispose()

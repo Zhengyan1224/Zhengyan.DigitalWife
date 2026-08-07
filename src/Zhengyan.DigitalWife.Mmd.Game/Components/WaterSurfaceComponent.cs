@@ -27,7 +27,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private Texture2D? _skyTexture;
     private ITexture2D[] _backendNormalMaps = [];
     private ITexture2D? _backendSkyTexture;
-    private VeldridWaterRenderer? _vulkanRenderer;
+    private IWaterPassRenderer? _backendRenderer;
 
     private uint _program;
     private uint _vao;
@@ -320,21 +320,19 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        int resolution = Math.Clamp(_meshResolution, 1, 256);
+        _vertices = new WaterVertex[(resolution + 1) * (resolution + 1)];
+        uint[] backendIndices = CreateIndices(resolution);
+        _backendRenderer = Game.GraphicsDevice.Renderer.Services.CreateWaterPassRenderer(
+            checked((uint)(_vertices.Length * sizeof(WaterVertex))), backendIndices);
+        if (_backendRenderer is not null)
         {
-            int resolution = Math.Clamp(_meshResolution, 1, 256);
-            _vertices = new WaterVertex[(resolution + 1) * (resolution + 1)];
-            uint[] vulkanIndices = CreateIndices(resolution);
             FillVertices(_vertices, GerstnerWavesEnabled, _elapsedSeconds);
-            _indexCount = vulkanIndices.Length;
+            _indexCount = backendIndices.Length;
             _uploadedGerstnerEnabled = GerstnerWavesEnabled;
             _backendNormalMaps = LoadBackendTextures(Game.GraphicsDevice, _normalMapPaths);
             _backendSkyTexture = Game.GraphicsDevice.CreateTexture2D();
             _backendSkyTexture.LoadFromFile(_skyTexturePath);
-            _vulkanRenderer = new VeldridWaterRenderer(
-                vulkan,
-                checked((uint)(_vertices.Length * sizeof(WaterVertex))),
-                vulkanIndices);
             return;
         }
 
@@ -346,7 +344,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 
         int clampedResolution = Math.Clamp(_meshResolution, 1, 256);
         _vertices = new WaterVertex[(clampedResolution + 1) * (clampedResolution + 1)];
-        uint[] indices = CreateIndices(clampedResolution);
+        uint[] indices = backendIndices;
         FillVertices(_vertices, GerstnerWavesEnabled, _elapsedSeconds);
         _indexCount = indices.Length;
         _uploadedGerstnerEnabled = GerstnerWavesEnabled;
@@ -437,7 +435,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             return;
         }
 
-        if (_vulkanRenderer is not null && _backendNormalMaps.Length > 0 && _backendSkyTexture is not null)
+        if (_backendRenderer is not null && _backendNormalMaps.Length > 0 && _backendSkyTexture is not null)
         {
             int frame = ((int)_elapsedSeconds) % _backendNormalMaps.Length;
             int next = (frame + 1) % _backendNormalMaps.Length;
@@ -458,7 +456,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             }
             rippleData[^1] = new Vector4(
                 Math.Max(RippleLifetimeSeconds, .05f), RippleWaveSpeed, RippleFrequency, RippleNormalStrength);
-            _vulkanRenderer.Draw<WaterVertex>(
+            _backendRenderer.Draw<WaterVertex>(
                 new ReadOnlySpan<WaterVertex>(_vertices), (uint)_indexCount,
                 _backendNormalMaps[next], _backendNormalMaps[frame], _backendSkyTexture,
                 _planarReflectionTextureHandle, rippleData, World, _camera.View, _camera.Projection,
@@ -557,8 +555,8 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
         _backendNormalMaps = [];
         _backendSkyTexture?.Dispose();
         _backendSkyTexture = null;
-        _vulkanRenderer?.Dispose();
-        _vulkanRenderer = null;
+        _backendRenderer?.Dispose();
+        _backendRenderer = null;
 
         if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {

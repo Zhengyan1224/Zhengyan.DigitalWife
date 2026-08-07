@@ -1,24 +1,19 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GameEditor;
 
-internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame editorGame, OrbitCamera camera) : DrawableGameComponent
+internal sealed class EditorColliderWireframeComponent(GameEditorGame editorGame, OrbitCamera camera) : DrawableGameComponent
 {
     private const int FloatStride = 6;
     private const int Segments = 24;
 
     private readonly GameEditorGame _editorGame = editorGame;
     private readonly OrbitCamera _camera = camera;
-    private uint _program;
-    private uint _vao;
-    private uint _vertexBuffer;
-    private VeldridLineRenderer? _vulkanLineRenderer;
-    private float[] _vulkanVertices = [];
-    private int _bufferVertexCapacity;
+    private ILineRenderer? _lineRenderer;
+    private float[] _vertices = [];
     private int _vertexCount;
     private int _lastDebugDrawVersion = -1;
 
@@ -29,30 +24,7 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
-        {
-            _vulkanLineRenderer = new VeldridLineRenderer(vulkan);
-            return;
-        }
-
-        GL gl = Game.GraphicsDevice.Gl;
-        _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
-        _vao = gl.GenVertexArray();
-        _vertexBuffer = gl.GenBuffer();
-
-        gl.BindVertexArray(_vao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
-        EnsureBufferCapacity(512);
-
-        uint positionLocation = (uint)gl.GetAttribLocation(_program, "in_Pos");
-        uint colorLocation = (uint)gl.GetAttribLocation(_program, "in_Color");
-        gl.VertexAttribPointer(positionLocation, 3, GLEnum.Float, false, FloatStride * (uint)sizeof(float), (void*)0);
-        gl.EnableVertexAttribArray(positionLocation);
-        gl.VertexAttribPointer(colorLocation, 3, GLEnum.Float, false, FloatStride * (uint)sizeof(float), (void*)(3 * sizeof(float)));
-        gl.EnableVertexAttribArray(colorLocation);
-
-        gl.BindVertexArray(0);
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        _lineRenderer = Game.GraphicsDevice.Renderer.Services.CreateLineRenderer();
     }
 
     public override void Draw(GameTime gameTime)
@@ -69,51 +41,15 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
             return;
         }
 
-        if (_vulkanLineRenderer is not null)
-        {
-            _vulkanLineRenderer.Draw(_vulkanVertices, _vertexCount, _camera.View * _camera.Projection);
-            return;
-        }
-
-        GL gl = Game.GraphicsDevice.Gl;
-        int uniformLocation = gl.GetUniformLocation(_program, "u_WVP");
-        gl.Disable(GLEnum.CullFace);
-        gl.Disable(GLEnum.DepthTest);
-        gl.UseProgram(_program);
-        gl.BindVertexArray(_vao);
-        gl.SetUniform(uniformLocation, _camera.View * _camera.Projection);
-        gl.DrawArrays(GLEnum.Lines, 0, (uint)_vertexCount);
-        gl.BindVertexArray(0);
-        gl.UseProgram(0);
-        gl.Enable(GLEnum.DepthTest);
+        _lineRenderer?.Draw(_vertices, _vertexCount, _camera.View * _camera.Projection);
     }
 
     public override void Dispose()
     {
-        _vulkanLineRenderer?.Dispose();
-        _vulkanLineRenderer = null;
-        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
-        {
-            GL gl = Game.GraphicsDevice.Gl;
-            gl.DeleteBuffer(_vertexBuffer);
-            gl.DeleteVertexArray(_vao);
-            gl.DeleteProgram(_program);
-        }
+        _lineRenderer?.Dispose();
+        _lineRenderer = null;
 
         base.Dispose();
-    }
-
-    private void EnsureBufferCapacity(int vertexCount)
-    {
-        if (Game is null || _vulkanLineRenderer is not null || vertexCount <= _bufferVertexCapacity)
-        {
-            return;
-        }
-
-        _bufferVertexCapacity = Math.Max(vertexCount, Math.Max(_bufferVertexCapacity * 2, 512));
-        GL gl = Game.GraphicsDevice.Gl;
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
-        gl.BufferData(GLEnum.ArrayBuffer, (uint)(_bufferVertexCapacity * FloatStride * sizeof(float)), null, GLEnum.DynamicDraw);
     }
 
     private void RebuildGeometryIfNeeded()
@@ -156,27 +92,7 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         }
 
         _vertexCount = vertices.Count / FloatStride;
-        if (_vulkanLineRenderer is not null)
-        {
-            _vulkanVertices = [.. vertices];
-            _lastDebugDrawVersion = _editorGame.DebugDrawVersion;
-            return;
-        }
-
-        EnsureBufferCapacity(_vertexCount);
-
-        GL gl = Game.GraphicsDevice.Gl;
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
-        if (vertices.Count > 0)
-        {
-            float[] vertexArray = [.. vertices];
-            fixed (float* vertexPtr = vertexArray)
-            {
-                gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexArray.Length * sizeof(float)), vertexPtr);
-            }
-        }
-
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        _vertices = [.. vertices];
         _lastDebugDrawVersion = _editorGame.DebugDrawVersion;
     }
 
@@ -287,34 +203,4 @@ internal sealed unsafe class EditorColliderWireframeComponent(GameEditorGame edi
         vertices.Add(color.Z);
     }
 
-    private const string VertexShaderSource = """
-#version 300 es
-
-in vec3 in_Pos;
-in vec3 in_Color;
-
-out vec3 vs_Color;
-
-uniform mat4 u_WVP;
-
-void main()
-{
-    vs_Color = in_Color;
-    gl_Position = u_WVP * vec4(in_Pos, 1.0);
-}
-""";
-
-    private const string FragmentShaderSource = """
-#version 300 es
-
-precision highp float;
-
-in vec3 vs_Color;
-out vec4 out_Color;
-
-void main()
-{
-    out_Color = vec4(vs_Color, 1.0);
-}
-""";
 }

@@ -1,22 +1,18 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GameEditor;
 
-internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : DrawableGameComponent
+internal sealed class EditorDebugAxesComponent(OrbitCamera camera) : DrawableGameComponent
 {
     private const int FloatStride = 6;
     private const int MaxVertexCount = 96;
 
     private readonly OrbitCamera _camera = camera;
 
-    private uint _program;
-    private uint _vao;
-    private uint _vertexBuffer;
-    private VeldridLineRenderer? _vulkanLineRenderer;
-    private float[] _vulkanVertices = [];
+    private ILineRenderer? _lineRenderer;
+    private float[] _vertices = [];
     private int _vertexCount;
     private bool _geometryDirty = true;
     private float _axisLength = 3.0f;
@@ -59,31 +55,8 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
-        {
-            _vulkanLineRenderer = new VeldridLineRenderer(vulkan, MaxVertexCount * FloatStride * sizeof(float));
-            return;
-        }
-
-        GL gl = Game.GraphicsDevice.Gl;
-        _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
-
-        _vao = gl.GenVertexArray();
-        _vertexBuffer = gl.GenBuffer();
-
-        gl.BindVertexArray(_vao);
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
-        gl.BufferData(GLEnum.ArrayBuffer, (uint)(MaxVertexCount * FloatStride * sizeof(float)), null, GLEnum.DynamicDraw);
-
-        uint positionLocation = (uint)gl.GetAttribLocation(_program, "in_Pos");
-        uint colorLocation = (uint)gl.GetAttribLocation(_program, "in_Color");
-        gl.VertexAttribPointer(positionLocation, 3, GLEnum.Float, false, FloatStride * (uint)sizeof(float), (void*)0);
-        gl.EnableVertexAttribArray(positionLocation);
-        gl.VertexAttribPointer(colorLocation, 3, GLEnum.Float, false, FloatStride * (uint)sizeof(float), (void*)(3 * sizeof(float)));
-        gl.EnableVertexAttribArray(colorLocation);
-
-        gl.BindVertexArray(0);
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        _lineRenderer = Game.GraphicsDevice.Renderer.Services
+            .CreateLineRenderer(MaxVertexCount * FloatStride * sizeof(float));
     }
 
     public override void Draw(GameTime gameTime)
@@ -95,50 +68,23 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
             return;
         }
 
-        if (_vulkanLineRenderer is not null)
+        if (_geometryDirty)
         {
-            if (_geometryDirty)
-            {
-                Span<float> vertices = stackalloc float[MaxVertexCount * FloatStride];
-                int vertexCount = 0;
-                AddAxes(vertices, ref vertexCount);
-                AddOriginMarker(vertices, ref vertexCount);
-                _vulkanVertices = vertices[..(vertexCount * FloatStride)].ToArray();
-                _vertexCount = vertexCount;
-                _geometryDirty = false;
-            }
-
-            _vulkanLineRenderer.Draw(_vulkanVertices, _vertexCount, _camera.View * _camera.Projection);
-            return;
+            Span<float> vertices = stackalloc float[MaxVertexCount * FloatStride];
+            int vertexCount = 0;
+            AddAxes(vertices, ref vertexCount);
+            AddOriginMarker(vertices, ref vertexCount);
+            _vertices = vertices[..(vertexCount * FloatStride)].ToArray();
+            _vertexCount = vertexCount;
+            _geometryDirty = false;
         }
-
-        UploadGeometryIfNeeded();
-
-        GL gl = Game.GraphicsDevice.Gl;
-        int uniformLocation = gl.GetUniformLocation(_program, "u_WVP");
-
-        gl.Disable(GLEnum.CullFace);
-        gl.Disable(GLEnum.DepthTest);
-        gl.UseProgram(_program);
-        gl.BindVertexArray(_vao);
-        gl.SetUniform(uniformLocation, _camera.View * _camera.Projection);
-        gl.DrawArrays(GLEnum.Lines, 0, (uint)_vertexCount);
-        gl.BindVertexArray(0);
-        gl.UseProgram(0);
-        gl.Enable(GLEnum.DepthTest);
+        _lineRenderer?.Draw(_vertices, _vertexCount, _camera.View * _camera.Projection);
     }
 
     public override void Dispose()
     {
-        _vulkanLineRenderer?.Dispose();
-        _vulkanLineRenderer = null;
-        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
-        {
-            GL gl = Game.GraphicsDevice.Gl;
-            gl.DeleteBuffer(_vertexBuffer);
-            gl.DeleteVertexArray(_vao);
-            gl.DeleteProgram(_program);
-        }
+        _lineRenderer?.Dispose();
+        _lineRenderer = null;
 
         base.Dispose();
     }
@@ -227,58 +173,4 @@ internal sealed unsafe class EditorDebugAxesComponent(OrbitCamera camera) : Draw
         vertices[offset + 5] = color.Z;
     }
 
-    private void UploadGeometryIfNeeded()
-    {
-        if (Game is null || !_geometryDirty)
-        {
-            return;
-        }
-
-        Span<float> vertices = stackalloc float[MaxVertexCount * FloatStride];
-        int vertexCount = 0;
-        AddAxes(vertices, ref vertexCount);
-        AddOriginMarker(vertices, ref vertexCount);
-
-        GL gl = Game.GraphicsDevice.Gl;
-        gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
-        fixed (float* vertexPtr = vertices)
-        {
-            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexCount * FloatStride * sizeof(float)), vertexPtr);
-        }
-
-        gl.BindBuffer(GLEnum.ArrayBuffer, 0);
-        _vertexCount = vertexCount;
-        _geometryDirty = false;
-    }
-
-    private const string VertexShaderSource = """
-#version 300 es
-
-in vec3 in_Pos;
-in vec3 in_Color;
-
-out vec3 vs_Color;
-
-uniform mat4 u_WVP;
-
-void main()
-{
-    vs_Color = in_Color;
-    gl_Position = u_WVP * vec4(in_Pos, 1.0);
-}
-""";
-
-    private const string FragmentShaderSource = """
-#version 300 es
-
-precision highp float;
-
-in vec3 vs_Color;
-out vec4 out_Color;
-
-void main()
-{
-    out_Color = vec4(vs_Color, 1.0);
-}
-""";
 }

@@ -5,7 +5,7 @@ using Veldrid.SPIRV;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
-internal sealed class VeldridSkyboxRenderer : IDisposable
+internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
 {
     private readonly VulkanRenderer _renderer;
     private readonly DeviceBuffer _vertices;

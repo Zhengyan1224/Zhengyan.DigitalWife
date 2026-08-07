@@ -10,7 +10,7 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
     private string _texturePath;
     private Texture2D? _texture;
     private ITexture2D? _backendTexture;
-    private VeldridSkyboxRenderer? _vulkanRenderer;
+    private ISkyboxPassRenderer? _backendRenderer;
     private uint _program;
     private uint _vao;
     private uint _vertexBuffer;
@@ -62,11 +62,11 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        _backendRenderer = Game.GraphicsDevice.Renderer.Services.CreateSkyboxPassRenderer();
+        if (_backendRenderer is not null)
         {
             _backendTexture = Game.GraphicsDevice.CreateTexture2D();
             ReloadBackendTexture();
-            _vulkanRenderer = new VeldridSkyboxRenderer(vulkan);
             return;
         }
 
@@ -122,9 +122,9 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
             return;
         }
 
-        if (_vulkanRenderer is not null && _backendTexture is not null)
+        if (_backendRenderer is not null && _backendTexture is not null)
         {
-            _vulkanRenderer.Draw(_backendTexture, inverseViewProjection, Tint, Exposure);
+            _backendRenderer.Draw(_backendTexture, inverseViewProjection, Tint, Exposure);
             return;
         }
 
@@ -157,8 +157,8 @@ public sealed unsafe class SkyboxComponent : DrawableGameComponent
     {
         _texture?.Dispose();
         _texture = null;
-        _vulkanRenderer?.Dispose();
-        _vulkanRenderer = null;
+        _backendRenderer?.Dispose();
+        _backendRenderer = null;
         _backendTexture?.Dispose();
         _backendTexture = null;
 

@@ -20,4 +20,5 @@ public interface IRenderTarget : IDisposable
     void BeginPass(Vector4 clearColor);
     void ResumePass();
     void EndPass();
+    void ForceOpaqueAlpha();
 }

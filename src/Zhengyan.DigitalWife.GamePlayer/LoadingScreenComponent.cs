@@ -25,7 +25,7 @@ internal sealed unsafe class LoadingScreenComponent(
     private int _uniformUseTexture = -1;
     private Texture2D? _backgroundTexture;
     private ITexture2D? _backendBackgroundTexture;
-    private VeldridLoadingScreenRenderer? _vulkanRenderer;
+    private ILoadingScreenPassRenderer? _backendRenderer;
     private string _backgroundTexturePath = string.Empty;
 
     protected override void Initialize()
@@ -35,9 +35,9 @@ internal sealed unsafe class LoadingScreenComponent(
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        _backendRenderer = Game.GraphicsDevice.Renderer.Services.CreateLoadingScreenPassRenderer();
+        if (_backendRenderer is not null)
         {
-            _vulkanRenderer = new VeldridLoadingScreenRenderer(vulkan);
             return;
         }
 
@@ -70,7 +70,7 @@ internal sealed unsafe class LoadingScreenComponent(
             return;
         }
 
-        if (_vulkanRenderer is not null)
+        if (_backendRenderer is not null)
         {
             DrawVulkan();
             return;
@@ -123,8 +123,8 @@ internal sealed unsafe class LoadingScreenComponent(
 
     public override void Dispose()
     {
-        _vulkanRenderer?.Dispose();
-        _vulkanRenderer = null;
+        _backendRenderer?.Dispose();
+        _backendRenderer = null;
         _backendBackgroundTexture?.Dispose();
         _backendBackgroundTexture = null;
 
@@ -179,14 +179,14 @@ internal sealed unsafe class LoadingScreenComponent(
 
     private void DrawVulkan()
     {
-        if (Game is null || _vulkanRenderer is null) return;
+        if (Game is null || _backendRenderer is null) return;
         LoadingScreenSettings settings = _getSettings();
         Vector4 backgroundColor = settings.BackgroundColor.ToVector4();
-        _vulkanRenderer.DrawRect(new Vector4(-1, -1, 1, 1), backgroundColor);
+        _backendRenderer.DrawRect(new Vector4(-1, -1, 1, 1), backgroundColor);
 
         ITexture2D? image = GetBackendBackgroundTexture(settings);
         if (image is not null)
-            _vulkanRenderer.DrawRect(new Vector4(-1, -1, 1, 1), Vector4.One, image, settings.BackgroundImageOpacity);
+            _backendRenderer.DrawRect(new Vector4(-1, -1, 1, 1), Vector4.One, image, settings.BackgroundImageOpacity);
 
         if (!settings.ProgressBar.Visible) return;
         LoadingProgressBarSettings progress = settings.ProgressBar;
@@ -205,8 +205,8 @@ internal sealed unsafe class LoadingScreenComponent(
 
     private void DrawVulkanBar(LayoutRect rect, Vector4 color, float thickness)
     {
-        if (Game is null || _vulkanRenderer is null) return;
-        _vulkanRenderer.DrawRect(ToClipRect(rect, Game.Window.Size.X, Game.Window.Size.Y), color);
+        if (Game is null || _backendRenderer is null) return;
+        _backendRenderer.DrawRect(ToClipRect(rect, Game.Window.Size.X, Game.Window.Size.Y), color);
     }
 
     private ITexture2D? GetBackendBackgroundTexture(LoadingScreenSettings settings)

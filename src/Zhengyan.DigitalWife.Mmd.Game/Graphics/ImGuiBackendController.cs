@@ -16,12 +16,7 @@ public static class ImGuiBackendController
 {
     public static IImGuiBackendController Create(Game game, Action? configureFonts = null)
     {
-        return game.GraphicsDevice.Renderer switch
-        {
-            OpenGlRenderer => new OpenGlImGuiBackendController(game, configureFonts),
-            VulkanRenderer vulkan => new VulkanImGuiBackendController(game, vulkan, configureFonts),
-            _ => throw new NotSupportedException($"ImGui is not available on {game.GraphicsDevice.Backend}.")
-        };
+        return game.GraphicsDevice.Renderer.Services.CreateImGuiController(game, configureFonts);
     }
 }
 
@@ -29,11 +24,11 @@ internal sealed class OpenGlImGuiBackendController : IImGuiBackendController
 {
     private readonly ImGuiController _controller;
 
-    public OpenGlImGuiBackendController(Game game, Action? configureFonts)
+    public OpenGlImGuiBackendController(Game game, OpenGlRenderer renderer, Action? configureFonts)
     {
         _controller = configureFonts is null
-            ? new ImGuiController(game.GraphicsDevice.Gl, game.Window, game.Input.Context)
-            : new ImGuiController(game.GraphicsDevice.Gl, game.Window, game.Input.Context, configureFonts);
+            ? new ImGuiController(renderer.Gl, game.Window, game.Input.Context)
+            : new ImGuiController(renderer.Gl, game.Window, game.Input.Context, configureFonts);
     }
 
     public void Update(float deltaSeconds) => _controller.Update(deltaSeconds);

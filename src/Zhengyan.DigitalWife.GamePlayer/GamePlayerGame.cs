@@ -174,12 +174,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _shadowMapRenderer = new ShadowMapRenderer(this);
-        _underwaterPostProcessRenderer = GraphicsDevice.Renderer switch
-        {
-            OpenGlRenderer => new UnderwaterPostProcessRenderer(GraphicsDevice.Gl, "PlayerUnderwater"),
-            VulkanRenderer vulkan => new VeldridUnderwaterPostProcessRenderer(vulkan, "PlayerUnderwater"),
-            _ => throw new NotSupportedException($"Underwater post-process is not available on {GraphicsDevice.Backend}.")
-        };
+        _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
+            .CreateUnderwaterPostProcessRenderer("PlayerUnderwater");
 
         _desktopSpriteWindowDrag = AddComponent(new DesktopSpriteWindowDragComponent(() => Project.Window)
         {
@@ -306,11 +302,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         RenderShadowMap(gameTime, width, height);
         RenderPlanarWaterReflections(gameTime, _camera, width, height);
         GraphicsDevice.RestoreBackBuffer();
-        if (GraphicsDevice.Renderer is OpenGlRenderer openGl)
-        {
-            GraphicsDevice.Gl.Disable(Silk.NET.OpenGLES.GLEnum.ScissorTest);
-            GraphicsDevice.Gl.Viewport(0, 0, (uint)width, (uint)height);
-        }
+        GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
+        GraphicsDevice.SetViewport(0, 0, width, height);
         DrawSceneSkybox(gameTime);
         _guiOverlay?.DrawBackgroundSprites(width, height, 0, 0, width, height);
     }
@@ -359,14 +352,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             GraphicsDevice.SetViewport(x, y, width, height);
             GraphicsDevice.SetScissor(x, y, width, height);
             Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
-            if (GraphicsDevice.Renderer is OpenGlRenderer)
-            {
-                Silk.NET.OpenGLES.GL clearGl = GraphicsDevice.Gl;
-                clearGl.ColorMask(true, true, true, true);
-                clearGl.DepthMask(true);
-                clearGl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
-                clearGl.Clear(Silk.NET.OpenGLES.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGLES.ClearBufferMask.DepthBufferBit | Silk.NET.OpenGLES.ClearBufferMask.StencilBufferBit);
-            }
+            GraphicsDevice.ClearViewport(x, y, width, height, clearColor);
 
             if (TryDrawUnderwaterCameraToBackBuffer(gameTime, camera, x, y, width, height, scissorEnabled: true, clearColor))
             {

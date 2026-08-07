@@ -17,12 +17,7 @@ public sealed class ShadowMapRenderer : IDisposable
     public ShadowMapRenderer(Game game)
     {
         ArgumentNullException.ThrowIfNull(game);
-        _shadowTexture = game.GraphicsDevice.Renderer switch
-        {
-            OpenGlRenderer openGl => new OpenGlShadowMapTarget(openGl.Gl, "DirectionalShadowMap"),
-            VulkanRenderer vulkan => new VeldridShadowMapTarget(vulkan, "DirectionalShadowMap"),
-            _ => throw new NotSupportedException($"Shadow maps are not implemented for {game.GraphicsDevice.Backend}.")
-        };
+        _shadowTexture = game.GraphicsDevice.Renderer.Services.CreateShadowMapTarget("DirectionalShadowMap");
     }
 
     public int Resolution

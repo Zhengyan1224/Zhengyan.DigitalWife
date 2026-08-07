@@ -368,6 +368,20 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             throw new ArgumentException("Both Vulkan vertex and fragment SPIR-V paths are required.");
         }
 
+        if (customSpirv)
+        {
+            VulkanShaderContract.ValidatePair(
+                vertexSpirvPath!,
+                fragmentSpirvPath!,
+                new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "PmxFrame", "PmxShadowMap", "PmxShadowSampler",
+                    "PmxMaterial", "PmxBaseTexture", "PmxBaseSampler",
+                    "PmxSphereTexture", "PmxSphereSampler",
+                    "PmxToonTexture", "PmxToonSampler"
+                });
+        }
+
         ShaderDescription vertexShader = customSpirv
             ? VulkanShaderCompiler.LoadSpirvFile(vertexSpirvPath!, ShaderStages.Vertex)
             : VulkanShaderCompiler.CompileSource("pmx_main.vert", VertexShaderSource, ShaderStages.Vertex);

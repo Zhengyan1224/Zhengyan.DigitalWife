@@ -11,7 +11,6 @@ using Zhengyan.DigitalWife.Mmd.Game.Components;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
-using Silk.NET.OpenGLES;
 
 namespace Zhengyan.DigitalWife.GameEditor;
 
@@ -131,12 +130,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _shadowMapRenderer = new ShadowMapRenderer(this);
-        _underwaterPostProcessRenderer = GraphicsDevice.Renderer switch
-        {
-            OpenGlRenderer => new UnderwaterPostProcessRenderer(GraphicsDevice.Gl, "EditorUnderwater"),
-            VulkanRenderer vulkan => new VeldridUnderwaterPostProcessRenderer(vulkan, "EditorUnderwater"),
-            _ => throw new NotSupportedException($"Underwater post-process is not available on {GraphicsDevice.Backend}.")
-        };
+        _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
+            .CreateUnderwaterPostProcessRenderer("EditorUnderwater");
 
         ApplyCameraSettings();
         ApplySceneSettings();
@@ -223,10 +218,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _sceneRenderTarget.Height,
             () => _sceneRenderTarget.Bind());
         _sceneRenderTarget.Bind();
-        if (GraphicsDevice.Renderer is OpenGlRenderer openGl)
-        {
-            GraphicsDevice.Gl.Disable(GLEnum.ScissorTest);
-        }
+        GraphicsDevice.SetScissor(0, 0, _sceneRenderTarget.Width, _sceneRenderTarget.Height, enabled: false);
+        GraphicsDevice.SetViewport(0, 0, _sceneRenderTarget.Width, _sceneRenderTarget.Height);
         DrawSceneSkybox(gameTime);
         _overlay?.DrawBackgroundSprites(
             _sceneRenderTarget.Width,
@@ -280,14 +273,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             GraphicsDevice.SetViewport(x, y, width, height);
             GraphicsDevice.SetScissor(x, y, width, height);
             Vector4 clearColor = Project.Scene.Lighting.ClearColor.ToVector4();
-            if (GraphicsDevice.Renderer is OpenGlRenderer)
-            {
-                GL clearGl = GraphicsDevice.Gl;
-                clearGl.ColorMask(true, true, true, true);
-                clearGl.DepthMask(true);
-                clearGl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
-                clearGl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
-            }
+            GraphicsDevice.ClearViewport(x, y, width, height, clearColor);
 
             if (TryDrawUnderwaterCameraToSceneTarget(gameTime, camera, x, y, width, height, scissorEnabled: true))
             {
