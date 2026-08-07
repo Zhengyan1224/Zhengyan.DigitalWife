@@ -67,6 +67,9 @@ public sealed class GraphicsDevice
     public void SetScissor(int x, int y, int width, int height, bool enabled = true)
         => _renderer.SetScissor(x, y, width, height, enabled);
 
+    public bool TryReadBackBufferRgba(Span<byte> destination)
+        => _renderer.TryReadBackBufferRgba(destination);
+
     public void Clear(ClearBufferMask mask = ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit)
     {
         ClearBufferMask defaultMask = ClearBufferMask.ColorBufferBit

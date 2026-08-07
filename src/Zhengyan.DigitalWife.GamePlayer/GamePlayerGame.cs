@@ -868,11 +868,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     private void EnsureLoadingScreen()
     {
-        if (GraphicsDevice.Renderer is not OpenGlRenderer)
-        {
-            return;
-        }
-
         if (_loadingScreen is not null)
         {
             return;

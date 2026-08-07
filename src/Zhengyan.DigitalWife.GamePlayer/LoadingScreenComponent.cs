@@ -24,6 +24,8 @@ internal sealed unsafe class LoadingScreenComponent(
     private int _uniformTexture = -1;
     private int _uniformUseTexture = -1;
     private Texture2D? _backgroundTexture;
+    private ITexture2D? _backendBackgroundTexture;
+    private VeldridLoadingScreenRenderer? _vulkanRenderer;
     private string _backgroundTexturePath = string.Empty;
 
     protected override void Initialize()
@@ -31,6 +33,12 @@ internal sealed unsafe class LoadingScreenComponent(
         if (Game is null)
         {
             throw new InvalidOperationException("Game is not attached.");
+        }
+
+        if (Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            _vulkanRenderer = new VeldridLoadingScreenRenderer(vulkan);
+            return;
         }
 
         GL gl = Game.GraphicsDevice.Gl;
@@ -59,6 +67,12 @@ internal sealed unsafe class LoadingScreenComponent(
 
         if (Game is null)
         {
+            return;
+        }
+
+        if (_vulkanRenderer is not null)
+        {
+            DrawVulkan();
             return;
         }
 
@@ -109,7 +123,12 @@ internal sealed unsafe class LoadingScreenComponent(
 
     public override void Dispose()
     {
-        if (Game is not null)
+        _vulkanRenderer?.Dispose();
+        _vulkanRenderer = null;
+        _backendBackgroundTexture?.Dispose();
+        _backendBackgroundTexture = null;
+
+        if (Game is not null && Game.GraphicsDevice.Renderer is OpenGlRenderer)
         {
             GL gl = Game.GraphicsDevice.Gl;
             gl.DeleteBuffer(_vertexBuffer);
@@ -156,6 +175,58 @@ internal sealed unsafe class LoadingScreenComponent(
             ClearBackgroundTexture();
             return null;
         }
+    }
+
+    private void DrawVulkan()
+    {
+        if (Game is null || _vulkanRenderer is null) return;
+        LoadingScreenSettings settings = _getSettings();
+        Vector4 backgroundColor = settings.BackgroundColor.ToVector4();
+        _vulkanRenderer.DrawRect(new Vector4(-1, -1, 1, 1), backgroundColor);
+
+        ITexture2D? image = GetBackendBackgroundTexture(settings);
+        if (image is not null)
+            _vulkanRenderer.DrawRect(new Vector4(-1, -1, 1, 1), Vector4.One, image, settings.BackgroundImageOpacity);
+
+        if (!settings.ProgressBar.Visible) return;
+        LoadingProgressBarSettings progress = settings.ProgressBar;
+        LayoutRect pixelRect = LayoutResolver.Resolve(progress.LayoutMode, progress.X, progress.Y, progress.Width, progress.Height,
+            Game.Window.Size.X, Game.Window.Size.Y, 1280, 720);
+        DrawVulkanBar(pixelRect, progress.BorderColor.ToVector4(), progress.BorderThickness);
+        float border = Math.Clamp(progress.BorderThickness, 0, MathF.Min(pixelRect.Width, pixelRect.Height) * .45f);
+        LayoutRect background = new(pixelRect.X + border, pixelRect.Y + border, Math.Max(pixelRect.Width - border * 2, 1), Math.Max(pixelRect.Height - border * 2, 1));
+        DrawVulkanBar(background, progress.BackgroundColor.ToVector4(), 0);
+        float padding = Math.Clamp(progress.Padding, 0, MathF.Min(background.Width, background.Height) * .45f);
+        LayoutRect track = new(background.X + padding, background.Y + padding, Math.Max(background.Width - padding * 2, 1), Math.Max(background.Height - padding * 2, 1));
+        DrawVulkanBar(track, progress.TrackColor.ToVector4(), 0);
+        float amount = Math.Clamp(_getProgress(), 0, 1);
+        if (amount > 0) DrawVulkanBar(track with { Width = Math.Max(track.Width * amount, 0) }, progress.FillColor.ToVector4(), 0);
+    }
+
+    private void DrawVulkanBar(LayoutRect rect, Vector4 color, float thickness)
+    {
+        if (Game is null || _vulkanRenderer is null) return;
+        _vulkanRenderer.DrawRect(ToClipRect(rect, Game.Window.Size.X, Game.Window.Size.Y), color);
+    }
+
+    private ITexture2D? GetBackendBackgroundTexture(LoadingScreenSettings settings)
+    {
+        if (Game is null || string.IsNullOrWhiteSpace(settings.BackgroundImagePath))
+        {
+            _backendBackgroundTexture?.Dispose(); _backendBackgroundTexture = null; _backgroundTexturePath = string.Empty; return null;
+        }
+        string fullPath = _resolvePath(settings.BackgroundImagePath);
+        if (!File.Exists(fullPath)) return null;
+        if (_backendBackgroundTexture is not null && string.Equals(_backgroundTexturePath, fullPath, StringComparison.OrdinalIgnoreCase)) return _backendBackgroundTexture;
+        _backendBackgroundTexture?.Dispose();
+        try
+        {
+            _backendBackgroundTexture = Game.GraphicsDevice.CreateTexture2D();
+            _backendBackgroundTexture.LoadFromFile(fullPath);
+            _backgroundTexturePath = fullPath;
+            return _backendBackgroundTexture;
+        }
+        catch { _backendBackgroundTexture?.Dispose(); _backendBackgroundTexture = null; return null; }
     }
 
     private void ClearBackgroundTexture()

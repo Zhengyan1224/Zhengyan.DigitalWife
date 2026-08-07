@@ -195,16 +195,12 @@ public abstract class Game : IDisposable
 
     private void OnLoad()
     {
-        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = Options.UseOpenCL;
-
         _renderer.Initialize(_window, _window.Size);
         GraphicsDevice = new GraphicsDevice(_renderer, Options.ClearColor);
-        if (_renderer.Backend == GraphicsBackend.Vulkan)
-        {
-            throw new NotSupportedException(
-                "The Vulkan device and swapchain are available, but legacy OpenGL scene passes are not yet migrated. " +
-                "Use OpenGL until the renderer resource migration is complete.");
-        }
+
+        // OpenCL is only a valid compute option for the OpenGL compatibility backend.
+        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL =
+            GraphicsDevice.Backend == GraphicsBackend.OpenGL && Options.UseOpenCL;
 
         Input = new InputManager(_window.CreateInput(), _window);
         if (Options.EnableAudio)

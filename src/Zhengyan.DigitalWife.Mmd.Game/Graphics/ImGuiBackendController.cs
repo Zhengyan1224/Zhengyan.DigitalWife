@@ -2,8 +2,6 @@ using ImGuiNET;
 using Silk.NET.Input;
 using Silk.NET.OpenGLES.Extensions.ImGui;
 using Veldrid;
-using SilkKey = Silk.NET.Input.Key;
-using SilkMouseButton = Silk.NET.Input.MouseButton;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
@@ -47,28 +45,17 @@ internal sealed class OpenGlImGuiBackendController : IImGuiBackendController
 internal sealed class VulkanImGuiBackendController : IImGuiBackendController
 {
     private readonly Game _game;
-    private readonly VulkanRenderer _renderer;
-    private readonly Veldrid.ImGuiRenderer _controller;
+    private readonly VeldridImGuiRenderer _controller;
     private readonly IKeyboard? _keyboard;
     private readonly IMouse? _mouse;
-    private readonly Dictionary<TextureView, nint> _bindings = [];
     private float _wheelX;
     private float _wheelY;
+    private readonly List<char> _characters = [];
 
     public VulkanImGuiBackendController(Game game, VulkanRenderer renderer, Action? configureFonts)
     {
         _game = game;
-        _renderer = renderer;
-        _controller = new Veldrid.ImGuiRenderer(
-            renderer.NativeDevice,
-            renderer.NativeOutputDescription,
-            Math.Max(game.GraphicsDevice.BackBufferSize.X, 1),
-            Math.Max(game.GraphicsDevice.BackBufferSize.Y, 1));
-        if (configureFonts is not null)
-        {
-            configureFonts();
-            _controller.RecreateFontDeviceTexture(renderer.NativeDevice);
-        }
+        _controller = new VeldridImGuiRenderer(renderer, configureFonts);
 
         _keyboard = game.Input.Context.Keyboards.FirstOrDefault();
         _mouse = game.Input.Context.Mice.FirstOrDefault();
@@ -78,22 +65,26 @@ internal sealed class VulkanImGuiBackendController : IImGuiBackendController
 
     public void Update(float deltaSeconds)
     {
-        SilkInputSnapshot snapshot = new(_mouse, _keyboard, _wheelY);
+        _controller.Update(
+            Math.Max(deltaSeconds, 1f / 1000f),
+            Math.Max(_game.GraphicsDevice.BackBufferSize.X, 1),
+            Math.Max(_game.GraphicsDevice.BackBufferSize.Y, 1),
+            _mouse,
+            _keyboard,
+            _wheelX,
+            _wheelY,
+            _characters);
+        _characters.Clear();
         _wheelX = _wheelY = 0;
-        _controller.Update(Math.Max(deltaSeconds, 1f / 1000f), snapshot);
     }
 
-    public void Render() => _controller.Render(_renderer.NativeDevice, _renderer.NativeCommandList);
+    public void Render() => _controller.Render();
 
     public nint GetTextureBinding(RuntimeTextureHandle texture)
     {
-        if (texture.NativeResource is not TextureView view) return 0;
-        if (!_bindings.TryGetValue(view, out nint binding))
-        {
-            binding = _controller.GetOrCreateImGuiBinding(_renderer.NativeDevice.ResourceFactory, view);
-            _bindings.Add(view, binding);
-        }
-        return binding;
+        return texture.NativeResource is TextureView view
+            ? _controller.GetOrCreateTextureBinding(view)
+            : 0;
     }
 
     public void Dispose()
@@ -103,20 +94,10 @@ internal sealed class VulkanImGuiBackendController : IImGuiBackendController
         _controller.Dispose();
     }
 
-    private static readonly (SilkKey, ImGuiKey)[] KeyMap =
-    [
-        (SilkKey.Tab, ImGuiKey.Tab), (SilkKey.Left, ImGuiKey.LeftArrow), (SilkKey.Right, ImGuiKey.RightArrow),
-        (SilkKey.Up, ImGuiKey.UpArrow), (SilkKey.Down, ImGuiKey.DownArrow), (SilkKey.PageUp, ImGuiKey.PageUp),
-        (SilkKey.PageDown, ImGuiKey.PageDown), (SilkKey.Home, ImGuiKey.Home), (SilkKey.End, ImGuiKey.End),
-        (SilkKey.Delete, ImGuiKey.Delete), (SilkKey.Backspace, ImGuiKey.Backspace), (SilkKey.Enter, ImGuiKey.Enter),
-        (SilkKey.Escape, ImGuiKey.Escape), (SilkKey.Space, ImGuiKey.Space), (SilkKey.A, ImGuiKey.A),
-        (SilkKey.C, ImGuiKey.C), (SilkKey.V, ImGuiKey.V), (SilkKey.X, ImGuiKey.X), (SilkKey.Y, ImGuiKey.Y), (SilkKey.Z, ImGuiKey.Z)
-    ];
-
-    private static void OnKeyChar(IKeyboard keyboard, char character)
+    private void OnKeyChar(IKeyboard keyboard, char character)
     {
         _ = keyboard;
-        ImGui.GetIO().AddInputCharacter(character);
+        _characters.Add(character);
     }
 
     private void OnScroll(IMouse mouse, ScrollWheel wheel)
@@ -126,28 +107,4 @@ internal sealed class VulkanImGuiBackendController : IImGuiBackendController
         _wheelY += wheel.Y;
     }
 
-    private sealed class SilkInputSnapshot : InputSnapshot
-    {
-        private readonly IMouse? _mouse;
-
-        public SilkInputSnapshot(IMouse? mouse, IKeyboard? keyboard, float wheelDelta)
-        {
-            _mouse = mouse;
-            MousePosition = mouse?.Position ?? System.Numerics.Vector2.Zero;
-            WheelDelta = wheelDelta;
-        }
-
-        public IReadOnlyList<KeyEvent> KeyEvents { get; } = Array.Empty<KeyEvent>();
-        public IReadOnlyList<MouseEvent> MouseEvents { get; } = Array.Empty<MouseEvent>();
-        public IReadOnlyList<char> KeyCharPresses { get; } = Array.Empty<char>();
-        public System.Numerics.Vector2 MousePosition { get; }
-        public float WheelDelta { get; }
-        public bool IsMouseDown(Veldrid.MouseButton button) => button switch
-        {
-            Veldrid.MouseButton.Left => _mouse?.IsButtonPressed(SilkMouseButton.Left) == true,
-            Veldrid.MouseButton.Right => _mouse?.IsButtonPressed(SilkMouseButton.Right) == true,
-            Veldrid.MouseButton.Middle => _mouse?.IsButtonPressed(SilkMouseButton.Middle) == true,
-            _ => false
-        };
-    }
 }

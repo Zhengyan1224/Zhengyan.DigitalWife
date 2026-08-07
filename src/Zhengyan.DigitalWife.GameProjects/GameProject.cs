@@ -41,6 +41,8 @@ public sealed class GameRuntimeSettings
     public string GraphicsBackend { get; set; } = "Auto";
 
     public bool UseOpenCL { get; set; } = true;
+
+    public bool UseVulkanCompute { get; set; } = true;
 }
 
 public sealed class GameProjectScriptRuntime

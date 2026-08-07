@@ -34,6 +34,8 @@ public interface IRenderer : IDisposable
 
     void SetScissor(int x, int y, int width, int height, bool enabled);
 
+    bool TryReadBackBufferRgba(Span<byte> destination);
+
     void Present();
 }
 

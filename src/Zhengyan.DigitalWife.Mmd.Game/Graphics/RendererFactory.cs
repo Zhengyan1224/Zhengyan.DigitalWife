@@ -24,10 +24,17 @@ public static class RendererFactory
             return new RendererSelection(requestedBackend, GraphicsBackend.Vulkan);
         }
 
-        // Auto remains conservative until every scene pass has a backend-neutral implementation.
-        // This prevents an existing project from opening as a blank Vulkan swapchain.
-        return new RendererSelection(requestedBackend, GraphicsBackend.OpenGL,
-            "Vulkan is available only for the staged device/swapchain path; scene passes still require OpenGL.");
+        string vulkanReason = "Vulkan is restricted to Windows and Linux for automatic selection.";
+        if ((OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
+            && Vulkan.IsSupported(out vulkanReason))
+        {
+            return new RendererSelection(requestedBackend, GraphicsBackend.Vulkan);
+        }
+
+        string fallbackReason = OperatingSystem.IsMacOS()
+            ? "Vulkan is not selected automatically on macOS; using OpenGL."
+            : $"Vulkan is unavailable; using OpenGL. {vulkanReason}";
+        return new RendererSelection(requestedBackend, GraphicsBackend.OpenGL, fallbackReason);
     }
 
     public static IRenderer Create(RendererSelection selection) => selection.ResolvedBackend switch

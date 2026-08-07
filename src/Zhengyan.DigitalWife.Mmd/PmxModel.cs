@@ -223,6 +223,7 @@ public unsafe class PmxModel : MMDModel
     private MMDPhysicsManager? physicsManager;
 
     private Kernel? kernel;
+    private IPmxSkinningCompute? skinningCompute;
 
     private nint positionsBuffer;
     private nint normalsBuffer;
@@ -267,7 +268,12 @@ public unsafe class PmxModel : MMDModel
 
     public bool IsUsingOpenCL => kernel is not null;
 
-    public string ComputeBackend => IsUsingOpenCL ? "OpenCL" : "CPU";
+    public bool IsUsingVulkanCompute => skinningCompute is not null;
+
+    public string ComputeBackend => skinningCompute?.BackendName ?? (IsUsingOpenCL ? "OpenCL" : "CPU");
+
+    /// <summary>Set by the Vulkan game layer before loading this model.</summary>
+    public PmxSkinningComputeFactory? SkinningComputeFactory { get; set; }
 
     public IReadOnlyList<string> LoadWarnings => _loadWarnings;
 
@@ -307,24 +313,28 @@ public unsafe class PmxModel : MMDModel
 
         string dir = Path.GetDirectoryName(path)!;
 
-        // Create Kernel
+        // OpenCL is a graphics-backend-specific compatibility compute path. Vulkan
+        // models receive a separate injected compute executor below and never probe CL.
         uint alignment = 4096;
-        try
+        if (Kernel.UseOpenCL)
         {
-            ValidateOpenClInteropLayout();
-            string kernelPath = Path.Combine(AppContext.BaseDirectory, "skinned_animation.cl");
-            if (File.Exists(kernelPath)
-                && Kernel.Create(File.ReadAllText(kernelPath), "Run", ["-cl-mad-enable"]) is Kernel temp)
+            try
             {
-                kernel = temp;
-                alignment = kernel.Alignment;
+                ValidateOpenClInteropLayout();
+                string kernelPath = Path.Combine(AppContext.BaseDirectory, "skinned_animation.cl");
+                if (File.Exists(kernelPath)
+                    && Kernel.Create(File.ReadAllText(kernelPath), "Run", ["-cl-mad-enable"]) is Kernel temp)
+                {
+                    kernel = temp;
+                    alignment = kernel.Alignment;
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"OpenCL disabled, falling back to CPU skinning: {ex.Message}");
-            kernel?.Dispose();
-            kernel = null;
+            catch (Exception ex)
+            {
+                Console.WriteLine($"OpenCL disabled, falling back to CPU skinning: {ex.Message}");
+                kernel?.Dispose();
+                kernel = null;
+            }
         }
 
         positions = TryCreateSvmArray<Vector3>(pmx.Vertices.Length, alignment, MemFlags.ReadOnly);
@@ -598,6 +608,20 @@ public unsafe class PmxModel : MMDModel
 
         updateTransforms = TryCreateSvmArray<Matrix4x4>(_nodes.Count, alignment, MemFlags.ReadOnly);
         _sortedNodes.AddRange(_nodes.OrderBy(item => item.DeformDepth));
+
+        if (kernel is null && SkinningComputeFactory is not null)
+        {
+            try
+            {
+                skinningCompute = SkinningComputeFactory(positions.Length, updateTransforms.Length);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Vulkan Compute disabled, falling back to CPU skinning: {ex.Message}");
+                skinningCompute?.Dispose();
+                skinningCompute = null;
+            }
+        }
 
         // IK
         for (int i = 0; i < pmx.Bones.Length; i++)
@@ -1230,6 +1254,28 @@ public unsafe class PmxModel : MMDModel
                 kernel.UnmapBuffer(updateUVsBuffer, updateUVsPtr);
             }
         }
+        else if (skinningCompute is not null)
+        {
+            if (!skinningCompute.Execute(
+                positions.Length,
+                updateTransforms.Length,
+                positions.Buffer,
+                normals.Buffer,
+                uvs.Buffer,
+                vertexBoneInfos.Buffer,
+                morphPositions.Buffer,
+                morphUVs.Buffer,
+                updateTransforms.Buffer,
+                globalTransforms.Buffer,
+                updatePositions.Buffer,
+                updateNormals.Buffer,
+                updateUVs.Buffer))
+            {
+                skinningCompute.Dispose();
+                skinningCompute = null;
+                Update();
+            }
+        }
         else
         {
             Parallel.ForEach(Partitioner.Create(0, positions.Length), range =>
@@ -1277,6 +1323,8 @@ public unsafe class PmxModel : MMDModel
         physicsManager?.Dispose();
 
         kernel?.Dispose();
+        skinningCompute?.Dispose();
+        skinningCompute = null;
     }
 
     private void AddLoadWarning(string warning)

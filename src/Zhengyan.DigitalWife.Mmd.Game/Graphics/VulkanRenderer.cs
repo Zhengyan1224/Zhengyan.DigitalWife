@@ -8,14 +8,16 @@ using VeldridDevice = Veldrid.GraphicsDevice;
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 /// <summary>
-/// Vulkan device and swapchain owner. Scene resources are intentionally not exposed here:
-/// the remaining legacy components must be migrated to the renderer resource API before
-/// they can issue Vulkan commands.
+/// Vulkan device, swapchain, and command-list owner. Backend-specific pass renderers receive
+/// this object and own their Veldrid resources.
 /// </summary>
 public sealed class VulkanRenderer : IRenderer
 {
     private VeldridDevice? _device;
     private CommandList? _commandList;
+    private Texture? _readbackTexture;
+    private int _readbackWidth;
+    private int _readbackHeight;
     private bool _frameOpen;
 
     public GraphicsBackend Backend => GraphicsBackend.Vulkan;
@@ -114,6 +116,87 @@ public sealed class VulkanRenderer : IRenderer
         if (!_frameOpen) return;
         if (enabled) _commandList!.SetScissorRect(0, (uint)Math.Max(x, 0), (uint)Math.Max(y, 0), (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
         else _commandList!.SetFullScissorRects();
+    }
+
+    public unsafe bool TryReadBackBufferRgba(Span<byte> destination)
+    {
+        int width = Math.Max(BackBufferSize.X, 1);
+        int height = Math.Max(BackBufferSize.Y, 1);
+        int required = checked(width * height * 4);
+        if (!_frameOpen || destination.Length < required)
+        {
+            return false;
+        }
+
+        Texture source = Device.SwapchainFramebuffer.ColorTargets[0].Target;
+        if (_readbackTexture is null || _readbackWidth != width || _readbackHeight != height || _readbackTexture.Format != source.Format)
+        {
+            _device!.WaitForIdle();
+            _readbackTexture?.Dispose();
+            _readbackTexture = ResourceFactory.CreateTexture(TextureDescription.Texture2D(
+                (uint)width, (uint)height, 1, 1, source.Format, TextureUsage.Staging));
+            _readbackWidth = width;
+            _readbackHeight = height;
+        }
+
+        _commandList!.SetFramebuffer(Device.SwapchainFramebuffer);
+        _commandList.CopyTexture(source, _readbackTexture);
+        _commandList.End();
+        Device.SubmitCommands(_commandList);
+        Device.WaitForIdle();
+        _frameOpen = false;
+
+        try
+        {
+            MappedResource mapped = Device.Map(_readbackTexture, MapMode.Read);
+            try
+            {
+                byte* sourceBytes = (byte*)mapped.Data.ToPointer();
+                uint rowPitch = mapped.RowPitch;
+                bool bgra = source.Format is PixelFormat.B8_G8_R8_A8_UNorm or PixelFormat.B8_G8_R8_A8_UNorm_SRgb;
+                bool sourceTopLeft = Device.IsUvOriginTopLeft;
+                for (int destinationY = 0; destinationY < height; destinationY++)
+                {
+                    int sourceY = sourceTopLeft ? height - 1 - destinationY : destinationY;
+                    byte* row = sourceBytes + (sourceY * rowPitch);
+                    int destinationOffset = destinationY * width * 4;
+                    for (int x = 0; x < width; x++)
+                    {
+                        int sourceOffset = x * 4;
+                        int targetOffset = destinationOffset + sourceOffset;
+                        if (bgra)
+                        {
+                            destination[targetOffset] = row[sourceOffset + 2];
+                            destination[targetOffset + 1] = row[sourceOffset + 1];
+                            destination[targetOffset + 2] = row[sourceOffset];
+                        }
+                        else
+                        {
+                            destination[targetOffset] = row[sourceOffset];
+                            destination[targetOffset + 1] = row[sourceOffset + 1];
+                            destination[targetOffset + 2] = row[sourceOffset + 2];
+                        }
+
+                        destination[targetOffset + 3] = row[sourceOffset + 3];
+                    }
+                }
+            }
+            finally
+            {
+                Device.Unmap(_readbackTexture);
+            }
+        }
+        finally
+        {
+            _commandList.Begin();
+            _commandList.SetFramebuffer(Device.SwapchainFramebuffer);
+            CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+            _commandList.SetFullViewports();
+            _commandList.SetFullScissorRects();
+            _frameOpen = true;
+        }
+
+        return true;
     }
 
     internal void BeginRenderTarget(VeldridRenderTarget target, Vector4 clearColor)
@@ -291,8 +374,10 @@ public sealed class VulkanRenderer : IRenderer
         finally
         {
             _commandList?.Dispose();
+            _readbackTexture?.Dispose();
             _device.Dispose();
             _commandList = null;
+            _readbackTexture = null;
             _device = null;
         }
     }

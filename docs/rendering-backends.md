@@ -60,6 +60,23 @@ shaders, alpha-blended pipeline, and per-texture resource-set cache. Renderer
 creation is selected through `IScreenSpriteRenderer`, so Editor and Player no
 longer instantiate the OpenGL sprite renderer directly.
 
+The remaining scene-level passes now have Vulkan implementations as well:
+`VeldridSkyboxRenderer`, `VeldridWaterRenderer`, `VeldridParticleRenderer`,
+`VeldridUnderwaterPostProcessRenderer`, and `VeldridLineRenderer`. Water
+reflection targets are allocated through `IRenderTarget` and return native
+texture handles, so reflection rendering no longer binds an OpenGL FBO. The
+Vulkan water pass also consumes the same 48-ripple state as OpenGL, and the
+underwater post-process samples a linearized off-screen depth texture for fog
+and absorption. Editor
+and Player ImGui overlays use the engine-owned Veldrid ImGui renderer on Vulkan
+and preserve the Silk controller on OpenGL; overlay images use backend-native
+ImGui texture bindings.
+The loading screen also has a Vulkan quad renderer. Desktop sprite click-through
+uses the backend-neutral `IRenderer.TryReadBackBufferRgba` contract: OpenGL uses
+`ReadPixels`, while Vulkan copies the swapchain image to a staging texture and
+normalizes it to the same bottom-left RGBA layout before native window regions
+are updated.
+
 ## Selecting a backend
 
 Project files store the setting at `runtime.graphicsBackend`:
@@ -83,11 +100,12 @@ creates its window; `--graphics-backend` can override it for diagnostics.
 
 ## Auto policy
 
-`Auto` currently resolves to OpenGL. This remains intentional while existing
-scene passes still issue legacy OpenGL commands directly. Selecting Vulkan now
-supports PMX main/auxiliary passes, screen sprites, and the fixed textured-plane
-pass; remaining legacy scene passes still produce a backend diagnostic until
-they are migrated.
+On Windows and Linux, `Auto` selects Vulkan when Veldrid finds a Vulkan loader
+and compatible physical device, and otherwise falls back to OpenGL. On macOS it
+selects OpenGL. Projects that contain legacy OpenGL-only custom components can
+pin the setting to `OpenGL`. Vulkan supports PMX, skybox, water, particles,
+screen sprites, textured planes, post-process, debug lines, reflections, loading
+screens, and ImGui overlays.
 
 The portable custom-shader contract requires `#version 450`, explicit vertex
 attribute/varying locations, a `PlaneFrame` block at `set=0,binding=0`, and
@@ -100,6 +118,6 @@ same reflected resources. The plane resource map is: binding 1 base texture,
 6 reflection sampler. Legacy `#version 300 es` shaders continue to work only
 through the OpenGL compatibility API.
 
-Remaining scene passes are water, particle, post-process, debug drawing, and
-ImGui. Once those paths no longer use `GraphicsDevice.Gl`, the Auto branch can
-prefer Vulkan on Windows/Linux and retain OpenGL on macOS or as fallback.
+Legacy custom GLSL components remain an OpenGL compatibility feature unless they
+use the portable GLSL 450 contract. OpenGL remains the compatibility fallback,
+including macOS.

@@ -129,7 +129,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         Vector2 imageMin = ImGui.GetCursorScreenPos();
         ImGui.Image(
-            _controller.GetTextureBinding(_editorGame.SceneRenderTarget.ColorTextureHandle),
+            _controller!.GetTextureBinding(_editorGame.SceneRenderTarget.ColorTextureHandle),
             new Vector2(width, height),
             new Vector2(0.0f, 1.0f),
             new Vector2(1.0f, 0.0f));

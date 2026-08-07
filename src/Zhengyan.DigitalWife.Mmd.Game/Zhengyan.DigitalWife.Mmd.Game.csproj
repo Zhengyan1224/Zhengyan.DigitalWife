@@ -14,7 +14,6 @@
         <PackageReference Include="Silk.NET.Windowing.Extensions.Veldrid" />
         <PackageReference Include="Veldrid" />
         <PackageReference Include="Veldrid.SPIRV" />
-        <PackageReference Include="Veldrid.ImGui" />
         <PackageReference Include="ImGui.NET" />
         <PackageReference Include="StbImageSharp" />
         <PackageReference Include="Pfim" />

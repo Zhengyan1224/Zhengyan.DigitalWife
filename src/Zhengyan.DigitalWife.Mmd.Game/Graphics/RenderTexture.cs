@@ -32,6 +32,8 @@ public sealed unsafe class RenderTexture : IRenderTarget
 
     public object NativeColorResource => ColorTextureId;
 
+    public object? NativeDepthResource => null;
+
     public uint FramebufferId { get; }
 
     public uint ColorTextureId { get; }

@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.Input;
-using Silk.NET.OpenGLES;
 using Silk.NET.Windowing;
 
 namespace Zhengyan.DigitalWife.GamePlayer;
@@ -105,7 +104,7 @@ internal static unsafe class DesktopSpritePlatform
         }
     }
 
-    public static void SyncClickThroughRegionFromFramebuffer(IWindow window, GL gl, int width, int height, bool enabled)
+    public static void SyncClickThroughRegion(IWindow window, byte[] framebufferRgba, int width, int height, bool enabled)
     {
         if (!enabled)
         {
@@ -118,19 +117,19 @@ internal static unsafe class DesktopSpritePlatform
 
         if (OperatingSystem.IsWindows())
         {
-            SyncWindowsClickThroughRegion(window, gl, width, height);
+            SyncWindowsClickThroughRegion(window, framebufferRgba, width, height);
             return;
         }
 
         if (OperatingSystem.IsMacOS())
         {
-            SyncMacClickThroughRegion(window, gl, width, height);
+            SyncMacClickThroughRegion(window, framebufferRgba, width, height);
             return;
         }
 
         if (OperatingSystem.IsLinux())
         {
-            SyncX11ClickThroughRegion(window, gl, width, height);
+            SyncX11ClickThroughRegion(window, framebufferRgba, width, height);
         }
     }
 
@@ -357,7 +356,7 @@ internal static unsafe class DesktopSpritePlatform
         return Math.Max(frame.Height, 1.0);
     }
 
-    private static void SyncWindowsClickThroughRegion(IWindow window, GL gl, int width, int height)
+    private static void SyncWindowsClickThroughRegion(IWindow window, byte[] framebufferRgba, int width, int height)
     {
         IntPtr hwnd = TryGetWindowsHwnd(window);
         if (hwnd == IntPtr.Zero)
@@ -374,13 +373,7 @@ internal static unsafe class DesktopSpritePlatform
             ClearWindowsTransparentStyle(hwnd);
         }
 
-        int bufferLength = checked(width * height * 4);
-        if (state.FramebufferBytes.Length != bufferLength)
-        {
-            state.FramebufferBytes = new byte[bufferLength];
-        }
-
-        ReadFramebufferRgba(gl, state.FramebufferBytes, width, height);
+        state.FramebufferBytes = framebufferRgba;
 
         IntPtr region = BuildWindowsAlphaRegion(state.FramebufferBytes, width, height);
         if (region == IntPtr.Zero)
@@ -456,7 +449,7 @@ internal static unsafe class DesktopSpritePlatform
         return hwnd;
     }
 
-    private static void SyncX11ClickThroughRegion(IWindow window, GL gl, int width, int height)
+    private static void SyncX11ClickThroughRegion(IWindow window, byte[] framebufferRgba, int width, int height)
     {
         if (!TryGetX11Handles(window, out IntPtr display, out nint windowHandle, logFailure: true))
         {
@@ -465,13 +458,7 @@ internal static unsafe class DesktopSpritePlatform
 
         X11ClickThroughState state = EnsureX11ClickThroughState(windowHandle);
         state.Enabled = true;
-        int bufferLength = checked(width * height * 4);
-        if (state.FramebufferBytes.Length != bufferLength)
-        {
-            state.FramebufferBytes = new byte[bufferLength];
-        }
-
-        ReadFramebufferRgba(gl, state.FramebufferBytes, width, height);
+        state.FramebufferBytes = framebufferRgba;
 
         IntPtr region = BuildX11AlphaRegion(state.FramebufferBytes, width, height);
         if (region == IntPtr.Zero)
@@ -664,7 +651,7 @@ internal static unsafe class DesktopSpritePlatform
         maskBytes[eventType >> 3] |= (byte)(1 << (eventType & 7));
     }
 
-    private static void SyncMacClickThroughRegion(IWindow window, GL gl, int width, int height)
+    private static void SyncMacClickThroughRegion(IWindow window, byte[] framebufferRgba, int width, int height)
     {
         IntPtr glfwWindow = TryGetGlfwWindowPointer(window);
         if (glfwWindow == IntPtr.Zero)
@@ -682,13 +669,7 @@ internal static unsafe class DesktopSpritePlatform
 
         MacClickThroughState state = EnsureMacClickThroughState(cocoaWindow);
         state.Enabled = true;
-        int bufferLength = checked(width * height * 4);
-        if (state.FramebufferBytes.Length != bufferLength)
-        {
-            state.FramebufferBytes = new byte[bufferLength];
-        }
-
-        ReadFramebufferRgba(gl, state.FramebufferBytes, width, height);
+        state.FramebufferBytes = framebufferRgba;
         BuildAlphaMask(state, width, height);
     }
 
@@ -1214,16 +1195,6 @@ internal static unsafe class DesktopSpritePlatform
             state = new MacClickThroughState(contentView, originalClass);
             MacClickThroughStatesByView[contentView] = state;
             return state;
-        }
-    }
-
-    private static void ReadFramebufferRgba(GL gl, byte[] target, int width, int height)
-    {
-        fixed (byte* pixels = target)
-        {
-            gl.BindFramebuffer(GLEnum.Framebuffer, 0);
-            gl.PixelStore(GLEnum.PackAlignment, 1);
-            gl.ReadPixels(0, 0, (uint)width, (uint)height, GLEnum.Rgba, GLEnum.UnsignedByte, pixels);
         }
     }
 

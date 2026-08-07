@@ -95,6 +95,25 @@ public sealed class OpenGlRenderer : IRenderer
         Gl.Scissor(x, y, (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
     }
 
+    public unsafe bool TryReadBackBufferRgba(Span<byte> destination)
+    {
+        int required = checked(Math.Max(BackBufferSize.X, 1) * Math.Max(BackBufferSize.Y, 1) * 4);
+        if (destination.Length < required)
+        {
+            return false;
+        }
+
+        fixed (byte* pixels = destination)
+        {
+            Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+            Gl.PixelStore(GLEnum.PackAlignment, 1);
+            Gl.ReadPixels(0, 0, (uint)Math.Max(BackBufferSize.X, 1), (uint)Math.Max(BackBufferSize.Y, 1),
+                GLEnum.Rgba, GLEnum.UnsignedByte, pixels);
+        }
+
+        return true;
+    }
+
     public void Present()
     {
         // Silk.NET presents the OpenGL surface at the end of the window Render callback.

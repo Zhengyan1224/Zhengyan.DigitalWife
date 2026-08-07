@@ -15,6 +15,7 @@ public interface IRenderTarget : IDisposable
     uint LegacyColorTextureId { get; }
 
     object? NativeColorResource { get; }
+    object? NativeDepthResource { get; }
     void EnsureSize(int width, int height);
     void BeginPass(Vector4 clearColor);
     void ResumePass();

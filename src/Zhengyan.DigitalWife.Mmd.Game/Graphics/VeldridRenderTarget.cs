@@ -26,6 +26,7 @@ public sealed class VeldridRenderTarget : IRenderTarget
     public GraphicsBackend Backend => GraphicsBackend.Vulkan;
     public uint LegacyColorTextureId => 0;
     public object? NativeColorResource => _colorView;
+    public object? NativeDepthResource => _depthView;
     internal Framebuffer Framebuffer => _framebuffer ?? throw new InvalidOperationException("Render target has not been sized.");
 
     public void EnsureSize(int width, int height)
@@ -47,8 +48,8 @@ public sealed class VeldridRenderTarget : IRenderTarget
             TextureUsage.RenderTarget | TextureUsage.Sampled));
         _colorView = factory.CreateTextureView(_colorTexture);
         _depthTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            (uint)width, (uint)height, 1, 1, PixelFormat.D24_UNorm_S8_UInt,
-            TextureUsage.DepthStencil));
+            (uint)width, (uint)height, 1, 1, PixelFormat.D32_Float_S8_UInt,
+            TextureUsage.DepthStencil | TextureUsage.Sampled));
         _depthView = factory.CreateTextureView(_depthTexture);
         _framebuffer = factory.CreateFramebuffer(new FramebufferDescription(_depthTexture, _colorTexture));
     }

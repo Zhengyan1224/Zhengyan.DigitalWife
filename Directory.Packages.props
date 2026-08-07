@@ -26,7 +26,6 @@
     <PackageVersion Include="Silk.NET.Vulkan" Version="2.22.0" />
     <PackageVersion Include="Silk.NET.Windowing.Extensions.Veldrid" Version="2.22.0" />
     <PackageVersion Include="Veldrid" Version="4.9.0" />
-    <PackageVersion Include="Veldrid.ImGui" Version="5.72.0" />
     <PackageVersion Include="Veldrid.SPIRV" Version="1.0.12" />
     <PackageVersion Include="Silk.NET.Windowing" Version="2.22.0" />
     <PackageVersion Include="StbImageSharp" Version="2.30.15" />

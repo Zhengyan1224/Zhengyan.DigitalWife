@@ -448,10 +448,20 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
                 FillVertices(_vertices, GerstnerWavesEnabled, _elapsedSeconds);
                 _uploadedGerstnerEnabled = GerstnerWavesEnabled;
             }
+            Span<Vector4> rippleData = stackalloc Vector4[MaxRipples * 2 + 1];
+            for (int i = 0; i < MaxRipples; i++)
+            {
+                RippleState ripple = _ripples[i];
+                rippleData[i * 2] = new Vector4(
+                    ripple.Center.X, ripple.Center.Z, ripple.Active ? ripple.Age : 999.0f, ripple.Radius);
+                rippleData[i * 2 + 1] = new Vector4(ripple.Active ? ripple.Strength : 0.0f, 0, 0, 0);
+            }
+            rippleData[^1] = new Vector4(
+                Math.Max(RippleLifetimeSeconds, .05f), RippleWaveSpeed, RippleFrequency, RippleNormalStrength);
             _vulkanRenderer.Draw<WaterVertex>(
                 new ReadOnlySpan<WaterVertex>(_vertices), (uint)_indexCount,
                 _backendNormalMaps[next], _backendNormalMaps[frame], _backendSkyTexture,
-                _planarReflectionTextureHandle, World, _camera.View, _camera.Projection,
+                _planarReflectionTextureHandle, rippleData, World, _camera.View, _camera.Projection,
                 _planarReflectionViewProjection, _camera.Position, DeepColor, ReflectionTint,
                 _elapsedSeconds * _animationSpeed, lerp, _alpha, NormalTiling,
                 _skyReflectionStrength, MirrorReflectionEnabled);

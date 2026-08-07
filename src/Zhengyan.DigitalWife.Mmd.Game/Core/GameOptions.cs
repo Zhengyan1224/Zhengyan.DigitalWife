@@ -41,6 +41,8 @@ public sealed class GameOptions
 
     public bool UseOpenCL { get; set; } = true;
 
+    public bool UseVulkanCompute { get; set; } = true;
+
     public bool EnableAudio { get; set; } = true;
 
     public AnimationTimingMode AnimationTimingMode { get; set; } = AnimationTimingMode.FrameRateDependent;

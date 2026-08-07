@@ -6,22 +6,13 @@ namespace Zhengyan.DigitalWife.GamePlayer;
 internal sealed class DesktopSpriteHitTestComponent(Func<bool> isEnabled) : DrawableGameComponent
 {
     private readonly Func<bool> _isEnabled = isEnabled;
+    private byte[] _framebufferBytes = [];
     private bool _wasEnabled;
 
     public override void Draw(GameTime gameTime)
     {
         if (Game is null)
         {
-            return;
-        }
-
-        if (Game.GraphicsDevice.Renderer is not OpenGlRenderer)
-        {
-            if (_wasEnabled)
-            {
-                DesktopSpritePlatform.ApplyClickThrough(Game.Window, false);
-                _wasEnabled = false;
-            }
             return;
         }
 
@@ -38,12 +29,22 @@ internal sealed class DesktopSpriteHitTestComponent(Func<bool> isEnabled) : Draw
         }
 
         _wasEnabled = true;
-        DesktopSpritePlatform.SyncClickThroughRegionFromFramebuffer(
-            Game.Window,
-            Game.GraphicsDevice.Gl,
-            Game.GraphicsDevice.BackBufferSize.X,
-            Game.GraphicsDevice.BackBufferSize.Y,
-            enabled);
+        int width = Math.Max(Game.GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(Game.GraphicsDevice.BackBufferSize.Y, 1);
+        int required = checked(width * height * 4);
+        if (_framebufferBytes.Length != required)
+        {
+            _framebufferBytes = new byte[required];
+        }
+
+        if (!Game.GraphicsDevice.TryReadBackBufferRgba(_framebufferBytes))
+        {
+            DesktopSpritePlatform.ApplyClickThrough(Game.Window, false);
+            _wasEnabled = false;
+            return;
+        }
+
+        DesktopSpritePlatform.SyncClickThroughRegion(Game.Window, _framebufferBytes, width, height, enabled);
     }
 
     public override void Dispose()
