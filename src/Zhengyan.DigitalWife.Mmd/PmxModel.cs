@@ -275,6 +275,13 @@ public unsafe class PmxModel : MMDModel
     /// <summary>Set by the Vulkan game layer before loading this model.</summary>
     public PmxSkinningComputeFactory? SkinningComputeFactory { get; set; }
 
+    public bool IsGpuSkinningOutputBound
+        => skinningCompute is IPmxGpuSkinningCompute { IsGpuOutputBound: true };
+
+    public bool TryBindGpuSkinningOutput(object positionBuffer, object normalBuffer, object uvBuffer)
+        => skinningCompute is IPmxGpuSkinningCompute gpu
+            && gpu.TryBindGpuOutput(positionBuffer, normalBuffer, uvBuffer);
+
     public IReadOnlyList<string> LoadWarnings => _loadWarnings;
 
     public Vector3 PhysicsGravity
@@ -1256,20 +1263,33 @@ public unsafe class PmxModel : MMDModel
         }
         else if (skinningCompute is not null)
         {
-            if (!skinningCompute.Execute(
-                positions.Length,
-                updateTransforms.Length,
-                positions.Buffer,
-                normals.Buffer,
-                uvs.Buffer,
-                vertexBoneInfos.Buffer,
-                morphPositions.Buffer,
-                morphUVs.Buffer,
-                updateTransforms.Buffer,
-                globalTransforms.Buffer,
-                updatePositions.Buffer,
-                updateNormals.Buffer,
-                updateUVs.Buffer))
+            bool succeeded = skinningCompute is IPmxGpuSkinningCompute { IsGpuOutputBound: true } gpu
+                ? gpu.ExecuteGpu(
+                    positions.Length,
+                    updateTransforms.Length,
+                    positions.Buffer,
+                    normals.Buffer,
+                    uvs.Buffer,
+                    vertexBoneInfos.Buffer,
+                    morphPositions.Buffer,
+                    morphUVs.Buffer,
+                    updateTransforms.Buffer,
+                    globalTransforms.Buffer)
+                : skinningCompute.Execute(
+                    positions.Length,
+                    updateTransforms.Length,
+                    positions.Buffer,
+                    normals.Buffer,
+                    uvs.Buffer,
+                    vertexBoneInfos.Buffer,
+                    morphPositions.Buffer,
+                    morphUVs.Buffer,
+                    updateTransforms.Buffer,
+                    globalTransforms.Buffer,
+                    updatePositions.Buffer,
+                    updateNormals.Buffer,
+                    updateUVs.Buffer);
+            if (!succeeded)
             {
                 skinningCompute.Dispose();
                 skinningCompute = null;

@@ -2859,6 +2859,17 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _uvBuffer = _gpuResources.UvBuffer.LegacyBufferId;
         _indexBuffer = _gpuResources.IndexBuffer.LegacyBufferId;
 
+        // Seed the buffers from the CPU pose before Vulkan Compute takes
+        // ownership of subsequent vertex updates.
+        _gpuResources.UploadPose(_model, uploadUv: true);
+        if (_model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel)
+        {
+            pmxModel.TryBindGpuSkinningOutput(
+                _gpuResources.PositionBuffer.NativeResource!,
+                _gpuResources.NormalBuffer.NativeResource!,
+                _gpuResources.UvBuffer.NativeResource!);
+        }
+
         if (gl is not null)
         {
             if (_customShader is not null)
@@ -2930,6 +2941,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private void UploadVertexBuffers(bool uploadUv)
     {
         if (_model is null || _gpuResources is null)
+        {
+            return;
+        }
+
+        if (_model is Zhengyan.DigitalWife.Mmd.PmxModel { IsGpuSkinningOutputBound: true })
         {
             return;
         }

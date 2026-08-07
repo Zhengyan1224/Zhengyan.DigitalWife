@@ -115,6 +115,19 @@ enabled. Both GPU paths fall back to CPU skinning when initialization or a
 dispatch fails. The Editor displays only the compute option applicable to the
 selected graphics backend.
 
+Vulkan Compute skinning implements the optional `IPmxGpuSkinningCompute`
+contract. After the initial CPU pose seeds the PMX vertex buffers, compute writes
+packed position/normal/UV data to storage buffers and records GPU `CopyBuffer`
+commands directly into the renderer-owned vertex buffers. The render path then
+skips `PmxGpuResources.UploadPose`, so normal Vulkan rendering has no skinning
+staging readback, CPU mapping, or CPU-to-GPU vertex re-upload.
+
+Compute submissions use three independent input/output, command-list, and fence
+slots. A slot is only waited on if the GPU falls more than two submissions
+behind or when resources are disposed. The original asynchronous staging path
+remains available when GPU vertex outputs are not bound, preserving the
+CPU-compatible `IPmxSkinningCompute` contract and fallback behavior.
+
 The GameEditor setting is also written to `GameEditor.settings.json` beside the
 editor executable. This is needed because a window's graphics API is selected
 before the project preview window is created. Changing the setting takes effect

@@ -6,30 +6,37 @@ using Veldrid.SPIRV;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
-/// <summary>Vulkan compute implementation of the PMX CPU/OpenCL skinning contract.</summary>
-internal sealed unsafe class VulkanPmxSkinningCompute : Zhengyan.DigitalWife.Mmd.IPmxSkinningCompute
+/// <summary>
+/// Vulkan compute implementation of the PMX CPU/OpenCL skinning contract.
+/// Dispatches use a three-slot input/output/staging ring. Completed results are
+/// consumed opportunistically so the update thread does not wait on every frame;
+/// a wait is only required for the first result or when the GPU falls behind the
+/// ring.
+/// </summary>
+internal sealed unsafe class VulkanPmxSkinningCompute :
+    Zhengyan.DigitalWife.Mmd.IPmxSkinningCompute,
+    Zhengyan.DigitalWife.Mmd.IPmxGpuSkinningCompute
 {
     private const uint WorkgroupSize = 64;
+    private const int SlotCount = 3;
 
     private readonly VulkanRenderer _renderer;
     private readonly int _vertexCount;
     private readonly int _boneCount;
-    private readonly DeviceBuffer _parameters;
-    private readonly DeviceBuffer _vertexInputs;
-    private readonly DeviceBuffer _boneInputs;
-    private readonly DeviceBuffer _transforms;
-    private readonly DeviceBuffer _outputs;
-    private readonly DeviceBuffer _outputStaging;
     private readonly ResourceLayout _layout;
-    private readonly ResourceSet _resourceSet;
     private readonly Shader _shader;
     private readonly Pipeline _pipeline;
-    private readonly CommandList _commands;
-    private readonly Fence _fence;
     private readonly VertexInputGpu[] _vertexInputData;
     private readonly BoneInputGpu[] _boneInputData;
     private readonly TransformInputGpu[] _transformData;
-    private bool _submissionPending;
+    private readonly OutputGpu[] _latestOutput;
+    private readonly ComputeSlot[] _slots;
+    private int _nextSlot;
+    private long _submissionId;
+    private bool _hasCompletedOutput;
+    private DeviceBuffer? _gpuPositionOutput;
+    private DeviceBuffer? _gpuNormalOutput;
+    private DeviceBuffer? _gpuUvOutput;
     private bool _disposed;
 
     public VulkanPmxSkinningCompute(VulkanRenderer renderer, int vertexCount, int boneCount)
@@ -43,33 +50,35 @@ internal sealed unsafe class VulkanPmxSkinningCompute : Zhengyan.DigitalWife.Mmd
         _boneInputData = new BoneInputGpu[_vertexCount];
         _transformData = new TransformInputGpu[_boneCount];
 
-        _parameters = factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
-        _vertexInputs = CreateStructuredBuffer<VertexInputGpu>(factory, _vertexCount, BufferUsage.StructuredBufferReadOnly);
-        _boneInputs = CreateStructuredBuffer<BoneInputGpu>(factory, _vertexCount, BufferUsage.StructuredBufferReadOnly);
-        _transforms = CreateStructuredBuffer<TransformInputGpu>(factory, _boneCount, BufferUsage.StructuredBufferReadOnly);
-        _outputs = CreateStructuredBuffer<OutputGpu>(factory, _vertexCount, BufferUsage.StructuredBufferReadWrite);
-        _outputStaging = factory.CreateBuffer(new BufferDescription(
-            checked((uint)(_vertexCount * Marshal.SizeOf<OutputGpu>())), BufferUsage.Staging));
-
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("SkinningParameters", ResourceKind.UniformBuffer, ShaderStages.Compute),
             new ResourceLayoutElementDescription("VertexInputs", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
             new ResourceLayoutElementDescription("BoneInputs", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
             new ResourceLayoutElementDescription("Transforms", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
-            new ResourceLayoutElementDescription("Outputs", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute)));
-        _resourceSet = factory.CreateResourceSet(new ResourceSetDescription(
-            _layout, _parameters, _vertexInputs, _boneInputs, _transforms, _outputs));
-
+            new ResourceLayoutElementDescription("PositionOutputs", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("NormalOutputs", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("UvOutputs", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute)));
         ShaderDescription shaderDescription = VulkanShaderCompiler.CompileSource(
             "pmx_skinning.comp", ComputeShaderSource, ShaderStages.Compute);
         _shader = factory.CreateFromSpirv(shaderDescription);
         _pipeline = factory.CreateComputePipeline(new ComputePipelineDescription(
             _shader, _layout, WorkgroupSize, 1, 1));
-        _commands = factory.CreateCommandList();
-        _fence = factory.CreateFence(false);
+        _latestOutput = new OutputGpu[_vertexCount];
+        _slots = new ComputeSlot[SlotCount];
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            _slots[i] = new ComputeSlot(
+                factory,
+                _layout,
+                _vertexCount,
+                _boneCount);
+        }
     }
 
     public string BackendName => "Vulkan Compute";
+
+    public bool IsGpuOutputBound
+        => _gpuPositionOutput is not null && _gpuNormalOutput is not null && _gpuUvOutput is not null;
 
     public bool Execute(
         int vertexCount,
@@ -94,72 +103,40 @@ internal sealed unsafe class VulkanPmxSkinningCompute : Zhengyan.DigitalWife.Mmd
 
         try
         {
-            for (int i = 0; i < vertexCount; i++)
-            {
-                _vertexInputData[i] = new VertexInputGpu
-                {
-                    Position = new Vector4(positions[i], 1.0f),
-                    Normal = new Vector4(normals[i], 0.0f),
-                    MorphPosition = new Vector4(morphPositions[i], 0.0f),
-                    Uv = new Vector4(uvs[i], 0.0f, 0.0f),
-                    MorphUv = morphUVs[i]
-                };
+            PopulateInputs(vertexCount, boneCount, positions, normals, uvs, vertexBoneInfos,
+                morphPositions, morphUVs, updateTransforms, globalTransforms);
 
-                Zhengyan.DigitalWife.Mmd.VertexBoneInfo info = vertexBoneInfos[i];
-                _boneInputData[i] = new BoneInputGpu
-                {
-                    BoneIndices = new Vector4(info.BoneIndices[0], info.BoneIndices[1], info.BoneIndices[2], info.BoneIndices[3]),
-                    BoneWeights = new Vector4(info.BoneWeights[0], info.BoneWeights[1], info.BoneWeights[2], info.BoneWeights[3]),
-                    SdefIndicesAndType = new Vector4(
-                        info.SDEF.BoneIndices[0], info.SDEF.BoneIndices[1], (int)info.SkinningType, 0.0f),
-                    SdefWeightAndCenterXyz = new Vector4(info.SDEF.BoneWeight, info.SDEF.C.X, info.SDEF.C.Y, info.SDEF.C.Z),
-                    SdefR0 = new Vector4(info.SDEF.R0, 0.0f),
-                    SdefR1 = new Vector4(info.SDEF.R1, 0.0f)
-                };
+            RetireCompletedSlots();
+            ComputeSlot slot = AcquireSlot();
+            _renderer.Device.UpdateBuffer(slot.Parameters, 0, new Vector4(vertexCount, boneCount, 0.0f, 0.0f));
+            _renderer.Device.UpdateBuffer(slot.VertexInputs, 0, _vertexInputData);
+            _renderer.Device.UpdateBuffer(slot.BoneInputs, 0, _boneInputData);
+            _renderer.Device.UpdateBuffer(slot.Transforms, 0, _transformData);
+
+            slot.Commands.Begin();
+            slot.Commands.SetPipeline(_pipeline);
+            slot.Commands.SetComputeResourceSet(0, slot.ResourceSet);
+            slot.Commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
+            slot.Commands.CopyBuffer(slot.PositionOutputs, 0, slot.PositionStaging, 0, slot.PositionStaging.SizeInBytes);
+            slot.Commands.CopyBuffer(slot.NormalOutputs, 0, slot.NormalStaging, 0, slot.NormalStaging.SizeInBytes);
+            slot.Commands.CopyBuffer(slot.UvOutputs, 0, slot.UvStaging, 0, slot.UvStaging.SizeInBytes);
+            slot.Commands.End();
+
+            _renderer.Device.ResetFence(slot.Fence);
+            _renderer.Device.SubmitCommands(slot.Commands, slot.Fence);
+            slot.InFlight = true;
+            slot.SubmissionId = ++_submissionId;
+            _nextSlot = (_nextSlot + 1) % _slots.Length;
+
+            // The first result must be valid. Subsequent frames consume the most
+            // recent completed result and avoid blocking the update thread.
+            if (!_hasCompletedOutput)
+            {
+                _renderer.Device.WaitForFence(slot.Fence);
+                RetireCompletedSlots();
             }
 
-            for (int i = 0; i < boneCount; i++)
-            {
-                _transformData[i] = new TransformInputGpu
-                {
-                    Update = updateTransforms[i],
-                    Global = globalTransforms[i]
-                };
-            }
-
-            _renderer.Device.UpdateBuffer(_parameters, 0, new Vector4(vertexCount, boneCount, 0.0f, 0.0f));
-            _renderer.Device.UpdateBuffer(_vertexInputs, 0, _vertexInputData);
-            _renderer.Device.UpdateBuffer(_boneInputs, 0, _boneInputData);
-            _renderer.Device.UpdateBuffer(_transforms, 0, _transformData);
-
-            _commands.Begin();
-            _commands.SetPipeline(_pipeline);
-            _commands.SetComputeResourceSet(0, _resourceSet);
-            _commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
-            _commands.CopyBuffer(_outputs, 0, _outputStaging, 0, _outputStaging.SizeInBytes);
-            _commands.End();
-
-            _renderer.Device.ResetFence(_fence);
-            _renderer.Device.SubmitCommands(_commands, _fence);
-            _submissionPending = true;
-            _renderer.Device.WaitForFence(_fence);
-            _submissionPending = false;
-
-            MappedResource mapped = _renderer.Device.Map(_outputStaging, MapMode.Read);
-            try
-            {
-                OutputGpu* results = (OutputGpu*)mapped.Data.ToPointer();
-                for (int i = 0; i < vertexCount; i++)
-                {
-                    updatePositions[i] = new Vector3(results[i].Position.X, results[i].Position.Y, results[i].Position.Z);
-                    updateNormals[i] = new Vector3(results[i].Normal.X, results[i].Normal.Y, results[i].Normal.Z);
-                    updateUVs[i] = new Vector2(results[i].Uv.X, results[i].Uv.Y);
-                }
-            }
-            finally
-            {
-                _renderer.Device.Unmap(_outputStaging);
-            }
+            CopyLatestOutput(updatePositions, updateNormals, updateUVs, vertexCount);
 
             return true;
         }
@@ -170,29 +147,311 @@ internal sealed unsafe class VulkanPmxSkinningCompute : Zhengyan.DigitalWife.Mmd
         }
     }
 
+    public bool TryBindGpuOutput(object positionBuffer, object normalBuffer, object uvBuffer)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (positionBuffer is not DeviceBuffer positions
+            || normalBuffer is not DeviceBuffer normals
+            || uvBuffer is not DeviceBuffer uvs)
+        {
+            return false;
+        }
+
+        uint positionBytes = checked((uint)(_vertexCount * 3 * sizeof(float)));
+        uint uvBytes = checked((uint)(_vertexCount * 2 * sizeof(float)));
+        if (positions.SizeInBytes < positionBytes || normals.SizeInBytes < positionBytes || uvs.SizeInBytes < uvBytes)
+        {
+            return false;
+        }
+
+        foreach (ComputeSlot slot in _slots)
+        {
+            if (slot.InFlight && !slot.Fence.Signaled)
+            {
+                _renderer.Device.WaitForFence(slot.Fence);
+            }
+
+            slot.InFlight = false;
+        }
+
+        _gpuPositionOutput = positions;
+        _gpuNormalOutput = normals;
+        _gpuUvOutput = uvs;
+        return true;
+    }
+
+    public bool ExecuteGpu(
+        int vertexCount,
+        int boneCount,
+        Vector3* positions,
+        Vector3* normals,
+        Vector2* uvs,
+        Zhengyan.DigitalWife.Mmd.VertexBoneInfo* vertexBoneInfos,
+        Vector3* morphPositions,
+        Vector4* morphUVs,
+        Matrix4x4* updateTransforms,
+        Matrix4x4* globalTransforms)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (vertexCount != _vertexCount || boneCount != _boneCount || !IsGpuOutputBound)
+        {
+            return false;
+        }
+
+        try
+        {
+            PopulateInputs(vertexCount, boneCount, positions, normals, uvs, vertexBoneInfos,
+                morphPositions, morphUVs, updateTransforms, globalTransforms);
+            ComputeSlot slot = AcquireSlot();
+            _renderer.Device.UpdateBuffer(slot.Parameters, 0, new Vector4(vertexCount, boneCount, 0.0f, 0.0f));
+            _renderer.Device.UpdateBuffer(slot.VertexInputs, 0, _vertexInputData);
+            _renderer.Device.UpdateBuffer(slot.BoneInputs, 0, _boneInputData);
+            _renderer.Device.UpdateBuffer(slot.Transforms, 0, _transformData);
+
+            slot.Commands.Begin();
+            slot.Commands.SetPipeline(_pipeline);
+            slot.Commands.SetComputeResourceSet(0, slot.ResourceSet);
+            slot.Commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
+            slot.Commands.CopyBuffer(slot.PositionOutputs, 0, _gpuPositionOutput!, 0, slot.PositionOutputs.SizeInBytes);
+            slot.Commands.CopyBuffer(slot.NormalOutputs, 0, _gpuNormalOutput!, 0, slot.NormalOutputs.SizeInBytes);
+            slot.Commands.CopyBuffer(slot.UvOutputs, 0, _gpuUvOutput!, 0, slot.UvOutputs.SizeInBytes);
+            slot.Commands.End();
+
+            _renderer.Device.ResetFence(slot.Fence);
+            _renderer.Device.SubmitCommands(slot.Commands, slot.Fence);
+            slot.InFlight = true;
+            slot.SubmissionId = ++_submissionId;
+            _nextSlot = (_nextSlot + 1) % _slots.Length;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Vulkan GPU-only skinning failed; falling back to CPU: {ex.Message}");
+            return false;
+        }
+    }
+
+    private void PopulateInputs(
+        int vertexCount,
+        int boneCount,
+        Vector3* positions,
+        Vector3* normals,
+        Vector2* uvs,
+        Zhengyan.DigitalWife.Mmd.VertexBoneInfo* vertexBoneInfos,
+        Vector3* morphPositions,
+        Vector4* morphUVs,
+        Matrix4x4* updateTransforms,
+        Matrix4x4* globalTransforms)
+    {
+        for (int i = 0; i < vertexCount; i++)
+        {
+            _vertexInputData[i] = new VertexInputGpu
+            {
+                Position = new Vector4(positions[i], 1.0f),
+                Normal = new Vector4(normals[i], 0.0f),
+                MorphPosition = new Vector4(morphPositions[i], 0.0f),
+                Uv = new Vector4(uvs[i], 0.0f, 0.0f),
+                MorphUv = morphUVs[i]
+            };
+
+            Zhengyan.DigitalWife.Mmd.VertexBoneInfo info = vertexBoneInfos[i];
+            _boneInputData[i] = new BoneInputGpu
+            {
+                BoneIndices = new Vector4(info.BoneIndices[0], info.BoneIndices[1], info.BoneIndices[2], info.BoneIndices[3]),
+                BoneWeights = new Vector4(info.BoneWeights[0], info.BoneWeights[1], info.BoneWeights[2], info.BoneWeights[3]),
+                SdefIndicesAndType = new Vector4(
+                    info.SDEF.BoneIndices[0], info.SDEF.BoneIndices[1], (int)info.SkinningType, 0.0f),
+                SdefWeightAndCenterXyz = new Vector4(info.SDEF.BoneWeight, info.SDEF.C.X, info.SDEF.C.Y, info.SDEF.C.Z),
+                SdefR0 = new Vector4(info.SDEF.R0, 0.0f),
+                SdefR1 = new Vector4(info.SDEF.R1, 0.0f)
+            };
+        }
+
+        for (int i = 0; i < boneCount; i++)
+        {
+            _transformData[i] = new TransformInputGpu
+            {
+                Update = updateTransforms[i],
+                Global = globalTransforms[i]
+            };
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        if (_submissionPending)
+        foreach (ComputeSlot slot in _slots)
         {
-            _renderer.Device.WaitForFence(_fence);
-            _submissionPending = false;
+            if (slot.InFlight && !slot.Fence.Signaled)
+            {
+                _renderer.Device.WaitForFence(slot.Fence);
+            }
+            slot.Dispose();
         }
-        _fence.Dispose();
-        _commands.Dispose();
         _pipeline.Dispose();
         _shader.Dispose();
-        _resourceSet.Dispose();
         _layout.Dispose();
-        _outputStaging.Dispose();
-        _outputs.Dispose();
-        _transforms.Dispose();
-        _boneInputs.Dispose();
-        _vertexInputs.Dispose();
-        _parameters.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    private ComputeSlot AcquireSlot()
+    {
+        ComputeSlot slot = _slots[_nextSlot];
+        if (slot.InFlight && !slot.Fence.Signaled)
+        {
+            // Three slots normally keep the CPU ahead of the GPU. Waiting here
+            // only means the GPU has fallen more than two dispatches behind.
+            _renderer.Device.WaitForFence(slot.Fence);
+        }
+
+        slot.InFlight = false;
+        return slot;
+    }
+
+    private void RetireCompletedSlots()
+    {
+        ComputeSlot? newest = null;
+        foreach (ComputeSlot slot in _slots)
+        {
+            if (!slot.InFlight || !slot.Fence.Signaled)
+            {
+                continue;
+            }
+
+            if (newest is null || slot.SubmissionId > newest.SubmissionId)
+            {
+                newest = slot;
+            }
+        }
+
+        if (newest is null)
+        {
+            return;
+        }
+
+        MappedResource positions = _renderer.Device.Map(newest.PositionStaging, MapMode.Read);
+        MappedResource normals = _renderer.Device.Map(newest.NormalStaging, MapMode.Read);
+        MappedResource uvs = _renderer.Device.Map(newest.UvStaging, MapMode.Read);
+        try
+        {
+            float* positionValues = (float*)positions.Data.ToPointer();
+            float* normalValues = (float*)normals.Data.ToPointer();
+            float* uvValues = (float*)uvs.Data.ToPointer();
+            for (int i = 0; i < _vertexCount; i++)
+            {
+                int vector3Offset = i * 3;
+                int vector2Offset = i * 2;
+                _latestOutput[i] = new OutputGpu
+                {
+                    Position = new Vector4(
+                        positionValues[vector3Offset],
+                        positionValues[vector3Offset + 1],
+                        positionValues[vector3Offset + 2],
+                        1.0f),
+                    Normal = new Vector4(
+                        normalValues[vector3Offset],
+                        normalValues[vector3Offset + 1],
+                        normalValues[vector3Offset + 2],
+                        0.0f),
+                    Uv = new Vector4(
+                        uvValues[vector2Offset],
+                        uvValues[vector2Offset + 1],
+                        0.0f,
+                        0.0f)
+                };
+            }
+        }
+        finally
+        {
+            _renderer.Device.Unmap(newest.UvStaging);
+            _renderer.Device.Unmap(newest.NormalStaging);
+            _renderer.Device.Unmap(newest.PositionStaging);
+        }
+
+        foreach (ComputeSlot slot in _slots)
+        {
+            if (slot.InFlight && slot.Fence.Signaled)
+            {
+                slot.InFlight = false;
+            }
+        }
+
+        _hasCompletedOutput = true;
+    }
+
+    private void CopyLatestOutput(Vector3* updatePositions, Vector3* updateNormals, Vector2* updateUVs, int vertexCount)
+    {
+        for (int i = 0; i < vertexCount; i++)
+        {
+            OutputGpu result = _latestOutput[i];
+            updatePositions[i] = new Vector3(result.Position.X, result.Position.Y, result.Position.Z);
+            updateNormals[i] = new Vector3(result.Normal.X, result.Normal.Y, result.Normal.Z);
+            updateUVs[i] = new Vector2(result.Uv.X, result.Uv.Y);
+        }
+    }
+
+    private sealed class ComputeSlot : IDisposable
+    {
+        public ComputeSlot(ResourceFactory factory, ResourceLayout layout, int vertexCount, int boneCount)
+        {
+            Parameters = factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+            VertexInputs = CreateStructuredBuffer<VertexInputGpu>(factory, vertexCount, BufferUsage.StructuredBufferReadOnly);
+            BoneInputs = CreateStructuredBuffer<BoneInputGpu>(factory, vertexCount, BufferUsage.StructuredBufferReadOnly);
+            Transforms = CreateStructuredBuffer<TransformInputGpu>(factory, boneCount, BufferUsage.StructuredBufferReadOnly);
+            PositionOutputs = CreateFloatBuffer(factory, vertexCount * 3, BufferUsage.StructuredBufferReadWrite);
+            NormalOutputs = CreateFloatBuffer(factory, vertexCount * 3, BufferUsage.StructuredBufferReadWrite);
+            UvOutputs = CreateFloatBuffer(factory, vertexCount * 2, BufferUsage.StructuredBufferReadWrite);
+            PositionStaging = CreateStagingBuffer(factory, PositionOutputs.SizeInBytes);
+            NormalStaging = CreateStagingBuffer(factory, NormalOutputs.SizeInBytes);
+            UvStaging = CreateStagingBuffer(factory, UvOutputs.SizeInBytes);
+            ResourceSet = factory.CreateResourceSet(new ResourceSetDescription(
+                layout, Parameters, VertexInputs, BoneInputs, Transforms,
+                PositionOutputs, NormalOutputs, UvOutputs));
+            Commands = factory.CreateCommandList();
+            Fence = factory.CreateFence(false);
+        }
+
+        public DeviceBuffer Parameters { get; }
+        public DeviceBuffer VertexInputs { get; }
+        public DeviceBuffer BoneInputs { get; }
+        public DeviceBuffer Transforms { get; }
+        public DeviceBuffer PositionOutputs { get; }
+        public DeviceBuffer NormalOutputs { get; }
+        public DeviceBuffer UvOutputs { get; }
+        public DeviceBuffer PositionStaging { get; }
+        public DeviceBuffer NormalStaging { get; }
+        public DeviceBuffer UvStaging { get; }
+        public ResourceSet ResourceSet { get; }
+        public CommandList Commands { get; }
+        public Fence Fence { get; }
+        public bool InFlight { get; set; }
+        public long SubmissionId { get; set; }
+
+        public void Dispose()
+        {
+            Fence.Dispose();
+            Commands.Dispose();
+            ResourceSet.Dispose();
+            UvStaging.Dispose();
+            NormalStaging.Dispose();
+            PositionStaging.Dispose();
+            UvOutputs.Dispose();
+            NormalOutputs.Dispose();
+            PositionOutputs.Dispose();
+            Transforms.Dispose();
+            BoneInputs.Dispose();
+            VertexInputs.Dispose();
+            Parameters.Dispose();
+        }
+
+        private static DeviceBuffer CreateStagingBuffer(ResourceFactory factory, uint sizeInBytes)
+            => factory.CreateBuffer(new BufferDescription(sizeInBytes, BufferUsage.Staging));
+    }
+
+    private static DeviceBuffer CreateFloatBuffer(ResourceFactory factory, int count, BufferUsage usage)
+        => factory.CreateBuffer(new BufferDescription(
+            checked((uint)(count * sizeof(float))), usage, sizeof(float)));
 
     private static DeviceBuffer CreateStructuredBuffer<T>(ResourceFactory factory, int count, BufferUsage usage)
         where T : unmanaged
@@ -270,17 +529,12 @@ internal sealed unsafe class VulkanPmxSkinningCompute : Zhengyan.DigitalWife.Mmd
             mat4 Global;
         };
 
-        struct OutputData
-        {
-            vec4 Position;
-            vec4 Normal;
-            vec4 Uv;
-        };
-
         layout(set = 0, binding = 1, std430) readonly buffer VertexInputs { VertexInput Values[]; } b_Vertices;
         layout(set = 0, binding = 2, std430) readonly buffer BoneInputs { BoneInput Values[]; } b_Bones;
         layout(set = 0, binding = 3, std430) readonly buffer Transforms { TransformInput Values[]; } b_Transforms;
-        layout(set = 0, binding = 4, std430) writeonly buffer Outputs { OutputData Values[]; } b_Outputs;
+        layout(set = 0, binding = 4, std430) writeonly buffer PositionOutputs { float Values[]; } b_Positions;
+        layout(set = 0, binding = 5, std430) writeonly buffer NormalOutputs { float Values[]; } b_Normals;
+        layout(set = 0, binding = 6, std430) writeonly buffer UvOutputs { float Values[]; } b_Uvs;
 
         vec4 QuaternionFromMatrix(mat4 m)
         {
@@ -375,9 +629,17 @@ internal sealed unsafe class VulkanPmxSkinningCompute : Zhengyan.DigitalWife.Mmd
                 outputNormal = normalize(mat3(skin) * vertex.Normal.xyz);
             }
 
-            b_Outputs.Values[index].Position = vec4(outputPosition, 1.0);
-            b_Outputs.Values[index].Normal = vec4(outputNormal, 0.0);
-            b_Outputs.Values[index].Uv = vec4(vertex.Uv.xy + vertex.MorphUv.xy, 0.0, 0.0);
+            uint vector3Offset = index * 3u;
+            uint vector2Offset = index * 2u;
+            b_Positions.Values[vector3Offset] = outputPosition.x;
+            b_Positions.Values[vector3Offset + 1u] = outputPosition.y;
+            b_Positions.Values[vector3Offset + 2u] = outputPosition.z;
+            b_Normals.Values[vector3Offset] = outputNormal.x;
+            b_Normals.Values[vector3Offset + 1u] = outputNormal.y;
+            b_Normals.Values[vector3Offset + 2u] = outputNormal.z;
+            vec2 outputUv = vertex.Uv.xy + vertex.MorphUv.xy;
+            b_Uvs.Values[vector2Offset] = outputUv.x;
+            b_Uvs.Values[vector2Offset + 1u] = outputUv.y;
         }
         """;
 }
