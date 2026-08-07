@@ -133,7 +133,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
         void main(){
             vec2 uv=vs_Uv; float rawDepth=texture(sampler2D(sceneDepth,depthSampler),uv).r;
             float skyMask=smoothstep(.9985,1.0,rawDepth); float sceneDistance=linearDepth(rawDepth);
-            float depthForWater=mix(sceneDistance,frame.depthParameters.y*.32,skyMask); float entry=smoothstep(0.0,.45,frame.effects.w);
+            float skyDistance=min(frame.depthParameters.y*.32,max(frame.depthParameters.w,frame.depthParameters.x)); float depthForWater=mix(sceneDistance,skyDistance,skyMask); float entry=smoothstep(0.0,.45,frame.effects.w);
             vec2 wave=vec2(sin(uv.y*32.0+frame.tintTime.w*.9)+sin((uv.x+uv.y)*22.0-frame.tintTime.w*1.35),cos(uv.x*28.0-frame.tintTime.w*.75)+sin((uv.x-uv.y)*18.0+frame.tintTime.w*1.1));
             float shimmer=noise(uv*14.0+vec2(frame.tintTime.w*.05,-frame.tintTime.w*.08)); vec2 distortion=wave*(.5+shimmer*.5)*frame.effects.x*entry*mix(1.0,.35,skyMask);
             vec4 source=texture(sampler2D(sceneColor,sceneSampler),clamp(uv+distortion,.001,.999)); vec3 color=source.rgb;

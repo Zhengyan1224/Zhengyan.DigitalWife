@@ -249,6 +249,12 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.InFlight = true;
             slot.SubmissionId = ++_submissionId;
             _nextSlot = (_nextSlot + 1) % _slots.Length;
+
+            // Rendering consumes these buffers from a different command-list
+            // submission. Veldrid does not expose a semaphore dependency here,
+            // so complete the transfer before the vertex-input submission.
+            _renderer.Device.WaitForFence(slot.Fence);
+            slot.InFlight = false;
             _gpuOutputValid = true;
             return true;
         }
@@ -288,10 +294,17 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             Zhengyan.DigitalWife.Mmd.VertexBoneInfo info = vertexBoneInfos[i];
             boneInputData[i] = new BoneInputGpu
             {
-                BoneIndices = new Vector4(info.BoneIndices[0], info.BoneIndices[1], info.BoneIndices[2], info.BoneIndices[3]),
+                BoneIndices = new Vector4(
+                    SanitizeBoneIndex(info.BoneIndices[0]),
+                    SanitizeBoneIndex(info.BoneIndices[1]),
+                    SanitizeBoneIndex(info.BoneIndices[2]),
+                    SanitizeBoneIndex(info.BoneIndices[3])),
                 BoneWeights = new Vector4(info.BoneWeights[0], info.BoneWeights[1], info.BoneWeights[2], info.BoneWeights[3]),
                 SdefIndicesAndType = new Vector4(
-                    info.SDEF.BoneIndices[0], info.SDEF.BoneIndices[1], (int)info.SkinningType, 0.0f),
+                    SanitizeBoneIndex(info.SDEF.BoneIndices[0]),
+                    SanitizeBoneIndex(info.SDEF.BoneIndices[1]),
+                    (int)info.SkinningType,
+                    0.0f),
                 SdefWeightAndCenterXyz = new Vector4(info.SDEF.BoneWeight, info.SDEF.C.X, info.SDEF.C.Y, info.SDEF.C.Z),
                 SdefR0 = new Vector4(info.SDEF.R0, 0.0f),
                 SdefR1 = new Vector4(info.SDEF.R1, 0.0f)
@@ -305,6 +318,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         _vertexInputData = null;
         _boneInputData = null;
     }
+
+    private int SanitizeBoneIndex(int index) => Math.Clamp(index, 0, _boneCount - 1);
 
     private void PopulateDynamicInputs(
         int vertexCount,
@@ -708,7 +723,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             MorphInput morph = b_Morphs.Values[index];
             BoneInput bone = b_Bones.Values[index];
             int skinningType = int(bone.SdefIndicesAndType.z);
-            ivec4 indices = ivec4(bone.BoneIndices);
+            int lastBone = max(int(u_Parameters.Counts.y) - 1, 0);
+            ivec4 indices = clamp(ivec4(bone.BoneIndices), ivec4(0), ivec4(lastBone));
             mat4 skin = mat4(1.0);
 
             if (skinningType == 0) skin = b_Transforms.Values[indices.x].Update;
@@ -726,8 +742,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             vec3 outputNormal;
             if (skinningType == 3)
             {
-                int i0 = int(bone.SdefIndicesAndType.x);
-                int i1 = int(bone.SdefIndicesAndType.y);
+                int i0 = clamp(int(bone.SdefIndicesAndType.x), 0, lastBone);
+                int i1 = clamp(int(bone.SdefIndicesAndType.y), 0, lastBone);
                 float w0 = bone.SdefWeightAndCenterXyz.x;
                 float w1 = 1.0 - w0;
                 vec3 center = bone.SdefWeightAndCenterXyz.yzw;

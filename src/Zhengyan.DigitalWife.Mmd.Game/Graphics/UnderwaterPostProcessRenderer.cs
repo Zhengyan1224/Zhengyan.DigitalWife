@@ -240,13 +240,16 @@ public sealed unsafe class UnderwaterPostProcessRenderer : IUnderwaterPostProces
 
         float linearDepth(float depth)
         {
+            // System.Numerics produces a 0..1 projection. OpenGL maps that NDC
+            // range into 0.5..1.0 in the depth buffer, so recover the original
+            // projection depth before linearizing it.
+            float projectionDepth = clamp(depth * 2.0 - 1.0, 0.0, 1.0);
             if (u_IsOrthographic > 0.5)
             {
-                return mix(u_Near, u_Far, depth);
+                return mix(u_Near, u_Far, projectionDepth);
             }
 
-            float z = depth * 2.0 - 1.0;
-            return (2.0 * u_Near * u_Far) / max(u_Far + u_Near - z * (u_Far - u_Near), 0.0001);
+            return (u_Near * u_Far) / max(u_Far - projectionDepth * (u_Far - u_Near), 0.0001);
         }
 
         float caustics(vec2 uv, float time)
@@ -291,7 +294,8 @@ public sealed unsafe class UnderwaterPostProcessRenderer : IUnderwaterPostProces
             float rawDepth = texture(u_DepthTex, uv).r;
             float skyMask = smoothstep(0.9985, 1.0, rawDepth);
             float sceneDepth = linearDepth(rawDepth);
-            float depthForWater = mix(sceneDepth, u_Far * 0.32, skyMask);
+            float skyDistance = min(u_Far * 0.32, max(u_VisibilityDistance, u_Near));
+            float depthForWater = mix(sceneDepth, skyDistance, skyMask);
             float entryStrength = smoothstep(0.0, 0.45, u_SurfaceDepth);
 
             vec2 wave = vec2(

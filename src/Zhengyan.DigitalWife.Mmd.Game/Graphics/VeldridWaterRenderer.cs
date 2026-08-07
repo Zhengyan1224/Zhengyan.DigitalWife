@@ -152,7 +152,7 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
             vec3 gradient=mix(frame.deepAlpha.rgb*.72,frame.reflectionSky.rgb,clamp(reflected.y*.5+.5,0.0,1.0));
             vec3 sky=texture(sampler2D(skyTex,skySampler),skyUv(reflected)).rgb;
             vec3 reflection=mix(gradient,sky,frame.reflectionSky.a*frame.parameters.z);
-            vec2 ruv=vs_Reflection.xy/max(abs(vs_Reflection.w),.0001)*.5+.5+n.xz*.035;
+            vec2 ruv=vs_Reflection.xy/max(abs(vs_Reflection.w),.0001)*.5+.5; ruv.y=1.0-ruv.y; ruv+=n.xz*.035;
             float inside=step(0,ruv.x)*step(ruv.x,1)*step(0,ruv.y)*step(ruv.y,1);
             vec3 planar=texture(sampler2D(reflectionTex,reflectionSampler),clamp(ruv,.001,.999)).rgb;
             reflection=mix(reflection,planar,frame.parameters.w*inside*.65);
