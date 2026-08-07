@@ -117,7 +117,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
     }
     private const string VertexSource = """
         layout(location=0) in vec2 in_Pos; layout(location=1) in vec2 in_Uv; layout(location=0) out vec2 vs_Uv;
-        void main(){ gl_Position=vec4(in_Pos,0,1); vs_Uv=in_Uv; }
+        void main(){ gl_Position=vec4(in_Pos,0,1); vs_Uv=vec2(in_Uv.x,1.0-in_Uv.y); }
         """;
     private const string FragmentSource = """
         layout(set=0,binding=0,std140) uniform PostFrame { vec4 tintTime; vec4 fogDensity; vec4 effects; vec4 depthParameters; } frame;
