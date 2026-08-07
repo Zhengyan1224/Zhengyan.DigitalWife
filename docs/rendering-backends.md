@@ -128,10 +128,20 @@ behind or when resources are disposed. The original asynchronous staging path
 remains available when GPU vertex outputs are not bound, preserving the
 CPU-compatible `IPmxSkinningCompute` contract and fallback behavior.
 
+Compute inputs are split by lifetime. Base position/normal/UV data and bone
+indices/weights live in two shared read-only GPU buffers and are uploaded once
+per model. The three rotating slots only own dynamic morph data, bone transforms,
+and outputs. Morph and transform revisions are compared before upload, so an
+unchanged slot is not updated again; when both revisions are unchanged and the
+GPU vertex output is already valid, the dispatch itself is skipped. Temporary
+CPU arrays used to build static inputs are released immediately after the first
+upload.
+
 The GameEditor setting is also written to `GameEditor.settings.json` beside the
 editor executable. This is needed because a window's graphics API is selected
-before the project preview window is created. Changing the setting takes effect
-on the next GameEditor start. GamePlayer reads the project setting before it
+before the project preview window is created. `Apply To Editor Window` saves the
+current project and automatically restarts GameEditor with the selected backend
+while reopening the same project. GamePlayer reads the project setting before it
 creates its window; `--graphics-backend` can override it for diagnostics.
 
 ## Auto policy

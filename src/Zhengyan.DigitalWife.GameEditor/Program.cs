@@ -11,9 +11,29 @@ internal static class Program
 
         Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend backend = ReadGraphicsBackend(args)
             ?? EditorGraphicsSettingsStore.Load();
-        using GameEditorGame game = new(backend);
+        string? projectDirectory = ReadOptionValue(args, "--project");
+        using GameEditorGame game = new(backend, projectDirectory);
         game.Run();
         return 0;
+    }
+
+    private static string? ReadOptionValue(string[] args, string optionName)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (string.Equals(args[i], optionName, StringComparison.OrdinalIgnoreCase))
+            {
+                return i + 1 < args.Length ? args[i + 1] : null;
+            }
+
+            string prefix = optionName + "=";
+            if (args[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i][prefix.Length..];
+            }
+        }
+
+        return null;
     }
 
     private static Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend? ReadGraphicsBackend(string[] args)

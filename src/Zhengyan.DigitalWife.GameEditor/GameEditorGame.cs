@@ -40,8 +40,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private bool _skyboxDrawnThisFrame;
     private int _selectedEntityIndex = -1;
     private int _debugDrawVersion = 1;
+    private readonly string? _initialProjectDirectory;
+    private bool _restartRequested;
 
-    public GameEditorGame(GraphicsBackend graphicsBackend = GraphicsBackend.Auto)
+    public GameEditorGame(
+        GraphicsBackend graphicsBackend = GraphicsBackend.Auto,
+        string? initialProjectDirectory = null)
         : base(new GameOptions
         {
             GraphicsBackend = graphicsBackend,
@@ -56,6 +60,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             AnimationTimingMode = AnimationTimingMode.TimeSynchronized
         })
     {
+        _initialProjectDirectory = string.IsNullOrWhiteSpace(initialProjectDirectory)
+            ? null
+            : Path.GetFullPath(initialProjectDirectory.Trim().Trim('"'));
         ProjectDirectory = GameProjectStore.CreateDefaultProjectDirectory();
         Project = CreateDefaultProject();
         Project.Runtime.GraphicsBackend = graphicsBackend.ToSettingValue();
@@ -85,7 +92,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         Project.Runtime.GraphicsBackend = backend.ToSettingValue();
         EditorGraphicsSettingsStore.Save(backend);
-        UpdateStatus($"Graphics backend set to {backend.ToSettingValue()}. Restart GameEditor to apply it to the preview window.");
+        UpdateStatus($"Graphics backend set to {backend.ToSettingValue()}. Click Apply To Editor Window to restart the preview with this backend.");
     }
 
     public IReadOnlyList<string> StatusLog => _statusLog;
@@ -164,10 +171,21 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _cameraController.CanProcessKeyboardInput = () => _overlay?.CanInteractWithSceneKeyboard ?? true;
 
         UpdateStatus($"Project ready: {ProjectDirectory}");
+        if (_initialProjectDirectory is not null)
+        {
+            ProjectDirectory = _initialProjectDirectory;
+            LoadProject();
+        }
     }
 
     protected override void Update(GameTime gameTime)
     {
+        if (_restartRequested)
+        {
+            Exit();
+            return;
+        }
+
         base.Update(gameTime);
     }
 
@@ -313,12 +331,15 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         return true;
     }
 
-    private void DrawSceneComponentsOnce(GameTime gameTime)
+    private void DrawSceneComponentsOnce(GameTime gameTime, DrawableGameComponent? excludedComponent = null)
     {
         IReadOnlyList<DrawableGameComponent> overlays = GetOverlayComponents();
         foreach (DrawableGameComponent component in Components
             .OfType<DrawableGameComponent>()
-            .Where(component => component.Visible && !overlays.Contains(component) && !ReferenceEquals(component, _skybox))
+            .Where(component => component.Visible
+                && !overlays.Contains(component)
+                && !ReferenceEquals(component, _skybox)
+                && !ReferenceEquals(component, excludedComponent))
             .OrderBy(component => component.DrawOrder))
         {
             component.Draw(gameTime);
@@ -397,7 +418,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         if (_sceneRenderTarget is null
             || _underwaterPostProcessRenderer is null
-            || !TryResolveUnderwaterSettings(camera, out UnderwaterPostProcessSettings settings))
+            || !TryResolveUnderwaterSettings(
+                camera,
+                out UnderwaterPostProcessSettings settings,
+                out WaterSurfaceComponent activeWaterSurface))
         {
             return false;
         }
@@ -415,6 +439,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             x,
             viewportY,
             settings,
+            activeWaterSurface,
             Project.Scene.Lighting.ClearColor.ToVector4(),
             () =>
             {
@@ -435,6 +460,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         int viewportX,
         int viewportY,
         UnderwaterPostProcessSettings settings,
+        WaterSurfaceComponent activeWaterSurface,
         Vector4 clearColor,
         Action bindOutputTarget)
     {
@@ -463,7 +489,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             viewportY,
             width,
             height);
-        DrawSceneComponentsOnce(gameTime);
+        DrawSceneComponentsOnce(gameTime, activeWaterSurface);
 
         bindOutputTarget();
         _underwaterPostProcessRenderer.Draw(camera, settings, gameTime.TotalSeconds, width, height);
@@ -480,9 +506,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _skyboxDrawnThisFrame = true;
     }
 
-    private bool TryResolveUnderwaterSettings(OrbitCamera camera, out UnderwaterPostProcessSettings settings)
+    private bool TryResolveUnderwaterSettings(
+        OrbitCamera camera,
+        out UnderwaterPostProcessSettings settings,
+        out WaterSurfaceComponent activeWaterSurface)
     {
         settings = default;
+        activeWaterSurface = null!;
         EditorWaterObject? activeWater = null;
         float activeDepth = float.MaxValue;
 
@@ -511,6 +541,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         WaterSurfaceSettings settingsSource = activeWater.Entity.Water;
         settings = CreateUnderwaterSettings(settingsSource, activeDepth);
+        activeWaterSurface = activeWater.Component;
         return true;
     }
 
@@ -615,7 +646,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string relationMessage = relationFixes > 0 ? $"\nNormalized {relationFixes} PMX relation binding(s)." : string.Empty;
         string backendMessage = projectBackend == ActiveGraphicsBackend
             ? string.Empty
-            : $"\nGraphics backend '{projectBackend.ToSettingValue()}' will apply after restarting GameEditor.";
+            : $"\nGraphics backend '{projectBackend.ToSettingValue()}' differs from the active backend. Click Apply To Editor Window to restart automatically.";
         UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}{relationMessage}{backendMessage}");
     }
 
@@ -1362,6 +1393,23 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public void ApplyWindowSettings()
     {
+        GraphicsBackend configuredBackend = GraphicsBackendNames.Parse(Project.Runtime.GraphicsBackend);
+        EditorGraphicsSettingsStore.Save(configuredBackend);
+        try
+        {
+            RendererSelection selection = RendererFactory.Select(configuredBackend);
+            if (selection.ResolvedBackend != ActiveGraphicsBackend)
+            {
+                RestartEditorWithBackend(configuredBackend);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdateStatus($"Cannot apply graphics backend '{configuredBackend.ToSettingValue()}': {ex.Message}");
+            return;
+        }
+
         Title = ResolveWindowTitle();
         Project.Window.TimingMode = NormalizeTimingMode(Project.Window.TimingMode);
         AnimationTimingMode = ToAnimationTimingMode(Project.Window.TimingMode);
@@ -1373,6 +1421,41 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             ? Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.png")
             : GameProjectPath.ToAbsolute(ProjectDirectory, Project.Window.IconPath);
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
+        UpdateStatus($"Applied window settings. Active graphics backend: {ActiveGraphicsBackend.ToSettingValue()}.");
+    }
+
+    private void RestartEditorWithBackend(GraphicsBackend backend)
+    {
+        if (_restartRequested)
+        {
+            return;
+        }
+
+        SaveProject();
+        string executable = Environment.ProcessPath
+            ?? Process.GetCurrentProcess().MainModule?.FileName
+            ?? throw new InvalidOperationException("Cannot locate the GameEditor executable.");
+        ProcessStartInfo startInfo = new(executable)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = Environment.CurrentDirectory
+        };
+        if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            string entryAssembly = Assembly.GetEntryAssembly()?.Location
+                ?? throw new InvalidOperationException("Cannot locate the GameEditor entry assembly.");
+            startInfo.ArgumentList.Add(entryAssembly);
+        }
+
+        startInfo.ArgumentList.Add("--graphics-backend");
+        startInfo.ArgumentList.Add(backend.ToSettingValue());
+        startInfo.ArgumentList.Add("--project");
+        startInfo.ArgumentList.Add(ProjectDirectory);
+
+        _ = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start the replacement GameEditor process.");
+        _restartRequested = true;
+        UpdateStatus($"Restarting GameEditor with {backend.ToSettingValue()}...");
     }
 
     public void ApplyRuntimeSettings()

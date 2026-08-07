@@ -24,16 +24,25 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     private readonly int _vertexCount;
     private readonly int _boneCount;
     private readonly ResourceLayout _layout;
+    private readonly DeviceBuffer _staticVertexInputs;
+    private readonly DeviceBuffer _staticBoneInputs;
     private readonly Shader _shader;
     private readonly Pipeline _pipeline;
-    private readonly VertexInputGpu[] _vertexInputData;
-    private readonly BoneInputGpu[] _boneInputData;
+    private VertexInputGpu[]? _vertexInputData;
+    private readonly MorphInputGpu[] _morphInputData;
+    private BoneInputGpu[]? _boneInputData;
     private readonly TransformInputGpu[] _transformData;
     private readonly OutputGpu[] _latestOutput;
     private readonly ComputeSlot[] _slots;
     private int _nextSlot;
     private long _submissionId;
+    private long _morphRevision;
+    private long _transformRevision;
     private bool _hasCompletedOutput;
+    private bool _staticInputsInitialized;
+    private bool _hasMorphSnapshot;
+    private bool _hasTransformSnapshot;
+    private bool _gpuOutputValid;
     private DeviceBuffer? _gpuPositionOutput;
     private DeviceBuffer? _gpuNormalOutput;
     private DeviceBuffer? _gpuUvOutput;
@@ -47,12 +56,18 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         ResourceFactory factory = renderer.ResourceFactory;
 
         _vertexInputData = new VertexInputGpu[_vertexCount];
+        _morphInputData = new MorphInputGpu[_vertexCount];
         _boneInputData = new BoneInputGpu[_vertexCount];
         _transformData = new TransformInputGpu[_boneCount];
+        _staticVertexInputs = CreateStructuredBuffer<VertexInputGpu>(
+            factory, _vertexCount, BufferUsage.StructuredBufferReadOnly | BufferUsage.Dynamic);
+        _staticBoneInputs = CreateStructuredBuffer<BoneInputGpu>(
+            factory, _vertexCount, BufferUsage.StructuredBufferReadOnly | BufferUsage.Dynamic);
 
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("SkinningParameters", ResourceKind.UniformBuffer, ShaderStages.Compute),
             new ResourceLayoutElementDescription("VertexInputs", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("MorphInputs", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
             new ResourceLayoutElementDescription("BoneInputs", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
             new ResourceLayoutElementDescription("Transforms", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
             new ResourceLayoutElementDescription("PositionOutputs", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute),
@@ -70,8 +85,14 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             _slots[i] = new ComputeSlot(
                 factory,
                 _layout,
+                _staticVertexInputs,
+                _staticBoneInputs,
                 _vertexCount,
                 _boneCount);
+            renderer.Device.UpdateBuffer(
+                _slots[i].Parameters,
+                0,
+                new Vector4(_vertexCount, _boneCount, 0.0f, 0.0f));
         }
     }
 
@@ -103,15 +124,13 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
 
         try
         {
-            PopulateInputs(vertexCount, boneCount, positions, normals, uvs, vertexBoneInfos,
-                morphPositions, morphUVs, updateTransforms, globalTransforms);
+            EnsureStaticInputs(vertexCount, positions, normals, uvs, vertexBoneInfos);
+            PopulateDynamicInputs(vertexCount, boneCount, morphPositions, morphUVs, updateTransforms, globalTransforms);
 
             RetireCompletedSlots();
             ComputeSlot slot = AcquireSlot();
-            _renderer.Device.UpdateBuffer(slot.Parameters, 0, new Vector4(vertexCount, boneCount, 0.0f, 0.0f));
-            _renderer.Device.UpdateBuffer(slot.VertexInputs, 0, _vertexInputData);
-            _renderer.Device.UpdateBuffer(slot.BoneInputs, 0, _boneInputData);
-            _renderer.Device.UpdateBuffer(slot.Transforms, 0, _transformData);
+            UploadMorphInputsIfNeeded(slot);
+            UploadTransformsIfNeeded(slot);
 
             slot.Commands.Begin();
             slot.Commands.SetPipeline(_pipeline);
@@ -177,6 +196,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         _gpuPositionOutput = positions;
         _gpuNormalOutput = normals;
         _gpuUvOutput = uvs;
+        _gpuOutputValid = false;
         return true;
     }
 
@@ -200,13 +220,20 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
 
         try
         {
-            PopulateInputs(vertexCount, boneCount, positions, normals, uvs, vertexBoneInfos,
-                morphPositions, morphUVs, updateTransforms, globalTransforms);
+            EnsureStaticInputs(vertexCount, positions, normals, uvs, vertexBoneInfos);
+            long previousMorphRevision = _morphRevision;
+            long previousTransformRevision = _transformRevision;
+            PopulateDynamicInputs(vertexCount, boneCount, morphPositions, morphUVs, updateTransforms, globalTransforms);
+            if (_gpuOutputValid
+                && previousMorphRevision == _morphRevision
+                && previousTransformRevision == _transformRevision)
+            {
+                return true;
+            }
+
             ComputeSlot slot = AcquireSlot();
-            _renderer.Device.UpdateBuffer(slot.Parameters, 0, new Vector4(vertexCount, boneCount, 0.0f, 0.0f));
-            _renderer.Device.UpdateBuffer(slot.VertexInputs, 0, _vertexInputData);
-            _renderer.Device.UpdateBuffer(slot.BoneInputs, 0, _boneInputData);
-            _renderer.Device.UpdateBuffer(slot.Transforms, 0, _transformData);
+            UploadMorphInputsIfNeeded(slot);
+            UploadTransformsIfNeeded(slot);
 
             slot.Commands.Begin();
             slot.Commands.SetPipeline(_pipeline);
@@ -222,6 +249,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.InFlight = true;
             slot.SubmissionId = ++_submissionId;
             _nextSlot = (_nextSlot + 1) % _slots.Length;
+            _gpuOutputValid = true;
             return true;
         }
         catch (Exception ex)
@@ -231,31 +259,34 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         }
     }
 
-    private void PopulateInputs(
+    private void EnsureStaticInputs(
         int vertexCount,
-        int boneCount,
         Vector3* positions,
         Vector3* normals,
         Vector2* uvs,
-        Zhengyan.DigitalWife.Mmd.VertexBoneInfo* vertexBoneInfos,
-        Vector3* morphPositions,
-        Vector4* morphUVs,
-        Matrix4x4* updateTransforms,
-        Matrix4x4* globalTransforms)
+        Zhengyan.DigitalWife.Mmd.VertexBoneInfo* vertexBoneInfos)
     {
+        if (_staticInputsInitialized)
+        {
+            return;
+        }
+
+        VertexInputGpu[] vertexInputData = _vertexInputData
+            ?? throw new InvalidOperationException("Static PMX vertex input data has already been released.");
+        BoneInputGpu[] boneInputData = _boneInputData
+            ?? throw new InvalidOperationException("Static PMX bone input data has already been released.");
+
         for (int i = 0; i < vertexCount; i++)
         {
-            _vertexInputData[i] = new VertexInputGpu
+            vertexInputData[i] = new VertexInputGpu
             {
                 Position = new Vector4(positions[i], 1.0f),
                 Normal = new Vector4(normals[i], 0.0f),
-                MorphPosition = new Vector4(morphPositions[i], 0.0f),
-                Uv = new Vector4(uvs[i], 0.0f, 0.0f),
-                MorphUv = morphUVs[i]
+                Uv = new Vector4(uvs[i], 0.0f, 0.0f)
             };
 
             Zhengyan.DigitalWife.Mmd.VertexBoneInfo info = vertexBoneInfos[i];
-            _boneInputData[i] = new BoneInputGpu
+            boneInputData[i] = new BoneInputGpu
             {
                 BoneIndices = new Vector4(info.BoneIndices[0], info.BoneIndices[1], info.BoneIndices[2], info.BoneIndices[3]),
                 BoneWeights = new Vector4(info.BoneWeights[0], info.BoneWeights[1], info.BoneWeights[2], info.BoneWeights[3]),
@@ -267,14 +298,79 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             };
         }
 
+        _renderer.Device.UpdateBuffer(_staticVertexInputs, 0, vertexInputData);
+        _renderer.Device.UpdateBuffer(_staticBoneInputs, 0, boneInputData);
+
+        _staticInputsInitialized = true;
+        _vertexInputData = null;
+        _boneInputData = null;
+    }
+
+    private void PopulateDynamicInputs(
+        int vertexCount,
+        int boneCount,
+        Vector3* morphPositions,
+        Vector4* morphUVs,
+        Matrix4x4* updateTransforms,
+        Matrix4x4* globalTransforms)
+    {
+        bool morphChanged = !_hasMorphSnapshot;
+        for (int i = 0; i < vertexCount; i++)
+        {
+            MorphInputGpu input = new()
+            {
+                Position = new Vector4(morphPositions[i], 0.0f),
+                Uv = morphUVs[i]
+            };
+            morphChanged |= _morphInputData[i].Position != input.Position || _morphInputData[i].Uv != input.Uv;
+            _morphInputData[i] = input;
+        }
+
+        if (morphChanged)
+        {
+            _morphRevision++;
+            _hasMorphSnapshot = true;
+        }
+
+        bool transformsChanged = !_hasTransformSnapshot;
         for (int i = 0; i < boneCount; i++)
         {
-            _transformData[i] = new TransformInputGpu
+            TransformInputGpu input = new()
             {
                 Update = updateTransforms[i],
                 Global = globalTransforms[i]
             };
+            transformsChanged |= _transformData[i].Update != input.Update || _transformData[i].Global != input.Global;
+            _transformData[i] = input;
         }
+
+        if (transformsChanged)
+        {
+            _transformRevision++;
+            _hasTransformSnapshot = true;
+        }
+    }
+
+    private void UploadMorphInputsIfNeeded(ComputeSlot slot)
+    {
+        if (slot.MorphRevision == _morphRevision)
+        {
+            return;
+        }
+
+        _renderer.Device.UpdateBuffer(slot.MorphInputs, 0, _morphInputData);
+        slot.MorphRevision = _morphRevision;
+    }
+
+    private void UploadTransformsIfNeeded(ComputeSlot slot)
+    {
+        if (slot.TransformRevision == _transformRevision)
+        {
+            return;
+        }
+
+        _renderer.Device.UpdateBuffer(slot.Transforms, 0, _transformData);
+        slot.TransformRevision = _transformRevision;
     }
 
     public void Dispose()
@@ -292,6 +388,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         _pipeline.Dispose();
         _shader.Dispose();
         _layout.Dispose();
+        _staticBoneInputs.Dispose();
+        _staticVertexInputs.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -393,12 +491,19 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
 
     private sealed class ComputeSlot : IDisposable
     {
-        public ComputeSlot(ResourceFactory factory, ResourceLayout layout, int vertexCount, int boneCount)
+        public ComputeSlot(
+            ResourceFactory factory,
+            ResourceLayout layout,
+            DeviceBuffer staticVertexInputs,
+            DeviceBuffer staticBoneInputs,
+            int vertexCount,
+            int boneCount)
         {
             Parameters = factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
-            VertexInputs = CreateStructuredBuffer<VertexInputGpu>(factory, vertexCount, BufferUsage.StructuredBufferReadOnly);
-            BoneInputs = CreateStructuredBuffer<BoneInputGpu>(factory, vertexCount, BufferUsage.StructuredBufferReadOnly);
-            Transforms = CreateStructuredBuffer<TransformInputGpu>(factory, boneCount, BufferUsage.StructuredBufferReadOnly);
+            MorphInputs = CreateStructuredBuffer<MorphInputGpu>(
+                factory, vertexCount, BufferUsage.StructuredBufferReadOnly | BufferUsage.Dynamic);
+            Transforms = CreateStructuredBuffer<TransformInputGpu>(
+                factory, boneCount, BufferUsage.StructuredBufferReadOnly | BufferUsage.Dynamic);
             PositionOutputs = CreateFloatBuffer(factory, vertexCount * 3, BufferUsage.StructuredBufferReadWrite);
             NormalOutputs = CreateFloatBuffer(factory, vertexCount * 3, BufferUsage.StructuredBufferReadWrite);
             UvOutputs = CreateFloatBuffer(factory, vertexCount * 2, BufferUsage.StructuredBufferReadWrite);
@@ -406,15 +511,14 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             NormalStaging = CreateStagingBuffer(factory, NormalOutputs.SizeInBytes);
             UvStaging = CreateStagingBuffer(factory, UvOutputs.SizeInBytes);
             ResourceSet = factory.CreateResourceSet(new ResourceSetDescription(
-                layout, Parameters, VertexInputs, BoneInputs, Transforms,
+                layout, Parameters, staticVertexInputs, MorphInputs, staticBoneInputs, Transforms,
                 PositionOutputs, NormalOutputs, UvOutputs));
             Commands = factory.CreateCommandList();
             Fence = factory.CreateFence(false);
         }
 
         public DeviceBuffer Parameters { get; }
-        public DeviceBuffer VertexInputs { get; }
-        public DeviceBuffer BoneInputs { get; }
+        public DeviceBuffer MorphInputs { get; }
         public DeviceBuffer Transforms { get; }
         public DeviceBuffer PositionOutputs { get; }
         public DeviceBuffer NormalOutputs { get; }
@@ -427,6 +531,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         public Fence Fence { get; }
         public bool InFlight { get; set; }
         public long SubmissionId { get; set; }
+        public long MorphRevision { get; set; } = -1;
+        public long TransformRevision { get; set; } = -1;
 
         public void Dispose()
         {
@@ -440,8 +546,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             NormalOutputs.Dispose();
             PositionOutputs.Dispose();
             Transforms.Dispose();
-            BoneInputs.Dispose();
-            VertexInputs.Dispose();
+            MorphInputs.Dispose();
             Parameters.Dispose();
         }
 
@@ -465,9 +570,14 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     {
         public Vector4 Position;
         public Vector4 Normal;
-        public Vector4 MorphPosition;
         public Vector4 Uv;
-        public Vector4 MorphUv;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MorphInputGpu
+    {
+        public Vector4 Position;
+        public Vector4 Uv;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -508,9 +618,13 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         {
             vec4 Position;
             vec4 Normal;
-            vec4 MorphPosition;
             vec4 Uv;
-            vec4 MorphUv;
+        };
+
+        struct MorphInput
+        {
+            vec4 Position;
+            vec4 Uv;
         };
 
         struct BoneInput
@@ -530,11 +644,12 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         };
 
         layout(set = 0, binding = 1, std430) readonly buffer VertexInputs { VertexInput Values[]; } b_Vertices;
-        layout(set = 0, binding = 2, std430) readonly buffer BoneInputs { BoneInput Values[]; } b_Bones;
-        layout(set = 0, binding = 3, std430) readonly buffer Transforms { TransformInput Values[]; } b_Transforms;
-        layout(set = 0, binding = 4, std430) writeonly buffer PositionOutputs { float Values[]; } b_Positions;
-        layout(set = 0, binding = 5, std430) writeonly buffer NormalOutputs { float Values[]; } b_Normals;
-        layout(set = 0, binding = 6, std430) writeonly buffer UvOutputs { float Values[]; } b_Uvs;
+        layout(set = 0, binding = 2, std430) readonly buffer MorphInputs { MorphInput Values[]; } b_Morphs;
+        layout(set = 0, binding = 3, std430) readonly buffer BoneInputs { BoneInput Values[]; } b_Bones;
+        layout(set = 0, binding = 4, std430) readonly buffer Transforms { TransformInput Values[]; } b_Transforms;
+        layout(set = 0, binding = 5, std430) writeonly buffer PositionOutputs { float Values[]; } b_Positions;
+        layout(set = 0, binding = 6, std430) writeonly buffer NormalOutputs { float Values[]; } b_Normals;
+        layout(set = 0, binding = 7, std430) writeonly buffer UvOutputs { float Values[]; } b_Uvs;
 
         vec4 QuaternionFromMatrix(mat4 m)
         {
@@ -590,6 +705,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             if (index >= uint(u_Parameters.Counts.x)) return;
 
             VertexInput vertex = b_Vertices.Values[index];
+            MorphInput morph = b_Morphs.Values[index];
             BoneInput bone = b_Bones.Values[index];
             int skinningType = int(bone.SdefIndicesAndType.z);
             ivec4 indices = ivec4(bone.BoneIndices);
@@ -605,7 +721,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
                     + b_Transforms.Values[indices.w].Update * bone.BoneWeights.w;
             }
 
-            vec3 position = vertex.Position.xyz + vertex.MorphPosition.xyz;
+            vec3 position = vertex.Position.xyz + morph.Position.xyz;
             vec3 outputPosition;
             vec3 outputNormal;
             if (skinningType == 3)
@@ -637,7 +753,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             b_Normals.Values[vector3Offset] = outputNormal.x;
             b_Normals.Values[vector3Offset + 1u] = outputNormal.y;
             b_Normals.Values[vector3Offset + 2u] = outputNormal.z;
-            vec2 outputUv = vertex.Uv.xy + vertex.MorphUv.xy;
+            vec2 outputUv = vertex.Uv.xy + morph.Uv.xy;
             b_Uvs.Values[vector2Offset] = outputUv.x;
             b_Uvs.Values[vector2Offset + 1u] = outputUv.y;
         }

@@ -128,11 +128,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         _editorGame.SetSceneViewportSize(width, height);
 
         Vector2 imageMin = ImGui.GetCursorScreenPos();
+        bool flipSceneTextureV = _editorGame.SceneRenderTarget.ColorTextureHandle.Backend == GraphicsBackend.OpenGL;
+        Vector2 sceneUv0 = flipSceneTextureV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
+        Vector2 sceneUv1 = flipSceneTextureV ? new Vector2(1.0f, 0.0f) : Vector2.One;
         ImGui.Image(
             _controller!.GetTextureBinding(_editorGame.SceneRenderTarget.ColorTextureHandle),
             new Vector2(width, height),
-            new Vector2(0.0f, 1.0f),
-            new Vector2(1.0f, 0.0f));
+            sceneUv0,
+            sceneUv1);
         DrawSpritePreview(imageMin, new Vector2(width, height));
         DrawGuiPreview(imageMin, new Vector2(width, height));
 
@@ -1144,7 +1147,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplyWindowSettings();
         }
 
-        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. OpenGL can use OpenCL for PMX skinning; Vulkan can use Vulkan Compute. Either path falls back to CPU if initialization fails. The button above only previews regular window settings in the editor.");
+        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. OpenGL can use OpenCL for PMX skinning; Vulkan can use Vulkan Compute. Either path falls back to CPU if initialization fails. Applying a different graphics backend saves the project and restarts GameEditor automatically.");
         ImGui.PopID();
     }
 

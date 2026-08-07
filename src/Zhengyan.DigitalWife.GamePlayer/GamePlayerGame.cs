@@ -392,12 +392,15 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         return true;
     }
 
-    private void DrawSceneComponentsOnce(GameTime gameTime)
+    private void DrawSceneComponentsOnce(GameTime gameTime, DrawableGameComponent? excludedComponent = null)
     {
         IReadOnlyList<DrawableGameComponent> overlays = GetOverlayComponents();
         foreach (DrawableGameComponent component in Components
             .OfType<DrawableGameComponent>()
-            .Where(component => component.Visible && !overlays.Contains(component) && !ReferenceEquals(component, _skybox))
+            .Where(component => component.Visible
+                && !overlays.Contains(component)
+                && !ReferenceEquals(component, _skybox)
+                && !ReferenceEquals(component, excludedComponent))
             .OrderBy(component => component.DrawOrder))
         {
             component.Draw(gameTime);
@@ -477,7 +480,10 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         Vector4 clearColor)
     {
         if (_underwaterPostProcessRenderer is null
-            || !TryResolveUnderwaterSettings(camera, out UnderwaterPostProcessSettings settings))
+            || !TryResolveUnderwaterSettings(
+                camera,
+                out UnderwaterPostProcessSettings settings,
+                out WaterSurfaceComponent activeWaterSurface))
         {
             return false;
         }
@@ -495,6 +501,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             x,
             viewportY,
             settings,
+            activeWaterSurface,
             clearColor,
             () =>
             {
@@ -515,6 +522,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         int viewportX,
         int viewportY,
         UnderwaterPostProcessSettings settings,
+        WaterSurfaceComponent activeWaterSurface,
         Vector4 clearColor,
         Action bindOutputTarget)
     {
@@ -543,7 +551,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             viewportY,
             width,
             height);
-        DrawSceneComponentsOnce(gameTime);
+        DrawSceneComponentsOnce(gameTime, activeWaterSurface);
 
         bindOutputTarget();
         _underwaterPostProcessRenderer.Draw(camera, settings, gameTime.TotalSeconds, width, height);
@@ -560,9 +568,13 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _skyboxDrawnThisFrame = true;
     }
 
-    private bool TryResolveUnderwaterSettings(OrbitCamera camera, out UnderwaterPostProcessSettings settings)
+    private bool TryResolveUnderwaterSettings(
+        OrbitCamera camera,
+        out UnderwaterPostProcessSettings settings,
+        out WaterSurfaceComponent activeWaterSurface)
     {
         settings = default;
+        activeWaterSurface = null!;
         RuntimeWaterObject? activeWater = null;
         float activeDepth = float.MaxValue;
 
@@ -591,6 +603,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         WaterSurfaceSettings settingsSource = activeWater.Definition.Water;
         settings = CreateUnderwaterSettings(settingsSource, activeDepth);
+        activeWaterSurface = activeWater.Component;
         return true;
     }
 
