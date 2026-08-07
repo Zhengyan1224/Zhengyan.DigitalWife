@@ -39,7 +39,8 @@ internal static class Program
             return 1;
         }
 
-        using GamePlayerGame game = new(projectSession);
+        Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend? graphicsBackend = ReadGraphicsBackend(args);
+        using GamePlayerGame game = new(projectSession, graphicsBackend);
         game.Run();
         return 0;
     }
@@ -62,6 +63,14 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend? ReadGraphicsBackend(string[] args)
+    {
+        string? value = ReadOptionValue(args, "--graphics-backend");
+        return value is null
+            ? null
+            : Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackendNames.Parse(value);
     }
 
     private static string ReadProjectInputPath(string[] args)
@@ -87,6 +96,7 @@ internal static class Program
 
     private static bool IsOptionWithValue(string optionName)
     {
-        return string.Equals(optionName, "--package-password", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(optionName, "--package-password", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(optionName, "--graphics-backend", StringComparison.OrdinalIgnoreCase);
     }
 }

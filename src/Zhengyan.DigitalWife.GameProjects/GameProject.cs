@@ -38,6 +38,8 @@ public sealed class GameProject
 
 public sealed class GameRuntimeSettings
 {
+    public string GraphicsBackend { get; set; } = "Auto";
+
     public bool UseOpenCL { get; set; } = true;
 }
 

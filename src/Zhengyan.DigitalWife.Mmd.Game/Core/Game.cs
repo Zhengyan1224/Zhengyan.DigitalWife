@@ -3,7 +3,6 @@ using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Input;
 using Silk.NET.Input;
 using Silk.NET.Maths;
-using Silk.NET.OpenGLES;
 using Silk.NET.Windowing;
 
 namespace Zhengyan.DigitalWife.Mmd.Game;
@@ -14,6 +13,7 @@ public abstract class Game : IDisposable
     private GameComponent[] _sortedUpdateComponents = [];
     private DrawableGameComponent[] _sortedDrawableComponents = [];
     private readonly IWindow _window;
+    private readonly IRenderer _renderer;
     private bool _disposed;
     private bool _initialized;
     private bool _isActive = true;
@@ -22,6 +22,8 @@ public abstract class Game : IDisposable
     protected Game(GameOptions? options = null)
     {
         Options = options ?? new GameOptions();
+        RendererSelection = RendererFactory.Select(Options.GraphicsBackend);
+        _renderer = RendererFactory.Create(RendererSelection);
 
         WindowOptions windowOptions = WindowOptions.Default;
         windowOptions.Title = Options.Title;
@@ -34,8 +36,7 @@ public abstract class Game : IDisposable
         windowOptions.TransparentFramebuffer = Options.TransparentFramebuffer;
         windowOptions.VSync = Options.VSync;
         windowOptions.Samples = Options.Samples;
-        // The built-in shaders only require GLES 3.0, which is a much safer baseline on Windows/WGL.
-        windowOptions.API = new GraphicsAPI(ContextAPI.OpenGLES, new APIVersion(3, 0));
+        RendererFactory.ConfigureWindow(ref windowOptions, RendererSelection.ResolvedBackend);
         windowOptions.PreferredDepthBufferBits = Options.PreferredDepthBufferBits;
         windowOptions.PreferredStencilBufferBits = Options.PreferredStencilBufferBits;
         windowOptions.PreferredBitDepth = new Vector4D<int>(8);
@@ -57,6 +58,8 @@ public abstract class Game : IDisposable
     }
 
     public GameOptions Options { get; }
+
+    public RendererSelection RendererSelection { get; }
 
     public GraphicsDevice GraphicsDevice { get; private set; } = null!;
 
@@ -185,7 +188,7 @@ public abstract class Game : IDisposable
 
         Audio?.Dispose();
         Input?.Dispose();
-        GraphicsDevice?.Gl.Dispose();
+        _renderer.Dispose();
 
         GC.SuppressFinalize(this);
     }
@@ -194,8 +197,15 @@ public abstract class Game : IDisposable
     {
         Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = Options.UseOpenCL;
 
-        GL gl = _window.CreateOpenGLES();
-        GraphicsDevice = new GraphicsDevice(gl, Options.ClearColor, _window.Size);
+        _renderer.Initialize(_window, _window.Size);
+        GraphicsDevice = new GraphicsDevice(_renderer, Options.ClearColor);
+        if (_renderer.Backend == GraphicsBackend.Vulkan)
+        {
+            throw new NotSupportedException(
+                "The Vulkan device and swapchain are available, but legacy OpenGL scene passes are not yet migrated. " +
+                "Use OpenGL until the renderer resource migration is complete.");
+        }
+
         Input = new InputManager(_window.CreateInput(), _window);
         if (Options.EnableAudio)
         {
@@ -278,6 +288,8 @@ public abstract class Game : IDisposable
                 component.Draw(gameTime);
             }
         }
+
+        _renderer.Present();
     }
 
     private void OnClosing()

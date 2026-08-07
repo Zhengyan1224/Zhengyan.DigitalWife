@@ -1,0 +1,93 @@
+using System.Numerics;
+using Silk.NET.Maths;
+using Silk.NET.OpenGLES;
+using Silk.NET.Windowing;
+
+namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
+
+public sealed class OpenGlRenderer : IRenderer
+{
+    private GL? _gl;
+
+    public GraphicsBackend Backend => GraphicsBackend.OpenGL;
+
+    public string Name => "OpenGL ES 3.0";
+
+    public Vector2D<int> BackBufferSize { get; private set; }
+
+    internal GL Gl => _gl ?? throw new InvalidOperationException("The OpenGL renderer has not been initialized.");
+
+    public void Initialize(IWindow window, Vector2D<int> backBufferSize)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        if (_gl is not null)
+        {
+            throw new InvalidOperationException("The OpenGL renderer is already initialized.");
+        }
+
+        _gl = window.CreateOpenGLES();
+        Resize(backBufferSize);
+    }
+
+    public void Resize(Vector2D<int> backBufferSize)
+    {
+        BackBufferSize = backBufferSize;
+        Gl.Viewport(backBufferSize);
+    }
+
+    public void Clear(Vector4 color)
+    {
+        GL gl = Gl;
+        gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+        gl.Viewport(BackBufferSize);
+        gl.Disable(GLEnum.ScissorTest);
+        gl.Disable(GLEnum.StencilTest);
+        gl.ColorMask(true, true, true, true);
+        gl.DepthMask(true);
+        gl.StencilMask(0xFF);
+        gl.ClearColor(color.X, color.Y, color.Z, color.W);
+        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    public IRenderTarget CreateRenderTarget(string name)
+    {
+        return new RenderTexture(Gl, name);
+    }
+
+    public ITexture2D CreateTexture2D()
+    {
+        return new Texture2D(Gl);
+    }
+
+    public IScreenSpriteRenderer CreateScreenSpriteRenderer()
+    {
+        return new ScreenSpriteRenderer(Gl);
+    }
+
+    public IGpuBuffer CreateBuffer(GpuBufferDescription description)
+    {
+        return new OpenGlGpuBuffer(Gl, description);
+    }
+
+    public IGpuSampler CreateSampler(GpuSamplerDescription description)
+    {
+        return new OpenGlGpuSampler(Gl, description);
+    }
+
+    public void RestoreBackBuffer()
+    {
+        Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+        Gl.Viewport(BackBufferSize);
+    }
+
+    public void Present()
+    {
+        // Silk.NET presents the OpenGL surface at the end of the window Render callback.
+    }
+
+    public void Dispose()
+    {
+        _gl?.Dispose();
+        _gl = null;
+    }
+}

@@ -35,7 +35,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private int _preferredLanguageIndex;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
-    private ScreenSpriteRenderer? _backgroundSpriteRenderer;
+    private IScreenSpriteRenderer? _backgroundSpriteRenderer;
     private static readonly string[] CameraControlModes =
     [
         "editor",
@@ -65,7 +65,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        _backgroundSpriteRenderer = new ScreenSpriteRenderer(Game.GraphicsDevice.Gl);
+        _backgroundSpriteRenderer = Game.GraphicsDevice.CreateScreenSpriteRenderer();
 
         if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
         {
@@ -220,8 +220,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             .Where(sprite => sprite.Visible && sprite.DrawOrder >= 0 && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            uint textureId = GetSpriteTextureId(sprite.Path);
-            if (textureId == 0)
+            RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
+            if (texture.LegacyTextureId == 0)
             {
                 continue;
             }
@@ -230,7 +230,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 min = viewportMin + new Vector2(rect.X, rect.Y);
             Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, textureId, min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
+            AddSpriteImage(drawList, texture.LegacyTextureId, min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
 
         drawList.PopClipRect();
@@ -257,8 +257,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             .Where(sprite => sprite.Visible && sprite.DrawOrder < 0 && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            uint textureId = GetSpriteTextureId(sprite.Path);
-            if (textureId == 0)
+            RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
+            if (texture.LegacyTextureId == 0)
             {
                 continue;
             }
@@ -267,7 +267,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 min = new(rect.X - viewportX, rect.Y - viewportY);
             Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             _backgroundSpriteCommands.Add(new ScreenSpriteDrawCommand(
-                textureId,
+                texture,
                 min,
                 max,
                 sprite.RotationDegrees,
@@ -339,13 +339,21 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
     private uint GetSpriteTextureId(string path)
     {
+        return GetSpriteTextureHandle(path).LegacyTextureId;
+    }
+
+    private RuntimeTextureHandle GetSpriteTextureHandle(string path)
+    {
         if (_editorGame.RenderTextureManager is not null
-            && _editorGame.RenderTextureManager.TryGetTexture(path, out uint textureId))
+            && _editorGame.RenderTextureManager.TryGetTextureHandle(path, out RuntimeTextureHandle handle))
         {
-            return textureId;
+            return handle;
         }
 
-        return GetSpriteTexture(path)?.Id ?? 0;
+        Texture2D? texture = GetSpriteTexture(path);
+        return texture is null
+            ? default
+            : new RuntimeTextureHandle(GraphicsBackend.OpenGL, texture.Id, texture.NativeResource);
     }
 
     private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)
@@ -1063,6 +1071,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool fullscreen = window.Fullscreen;
         bool resizable = window.Resizable;
         string timingMode = window.TimingMode;
+        string graphicsBackend = GraphicsBackendNames.Parse(
+            _editorGame.Project.Runtime.GraphicsBackend).ToSettingValue();
         bool useOpenCl = _editorGame.Project.Runtime.UseOpenCL;
         bool changed = false;
         changed |= ImGui.Checkbox("Desktop sprite mode", ref desktopSpriteMode);
@@ -1105,6 +1115,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Fullscreen", ref fullscreen);
         changed |= ImGui.Checkbox("Resizable", ref resizable);
         changed |= DrawStringCombo("Timing Mode", ref timingMode, ["time_synchronized", "frame_rate_dependent"]);
+        if (DrawStringCombo("Graphics backend", ref graphicsBackend, ["Auto", "OpenGL", "Vulkan"]))
+        {
+            _editorGame.SetGraphicsBackend(GraphicsBackendNames.Parse(graphicsBackend));
+        }
+
+        ImGui.TextDisabled($"Active: {_editorGame.ActiveGraphicsBackend.ToSettingValue()}");
         changed |= ImGui.Checkbox("Use OpenCL", ref useOpenCl);
 
         if (changed)

@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
@@ -11,7 +10,7 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 {
     private sealed class RenderTextureRuntimeState
     {
-        public required RenderTexture Texture { get; init; }
+        public required IRenderTarget Texture { get; init; }
 
         public double LastRenderTimeSeconds { get; set; } = double.NegativeInfinity;
     }
@@ -90,8 +89,26 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
             return false;
         }
 
-        textureId = state.Texture.ColorTextureId;
+        textureId = state.Texture.LegacyColorTextureId;
         return textureId != 0;
+    }
+
+    public bool TryGetTextureHandle(string textureReference, out RuntimeTextureHandle handle)
+    {
+        string name = NormalizeRuntimeTextureName(textureReference);
+        if (!string.IsNullOrWhiteSpace(name)
+            && _renderTextures.TryGetValue(name, out RenderTextureRuntimeState? state)
+            && (state.Texture.LegacyColorTextureId != 0 || state.Texture.Backend == GraphicsBackend.Vulkan))
+        {
+            handle = new RuntimeTextureHandle(
+                state.Texture.Backend,
+                state.Texture.LegacyColorTextureId,
+                state.Texture.NativeColorResource);
+            return true;
+        }
+
+        handle = default;
+        return false;
     }
 
     public void RenderAll(
@@ -110,7 +127,6 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
         {
             SyncCameras(mainCamera);
             GameProjectScene scene = _getScene();
-            GL gl = _game.GraphicsDevice.Gl;
             HashSet<string> validRenderTextures = new(StringComparer.OrdinalIgnoreCase);
 
             foreach (RenderTextureSettings settings in scene.RenderTextures.Where(item => item.Enabled))
@@ -122,7 +138,7 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 
                 validRenderTextures.Add(settings.Name);
                 RenderTextureRuntimeState state = GetOrCreateRenderTexture(settings.Name);
-                RenderTexture renderTexture = state.Texture;
+                IRenderTarget renderTexture = state.Texture;
                 renderTexture.EnsureSize(settings.Width, settings.Height);
                 OrbitCamera camera = ResolveCamera(settings.Camera, mainCamera);
                 camera.Width = renderTexture.Width;
@@ -133,17 +149,12 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
                     continue;
                 }
 
-                renderTexture.Bind();
-                gl.Disable(GLEnum.ScissorTest);
-                gl.Disable(GLEnum.StencilTest);
-                gl.ColorMask(true, true, true, true);
-                gl.DepthMask(true);
                 Vector4 clearColor = settings.ClearColor.ToVector4();
-                gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
-                gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+                renderTexture.BeginPass(clearColor);
 
                 applyCamera(camera);
                 DrawSceneComponents(gameTime);
+                renderTexture.EndPass();
                 state.LastRenderTimeSeconds = gameTime.TotalSeconds;
             }
 
@@ -153,13 +164,12 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
                 _renderTextures.Remove(staleName);
             }
         }
-        finally
-        {
-            restoreCamera(mainCamera);
-            _game.GraphicsDevice.Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
-            _game.GraphicsDevice.Gl.Viewport(0, 0, (uint)Math.Max(_game.GraphicsDevice.BackBufferSize.X, 1), (uint)Math.Max(_game.GraphicsDevice.BackBufferSize.Y, 1));
-            _isRendering = false;
-        }
+            finally
+            {
+                restoreCamera(mainCamera);
+                _game.GraphicsDevice.RestoreBackBuffer();
+                _isRendering = false;
+            }
     }
 
     public void Dispose()
@@ -189,7 +199,7 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
         {
             state = new RenderTextureRuntimeState
             {
-                Texture = new RenderTexture(_game.GraphicsDevice.Gl, name)
+                Texture = _game.GraphicsDevice.CreateRenderTarget(name)
             };
             _renderTextures[name] = state;
         }

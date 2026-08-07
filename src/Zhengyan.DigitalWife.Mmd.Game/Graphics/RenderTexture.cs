@@ -1,8 +1,9 @@
 using Silk.NET.OpenGLES;
+using System.Numerics;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
-public sealed unsafe class RenderTexture : IDisposable
+public sealed unsafe class RenderTexture : IRenderTarget
 {
     private readonly GL _gl;
     private bool _disposed;
@@ -24,6 +25,12 @@ public sealed unsafe class RenderTexture : IDisposable
     }
 
     public string Name { get; }
+
+    public GraphicsBackend Backend => GraphicsBackend.OpenGL;
+
+    public uint LegacyColorTextureId => ColorTextureId;
+
+    public object NativeColorResource => ColorTextureId;
 
     public uint FramebufferId { get; }
 
@@ -65,6 +72,22 @@ public sealed unsafe class RenderTexture : IDisposable
     {
         _gl.BindFramebuffer(GLEnum.Framebuffer, FramebufferId);
         _gl.Viewport(0, 0, (uint)Math.Max(Width, 1), (uint)Math.Max(Height, 1));
+    }
+
+    public void BeginPass(Vector4 clearColor)
+    {
+        Bind();
+        _gl.Disable(GLEnum.ScissorTest);
+        _gl.Disable(GLEnum.StencilTest);
+        _gl.ColorMask(true, true, true, true);
+        _gl.DepthMask(true);
+        _gl.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, clearColor.W);
+        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    public void EndPass()
+    {
+        _gl.BindFramebuffer(GLEnum.Framebuffer, 0);
     }
 
     public void Dispose()

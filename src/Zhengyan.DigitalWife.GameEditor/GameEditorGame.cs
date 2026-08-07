@@ -42,9 +42,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private int _selectedEntityIndex = -1;
     private int _debugDrawVersion = 1;
 
-    public GameEditorGame()
+    public GameEditorGame(GraphicsBackend graphicsBackend = GraphicsBackend.Auto)
         : base(new GameOptions
         {
+            GraphicsBackend = graphicsBackend,
             Title = "Zhengyan.DigitalWife Game Editor",
             WindowSize = new Silk.NET.Maths.Vector2D<int>(1440, 860),
             VSync = true,
@@ -57,6 +58,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         ProjectDirectory = GameProjectStore.CreateDefaultProjectDirectory();
         Project = CreateDefaultProject();
+        Project.Runtime.GraphicsBackend = graphicsBackend.ToSettingValue();
     }
 
     public GameProject Project { get; private set; }
@@ -74,6 +76,17 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public IReadOnlyList<EditorPlaneObject> PlaneObjects => _planeObjects;
 
     public string StatusMessage => _statusMessage;
+
+    public GraphicsBackend ActiveGraphicsBackend => GraphicsDevice.Backend;
+
+    public GraphicsBackend RequestedGraphicsBackend => Options.GraphicsBackend;
+
+    public void SetGraphicsBackend(GraphicsBackend backend)
+    {
+        Project.Runtime.GraphicsBackend = backend.ToSettingValue();
+        EditorGraphicsSettingsStore.Save(backend);
+        UpdateStatus($"Graphics backend set to {backend.ToSettingValue()}. Restart GameEditor to apply it to the preview window.");
+    }
 
     public IReadOnlyList<string> StatusLog => _statusLog;
 
@@ -112,7 +125,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     protected override void LoadContent()
     {
-        _sceneRenderTarget = new SceneRenderTarget(GraphicsDevice.Gl);
+        _sceneRenderTarget = new SceneRenderTarget(GraphicsDevice);
         _sceneRenderTarget.EnsureSize(GraphicsDevice.BackBufferSize.X, GraphicsDevice.BackBufferSize.Y);
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
@@ -626,10 +639,15 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         ClearSceneRuntime();
         Project = GameProjectStore.Load(ProjectDirectory);
+        GraphicsBackend projectBackend = GraphicsBackendNames.Parse(Project.Runtime.GraphicsBackend);
+        EditorGraphicsSettingsStore.Save(projectBackend);
         ApplyRuntimeSettings();
         int relationFixes = ReloadActiveSceneRuntime(clearFirst: false);
         string relationMessage = relationFixes > 0 ? $"\nNormalized {relationFixes} PMX relation binding(s)." : string.Empty;
-        UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}{relationMessage}");
+        string backendMessage = projectBackend == ActiveGraphicsBackend
+            ? string.Empty
+            : $"\nGraphics backend '{projectBackend.ToSettingValue()}' will apply after restarting GameEditor.";
+        UpdateStatus($"Loaded project: {Path.Combine(ProjectDirectory, GameProjectStore.ProjectFileName)}{relationMessage}{backendMessage}");
     }
 
     public void SaveProject()
@@ -3337,6 +3355,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             Version = "0.1.0",
             Runtime = new GameRuntimeSettings
             {
+                GraphicsBackend = GraphicsBackend.Auto.ToSettingValue(),
                 UseOpenCL = true
             },
             Scene = new GameProjectScene

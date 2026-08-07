@@ -6,40 +6,79 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 public sealed class GraphicsDevice
 {
-    public GraphicsDevice(GL gl, Vector4 clearColor, Vector2D<int> backBufferSize)
-    {
-        Gl = gl;
-        ClearColor = clearColor;
-        BackBufferSize = backBufferSize;
+    private readonly IRenderer _renderer;
 
-        // The default framebuffer viewport is not guaranteed to match the window size.
-        // Initialize it up front so the first non-ImGui draw call can render correctly.
-        Gl.Viewport(backBufferSize);
+    public GraphicsDevice(IRenderer renderer, Vector4 clearColor)
+    {
+        _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
+        ClearColor = clearColor;
     }
 
-    public GL Gl { get; }
+    public IRenderer Renderer => _renderer;
+
+    public GraphicsBackend Backend => _renderer.Backend;
+
+    // Compatibility bridge while individual rendering components move to backend-neutral resources.
+    public GL Gl => _renderer is OpenGlRenderer openGl
+        ? openGl.Gl
+        : throw new NotSupportedException($"{_renderer.Backend} does not expose an OpenGL API.");
 
     public Vector4 ClearColor { get; set; }
 
-    public Vector2D<int> BackBufferSize { get; private set; }
+    public Vector2D<int> BackBufferSize => _renderer.BackBufferSize;
 
     public void Resize(Vector2D<int> backBufferSize)
     {
-        BackBufferSize = backBufferSize;
-        Gl.Viewport(backBufferSize);
+        _renderer.Resize(backBufferSize);
+    }
+
+    public IRenderTarget CreateRenderTarget(string name)
+    {
+        return _renderer.CreateRenderTarget(name);
+    }
+
+    public ITexture2D CreateTexture2D()
+    {
+        return _renderer.CreateTexture2D();
+    }
+
+    public IScreenSpriteRenderer CreateScreenSpriteRenderer()
+    {
+        return _renderer.CreateScreenSpriteRenderer();
+    }
+
+    public IGpuBuffer CreateBuffer(GpuBufferDescription description)
+    {
+        return _renderer.CreateBuffer(description);
+    }
+
+    public IGpuSampler CreateSampler(GpuSamplerDescription description)
+    {
+        return _renderer.CreateSampler(description);
+    }
+
+    public void RestoreBackBuffer()
+    {
+        _renderer.RestoreBackBuffer();
     }
 
     public void Clear(ClearBufferMask mask = ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit)
     {
-        Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
-        Gl.Viewport(BackBufferSize);
-        Gl.Disable(GLEnum.ScissorTest);
-        Gl.Disable(GLEnum.StencilTest);
-        Gl.ColorMask(true, true, true, true);
-        Gl.DepthMask(true);
-        Gl.StencilMask(0xFF);
-        Gl.ClearColor(ClearColor.X, ClearColor.Y, ClearColor.Z, ClearColor.W);
-        Gl.Clear(mask);
+        ClearBufferMask defaultMask = ClearBufferMask.ColorBufferBit
+            | ClearBufferMask.DepthBufferBit
+            | ClearBufferMask.StencilBufferBit;
+        if (mask == defaultMask)
+        {
+            _renderer.Clear(ClearColor);
+            return;
+        }
+
+        if (_renderer is not OpenGlRenderer openGl)
+        {
+            throw new NotSupportedException("Custom clear masks are only available through the OpenGL compatibility path.");
+        }
+
+        openGl.Gl.Clear(mask);
     }
 }
 

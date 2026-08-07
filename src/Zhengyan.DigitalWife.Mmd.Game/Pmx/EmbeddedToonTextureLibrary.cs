@@ -1,19 +1,17 @@
 ﻿using Zhengyan.DigitalWife.Mmd.Game.Graphics;
-using Silk.NET.OpenGLES;
-
 namespace Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 internal sealed class EmbeddedToonTextureLibrary : IDisposable
 {
-    private readonly Texture2D[] _textures;
+    private readonly ITexture2D[] _textures;
 
-    public EmbeddedToonTextureLibrary(GL gl)
+    public EmbeddedToonTextureLibrary(GraphicsDevice graphicsDevice)
     {
-        _textures = new Texture2D[10];
+        _textures = new ITexture2D[10];
 
         for (int i = 0; i < _textures.Length; i++)
         {
-            Texture2D texture = new(gl, GLEnum.ClampToEdge);
+            ITexture2D texture = graphicsDevice.CreateTexture2D();
             string? toonPath = ResolveToonTexturePath(i + 1);
             if (toonPath is not null)
             {
@@ -28,7 +26,7 @@ internal sealed class EmbeddedToonTextureLibrary : IDisposable
         }
     }
 
-    public bool TryGetTexture(string texturePath, out Texture2D texture)
+    public bool TryGetTexture(string texturePath, out ITexture2D texture)
     {
         string fileName = Path.GetFileName(texturePath);
         if (fileName.StartsWith("toon", StringComparison.OrdinalIgnoreCase) &&
@@ -48,7 +46,7 @@ internal sealed class EmbeddedToonTextureLibrary : IDisposable
 
     public void Dispose()
     {
-        foreach (Texture2D texture in _textures)
+        foreach (ITexture2D texture in _textures)
         {
             texture.Dispose();
         }

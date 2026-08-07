@@ -71,8 +71,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private bool _microphoneInputAvailable = true;
     private string _microphoneUnavailableReason = string.Empty;
 
-    public GamePlayerGame(GameProjectPackageSession projectSession)
-        : base(CreateInitialOptions(projectSession.ProjectDirectory))
+    public GamePlayerGame(GameProjectPackageSession projectSession, GraphicsBackend? graphicsBackendOverride = null)
+        : base(CreateInitialOptions(projectSession.ProjectDirectory, graphicsBackendOverride))
     {
         _projectSession = projectSession;
         _projectDirectory = projectSession.ProjectDirectory;
@@ -104,7 +104,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
     }
 
-    private static GameOptions CreateInitialOptions(string projectDirectory)
+    private static GameOptions CreateInitialOptions(
+        string projectDirectory,
+        GraphicsBackend? graphicsBackendOverride)
     {
         GameOptions options = new()
         {
@@ -123,10 +125,13 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             string projectPath = Path.Combine(projectDirectory, GameProjectStore.ProjectFileName);
             if (!File.Exists(projectPath))
             {
+                options.GraphicsBackend = graphicsBackendOverride ?? options.GraphicsBackend;
                 return options;
             }
 
             GameProject project = GameProjectStore.Load(projectDirectory);
+            options.GraphicsBackend = graphicsBackendOverride
+                ?? GraphicsBackendNames.Parse(project.Runtime.GraphicsBackend);
             options.Title = string.IsNullOrWhiteSpace(project.Window.Title) ? options.Title : project.Window.Title;
             options.WindowSize = new Silk.NET.Maths.Vector2D<int>(
                 Math.Max(320, project.Window.Width),
@@ -146,6 +151,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
         }
 
+        options.GraphicsBackend = graphicsBackendOverride ?? options.GraphicsBackend;
         return options;
     }
 

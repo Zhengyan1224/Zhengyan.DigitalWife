@@ -10,6 +10,7 @@
         <PackageReference Include="ImGui.NET" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
         <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
+        <PackageReference Include="Veldrid.ImGui" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Audio.PortAudio\Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects\Zhengyan.DigitalWife.GameProjects.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />

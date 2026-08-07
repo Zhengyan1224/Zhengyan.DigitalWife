@@ -1,6 +1,8 @@
 ﻿using System.Numerics;
 using Silk.NET.Maths;
 
+using Zhengyan.DigitalWife.Mmd.Game.Graphics;
+
 namespace Zhengyan.DigitalWife.Mmd.Game;
 
 public enum AnimationTimingMode
@@ -11,6 +13,8 @@ public enum AnimationTimingMode
 
 public sealed class GameOptions
 {
+    public GraphicsBackend GraphicsBackend { get; set; } = GraphicsBackend.Auto;
+
     public string Title { get; set; } = "Zhengyan.DigitalWife.Mmd.Game";
 
     public Vector2D<int> WindowSize { get; set; } = new(1280, 720);

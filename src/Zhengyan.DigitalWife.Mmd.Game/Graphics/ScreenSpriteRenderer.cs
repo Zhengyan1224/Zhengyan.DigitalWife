@@ -4,14 +4,14 @@ using Silk.NET.OpenGLES;
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 public readonly record struct ScreenSpriteDrawCommand(
-    uint TextureId,
+    RuntimeTextureHandle Texture,
     Vector2 Min,
     Vector2 Max,
     float RotationDegrees,
     float Opacity,
     bool FlipV);
 
-public sealed unsafe class ScreenSpriteRenderer : IDisposable
+public sealed unsafe class ScreenSpriteRenderer : IScreenSpriteRenderer
 {
     private readonly GL _gl;
     private readonly uint _program;
@@ -71,7 +71,8 @@ public sealed unsafe class ScreenSpriteRenderer : IDisposable
 
         foreach (ScreenSpriteDrawCommand command in commands)
         {
-            if (command.TextureId == 0)
+            uint textureId = command.Texture.LegacyTextureId;
+            if (textureId == 0)
             {
                 continue;
             }
@@ -84,7 +85,7 @@ public sealed unsafe class ScreenSpriteRenderer : IDisposable
             }
 
             _gl.SetUniform(_uniformOpacity, Math.Clamp(command.Opacity, 0.0f, 1.0f));
-            _gl.BindTexture(GLEnum.Texture2D, command.TextureId);
+            _gl.BindTexture(GLEnum.Texture2D, textureId);
             _gl.DrawArrays(GLEnum.Triangles, 0, 6);
         }
 

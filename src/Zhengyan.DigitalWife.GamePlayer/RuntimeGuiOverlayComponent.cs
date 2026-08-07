@@ -32,7 +32,7 @@ internal sealed class RuntimeGuiOverlayComponent(
     private readonly Action<ContextMenuSettings, ContextMenuItemSettings> _dispatchContextMenuEvent = dispatchContextMenuEvent;
     private readonly Dictionary<string, Texture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
-    private ScreenSpriteRenderer? _backgroundSpriteRenderer;
+    private IScreenSpriteRenderer? _backgroundSpriteRenderer;
     private ImGuiController? _controller;
     private string _openContextMenuId = string.Empty;
     private Vector2 _contextMenuPopupPosition;
@@ -48,7 +48,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             throw new InvalidOperationException("Game is not attached.");
         }
 
-        _backgroundSpriteRenderer = new ScreenSpriteRenderer(Game.GraphicsDevice.Gl);
+        _backgroundSpriteRenderer = Game.GraphicsDevice.CreateScreenSpriteRenderer();
 
         if (ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath))
         {
@@ -129,8 +129,8 @@ internal sealed class RuntimeGuiOverlayComponent(
             .Where(sprite => sprite.Visible && sprite.DrawOrder >= 0 && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            uint textureId = GetSpriteTextureId(sprite.Path);
-            if (textureId == 0)
+            RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
+            if (texture.LegacyTextureId == 0)
             {
                 continue;
             }
@@ -145,7 +145,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             Vector2 min = new(rect.X, rect.Y);
             Vector2 spriteMax = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, textureId, min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
+            AddSpriteImage(drawList, texture.LegacyTextureId, min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
         }
 
         drawList.PopClipRect();
@@ -173,8 +173,8 @@ internal sealed class RuntimeGuiOverlayComponent(
             .Where(sprite => sprite.Visible && sprite.DrawOrder < 0 && !string.IsNullOrWhiteSpace(sprite.Path))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            uint textureId = GetSpriteTextureId(sprite.Path);
-            if (textureId == 0)
+            RuntimeTextureHandle texture = GetSpriteTextureHandle(sprite.Path);
+            if (texture.LegacyTextureId == 0)
             {
                 continue;
             }
@@ -188,7 +188,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             Vector2 min = new(rect.X - viewportX, rect.Y - viewportY);
             Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             _backgroundSpriteCommands.Add(new ScreenSpriteDrawCommand(
-                textureId,
+                texture,
                 min,
                 max,
                 sprite.RotationDegrees,
@@ -412,12 +412,21 @@ internal sealed class RuntimeGuiOverlayComponent(
 
     private uint GetSpriteTextureId(string path)
     {
-        if (RuntimeTextureProvider is not null && RuntimeTextureProvider.TryGetTexture(path, out uint textureId))
+        return GetSpriteTextureHandle(path).LegacyTextureId;
+    }
+
+    private RuntimeTextureHandle GetSpriteTextureHandle(string path)
+    {
+        if (RuntimeTextureProvider is not null
+            && RuntimeTextureProvider.TryGetTextureHandle(path, out RuntimeTextureHandle handle))
         {
-            return textureId;
+            return handle;
         }
 
-        return GetSpriteTexture(path)?.Id ?? 0;
+        Texture2D? texture = GetSpriteTexture(path);
+        return texture is null
+            ? default
+            : new RuntimeTextureHandle(GraphicsBackend.OpenGL, texture.Id, texture.NativeResource);
     }
 
     private void PruneSpriteTextureCache(IEnumerable<SpriteSettings> sprites)

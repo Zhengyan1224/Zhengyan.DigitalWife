@@ -14,7 +14,7 @@ public enum TextureAlphaMode
     BlendMaskColor = 3
 }
 
-public unsafe class Texture2D : IDisposable
+public unsafe class Texture2D : ITexture2D
 {
     private readonly GL _gl;
     private const float SoftAlphaOverlayThreshold = 0.25f;
@@ -24,7 +24,17 @@ public unsafe class Texture2D : IDisposable
 
     public bool HasAlpha { get; private set; } = true;
 
+    public GraphicsBackend Backend => GraphicsBackend.OpenGL;
+
+    public int Width { get; private set; }
+
+    public int Height { get; private set; }
+
     public TextureAlphaMode AlphaMode { get; private set; } = TextureAlphaMode.Opaque;
+
+    public uint LegacyTextureId => Id;
+
+    public object NativeResource => Id;
 
     public Texture2D(GL gl, GLEnum wrapMode = GLEnum.Repeat)
     {
@@ -58,6 +68,28 @@ public unsafe class Texture2D : IDisposable
         LoadStandardImageTexture(filePath);
     }
 
+    internal static byte[] DecodeRgba(string filePath, out uint width, out uint height)
+    {
+        if (LooksLikeDds(filePath))
+        {
+            using IImage image = Pfimage.FromFile(filePath);
+            width = (uint)image.Width;
+            height = (uint)image.Height;
+            return ConvertPfimToRgba(image);
+        }
+
+        if (Path.GetExtension(filePath).Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+            && TryLoadBitfieldBmp(filePath, out byte[]? bitfieldRgba, out width, out height))
+        {
+            return bitfieldRgba;
+        }
+
+        ImageResult standardImage = ImageResult.FromMemory(File.ReadAllBytes(filePath), ColorComponents.RedGreenBlueAlpha);
+        width = (uint)standardImage.Width;
+        height = (uint)standardImage.Height;
+        return standardImage.Data;
+    }
+
     public void Upload(byte[] bytes, uint width, uint height, TextureAlphaMode alphaMode = TextureAlphaMode.Blend)
     {
         fixed (byte* ptr = bytes)
@@ -73,6 +105,8 @@ public unsafe class Texture2D : IDisposable
 
     public void Upload(void* image, Vector2D<uint> size, GLEnum format, GLEnum type, TextureAlphaMode alphaMode = TextureAlphaMode.Blend)
     {
+        Width = checked((int)size.X);
+        Height = checked((int)size.Y);
         AlphaMode = alphaMode;
         HasAlpha = alphaMode != TextureAlphaMode.Opaque;
 
@@ -138,7 +172,7 @@ public unsafe class Texture2D : IDisposable
         LoadStandardImageTexture(filePath);
     }
 
-    private static TextureAlphaMode DetermineAlphaMode(byte[] rgba)
+    internal static TextureAlphaMode DetermineAlphaMode(byte[] rgba)
     {
         AlphaStats alphaStats = AnalyzeAlpha(rgba);
         if (!alphaStats.HasAlpha)
