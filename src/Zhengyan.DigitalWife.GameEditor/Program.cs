@@ -9,8 +9,20 @@ internal static class Program
             return Zhengyan.DigitalWife.Mmd.Kernel.ProbeCurrentProcessUnsafe() ? 0 : 2;
         }
 
-        Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend backend = ReadGraphicsBackend(args)
+        Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend? commandLineBackend = ReadGraphicsBackend(args);
+        Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend backend = commandLineBackend
             ?? EditorGraphicsSettingsStore.Load();
+        if (!commandLineBackend.HasValue
+            && backend == Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend.Vulkan
+            && !Zhengyan.DigitalWife.Mmd.Game.Graphics.VulkanRenderer.IsSupported(out string vulkanReason))
+        {
+            Console.Error.WriteLine(
+                $"[GameEditor] Saved Vulkan backend is unavailable: {vulkanReason} Falling back to OpenGL. " +
+                "Install/update the Vulkan runtime and graphics driver before selecting Vulkan again.");
+            backend = Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend.OpenGL;
+            EditorGraphicsSettingsStore.Save(backend);
+        }
+
         string? projectDirectory = ReadOptionValue(args, "--project");
         using GameEditorGame game = new(backend, projectDirectory);
         game.Run();

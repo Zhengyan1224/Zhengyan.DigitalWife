@@ -91,7 +91,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public void SetGraphicsBackend(GraphicsBackend backend)
     {
         Project.Runtime.GraphicsBackend = backend.ToSettingValue();
-        EditorGraphicsSettingsStore.Save(backend);
         UpdateStatus($"Graphics backend set to {backend.ToSettingValue()}. Click Apply To Editor Window to restart the preview with this backend.");
     }
 
@@ -1394,7 +1393,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public void ApplyWindowSettings()
     {
         GraphicsBackend configuredBackend = GraphicsBackendNames.Parse(Project.Runtime.GraphicsBackend);
-        EditorGraphicsSettingsStore.Save(configuredBackend);
         try
         {
             RendererSelection selection = RendererFactory.Select(configuredBackend);
@@ -1403,6 +1401,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 RestartEditorWithBackend(configuredBackend);
                 return;
             }
+
+            EditorGraphicsSettingsStore.Save(configuredBackend);
         }
         catch (Exception ex)
         {
@@ -1432,30 +1432,53 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         SaveProject();
+        ProcessStartInfo startInfo = CreateRestartStartInfo(backend, ProjectDirectory);
+        using Process replacement = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start the replacement GameEditor process.");
+
+        // Persist this only after the replacement process was successfully
+        // created. A failed restart must not poison the next editor launch.
+        EditorGraphicsSettingsStore.Save(backend);
+        _restartRequested = true;
+        UpdateStatus($"Restarting GameEditor with {backend.ToSettingValue()}...");
+    }
+
+    private static ProcessStartInfo CreateRestartStartInfo(GraphicsBackend backend, string projectDirectory)
+    {
         string executable = Environment.ProcessPath
             ?? Process.GetCurrentProcess().MainModule?.FileName
             ?? throw new InvalidOperationException("Cannot locate the GameEditor executable.");
         ProcessStartInfo startInfo = new(executable)
         {
             UseShellExecute = false,
-            WorkingDirectory = Environment.CurrentDirectory
+            WorkingDirectory = AppContext.BaseDirectory,
+            CreateNoWindow = true
         };
+
         if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
         {
-            string entryAssembly = Assembly.GetEntryAssembly()?.Location
-                ?? throw new InvalidOperationException("Cannot locate the GameEditor entry assembly.");
+            string? entryAssembly = Assembly.GetEntryAssembly()?.Location;
+            if (string.IsNullOrWhiteSpace(entryAssembly) || !File.Exists(entryAssembly))
+            {
+                string[] commandLine = Environment.GetCommandLineArgs();
+                entryAssembly = commandLine.Length > 0 && File.Exists(commandLine[0])
+                    ? commandLine[0]
+                    : null;
+            }
+
+            if (string.IsNullOrWhiteSpace(entryAssembly))
+            {
+                throw new InvalidOperationException("Cannot locate the GameEditor entry assembly.");
+            }
+
             startInfo.ArgumentList.Add(entryAssembly);
         }
 
         startInfo.ArgumentList.Add("--graphics-backend");
         startInfo.ArgumentList.Add(backend.ToSettingValue());
         startInfo.ArgumentList.Add("--project");
-        startInfo.ArgumentList.Add(ProjectDirectory);
-
-        _ = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start the replacement GameEditor process.");
-        _restartRequested = true;
-        UpdateStatus($"Restarting GameEditor with {backend.ToSettingValue()}...");
+        startInfo.ArgumentList.Add(Path.GetFullPath(projectDirectory));
+        return startInfo;
     }
 
     public void ApplyRuntimeSettings()

@@ -143,16 +143,25 @@ public sealed unsafe class UnderwaterPostProcessRenderer : IUnderwaterPostProces
         _gl.SetUniform(_uniformSurfaceDepth, Math.Max(settings.SurfaceDepth, 0.0f));
 
         _gl.ActiveTexture(TextureUnit.Texture0);
+        // PMX material passes bind sampler objects to these texture units. Their
+        // default mipmap filter makes the non-mipmapped capture textures
+        // incomplete, which samples as black on OpenGL. The capture target
+        // already has the required filtering parameters, so use texture state
+        // directly for this post-process pass.
+        _gl.BindSampler(0, 0);
         _gl.BindTexture(GLEnum.Texture2D, _captureTarget.ColorTextureId);
         _gl.ActiveTexture(TextureUnit.Texture1);
+        _gl.BindSampler(1, 0);
         _gl.BindTexture(GLEnum.Texture2D, _captureTarget.DepthTextureId);
 
         _gl.DrawArrays(GLEnum.Triangles, 0, 6);
 
         _gl.ActiveTexture(TextureUnit.Texture1);
         _gl.BindTexture(GLEnum.Texture2D, 0);
+        _gl.BindSampler(1, 0);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(GLEnum.Texture2D, 0);
+        _gl.BindSampler(0, 0);
         _gl.BindVertexArray(0);
         _gl.UseProgram(0);
 
