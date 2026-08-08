@@ -1584,13 +1584,18 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 ResolveMaterialOverrideTextureHandle);
         }
 
-        if (EnableEdge)
+        // Edge expansion is view-dependent and its front-face culling is not
+        // meaningful after the camera has been mirrored. Drawing it in the
+        // reflection pass can cover transparent facial materials with dark
+        // outline fragments, so reflections use the main material pass only.
+        bool isPlanarReflectionPass = Game.IsPlanarReflectionPass;
+        if (EnableEdge && !isPlanarReflectionPass)
         {
             _lastEdgeMeshDrawCount = _auxiliaryPassRenderer.DrawEdge(
                 _gpuResources, _meshes, transform, Camera.View, Camera.Projection, screenSize);
         }
 
-        if (DrawShadowInMainPass && ShadowMap is not { TextureId: not 0 })
+        if (!isPlanarReflectionPass && DrawShadowInMainPass && ShadowMap is not { TextureId: not 0 })
         {
             DrawGroundShadowPassCore(transform);
         }

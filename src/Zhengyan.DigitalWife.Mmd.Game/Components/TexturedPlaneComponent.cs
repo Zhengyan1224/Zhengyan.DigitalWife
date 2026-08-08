@@ -432,6 +432,10 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.SetUniform(_uniformReflectionViewProjection, _planarReflectionViewProjection);
         gl.SetUniform(_uniformMirrorReflectionStrength, Math.Clamp(MirrorReflectionStrength, 0.0f, 1.0f));
         ApplyShadowMapUniforms(gl);
+        // PMX passes may leave mipmapped sampler objects bound on these units.
+        // Plane and reflection render targets do not have mipmaps, so use the
+        // texture object's filtering/wrap state for this draw.
+        UnbindTextureSamplers(gl);
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(GLEnum.Texture2D, ResolveTextureId());
         gl.ActiveTexture(TextureUnit.Texture1);
@@ -446,6 +450,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.BindTexture(GLEnum.Texture2D, 0);
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(GLEnum.Texture2D, 0);
+        UnbindTextureSamplers(gl);
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Disable(GLEnum.Blend);
@@ -587,6 +592,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         ApplyCustomShadowMapUniforms(shader);
         shader.ApplyUniforms(_customShaderUniforms);
 
+        UnbindTextureSamplers(gl);
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(GLEnum.Texture2D, baseTextureId);
         gl.ActiveTexture(TextureUnit.Texture1);
@@ -601,6 +607,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.BindTexture(GLEnum.Texture2D, 0);
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(GLEnum.Texture2D, 0);
+        UnbindTextureSamplers(gl);
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Disable(GLEnum.Blend);
@@ -618,6 +625,13 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+    }
+
+    private static void UnbindTextureSamplers(GL gl)
+    {
+        gl.BindSampler(0, 0);
+        gl.BindSampler(1, 0);
+        gl.BindSampler(2, 0);
     }
 
     private void RebuildCustomShaderVao(GL gl)

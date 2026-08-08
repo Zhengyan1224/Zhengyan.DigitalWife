@@ -75,6 +75,10 @@ public abstract class Game : IDisposable
 
     public bool IsActive => _isActive;
 
+    // Planar reflections render the scene a second time with a mirrored camera.
+    // Components can use this context to skip view-dependent auxiliary passes.
+    internal bool IsPlanarReflectionPass { get; set; }
+
     public IReadOnlyList<GameComponent> Components => _components;
 
     public string Title
