@@ -16,9 +16,11 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
 
     private readonly VulkanRenderer _renderer;
     private readonly nint _context;
-    private readonly ResourceLayout _layout;
+    private readonly ResourceLayout _mainLayout;
+    private readonly ResourceLayout _textureLayout;
     private readonly DeviceBuffer _frameBuffer;
     private readonly Sampler _sampler;
+    private readonly ResourceSet _mainSet;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
     private readonly Dictionary<TextureView, nint> _viewBindings = [];
@@ -50,10 +52,12 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         _indexBuffer = factory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic));
         _frameBuffer = factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
         _sampler = factory.CreateSampler(SamplerDescription.Linear);
-        _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+        _mainLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("ImGuiFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex),
-            new ResourceLayoutElementDescription("ImGuiTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("ImGuiSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
+        _textureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+            new ResourceLayoutElementDescription("ImGuiTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment)));
+        _mainSet = factory.CreateResourceSet(new ResourceSetDescription(_mainLayout, _frameBuffer, _sampler));
         _shaders = factory.CreateFromSpirv(
             VulkanShaderCompiler.CompileSource("imgui.vert", VertexSource, ShaderStages.Vertex),
             VulkanShaderCompiler.CompileSource("imgui.frag", FragmentSource, ShaderStages.Fragment));
@@ -117,7 +121,7 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         if (_viewBindings.TryGetValue(view, out nint existing)) return existing;
         nint binding = _nextBinding++;
         ResourceSet set = _renderer.ResourceFactory.CreateResourceSet(
-            new ResourceSetDescription(_layout, _frameBuffer, view, _sampler));
+            new ResourceSetDescription(_textureLayout, view));
         _viewBindings.Add(view, binding);
         _textureSets.Add(binding, set);
         return binding;
@@ -133,7 +137,9 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         foreach (Shader shader in _shaders) shader.Dispose();
         _fontView?.Dispose();
         _fontTexture?.Dispose();
-        _layout.Dispose();
+        _mainSet.Dispose();
+        _textureLayout.Dispose();
+        _mainLayout.Dispose();
         _sampler.Dispose();
         _frameBuffer.Dispose();
         _indexBuffer.Dispose();
@@ -185,10 +191,11 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
                 -1f - drawData.DisplayPos.X * (2f / drawData.DisplaySize.X),
                 -1f - drawData.DisplayPos.Y * (2f / drawData.DisplaySize.Y))
         };
-        commands.UpdateBuffer(_frameBuffer, 0, frame);
+        _renderer.NativeDevice.UpdateBuffer(_frameBuffer, 0, frame);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertexBuffer);
         commands.SetIndexBuffer(_indexBuffer, IndexFormat.UInt16);
+        commands.SetGraphicsResourceSet(0, _mainSet);
 
         Vector2 clipOffset = drawData.DisplayPos;
         Vector2 clipScale = drawData.FramebufferScale;
@@ -225,7 +232,7 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
                     (uint)y,
                     (uint)(clipRight - x),
                     (uint)(clipBottom - y));
-                commands.SetGraphicsResourceSet(0, textureSet);
+                commands.SetGraphicsResourceSet(1, textureSet);
                 commands.DrawIndexed(
                     drawCommand.ElemCount,
                     1,
@@ -272,7 +279,7 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
             rasterizer,
             PrimitiveTopology.TriangleList,
             _shaderSet,
-            [_layout],
+            [_mainLayout, _textureLayout],
             output));
         _pipelines.Add((output, created));
         return created;
@@ -316,8 +323,8 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         """;
 
     private const string FragmentSource = """
-        layout(set=0,binding=1) uniform texture2D imguiTexture;
-        layout(set=0,binding=2) uniform sampler imguiSampler;
+        layout(set=0,binding=1) uniform sampler imguiSampler;
+        layout(set=1,binding=0) uniform texture2D imguiTexture;
         layout(location=0) in vec2 fs_Uv;
         layout(location=1) in vec4 fs_Color;
         layout(location=0) out vec4 out_Color;

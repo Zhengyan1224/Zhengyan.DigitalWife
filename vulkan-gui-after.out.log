@@ -1,0 +1,5 @@
+[Vulkan] Device='Intel(R) HD Graphics 520', DepthZeroToOne=True, ClipSpaceYInverted=False, UvOriginTopLeft=True
+[GamePlayer] Vulkan Compute PMX skinning requested but disabled pending correctness validation; using CPU
+Microphone auto-detected: default device [1] 麦克风 (Realtek High Definition Au, sampleRate=16000, rms=0.034967, runtime=current process default device
+Microphone candidate: [1] default 麦克风 (Realtek High Definition Au, sampleRate=16000, rms=0.034967, maxInputChannels=2, defaultSampleRate=44100
+[GamePlayer] Voice playback backend: OpenAL

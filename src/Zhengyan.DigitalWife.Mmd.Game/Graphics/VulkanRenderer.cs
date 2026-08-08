@@ -52,6 +52,9 @@ public sealed class VulkanRenderer : IRenderer
     internal FrontFace RasterizerFrontFace
         => Device.IsClipSpaceYInverted ? FrontFace.Clockwise : FrontFace.CounterClockwise;
 
+    internal bool RequiresProjectedTextureYFlip
+        => Device.IsUvOriginTopLeft != Device.IsClipSpaceYInverted;
+
     public Veldrid.GraphicsDevice NativeDevice => Device;
 
     public CommandList NativeCommandList => CommandList;
