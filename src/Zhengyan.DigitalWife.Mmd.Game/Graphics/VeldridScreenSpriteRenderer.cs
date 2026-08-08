@@ -14,7 +14,6 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
     private const int MaxVerticesPerSprite = 6;
 
     private readonly VulkanRenderer _renderer;
-    private readonly Pipeline _pipeline;
     private readonly DeviceBuffer _vertexBuffer;
     private readonly DeviceBuffer _parametersBuffer;
     private readonly ResourceLayout _parametersLayout;
@@ -22,7 +21,9 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
     private readonly ResourceSet _parametersSet;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
+    private readonly ShaderSetDescription _shaderSet;
     private readonly Dictionary<TextureView, ResourceSet> _textureSets = [];
+    private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
     private readonly float[] _vertices = new float[MaxVerticesPerSprite * 4];
     private bool _disposed;
 
@@ -53,14 +54,7 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
         VertexLayoutDescription vertexLayout = new(
             new VertexElementDescription("Position", VertexElementSemantic.Position, VertexElementFormat.Float2),
             new VertexElementDescription("TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2));
-        _pipeline = factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
-            BlendStateDescription.SingleAlphaBlend,
-            DepthStencilStateDescription.Disabled,
-            RasterizerStateDescription.CullNone,
-            PrimitiveTopology.TriangleList,
-            new ShaderSetDescription([vertexLayout], _shaders),
-            [_parametersLayout, _textureLayout],
-            renderer.Device.SwapchainFramebuffer.OutputDescription));
+        _shaderSet = new ShaderSetDescription([vertexLayout], _shaders);
     }
 
     public void Draw(IReadOnlyList<ScreenSpriteDrawCommand> commands, int targetWidth, int targetHeight)
@@ -72,7 +66,7 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
         }
 
         CommandList commandList = _renderer.CommandList;
-        commandList.SetPipeline(_pipeline);
+        commandList.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commandList.SetVertexBuffer(0, _vertexBuffer);
         commandList.SetGraphicsResourceSet(0, _parametersSet);
 
@@ -102,7 +96,12 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
         }
 
         _textureSets.Clear();
-        _pipeline.Dispose();
+        foreach ((_, Pipeline pipeline) in _pipelines)
+        {
+            pipeline.Dispose();
+        }
+
+        _pipelines.Clear();
         _parametersSet.Dispose();
         _parametersLayout.Dispose();
         _textureLayout.Dispose();
@@ -130,6 +129,28 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
             _sampler));
         _textureSets[textureView] = resourceSet;
         return resourceSet;
+    }
+
+    private Pipeline GetPipeline(OutputDescription output)
+    {
+        foreach ((OutputDescription candidate, Pipeline pipeline) in _pipelines)
+        {
+            if (candidate.Equals(output))
+            {
+                return pipeline;
+            }
+        }
+
+        Pipeline created = _renderer.ResourceFactory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
+            BlendStateDescription.SingleAlphaBlend,
+            DepthStencilStateDescription.Disabled,
+            RasterizerStateDescription.CullNone,
+            PrimitiveTopology.TriangleList,
+            _shaderSet,
+            [_parametersLayout, _textureLayout],
+            output));
+        _pipelines.Add((output, created));
+        return created;
     }
 
     private static void FillVertices(

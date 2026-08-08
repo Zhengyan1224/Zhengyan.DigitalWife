@@ -50,7 +50,7 @@ internal sealed class RuntimeGuiOverlayComponent(
         _backgroundSpriteRenderer = Game.GraphicsDevice.CreateScreenSpriteRenderer();
 
         Action? configureFonts = ImGuiFontResolver.TryGetCjkFontPath(out string cjkFontPath)
-            ? () => ConfigureIoFontAtlas(cjkFontPath)
+            ? () => ConfigureIoFontAtlas(cjkFontPath, Game.GraphicsDevice.Backend == GraphicsBackend.OpenGL)
             : null;
         _controller = ImGuiBackendController.Create(Game, configureFonts);
     }
@@ -1134,11 +1134,14 @@ internal sealed class RuntimeGuiOverlayComponent(
         };
     }
 
-    private static void ConfigureIoFontAtlas(string fontPath)
+    private static void ConfigureIoFontAtlas(string fontPath, bool fullChineseRange)
     {
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.Clear();
-        io.Fonts.AddFontFromFileTTF(fontPath, BaseFontSize, default, io.Fonts.GetGlyphRangesChineseFull());
+        nint glyphRanges = fullChineseRange
+            ? io.Fonts.GetGlyphRangesChineseFull()
+            : io.Fonts.GetGlyphRangesChineseSimplifiedCommon();
+        io.Fonts.AddFontFromFileTTF(fontPath, BaseFontSize, default, glyphRanges);
     }
 
 }

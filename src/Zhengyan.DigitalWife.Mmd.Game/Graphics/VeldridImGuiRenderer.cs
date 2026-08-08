@@ -11,8 +11,8 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 internal sealed unsafe class VeldridImGuiRenderer : IDisposable
 {
-    private const uint InitialVertexBufferSize = 10_000;
-    private const uint InitialIndexBufferSize = 2_000;
+    private const uint InitialVertexBufferSize = 256 * 1024;
+    private const uint InitialIndexBufferSize = 64 * 1024;
 
     private readonly VulkanRenderer _renderer;
     private readonly nint _context;
@@ -51,13 +51,13 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         _vertexBuffer = factory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic));
         _indexBuffer = factory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic));
         _frameBuffer = factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
-        _sampler = factory.CreateSampler(SamplerDescription.Linear);
+        _sampler = factory.CreateSampler(SamplerDescription.Point);
         _mainLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("ImGuiFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex),
-            new ResourceLayoutElementDescription("ImGuiSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
+            new ResourceLayoutElementDescription("ImGuiFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex)));
         _textureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("ImGuiTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment)));
-        _mainSet = factory.CreateResourceSet(new ResourceSetDescription(_mainLayout, _frameBuffer, _sampler));
+            new ResourceLayoutElementDescription("ImGuiTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("ImGuiSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
+        _mainSet = factory.CreateResourceSet(new ResourceSetDescription(_mainLayout, _frameBuffer));
         _shaders = factory.CreateFromSpirv(
             VulkanShaderCompiler.CompileSource("imgui.vert", VertexSource, ShaderStages.Vertex),
             VulkanShaderCompiler.CompileSource("imgui.frag", FragmentSource, ShaderStages.Fragment));
@@ -121,7 +121,7 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         if (_viewBindings.TryGetValue(view, out nint existing)) return existing;
         nint binding = _nextBinding++;
         ResourceSet set = _renderer.ResourceFactory.CreateResourceSet(
-            new ResourceSetDescription(_textureLayout, view));
+            new ResourceSetDescription(_textureLayout, view, _sampler));
         _viewBindings.Add(view, binding);
         _textureSets.Add(binding, set);
         return binding;
@@ -323,8 +323,8 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         """;
 
     private const string FragmentSource = """
-        layout(set=0,binding=1) uniform sampler imguiSampler;
         layout(set=1,binding=0) uniform texture2D imguiTexture;
+        layout(set=1,binding=1) uniform sampler imguiSampler;
         layout(location=0) in vec2 fs_Uv;
         layout(location=1) in vec4 fs_Color;
         layout(location=0) out vec4 out_Color;
