@@ -78,7 +78,8 @@ public interface ITexturedPlanePassRenderer : IDisposable
         ShadowMapBinding? shadowMap,
         RuntimeTextureHandle? reflectionTexture,
         Matrix4x4 reflectionViewProjection,
-        float reflectionStrength);
+        float reflectionStrength,
+        bool reflectionFlipX);
 }
 
 public interface ILineRenderer : IDisposable

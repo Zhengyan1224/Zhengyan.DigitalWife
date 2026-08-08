@@ -69,7 +69,8 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         ShadowMapBinding? shadowMap,
         RuntimeTextureHandle? reflectionTexture,
         Matrix4x4 reflectionViewProjection,
-        float reflectionStrength)
+        float reflectionStrength,
+        bool reflectionFlipX)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_renderer.IsFrameOpen)
@@ -105,7 +106,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             ReflectionParameters = new Vector4(
                 reflectionEnabled ? 1.0f : 0.0f,
                 Math.Clamp(reflectionStrength, 0.0f, 1.0f),
-                0.0f,
+                reflectionFlipX ? 1.0f : 0.0f,
                 0.0f)
         };
 
@@ -365,6 +366,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             color.rgb *= SampleShadow();
             vec3 reflectionNdc = vs_ReflectionPos.xyz / max(abs(vs_ReflectionPos.w), 0.0001);
             vec2 reflectionUv = reflectionNdc.xy * 0.5 + 0.5;
+            if (u_Frame.u_ReflectionParameters.z > 0.5) reflectionUv.x = 1.0 - reflectionUv.x;
             float inside = step(0.0, reflectionUv.x) * step(reflectionUv.x, 1.0) * step(0.0, reflectionUv.y) * step(reflectionUv.y, 1.0);
             vec3 reflection = texture(sampler2D(u_ReflectionTex, u_ReflectionSampler), clamp(reflectionUv, 0.001, 0.999)).rgb;
             float amount = clamp(u_Frame.u_ReflectionParameters.x, 0.0, 1.0) * inside * clamp(u_Frame.u_ReflectionParameters.y, 0.0, 1.0);

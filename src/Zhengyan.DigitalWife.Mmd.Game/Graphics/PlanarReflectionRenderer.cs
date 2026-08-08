@@ -79,7 +79,10 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
         foreach (TexturedPlaneComponent plane in mirrorPlanes ?? [])
         {
-            if (plane.Visible && plane.MirrorReflectionEnabled && plane.MirrorReflectionStrength > 0.001f && plane.TryGetMirrorPlane(out Vector3 normal, out float distance))
+            if (plane.Visible
+                && plane.MirrorReflectionEnabled
+                && plane.MirrorReflectionStrength > 0.001f
+                && plane.TryGetMirrorPlane(out Vector3 normal, out float distance))
             {
                 activeSurfaces.Add(ReflectionSurface.ForPlane(plane, normal, distance));
             }
@@ -136,7 +139,8 @@ public sealed class PlanarReflectionRenderer : IDisposable
                     new RuntimeTextureHandle(target.Backend, target.LegacyColorTextureId, target.NativeColorResource),
                     state.Camera.View * state.Camera.Projection,
                     target.Width,
-                    target.Height);
+                    target.Height,
+                    sourceCamera.Position);
             }
         }
         finally
@@ -271,7 +275,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
         public static ReflectionSurface ForPlane(TexturedPlaneComponent plane, Vector3 normal, float distance) => new(plane, normal, distance);
 
-        public void SetReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height)
+        public void SetReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height, Vector3 sourceCameraPosition)
         {
             if (_water is not null)
             {
@@ -279,7 +283,8 @@ public sealed class PlanarReflectionRenderer : IDisposable
             }
             else
             {
-                _plane?.SetPlanarReflection(texture, reflectionViewProjection, width, height);
+                bool flipX = Vector3.Dot(Normal, sourceCameraPosition) + Distance > 0.0001f;
+                _plane?.SetPlanarReflection(texture, reflectionViewProjection, width, height, flipX);
             }
         }
     }

@@ -33,11 +33,13 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformPlanarReflectionEnabled = -1;
     private int _uniformReflectionViewProjection = -1;
     private int _uniformMirrorReflectionStrength = -1;
+    private int _uniformReflectionFlipX = -1;
     private uint _planarReflectionTextureId;
     private string? _vulkanCustomVertexShaderPath;
     private string? _vulkanCustomFragmentShaderPath;
     private RuntimeTextureHandle? _planarReflectionTextureHandle;
     private Matrix4x4 _planarReflectionViewProjection = Matrix4x4.Identity;
+    private bool _planarReflectionFlipX;
     private CustomShaderProgram? _customShader;
     private readonly Dictionary<string, CustomShaderUniformValue> _customShaderUniforms = new(StringComparer.Ordinal);
 
@@ -115,6 +117,11 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
     public void SetPlanarReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height)
     {
+        SetPlanarReflection(textureId, reflectionViewProjection, width, height, flipX: false);
+    }
+
+    internal void SetPlanarReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height, bool flipX)
+    {
         _ = width;
         _ = height;
         _planarReflectionTextureId = textureId;
@@ -122,15 +129,22 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
             ? null
             : new RuntimeTextureHandle(GraphicsBackend.OpenGL, textureId);
         _planarReflectionViewProjection = reflectionViewProjection;
+        _planarReflectionFlipX = flipX;
     }
 
     public void SetPlanarReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height)
+    {
+        SetPlanarReflection(texture, reflectionViewProjection, width, height, flipX: false);
+    }
+
+    internal void SetPlanarReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height, bool flipX)
     {
         _ = width;
         _ = height;
         _planarReflectionTextureHandle = texture;
         _planarReflectionTextureId = texture.Backend == GraphicsBackend.OpenGL ? texture.LegacyTextureId : 0;
         _planarReflectionViewProjection = reflectionViewProjection;
+        _planarReflectionFlipX = flipX;
     }
 
     public void ClearPlanarReflection()
@@ -138,6 +152,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _planarReflectionTextureId = 0;
         _planarReflectionTextureHandle = null;
         _planarReflectionViewProjection = Matrix4x4.Identity;
+        _planarReflectionFlipX = false;
     }
 
     public bool HasCustomShader => _customShader is not null || _vulkanCustomVertexShaderPath is not null;
@@ -350,6 +365,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _uniformPlanarReflectionEnabled = gl.GetUniformLocation(_program, "u_PlanarReflectionEnabled");
         _uniformReflectionViewProjection = gl.GetUniformLocation(_program, "u_ReflectionViewProjection");
         _uniformMirrorReflectionStrength = gl.GetUniformLocation(_program, "u_MirrorReflectionStrength");
+        _uniformReflectionFlipX = gl.GetUniformLocation(_program, "u_ReflectionFlipX");
         ReloadTexture(gl);
 
         if (_customShader is not null)
@@ -397,7 +413,8 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
                 ShadowMap,
                 reflectionHandle,
                 _planarReflectionViewProjection,
-                MirrorReflectionStrength);
+                MirrorReflectionStrength,
+                _planarReflectionFlipX);
             return;
         }
 
@@ -436,6 +453,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.Uniform1(_uniformPlanarReflectionEnabled, MirrorReflectionEnabled && _planarReflectionTextureId != 0 ? 1.0f : 0.0f);
         gl.SetUniform(_uniformReflectionViewProjection, _planarReflectionViewProjection);
         gl.SetUniform(_uniformMirrorReflectionStrength, Math.Clamp(MirrorReflectionStrength, 0.0f, 1.0f));
+        gl.SetUniform(_uniformReflectionFlipX, _planarReflectionFlipX ? 1.0f : 0.0f);
         ApplyShadowMapUniforms(gl);
         // PMX passes may leave mipmapped sampler objects bound on these units.
         // Plane and reflection render targets do not have mipmaps, so use the
@@ -594,6 +612,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         shader.SetUniform("u_PlanarReflectionEnabled", MirrorReflectionEnabled && _planarReflectionTextureId != 0 ? 1.0f : 0.0f);
         shader.SetUniform("u_ReflectionViewProjection", _planarReflectionViewProjection);
         shader.SetUniform("u_MirrorReflectionStrength", Math.Clamp(MirrorReflectionStrength, 0.0f, 1.0f));
+        shader.SetUniform("u_ReflectionFlipX", _planarReflectionFlipX ? 1.0f : 0.0f);
         ApplyCustomShadowMapUniforms(shader);
         shader.ApplyUniforms(_customShaderUniforms);
 
@@ -758,6 +777,7 @@ uniform float u_ShadowMapStrength;
 uniform float u_ShadowMapBias;
 uniform float u_PlanarReflectionEnabled;
 uniform float u_MirrorReflectionStrength;
+uniform float u_ReflectionFlipX;
 
 out vec4 out_Color;
 
@@ -792,6 +812,10 @@ void main()
     vec4 color = texture(u_Texture, uv) * u_Tint;
     color.rgb *= SampleShadow();
     vec2 reflectionUv = (vs_ReflectionClipPos.xy / max(abs(vs_ReflectionClipPos.w), 0.0001)) * 0.5 + 0.5;
+    if (u_ReflectionFlipX > 0.5)
+    {
+        reflectionUv.x = 1.0 - reflectionUv.x;
+    }
     float reflectionInside = step(0.0, reflectionUv.x) * step(reflectionUv.x, 1.0) * step(0.0, reflectionUv.y) * step(reflectionUv.y, 1.0);
     vec3 reflectionColor = texture(u_PlanarReflectionTex, clamp(reflectionUv, 0.001, 0.999)).rgb;
     float reflectionAmount = clamp(u_PlanarReflectionEnabled, 0.0, 1.0) * reflectionInside * clamp(u_MirrorReflectionStrength, 0.0, 1.0);
