@@ -408,6 +408,11 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
         GL gl = Game.GraphicsDevice.Gl;
         gl.Enable(GLEnum.DepthTest);
+        // Keep the OpenGL path consistent with the Vulkan pipeline. A water
+        // or shadow pass may leave depth writes disabled; without restoring
+        // them, the mirror plane is blended but never occludes geometry behind
+        // it, which makes the reflection look like it is drawn out of order.
+        gl.DepthMask(true);
         gl.Enable(GLEnum.Blend);
         gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
         gl.Disable(GLEnum.CullFace);

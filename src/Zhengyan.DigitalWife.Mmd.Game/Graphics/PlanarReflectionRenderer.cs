@@ -17,7 +17,12 @@ public sealed class PlanarReflectionRenderer : IDisposable
     private readonly Dictionary<object, ReflectionSurfaceState> _surfaces = [];
     private bool _isRendering;
     private bool _disposed;
-    private int _resolutionDivisor = 2;
+    // Reflections are inspected as a full surface (for example a wall
+    // mirror), so rendering them at half resolution makes facial textures and
+    // thin geometry visibly blocky. Keep the default at native target size;
+    // callers can still lower it through ResolutionDivisor when performance
+    // is more important than reflection detail.
+    private int _resolutionDivisor = 1;
 
     public PlanarReflectionRenderer(Game game)
     {
