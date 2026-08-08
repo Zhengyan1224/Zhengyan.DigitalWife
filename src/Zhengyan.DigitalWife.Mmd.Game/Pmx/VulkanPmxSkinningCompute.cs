@@ -19,6 +19,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
 {
     private const uint WorkgroupSize = 64;
     private const int SlotCount = 3;
+    private const int ValidationDispatchCount = 3;
 
     private readonly VulkanRenderer _renderer;
     private readonly int _vertexCount;
@@ -32,6 +33,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     private readonly MorphInputGpu[] _morphInputData;
     private BoneInputGpu[]? _boneInputData;
     private readonly TransformInputGpu[] _transformData;
+    private readonly int[] _skinningTypeCounts = new int[5];
     private readonly OutputGpu[] _latestOutput;
     private readonly ComputeSlot[] _slots;
     private int _nextSlot;
@@ -43,6 +45,10 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     private bool _hasMorphSnapshot;
     private bool _hasTransformSnapshot;
     private bool _gpuOutputValid;
+    private int _validatedDispatchCount;
+    private float _maxValidationPositionError;
+    private float _maxValidationNormalError;
+    private float _maxValidationUvError;
     private DeviceBuffer? _gpuPositionOutput;
     private DeviceBuffer? _gpuNormalOutput;
     private DeviceBuffer? _gpuUvOutput;
@@ -92,7 +98,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             renderer.Device.UpdateBuffer(
                 _slots[i].Parameters,
                 0,
-                new Vector4(_vertexCount, _boneCount, 0.0f, 0.0f));
+                new SkinningParametersGpu((uint)_vertexCount, (uint)_boneCount, 0, 0));
         }
     }
 
@@ -234,6 +240,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             ComputeSlot slot = AcquireSlot();
             UploadMorphInputsIfNeeded(slot);
             UploadTransformsIfNeeded(slot);
+            bool validateOutput = _validatedDispatchCount < ValidationDispatchCount;
 
             slot.Commands.Begin();
             slot.Commands.SetPipeline(_pipeline);
@@ -242,6 +249,12 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.Commands.CopyBuffer(slot.PositionOutputs, 0, _gpuPositionOutput!, 0, slot.PositionOutputs.SizeInBytes);
             slot.Commands.CopyBuffer(slot.NormalOutputs, 0, _gpuNormalOutput!, 0, slot.NormalOutputs.SizeInBytes);
             slot.Commands.CopyBuffer(slot.UvOutputs, 0, _gpuUvOutput!, 0, slot.UvOutputs.SizeInBytes);
+            if (validateOutput)
+            {
+                slot.Commands.CopyBuffer(slot.PositionOutputs, 0, slot.PositionStaging, 0, slot.PositionStaging.SizeInBytes);
+                slot.Commands.CopyBuffer(slot.NormalOutputs, 0, slot.NormalStaging, 0, slot.NormalStaging.SizeInBytes);
+                slot.Commands.CopyBuffer(slot.UvOutputs, 0, slot.UvStaging, 0, slot.UvStaging.SizeInBytes);
+            }
             slot.Commands.End();
 
             _renderer.Device.ResetFence(slot.Fence);
@@ -255,6 +268,21 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             // so complete the transfer before the vertex-input submission.
             _renderer.Device.WaitForFence(slot.Fence);
             slot.InFlight = false;
+            if (validateOutput && !ValidateGpuOutput(
+                    slot,
+                    vertexCount,
+                    positions,
+                    normals,
+                    uvs,
+                    vertexBoneInfos,
+                    morphPositions,
+                    morphUVs,
+                    updateTransforms,
+                    globalTransforms))
+            {
+                return false;
+            }
+
             _gpuOutputValid = true;
             return true;
         }
@@ -292,19 +320,25 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             };
 
             Zhengyan.DigitalWife.Mmd.VertexBoneInfo info = vertexBoneInfos[i];
+            int skinningType = (int)info.SkinningType;
+            if ((uint)skinningType < (uint)_skinningTypeCounts.Length)
+            {
+                _skinningTypeCounts[skinningType]++;
+            }
+
             boneInputData[i] = new BoneInputGpu
             {
-                BoneIndices = new Vector4(
+                BoneIndices = new Int4(
                     SanitizeBoneIndex(info.BoneIndices[0]),
                     SanitizeBoneIndex(info.BoneIndices[1]),
                     SanitizeBoneIndex(info.BoneIndices[2]),
                     SanitizeBoneIndex(info.BoneIndices[3])),
                 BoneWeights = new Vector4(info.BoneWeights[0], info.BoneWeights[1], info.BoneWeights[2], info.BoneWeights[3]),
-                SdefIndicesAndType = new Vector4(
+                SdefIndicesAndType = new Int4(
                     SanitizeBoneIndex(info.SDEF.BoneIndices[0]),
                     SanitizeBoneIndex(info.SDEF.BoneIndices[1]),
                     (int)info.SkinningType,
-                    0.0f),
+                    0),
                 SdefWeightAndCenterXyz = new Vector4(info.SDEF.BoneWeight, info.SDEF.C.X, info.SDEF.C.Y, info.SDEF.C.Z),
                 SdefR0 = new Vector4(info.SDEF.R0, 0.0f),
                 SdefR1 = new Vector4(info.SDEF.R1, 0.0f)
@@ -352,8 +386,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         {
             TransformInputGpu input = new()
             {
-                Update = updateTransforms[i],
-                Global = globalTransforms[i]
+                Update = MatrixRowsGpu.FromMatrix(updateTransforms[i]),
+                Global = MatrixRowsGpu.FromMatrix(globalTransforms[i])
             };
             transformsChanged |= _transformData[i].Update != input.Update || _transformData[i].Global != input.Global;
             _transformData[i] = input;
@@ -504,6 +538,212 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         }
     }
 
+    private bool ValidateGpuOutput(
+        ComputeSlot slot,
+        int vertexCount,
+        Vector3* positions,
+        Vector3* normals,
+        Vector2* uvs,
+        Zhengyan.DigitalWife.Mmd.VertexBoneInfo* vertexBoneInfos,
+        Vector3* morphPositions,
+        Vector4* morphUVs,
+        Matrix4x4* updateTransforms,
+        Matrix4x4* globalTransforms)
+    {
+        MappedResource mappedPositions = _renderer.Device.Map(slot.PositionStaging, MapMode.Read);
+        MappedResource mappedNormals = _renderer.Device.Map(slot.NormalStaging, MapMode.Read);
+        MappedResource mappedUvs = _renderer.Device.Map(slot.UvStaging, MapMode.Read);
+        float maxPositionError = 0.0f;
+        float maxNormalError = 0.0f;
+        float maxUvError = 0.0f;
+        int failedVertex = -1;
+        Vector3 failedExpectedPosition = default;
+        Vector3 failedActualPosition = default;
+        Vector3 failedExpectedNormal = default;
+        Vector3 failedActualNormal = default;
+        Zhengyan.DigitalWife.Mmd.SkinningType failedSkinningType = default;
+        try
+        {
+            float* positionValues = (float*)mappedPositions.Data.ToPointer();
+            float* normalValues = (float*)mappedNormals.Data.ToPointer();
+            float* uvValues = (float*)mappedUvs.Data.ToPointer();
+            for (int i = 0; i < vertexCount; i++)
+            {
+                CalculateReferenceSkinning(
+                    positions[i],
+                    normals[i],
+                    uvs[i],
+                    vertexBoneInfos[i],
+                    morphPositions[i],
+                    morphUVs[i],
+                    updateTransforms,
+                    globalTransforms,
+                    out Vector3 expectedPosition,
+                    out Vector3 expectedNormal,
+                    out Vector2 expectedUv);
+
+                int vector3Offset = i * 3;
+                int vector2Offset = i * 2;
+                Vector3 actualPosition = new(
+                    positionValues[vector3Offset],
+                    positionValues[vector3Offset + 1],
+                    positionValues[vector3Offset + 2]);
+                Vector3 actualNormal = new(
+                    normalValues[vector3Offset],
+                    normalValues[vector3Offset + 1],
+                    normalValues[vector3Offset + 2]);
+                Vector2 actualUv = new(uvValues[vector2Offset], uvValues[vector2Offset + 1]);
+
+                float positionError = MaxComponentError(actualPosition, expectedPosition);
+                float normalError = MaxComponentError(actualNormal, expectedNormal);
+                float uvError = MaxComponentError(actualUv, expectedUv);
+                if (float.IsFinite(positionError)) maxPositionError = Math.Max(maxPositionError, positionError);
+                if (float.IsFinite(normalError)) maxNormalError = Math.Max(maxNormalError, normalError);
+                if (float.IsFinite(uvError)) maxUvError = Math.Max(maxUvError, uvError);
+
+                if (failedVertex < 0
+                    && (!IsWithinTolerance(actualPosition, expectedPosition, 2e-3f, 2e-4f)
+                        || !IsWithinTolerance(actualNormal, expectedNormal, 2e-3f, 1e-3f)
+                        || !IsWithinTolerance(actualUv, expectedUv, 1e-4f, 1e-5f)))
+                {
+                    failedVertex = i;
+                    failedExpectedPosition = expectedPosition;
+                    failedActualPosition = actualPosition;
+                    failedExpectedNormal = expectedNormal;
+                    failedActualNormal = actualNormal;
+                    failedSkinningType = vertexBoneInfos[i].SkinningType;
+                }
+            }
+        }
+        finally
+        {
+            _renderer.Device.Unmap(slot.UvStaging);
+            _renderer.Device.Unmap(slot.NormalStaging);
+            _renderer.Device.Unmap(slot.PositionStaging);
+        }
+
+        if (failedVertex >= 0)
+        {
+            Console.Error.WriteLine(
+                $"Vulkan Compute validation failed at vertex {failedVertex}: " +
+                $"skinning={failedSkinningType}, " +
+                $"position expected={failedExpectedPosition}, actual={failedActualPosition}, " +
+                $"normal expected={failedExpectedNormal}, actual={failedActualNormal}, " +
+                $"max errors position={maxPositionError:G6}, normal={maxNormalError:G6}, uv={maxUvError:G6}; " +
+                "falling back to CPU");
+            return false;
+        }
+
+        _maxValidationPositionError = Math.Max(_maxValidationPositionError, maxPositionError);
+        _maxValidationNormalError = Math.Max(_maxValidationNormalError, maxNormalError);
+        _maxValidationUvError = Math.Max(_maxValidationUvError, maxUvError);
+        _validatedDispatchCount++;
+        if (_validatedDispatchCount == ValidationDispatchCount)
+        {
+            Console.WriteLine(
+                $"[Vulkan Compute] PMX skinning validated against CPU across {ValidationDispatchCount} dispatches " +
+                $"({_vertexCount} vertices; max errors position={_maxValidationPositionError:G6}, " +
+                $"normal={_maxValidationNormalError:G6}, uv={_maxValidationUvError:G6}; " +
+                $"BDEF1={_skinningTypeCounts[0]}, BDEF2={_skinningTypeCounts[1]}, " +
+                $"BDEF4={_skinningTypeCounts[2]}, SDEF={_skinningTypeCounts[3]}, QDEF={_skinningTypeCounts[4]})");
+        }
+
+        return true;
+    }
+
+    private void CalculateReferenceSkinning(
+        Vector3 position,
+        Vector3 normal,
+        Vector2 uv,
+        Zhengyan.DigitalWife.Mmd.VertexBoneInfo info,
+        Vector3 morphPosition,
+        Vector4 morphUv,
+        Matrix4x4* updateTransforms,
+        Matrix4x4* globalTransforms,
+        out Vector3 outputPosition,
+        out Vector3 outputNormal,
+        out Vector2 outputUv)
+    {
+        int i0 = SanitizeBoneIndex(info.BoneIndices[0]);
+        int i1 = SanitizeBoneIndex(info.BoneIndices[1]);
+        int i2 = SanitizeBoneIndex(info.BoneIndices[2]);
+        int i3 = SanitizeBoneIndex(info.BoneIndices[3]);
+        Matrix4x4 skin = Matrix4x4.Identity;
+        switch (info.SkinningType)
+        {
+            case Zhengyan.DigitalWife.Mmd.SkinningType.Weight1:
+                skin = updateTransforms[i0];
+                break;
+            case Zhengyan.DigitalWife.Mmd.SkinningType.Weight2:
+                skin = updateTransforms[i0] * info.BoneWeights[0]
+                    + updateTransforms[i1] * info.BoneWeights[1];
+                break;
+            case Zhengyan.DigitalWife.Mmd.SkinningType.Weight4:
+                skin = updateTransforms[i0] * info.BoneWeights[0]
+                    + updateTransforms[i1] * info.BoneWeights[1]
+                    + updateTransforms[i2] * info.BoneWeights[2]
+                    + updateTransforms[i3] * info.BoneWeights[3];
+                break;
+            case Zhengyan.DigitalWife.Mmd.SkinningType.SDEF:
+            {
+                int sdef0 = SanitizeBoneIndex(info.SDEF.BoneIndices[0]);
+                int sdef1 = SanitizeBoneIndex(info.SDEF.BoneIndices[1]);
+                float weight0 = info.SDEF.BoneWeight;
+                float weight1 = 1.0f - weight0;
+                Quaternion q0 = Quaternion.CreateFromRotationMatrix(globalTransforms[sdef0]);
+                Quaternion q1 = Quaternion.CreateFromRotationMatrix(globalTransforms[sdef1]);
+                Matrix4x4 rotation = Matrix4x4.CreateFromQuaternion(Quaternion.Slerp(q0, q1, weight1));
+                Vector3 posedPosition = position + morphPosition;
+                outputPosition = Vector3.Transform(posedPosition - info.SDEF.C, rotation)
+                    + Vector3.Transform(info.SDEF.R0, updateTransforms[sdef0]) * weight0
+                    + Vector3.Transform(info.SDEF.R1, updateTransforms[sdef1]) * weight1;
+                outputNormal = Vector3.Normalize(Vector3.TransformNormal(normal, rotation));
+                outputUv = uv + new Vector2(morphUv.X, morphUv.Y);
+                return;
+            }
+        }
+
+        outputPosition = Vector3.Transform(position + morphPosition, skin);
+        outputNormal = Vector3.Normalize(Vector3.TransformNormal(normal, skin));
+        outputUv = uv + new Vector2(morphUv.X, morphUv.Y);
+    }
+
+    private static bool IsWithinTolerance(Vector3 actual, Vector3 expected, float absolute, float relative)
+        => MaxComponentError(actual, expected) <= absolute + relative * MaxAbsComponent(expected);
+
+    private static bool IsWithinTolerance(Vector2 actual, Vector2 expected, float absolute, float relative)
+        => MaxComponentError(actual, expected) <= absolute + relative * MaxAbsComponent(expected);
+
+    private static float MaxComponentError(Vector3 left, Vector3 right)
+        => Math.Max(ComponentError(left.X, right.X),
+            Math.Max(ComponentError(left.Y, right.Y), ComponentError(left.Z, right.Z)));
+
+    private static float MaxComponentError(Vector2 left, Vector2 right)
+        => Math.Max(ComponentError(left.X, right.X), ComponentError(left.Y, right.Y));
+
+    private static float MaxAbsComponent(Vector3 value)
+        => Math.Max(FiniteAbs(value.X), Math.Max(FiniteAbs(value.Y), FiniteAbs(value.Z)));
+
+    private static float MaxAbsComponent(Vector2 value)
+        => Math.Max(FiniteAbs(value.X), FiniteAbs(value.Y));
+
+    private static float ComponentError(float actual, float expected)
+    {
+        if (float.IsFinite(actual) && float.IsFinite(expected))
+        {
+            return Math.Abs(actual - expected);
+        }
+
+        if ((float.IsNaN(actual) && float.IsNaN(expected)) || actual.Equals(expected))
+        {
+            return 0.0f;
+        }
+
+        return float.PositiveInfinity;
+    }
+
+    private static float FiniteAbs(float value) => float.IsFinite(value) ? Math.Abs(value) : 0.0f;
+
     private sealed class ComputeSlot : IDisposable
     {
         public ComputeSlot(
@@ -581,6 +821,23 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private readonly record struct SkinningParametersGpu(uint VertexCount, uint BoneCount, uint Padding0, uint Padding1);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly record struct Int4(int X, int Y, int Z, int W);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly record struct MatrixRowsGpu(Vector4 Row0, Vector4 Row1, Vector4 Row2, Vector4 Row3)
+    {
+        public static MatrixRowsGpu FromMatrix(Matrix4x4 matrix)
+            => new(
+                new Vector4(matrix.M11, matrix.M12, matrix.M13, matrix.M14),
+                new Vector4(matrix.M21, matrix.M22, matrix.M23, matrix.M24),
+                new Vector4(matrix.M31, matrix.M32, matrix.M33, matrix.M34),
+                new Vector4(matrix.M41, matrix.M42, matrix.M43, matrix.M44));
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct VertexInputGpu
     {
         public Vector4 Position;
@@ -598,9 +855,9 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     [StructLayout(LayoutKind.Sequential)]
     private struct BoneInputGpu
     {
-        public Vector4 BoneIndices;
+        public Int4 BoneIndices;
         public Vector4 BoneWeights;
-        public Vector4 SdefIndicesAndType;
+        public Int4 SdefIndicesAndType;
         public Vector4 SdefWeightAndCenterXyz;
         public Vector4 SdefR0;
         public Vector4 SdefR1;
@@ -609,8 +866,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     [StructLayout(LayoutKind.Sequential)]
     private struct TransformInputGpu
     {
-        public Matrix4x4 Update;
-        public Matrix4x4 Global;
+        public MatrixRowsGpu Update;
+        public MatrixRowsGpu Global;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -626,7 +883,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
 
         layout(set = 0, binding = 0, std140) uniform SkinningParameters
         {
-            vec4 Counts;
+            uvec4 Counts;
         } u_Parameters;
 
         struct VertexInput
@@ -644,18 +901,26 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
 
         struct BoneInput
         {
-            vec4 BoneIndices;
+            ivec4 BoneIndices;
             vec4 BoneWeights;
-            vec4 SdefIndicesAndType;
+            ivec4 SdefIndicesAndType;
             vec4 SdefWeightAndCenterXyz;
             vec4 SdefR0;
             vec4 SdefR1;
         };
 
+        struct MatrixRows
+        {
+            vec4 Row0;
+            vec4 Row1;
+            vec4 Row2;
+            vec4 Row3;
+        };
+
         struct TransformInput
         {
-            mat4 Update;
-            mat4 Global;
+            MatrixRows Update;
+            MatrixRows Global;
         };
 
         layout(set = 0, binding = 1, std430) readonly buffer VertexInputs { VertexInput Values[]; } b_Vertices;
@@ -666,52 +931,114 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         layout(set = 0, binding = 6, std430) writeonly buffer NormalOutputs { float Values[]; } b_Normals;
         layout(set = 0, binding = 7, std430) writeonly buffer UvOutputs { float Values[]; } b_Uvs;
 
-        vec4 QuaternionFromMatrix(mat4 m)
+        vec3 TransformPosition(vec3 position, MatrixRows matrix)
         {
-            vec4 q;
-            float trace = m[0][0] + m[1][1] + m[2][2];
+            return vec3(
+                position.x * matrix.Row0.x + position.y * matrix.Row1.x + position.z * matrix.Row2.x + matrix.Row3.x,
+                position.x * matrix.Row0.y + position.y * matrix.Row1.y + position.z * matrix.Row2.y + matrix.Row3.y,
+                position.x * matrix.Row0.z + position.y * matrix.Row1.z + position.z * matrix.Row2.z + matrix.Row3.z);
+        }
+
+        vec3 TransformNormal(vec3 normal, MatrixRows matrix)
+        {
+            return vec3(
+                normal.x * matrix.Row0.x + normal.y * matrix.Row1.x + normal.z * matrix.Row2.x,
+                normal.x * matrix.Row0.y + normal.y * matrix.Row1.y + normal.z * matrix.Row2.y,
+                normal.x * matrix.Row0.z + normal.y * matrix.Row1.z + normal.z * matrix.Row2.z);
+        }
+
+        vec4 QuaternionFromMatrix(MatrixRows matrix)
+        {
+            float m11 = matrix.Row0.x;
+            float m12 = matrix.Row0.y;
+            float m13 = matrix.Row0.z;
+            float m21 = matrix.Row1.x;
+            float m22 = matrix.Row1.y;
+            float m23 = matrix.Row1.z;
+            float m31 = matrix.Row2.x;
+            float m32 = matrix.Row2.y;
+            float m33 = matrix.Row2.z;
+            float trace = m11 + m22 + m33;
+            vec4 q = vec4(0.0);
             if (trace > 0.0)
             {
-                float s = sqrt(trace + 1.0) * 2.0;
-                q = vec4((m[1][2] - m[2][1]) / s, (m[2][0] - m[0][2]) / s, (m[0][1] - m[1][0]) / s, 0.25 * s);
+                float s = sqrt(trace + 1.0);
+                q.w = s * 0.5;
+                s = 0.5 / s;
+                q.x = (m23 - m32) * s;
+                q.y = (m31 - m13) * s;
+                q.z = (m12 - m21) * s;
             }
-            else if (m[0][0] > m[1][1] && m[0][0] > m[2][2])
+            else if (m11 >= m22 && m11 >= m33)
             {
-                float s = sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2.0;
-                q = vec4(0.25 * s, (m[1][0] + m[0][1]) / s, (m[2][0] + m[0][2]) / s, (m[1][2] - m[2][1]) / s);
+                float s = sqrt(1.0 + m11 - m22 - m33);
+                float invS = 0.5 / s;
+                q.x = 0.5 * s;
+                q.y = (m12 + m21) * invS;
+                q.z = (m13 + m31) * invS;
+                q.w = (m23 - m32) * invS;
             }
-            else if (m[1][1] > m[2][2])
+            else if (m22 > m33)
             {
-                float s = sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2.0;
-                q = vec4((m[1][0] + m[0][1]) / s, 0.25 * s, (m[2][1] + m[1][2]) / s, (m[2][0] - m[0][2]) / s);
+                float s = sqrt(1.0 + m22 - m11 - m33);
+                float invS = 0.5 / s;
+                q.x = (m21 + m12) * invS;
+                q.y = 0.5 * s;
+                q.z = (m32 + m23) * invS;
+                q.w = (m31 - m13) * invS;
             }
             else
             {
-                float s = sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2.0;
-                q = vec4((m[2][0] + m[0][2]) / s, (m[2][1] + m[1][2]) / s, 0.25 * s, (m[0][1] - m[1][0]) / s);
+                float s = sqrt(1.0 + m33 - m11 - m22);
+                float invS = 0.5 / s;
+                q.x = (m31 + m13) * invS;
+                q.y = (m32 + m23) * invS;
+                q.z = 0.5 * s;
+                q.w = (m12 - m21) * invS;
             }
-            return normalize(q);
+            return q;
         }
 
         vec4 QuaternionSlerp(vec4 a, vec4 b, float amount)
         {
             float cosine = dot(a, b);
-            if (cosine < 0.0) { b = -b; cosine = -cosine; }
-            if (cosine > 0.9995) return normalize(mix(a, b, amount));
-            float angle = acos(clamp(cosine, -1.0, 1.0));
-            return normalize((sin((1.0 - amount) * angle) * a + sin(amount * angle) * b) / sin(angle));
+            bool flip = cosine < 0.0;
+            if (flip) cosine = -cosine;
+            float s1;
+            float s2;
+            if (cosine > 1.0 - 1e-6)
+            {
+                s1 = 1.0 - amount;
+                s2 = flip ? -amount : amount;
+            }
+            else
+            {
+                float omega = acos(clamp(cosine, -1.0, 1.0));
+                float invSinOmega = 1.0 / sin(omega);
+                s1 = sin((1.0 - amount) * omega) * invSinOmega;
+                s2 = (flip ? -sin(amount * omega) : sin(amount * omega)) * invSinOmega;
+            }
+            return s1 * a + s2 * b;
         }
 
-        mat4 MatrixFromQuaternion(vec4 q)
+        vec3 RotateByQuaternion(vec3 value, vec4 q)
         {
             float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
             float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
             float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
-            return mat4(
-                1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz), 2.0 * (xz - wy), 0.0,
-                2.0 * (xy - wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx), 0.0,
-                2.0 * (xz + wy), 2.0 * (yz - wx), 1.0 - 2.0 * (xx + yy), 0.0,
-                0.0, 0.0, 0.0, 1.0);
+            float m11 = 1.0 - 2.0 * (yy + zz);
+            float m12 = 2.0 * (xy + wz);
+            float m13 = 2.0 * (xz - wy);
+            float m21 = 2.0 * (xy - wz);
+            float m22 = 1.0 - 2.0 * (zz + xx);
+            float m23 = 2.0 * (yz + wx);
+            float m31 = 2.0 * (xz + wy);
+            float m32 = 2.0 * (yz - wx);
+            float m33 = 1.0 - 2.0 * (yy + xx);
+            return vec3(
+                value.x * m11 + value.y * m21 + value.z * m31,
+                value.x * m12 + value.y * m22 + value.z * m32,
+                value.x * m13 + value.y * m23 + value.z * m33);
         }
 
         void main()
@@ -722,20 +1049,9 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             VertexInput vertex = b_Vertices.Values[index];
             MorphInput morph = b_Morphs.Values[index];
             BoneInput bone = b_Bones.Values[index];
-            int skinningType = int(bone.SdefIndicesAndType.z);
+            int skinningType = bone.SdefIndicesAndType.z;
             int lastBone = max(int(u_Parameters.Counts.y) - 1, 0);
-            ivec4 indices = clamp(ivec4(bone.BoneIndices), ivec4(0), ivec4(lastBone));
-            mat4 skin = mat4(1.0);
-
-            if (skinningType == 0) skin = b_Transforms.Values[indices.x].Update;
-            else if (skinningType == 1) skin = b_Transforms.Values[indices.x].Update * bone.BoneWeights.x + b_Transforms.Values[indices.y].Update * bone.BoneWeights.y;
-            else if (skinningType == 2)
-            {
-                skin = b_Transforms.Values[indices.x].Update * bone.BoneWeights.x
-                    + b_Transforms.Values[indices.y].Update * bone.BoneWeights.y
-                    + b_Transforms.Values[indices.z].Update * bone.BoneWeights.z
-                    + b_Transforms.Values[indices.w].Update * bone.BoneWeights.w;
-            }
+            ivec4 indices = clamp(bone.BoneIndices, ivec4(0), ivec4(lastBone));
 
             vec3 position = vertex.Position.xyz + morph.Position.xyz;
             vec3 outputPosition;
@@ -747,18 +1063,43 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
                 float w0 = bone.SdefWeightAndCenterXyz.x;
                 float w1 = 1.0 - w0;
                 vec3 center = bone.SdefWeightAndCenterXyz.yzw;
-                mat4 rotation = MatrixFromQuaternion(QuaternionSlerp(
+                vec4 rotation = QuaternionSlerp(
                     QuaternionFromMatrix(b_Transforms.Values[i0].Global),
-                    QuaternionFromMatrix(b_Transforms.Values[i1].Global), w1));
-                outputPosition = (rotation * vec4(position - center, 1.0)).xyz
-                    + (b_Transforms.Values[i0].Update * vec4(bone.SdefR0.xyz, 1.0)).xyz * w0
-                    + (b_Transforms.Values[i1].Update * vec4(bone.SdefR1.xyz, 1.0)).xyz * w1;
-                outputNormal = normalize(mat3(rotation) * vertex.Normal.xyz);
+                    QuaternionFromMatrix(b_Transforms.Values[i1].Global), w1);
+                outputPosition = RotateByQuaternion(position - center, rotation)
+                    + TransformPosition(bone.SdefR0.xyz, b_Transforms.Values[i0].Update) * w0
+                    + TransformPosition(bone.SdefR1.xyz, b_Transforms.Values[i1].Update) * w1;
+                outputNormal = normalize(RotateByQuaternion(vertex.Normal.xyz, rotation));
+            }
+            else if (skinningType == 0)
+            {
+                outputPosition = TransformPosition(position, b_Transforms.Values[indices.x].Update);
+                outputNormal = normalize(TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.x].Update));
+            }
+            else if (skinningType == 1)
+            {
+                outputPosition = TransformPosition(position, b_Transforms.Values[indices.x].Update) * bone.BoneWeights.x
+                    + TransformPosition(position, b_Transforms.Values[indices.y].Update) * bone.BoneWeights.y;
+                outputNormal = normalize(
+                    TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.x].Update) * bone.BoneWeights.x
+                    + TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.y].Update) * bone.BoneWeights.y);
+            }
+            else if (skinningType == 2)
+            {
+                outputPosition = TransformPosition(position, b_Transforms.Values[indices.x].Update) * bone.BoneWeights.x
+                    + TransformPosition(position, b_Transforms.Values[indices.y].Update) * bone.BoneWeights.y
+                    + TransformPosition(position, b_Transforms.Values[indices.z].Update) * bone.BoneWeights.z
+                    + TransformPosition(position, b_Transforms.Values[indices.w].Update) * bone.BoneWeights.w;
+                outputNormal = normalize(
+                    TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.x].Update) * bone.BoneWeights.x
+                    + TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.y].Update) * bone.BoneWeights.y
+                    + TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.z].Update) * bone.BoneWeights.z
+                    + TransformNormal(vertex.Normal.xyz, b_Transforms.Values[indices.w].Update) * bone.BoneWeights.w);
             }
             else
             {
-                outputPosition = (skin * vec4(position, 1.0)).xyz;
-                outputNormal = normalize(mat3(skin) * vertex.Normal.xyz);
+                outputPosition = position;
+                outputNormal = normalize(vertex.Normal.xyz);
             }
 
             uint vector3Offset = index * 3u;

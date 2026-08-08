@@ -1480,17 +1480,16 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public void ApplyRuntimeSettings()
     {
         bool useOpenCl = ActiveGraphicsBackend == GraphicsBackend.OpenGL && Project.Runtime.UseOpenCL;
-        bool vulkanComputeRequested = ActiveGraphicsBackend == GraphicsBackend.Vulkan
+        bool useVulkanCompute = ActiveGraphicsBackend == GraphicsBackend.Vulkan
             && Project.Runtime.UseVulkanCompute;
-        bool useVulkanCompute = false;
         Options.UseOpenCL = useOpenCl;
         Options.UseVulkanCompute = useVulkanCompute;
         Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = useOpenCl;
         Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
         if (ActiveGraphicsBackend == GraphicsBackend.Vulkan)
         {
-            Console.WriteLine(vulkanComputeRequested
-                ? "[GameEditor] Vulkan Compute PMX skinning requested but disabled pending correctness validation; using CPU"
+            Console.WriteLine(useVulkanCompute
+                ? "[GameEditor] PMX compute backend: Vulkan Compute"
                 : "[GameEditor] Vulkan Compute disabled by project/runtime setting; using CPU");
         }
         else

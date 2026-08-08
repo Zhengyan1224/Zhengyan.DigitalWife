@@ -134,7 +134,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             options.GraphicsBackend = graphicsBackendOverride
                 ?? GraphicsBackendNames.Parse(project.Runtime.GraphicsBackend);
             options.UseOpenCL = project.Runtime.UseOpenCL;
-            options.UseVulkanCompute = false;
+            options.UseVulkanCompute = project.Runtime.UseVulkanCompute;
             options.Title = string.IsNullOrWhiteSpace(project.Window.Title) ? options.Title : project.Window.Title;
             options.WindowSize = new Silk.NET.Maths.Vector2D<int>(
                 Math.Max(320, project.Window.Width),
@@ -1319,17 +1319,16 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     internal void ApplyRuntimeSettings()
     {
         bool useOpenCl = GraphicsDevice.Backend == GraphicsBackend.OpenGL && Project.Runtime.UseOpenCL;
-        bool vulkanComputeRequested = GraphicsDevice.Backend == GraphicsBackend.Vulkan
+        bool useVulkanCompute = GraphicsDevice.Backend == GraphicsBackend.Vulkan
             && Project.Runtime.UseVulkanCompute;
-        bool useVulkanCompute = false;
         Options.UseOpenCL = useOpenCl;
         Options.UseVulkanCompute = useVulkanCompute;
         Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = useOpenCl;
         Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
         if (GraphicsDevice.Backend == GraphicsBackend.Vulkan)
         {
-            Console.WriteLine(vulkanComputeRequested
-                ? "[GamePlayer] Vulkan Compute PMX skinning requested but disabled pending correctness validation; using CPU"
+            Console.WriteLine(useVulkanCompute
+                ? "[GamePlayer] PMX compute backend: Vulkan Compute"
                 : "[GamePlayer] Vulkan Compute disabled by project/runtime setting; using CPU");
         }
         else
