@@ -108,17 +108,26 @@ public sealed class PlanarReflectionRenderer : IDisposable
         try
         {
             _game.IsPlanarReflectionPass = true;
-            HashSet<DrawableGameComponent> excluded = [.. excludedComponents];
-            foreach (ReflectionSurface surface in activeSurfaces)
+            HashSet<DrawableGameComponent> baseExcluded = [.. excludedComponents];
+            foreach (ReflectionSurface surface in activeSurfaces.Where(candidate => candidate.Key is TexturedPlaneComponent))
             {
                 if (surface.Key is DrawableGameComponent drawableSurface)
                 {
-                    excluded.Add(drawableSurface);
+                    baseExcluded.Add(drawableSurface);
                 }
             }
 
             foreach (ReflectionSurface surface in activeSurfaces)
             {
+                HashSet<DrawableGameComponent> excluded = [.. baseExcluded];
+                if (surface.Key is WaterSurfaceComponent)
+                {
+                    foreach (ReflectionSurface waterSurface in activeSurfaces.Where(candidate => candidate.Key is WaterSurfaceComponent))
+                    {
+                        excluded.Add((DrawableGameComponent)waterSurface.Key);
+                    }
+                }
+
                 ReflectionSurfaceState state = GetOrCreateSurfaceState(surface.Key);
                 IRenderTarget target = state.Target;
                 target.EnsureSize(textureWidth, textureHeight);
