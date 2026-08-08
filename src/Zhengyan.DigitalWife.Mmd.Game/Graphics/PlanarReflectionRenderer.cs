@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.OpenGLES;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
@@ -132,7 +131,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
                 target.BeginPass(clearColor);
 
                 applyCamera(state.Camera);
-                DrawReflectionSceneWithCorrectWinding(gameTime, excluded);
+                DrawReflectionScene(gameTime, excluded);
                 surface.SetReflection(
                     new RuntimeTextureHandle(target.Backend, target.LegacyColorTextureId, target.NativeColorResource),
                     state.Camera.View * state.Camera.Projection,
@@ -200,28 +199,6 @@ public sealed class PlanarReflectionRenderer : IDisposable
             }
 
             drawable.Draw(gameTime);
-        }
-    }
-
-    private void DrawReflectionSceneWithCorrectWinding(GameTime gameTime, HashSet<DrawableGameComponent> excluded)
-    {
-        if (_game.GraphicsDevice.Renderer is not OpenGlRenderer openGl)
-        {
-            DrawReflectionScene(gameTime, excluded);
-            return;
-        }
-
-        // Reflection changes the handedness of the view transform. Invert
-        // OpenGL's front-face winding so back-face culling still keeps the
-        // visible side of PMX meshes in the reflected scene.
-        openGl.Gl.FrontFace((GLEnum)0x0900); // GL_CW
-        try
-        {
-            DrawReflectionScene(gameTime, excluded);
-        }
-        finally
-        {
-            openGl.Gl.FrontFace((GLEnum)0x0901); // GL_CCW
         }
     }
 
