@@ -9,3 +9,5 @@ appsettings.Local.json
 imgui.ini
 **/imgui.ini
 .session/
+.dotnet/
+.tmp*.png

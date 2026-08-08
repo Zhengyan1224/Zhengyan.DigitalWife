@@ -42,7 +42,7 @@ public sealed class GameRuntimeSettings
 
     public bool UseOpenCL { get; set; } = true;
 
-    public bool UseVulkanCompute { get; set; } = true;
+    public bool UseVulkanCompute { get; set; }
 }
 
 public sealed class GameProjectScriptRuntime

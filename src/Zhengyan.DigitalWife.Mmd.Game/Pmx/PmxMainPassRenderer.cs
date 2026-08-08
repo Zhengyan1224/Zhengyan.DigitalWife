@@ -613,7 +613,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         return created;
     }
 
-    private static GraphicsPipelineDescription CreatePipelineDescription(
+    private GraphicsPipelineDescription CreatePipelineDescription(
         ShaderSetDescription shaderSet,
         ResourceLayout[] layouts,
         OutputDescription outputDescription,
@@ -626,8 +626,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 depthWriteEnabled: true,
                 comparisonKind: ComparisonKind.LessEqual),
             cullBack
-                ? new RasterizerStateDescription(FaceCullMode.Back, PolygonFillMode.Solid, FrontFace.Clockwise, depthClipEnabled: true, scissorTestEnabled: false)
-                : new RasterizerStateDescription(FaceCullMode.None, PolygonFillMode.Solid, FrontFace.Clockwise, depthClipEnabled: true, scissorTestEnabled: false),
+                ? new RasterizerStateDescription(FaceCullMode.Back, PolygonFillMode.Solid, _renderer.RasterizerFrontFace, depthClipEnabled: true, scissorTestEnabled: false)
+                : new RasterizerStateDescription(FaceCullMode.None, PolygonFillMode.Solid, _renderer.RasterizerFrontFace, depthClipEnabled: true, scissorTestEnabled: false),
             PrimitiveTopology.TriangleList,
             shaderSet,
             layouts,

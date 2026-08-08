@@ -24,6 +24,7 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
     private readonly Dictionary<TextureView, nint> _viewBindings = [];
     private readonly Dictionary<nint, ResourceSet> _textureSets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
+    private readonly List<DeviceBuffer> _retiredBuffers = [];
     private DeviceBuffer _vertexBuffer;
     private DeviceBuffer _indexBuffer;
     private Texture? _fontTexture;
@@ -137,6 +138,7 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         _frameBuffer.Dispose();
         _indexBuffer.Dispose();
         _vertexBuffer.Dispose();
+        foreach (DeviceBuffer buffer in _retiredBuffers) buffer.Dispose();
         ImGui.DestroyContext(_context);
     }
 
@@ -190,6 +192,9 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
 
         Vector2 clipOffset = drawData.DisplayPos;
         Vector2 clipScale = drawData.FramebufferScale;
+        int framebufferWidth = Math.Max((int)(drawData.DisplaySize.X * clipScale.X), 0);
+        int framebufferHeight = Math.Max((int)(drawData.DisplaySize.Y * clipScale.Y), 0);
+        if (framebufferWidth == 0 || framebufferHeight == 0) return;
         int globalVertexOffset = 0;
         uint globalIndexOffset = 0;
         for (int listIndex = 0; listIndex < drawData.CmdListsCount; listIndex++)
@@ -208,11 +213,18 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
                 float bottom = (clip.W - clipOffset.Y) * clipScale.Y;
                 if (right <= left || bottom <= top) continue;
 
-                uint x = (uint)Math.Max(left, 0);
-                uint y = (uint)Math.Max(top, 0);
-                uint width = (uint)Math.Max(right - Math.Max(left, 0), 1);
-                uint height = (uint)Math.Max(bottom - Math.Max(top, 0), 1);
-                commands.SetScissorRect(0, x, y, width, height);
+                int x = Math.Max((int)MathF.Floor(left), 0);
+                int y = Math.Max((int)MathF.Floor(top), 0);
+                int clipRight = Math.Min((int)MathF.Ceiling(right), framebufferWidth);
+                int clipBottom = Math.Min((int)MathF.Ceiling(bottom), framebufferHeight);
+                if (clipRight <= x || clipBottom <= y) continue;
+
+                commands.SetScissorRect(
+                    0,
+                    (uint)x,
+                    (uint)y,
+                    (uint)(clipRight - x),
+                    (uint)(clipBottom - y));
                 commands.SetGraphicsResourceSet(0, textureSet);
                 commands.DrawIndexed(
                     drawCommand.ElemCount,
@@ -233,16 +245,14 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         uint requiredIndices = checked((uint)(indexCount * sizeof(ushort)));
         if (requiredVertices > _vertexBufferSize)
         {
-            _renderer.NativeDevice.WaitForIdle();
-            _vertexBuffer.Dispose();
+            _retiredBuffers.Add(_vertexBuffer);
             _vertexBufferSize = Math.Max(requiredVertices * 3 / 2, InitialVertexBufferSize);
             _vertexBuffer = _renderer.ResourceFactory.CreateBuffer(
                 new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic));
         }
         if (requiredIndices > _indexBufferSize)
         {
-            _renderer.NativeDevice.WaitForIdle();
-            _indexBuffer.Dispose();
+            _retiredBuffers.Add(_indexBuffer);
             _indexBufferSize = Math.Max(requiredIndices * 3 / 2, InitialIndexBufferSize);
             _indexBuffer = _renderer.ResourceFactory.CreateBuffer(
                 new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic));

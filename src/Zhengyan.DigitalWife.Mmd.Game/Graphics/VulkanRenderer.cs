@@ -49,6 +49,9 @@ public sealed class VulkanRenderer : IRenderer
 
     internal bool IsFrameOpen => _frameOpen;
 
+    internal FrontFace RasterizerFrontFace
+        => Device.IsClipSpaceYInverted ? FrontFace.Clockwise : FrontFace.CounterClockwise;
+
     public Veldrid.GraphicsDevice NativeDevice => Device;
 
     public CommandList NativeCommandList => CommandList;
@@ -338,6 +341,12 @@ public sealed class VulkanRenderer : IRenderer
             window,
             options,
             Veldrid.GraphicsBackend.Vulkan);
+        string deviceInfo =
+            $"[Vulkan] Device='{_device.DeviceName}', " +
+            $"DepthZeroToOne={_device.IsDepthRangeZeroToOne}, " +
+            $"ClipSpaceYInverted={_device.IsClipSpaceYInverted}, " +
+            $"UvOriginTopLeft={_device.IsUvOriginTopLeft}";
+        Console.WriteLine(deviceInfo);
         _commandList = _device.ResourceFactory.CreateCommandList();
         CurrentOutputDescription = _device.SwapchainFramebuffer.OutputDescription;
         Resize(backBufferSize);

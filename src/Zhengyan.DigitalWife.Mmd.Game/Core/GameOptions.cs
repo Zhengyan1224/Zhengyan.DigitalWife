@@ -41,7 +41,7 @@ public sealed class GameOptions
 
     public bool UseOpenCL { get; set; } = true;
 
-    public bool UseVulkanCompute { get; set; } = true;
+    public bool UseVulkanCompute { get; set; }
 
     public bool EnableAudio { get; set; } = true;
 

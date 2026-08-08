@@ -54,7 +54,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             VSync = true,
             Samples = 4,
             UseOpenCL = true,
-            UseVulkanCompute = true,
+            UseVulkanCompute = false,
             EnableAudio = true,
             ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
             AnimationTimingMode = AnimationTimingMode.TimeSynchronized
@@ -1480,15 +1480,17 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public void ApplyRuntimeSettings()
     {
         bool useOpenCl = ActiveGraphicsBackend == GraphicsBackend.OpenGL && Project.Runtime.UseOpenCL;
-        bool useVulkanCompute = ActiveGraphicsBackend == GraphicsBackend.Vulkan && Project.Runtime.UseVulkanCompute;
+        bool vulkanComputeRequested = ActiveGraphicsBackend == GraphicsBackend.Vulkan
+            && Project.Runtime.UseVulkanCompute;
+        bool useVulkanCompute = false;
         Options.UseOpenCL = useOpenCl;
         Options.UseVulkanCompute = useVulkanCompute;
         Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL = useOpenCl;
         Zhengyan.DigitalWife.Mmd.Kernel.ResetOpenClProbe();
         if (ActiveGraphicsBackend == GraphicsBackend.Vulkan)
         {
-            Console.WriteLine(useVulkanCompute
-                ? "[GameEditor] PMX compute backend: Vulkan Compute"
+            Console.WriteLine(vulkanComputeRequested
+                ? "[GameEditor] Vulkan Compute PMX skinning requested but disabled pending correctness validation; using CPU"
                 : "[GameEditor] Vulkan Compute disabled by project/runtime setting; using CPU");
         }
         else
@@ -3439,7 +3441,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             {
                 GraphicsBackend = GraphicsBackend.Auto.ToSettingValue(),
                 UseOpenCL = true,
-                UseVulkanCompute = true
+                UseVulkanCompute = false
             },
             Scene = new GameProjectScene
             {

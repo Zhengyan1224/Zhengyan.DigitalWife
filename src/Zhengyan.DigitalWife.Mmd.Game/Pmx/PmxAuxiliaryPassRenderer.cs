@@ -419,7 +419,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         Pipeline pipeline = _renderer.ResourceFactory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
             BlendStateDescription.SingleAlphaBlend,
             new DepthStencilStateDescription(true, true, ComparisonKind.LessEqual),
-            new RasterizerStateDescription(FaceCullMode.Front, PolygonFillMode.Solid, FrontFace.Clockwise, true, false),
+            new RasterizerStateDescription(FaceCullMode.Front, PolygonFillMode.Solid, _renderer.RasterizerFrontFace, true, false),
             PrimitiveTopology.TriangleList,
             _edgeShaderSet,
             [_edgeLayout],
@@ -483,7 +483,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         return _renderer.ResourceFactory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
             blend,
             new DepthStencilStateDescription(true, true, ComparisonKind.LessEqual),
-            new RasterizerStateDescription(cullMode, PolygonFillMode.Solid, FrontFace.Clockwise, true, false),
+            new RasterizerStateDescription(cullMode, PolygonFillMode.Solid, _renderer.RasterizerFrontFace, true, false),
             PrimitiveTopology.TriangleList,
             _depthShaderSet,
             [_depthLayout],
