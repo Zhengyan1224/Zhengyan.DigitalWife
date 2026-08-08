@@ -205,7 +205,7 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 
 ## 3D 贴图矩形面、天空盒和水面交互
 
-`textured_plane` 是场景中的 3D 对象，不是屏幕空间 GUI。它支持 Transform、脚本和多个碰撞体，纹理路径支持工程相对路径、绝对路径、`project:` 和 `app:`。如果勾选 `Billboard`，矩形面会在渲染时自动朝向当前相机。`Receive shadow` 控制它是否接收 PMX shadow map 阴影；`Mirror reflection` 会把它当作双面平面镜，在绘制前用镜像相机额外渲染一次场景，可用于墙面镜子、镜面地板或反射屏幕。相机绕到平面另一侧时，反射采样会自动水平校正，避免出现另一侧视角方向错误。脚本层可通过 `PlaneMirrorReflectionEnabled` / `PlaneMirrorReflectionStrength` 或 Python 的 `set_plane_mirror_reflection_enabled(...)` / `set_plane_mirror_reflection_strength(...)` 控制 3D 贴图矩形面的镜面反射。
+`textured_plane` 是场景中的 3D 对象，不是屏幕空间 GUI。它支持 Transform、脚本和多个碰撞体，纹理路径支持工程相对路径、绝对路径、`project:` 和 `app:`。如果勾选 `Billboard`，矩形面会在渲染时自动朝向当前相机。`Receive shadow` 控制它是否接收 PMX shadow map 阴影；`Mirror reflection` 会把它当作双面平面镜，在绘制前用镜像相机额外渲染一次场景，可用于墙面镜子、镜面地板或反射屏幕。镜像相机会使用与镜面共面的斜截投影，避免平面另一侧的物体进入反射。脚本层可通过 `PlaneMirrorReflectionEnabled` / `PlaneMirrorReflectionStrength` 或 Python 的 `set_plane_mirror_reflection_enabled(...)` / `set_plane_mirror_reflection_strength(...)` 控制 3D 贴图矩形面的镜面反射。
 
 水面交互分两类：
 
@@ -218,7 +218,7 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 
 阴影说明：GameEditor/GamePlayer 使用单张方向光 shadow map 替代旧的平面投影地面阴影。PMX 的 `Enable shadow` 控制是否投射并接收 shadow map 阴影；3D 贴图矩形面的 `Receive shadow` 控制是否接收阴影。shadow map 需要实际的接收面，例如场景 PMX 模型里的地面或 3D 贴图矩形面，不会像旧平面投影阴影那样自动投到固定高度平面。旧的 `DrawShadowInMainPass` 主要用于兼容其它旧示例程序，GameEditor/GamePlayer 通常不需要修改它。
 
-性能注意：每个启用镜面反射的水面或 3D 贴图矩形面至少会多一次场景渲染。复杂场景、多个水面、多个镜面或多个相机视口会显著增加 GPU 开销。当前实现会跳过其它启用镜面反射的水面和平面，避免递归反射和上一帧纹理反馈；严格裁剪平面暂未作为首版目标。
+性能注意：每个启用镜面反射的水面或 3D 贴图矩形面至少会多一次场景渲染。复杂场景、多个水面、多个镜面或多个相机视口会显著增加 GPU 开销。当前实现会跳过其它启用镜面反射的水面和平面，避免递归反射和上一帧纹理反馈。
 
 推荐参数模板：
 

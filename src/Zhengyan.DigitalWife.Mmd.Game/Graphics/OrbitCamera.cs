@@ -27,6 +27,8 @@ public class OrbitCamera
     private float _nearClipPlane = 0.1f;
     private float _farClipPlane = 1000.0f;
 
+    internal Matrix4x4? ProjectionOverride { get; set; }
+
     public int Width { get; set; } = 1;
 
     public int Height { get; set; } = 1;
@@ -79,6 +81,11 @@ public class OrbitCamera
     {
         get
         {
+            if (ProjectionOverride is Matrix4x4 projectionOverride)
+            {
+                return projectionOverride;
+            }
+
             float aspect = (float)Math.Max(Width, 1) / Math.Max(Height, 1);
             return ProjectionMode == CameraProjectionMode.Orthographic
                 ? Matrix4x4.CreateOrthographic(OrthographicSize * 2.0f * aspect, OrthographicSize * 2.0f, NearClipPlane, FarClipPlane)

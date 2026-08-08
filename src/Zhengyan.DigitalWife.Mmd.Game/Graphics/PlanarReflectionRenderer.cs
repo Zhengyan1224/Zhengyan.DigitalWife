@@ -129,7 +129,10 @@ public sealed class PlanarReflectionRenderer : IDisposable
                     surface.Normal,
                     surface.Distance,
                     target.Width,
-                    target.Height);
+                    target.Height,
+                    clipAtSurface: surface.Key is TexturedPlaneComponent,
+                    backend: _game.GraphicsDevice.Backend,
+                    retainedPoint: sourceCamera.Position);
 
                 target.BeginPass(clearColor);
 
@@ -139,8 +142,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
                     new RuntimeTextureHandle(target.Backend, target.LegacyColorTextureId, target.NativeColorResource),
                     state.Camera.View * state.Camera.Projection,
                     target.Width,
-                    target.Height,
-                    sourceCamera.Position);
+                    target.Height);
             }
         }
         finally
@@ -212,7 +214,10 @@ public sealed class PlanarReflectionRenderer : IDisposable
         Vector3 planeNormal,
         float planeDistance,
         int width,
-        int height)
+        int height,
+        bool clipAtSurface,
+        GraphicsBackend backend,
+        Vector3 retainedPoint)
     {
         Vector3 normal = planeNormal.LengthSquared() > 0.0001f ? Vector3.Normalize(planeNormal) : Vector3.UnitY;
         Vector3 reflectedPosition = ReflectPoint(source.Position, normal, planeDistance);
@@ -230,7 +235,87 @@ public sealed class PlanarReflectionRenderer : IDisposable
         target.OrthographicSize = source.OrthographicSize;
         target.NearClipPlane = source.NearClipPlane;
         target.FarClipPlane = source.FarClipPlane;
+        target.ProjectionOverride = null;
+
+        if (clipAtSurface && TryCreateObliqueProjection(
+            target.View,
+            target.Projection,
+            normal,
+            planeDistance,
+            retainedPoint,
+            backend,
+            out Matrix4x4 obliqueProjection))
+        {
+            target.ProjectionOverride = obliqueProjection;
+        }
     }
+
+    private static bool TryCreateObliqueProjection(
+        Matrix4x4 view,
+        Matrix4x4 projection,
+        Vector3 planeNormal,
+        float planeDistance,
+        Vector3 retainedPoint,
+        GraphicsBackend backend,
+        out Matrix4x4 result)
+    {
+        result = projection;
+        float retainedSide = Vector3.Dot(planeNormal, retainedPoint) + planeDistance;
+        if (retainedSide < 0.0f)
+        {
+            planeNormal = -planeNormal;
+            planeDistance = -planeDistance;
+        }
+
+        // Keep the boundary just behind the visible mirror surface to avoid
+        // precision noise from geometry that is exactly coplanar with it.
+        const float clipBias = 0.01f;
+        Vector4 worldPlane = new(planeNormal, planeDistance - clipBias);
+        if (!Matrix4x4.Invert(view, out Matrix4x4 inverseView)
+            || !Matrix4x4.Invert(projection, out Matrix4x4 inverseProjection))
+        {
+            return false;
+        }
+
+        Vector4 eyePlane = MultiplyMatrixByColumn(inverseView, worldPlane);
+        Vector4 clipCorner = new(SignNotZero(eyePlane.X), SignNotZero(eyePlane.Y), 1.0f, 1.0f);
+        Vector4 eyeCorner = Vector4.Transform(clipCorner, inverseProjection);
+        float denominator = Vector4.Dot(eyePlane, eyeCorner);
+        if (MathF.Abs(denominator) <= 0.000001f)
+        {
+            return false;
+        }
+
+        float scale = (backend == GraphicsBackend.OpenGL ? 2.0f : 1.0f) / denominator;
+        Vector4 scaledPlane = eyePlane * scale;
+        if (backend == GraphicsBackend.OpenGL)
+        {
+            result.M13 = scaledPlane.X - projection.M14;
+            result.M23 = scaledPlane.Y - projection.M24;
+            result.M33 = scaledPlane.Z - projection.M34;
+            result.M43 = scaledPlane.W - projection.M44;
+        }
+        else
+        {
+            result.M13 = scaledPlane.X;
+            result.M23 = scaledPlane.Y;
+            result.M33 = scaledPlane.Z;
+            result.M43 = scaledPlane.W;
+        }
+
+        return true;
+    }
+
+    private static Vector4 MultiplyMatrixByColumn(Matrix4x4 matrix, Vector4 column)
+    {
+        return new Vector4(
+            (matrix.M11 * column.X) + (matrix.M12 * column.Y) + (matrix.M13 * column.Z) + (matrix.M14 * column.W),
+            (matrix.M21 * column.X) + (matrix.M22 * column.Y) + (matrix.M23 * column.Z) + (matrix.M24 * column.W),
+            (matrix.M31 * column.X) + (matrix.M32 * column.Y) + (matrix.M33 * column.Z) + (matrix.M34 * column.W),
+            (matrix.M41 * column.X) + (matrix.M42 * column.Y) + (matrix.M43 * column.Z) + (matrix.M44 * column.W));
+    }
+
+    private static float SignNotZero(float value) => value >= 0.0f ? 1.0f : -1.0f;
 
     private static Vector3 ReflectPoint(Vector3 point, Vector3 normal, float distance)
     {
@@ -275,7 +360,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
         public static ReflectionSurface ForPlane(TexturedPlaneComponent plane, Vector3 normal, float distance) => new(plane, normal, distance);
 
-        public void SetReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height, Vector3 sourceCameraPosition)
+        public void SetReflection(RuntimeTextureHandle texture, Matrix4x4 reflectionViewProjection, int width, int height)
         {
             if (_water is not null)
             {
@@ -283,8 +368,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
             }
             else
             {
-                bool flipX = Vector3.Dot(Normal, sourceCameraPosition) + Distance > 0.0001f;
-                _plane?.SetPlanarReflection(texture, reflectionViewProjection, width, height, flipX);
+                _plane?.SetPlanarReflection(texture, reflectionViewProjection, width, height);
             }
         }
     }
