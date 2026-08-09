@@ -443,7 +443,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             LightColor = new Vector4(lightColor, 1.0f),
             LightDirection = new Vector4(viewSpaceLightDirection, 0.0f),
             AmbientLightColor = new Vector4(ambientLightColor, 1.0f),
-            Parameters = new Vector4(ambientLightStrength, enableShadow ? 1.0f : 0.0f, 0.0f, 0.0f),
+            Parameters = new Vector4(
+                ambientLightStrength,
+                enableShadow ? 1.0f : 0.0f,
+                _renderer.RequiresProjectedTextureYFlip ? 1.0f : 0.0f,
+                _renderer.UsesZeroToOneDepthRange ? 1.0f : 0.0f),
             ShadowLightViewProjection = shadowLightViewProjection,
             ShadowParameters = new Vector4(
                 shadowAvailable ? 1.0f : 0.0f,
@@ -791,12 +795,19 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         {
             vec3 ndc = vs_ShadowPos.xyz / max(abs(vs_ShadowPos.w), 0.0001);
             vec2 uv = ndc.xy * 0.5 + 0.5;
-            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0)
+            if (u_Frame.u_Parameters.z > 0.5)
+            {
+                uv.y = 1.0 - uv.y;
+            }
+
+            float minimumDepth = u_Frame.u_Parameters.w > 0.5 ? 0.0 : -1.0;
+            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < minimumDepth || ndc.z > 1.0)
             {
                 return 1.0;
             }
 
-            float depth = (ndc.z * 0.5 + 0.5) - u_Frame.u_ShadowParameters.z;
+            float depth = (u_Frame.u_Parameters.w > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
+                - u_Frame.u_ShadowParameters.z;
             return texture(sampler2D(u_ShadowMap, u_ShadowSampler), uv).r >= depth ? 1.0 : 0.0;
         }
 

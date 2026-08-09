@@ -282,6 +282,14 @@ public unsafe class PmxModel : MMDModel
         => skinningCompute is IPmxGpuSkinningCompute gpu
             && gpu.TryBindGpuOutput(positionBuffer, normalBuffer, uvBuffer);
 
+    public void InvalidateGpuSkinningOutput()
+    {
+        if (skinningCompute is IPmxGpuSkinningCompute gpu)
+        {
+            gpu.InvalidateGpuOutput();
+        }
+    }
+
     public IReadOnlyList<string> LoadWarnings => _loadWarnings;
 
     public Vector3 PhysicsGravity

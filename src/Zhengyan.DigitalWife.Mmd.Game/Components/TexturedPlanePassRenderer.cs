@@ -106,6 +106,11 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
                 reflectionEnabled ? 1.0f : 0.0f,
                 Math.Clamp(reflectionStrength, 0.0f, 1.0f),
                 _renderer.RequiresProjectedTextureYFlip ? 1.0f : 0.0f,
+                0.0f),
+            BackendParameters = new Vector4(
+                _renderer.RequiresProjectedTextureYFlip ? 1.0f : 0.0f,
+                _renderer.UsesZeroToOneDepthRange ? 1.0f : 0.0f,
+                0.0f,
                 0.0f)
         };
 
@@ -268,6 +273,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         public Vector4 Tint;
         public Vector4 ShadowParameters;
         public Vector4 ReflectionParameters;
+        public Vector4 BackendParameters;
     }
 
     private sealed record PipelineBundle(OutputDescription Output, Pipeline Pipeline);
@@ -307,6 +313,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             vec4 u_Tint;
             vec4 u_ShadowParameters;
             vec4 u_ReflectionParameters;
+            vec4 u_BackendParameters;
         } u_Frame;
         layout(location = 0) in vec3 in_Pos;
         layout(location = 1) in vec2 in_Uv;
@@ -335,6 +342,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             vec4 u_Tint;
             vec4 u_ShadowParameters;
             vec4 u_ReflectionParameters;
+            vec4 u_BackendParameters;
         } u_Frame;
         layout(set = 0, binding = 1) uniform texture2D u_Texture;
         layout(set = 0, binding = 2) uniform sampler u_TextureSampler;
@@ -352,8 +360,11 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             if (u_Frame.u_ShadowParameters.x < 0.5) return 1.0;
             vec3 ndc = vs_ShadowPos.xyz / max(abs(vs_ShadowPos.w), 0.0001);
             vec2 uv = ndc.xy * 0.5 + 0.5;
-            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) return 1.0;
-            float depth = (ndc.z * 0.5 + 0.5) - u_Frame.u_ShadowParameters.z;
+            if (u_Frame.u_BackendParameters.x > 0.5) uv.y = 1.0 - uv.y;
+            float minimumDepth = u_Frame.u_BackendParameters.y > 0.5 ? 0.0 : -1.0;
+            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < minimumDepth || ndc.z > 1.0) return 1.0;
+            float depth = (u_Frame.u_BackendParameters.y > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
+                - u_Frame.u_ShadowParameters.z;
             float visibility = texture(sampler2D(u_ShadowMap, u_ShadowSampler), uv).r >= depth ? 1.0 : 0.0;
             return mix(1.0 - clamp(u_Frame.u_ShadowParameters.y, 0.0, 1.0), 1.0, visibility);
         }

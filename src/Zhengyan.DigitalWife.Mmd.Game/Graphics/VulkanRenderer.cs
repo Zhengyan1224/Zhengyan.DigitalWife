@@ -55,6 +55,9 @@ public sealed class VulkanRenderer : IRenderer
     internal bool RequiresProjectedTextureYFlip
         => Device.IsUvOriginTopLeft != Device.IsClipSpaceYInverted;
 
+    internal bool UsesZeroToOneDepthRange
+        => Device.IsDepthRangeZeroToOne;
+
     public Veldrid.GraphicsDevice NativeDevice => Device;
 
     public CommandList NativeCommandList => CommandList;

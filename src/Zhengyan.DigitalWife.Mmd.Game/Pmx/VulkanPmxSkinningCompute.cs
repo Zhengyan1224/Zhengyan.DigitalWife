@@ -206,6 +206,12 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         return true;
     }
 
+    public void InvalidateGpuOutput()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _gpuOutputValid = false;
+    }
+
     public bool ExecuteGpu(
         int vertexCount,
         int boneCount,

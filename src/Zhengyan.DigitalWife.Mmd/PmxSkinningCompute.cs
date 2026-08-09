@@ -34,6 +34,8 @@ public unsafe interface IPmxGpuSkinningCompute
 
     bool TryBindGpuOutput(object positionBuffer, object normalBuffer, object uvBuffer);
 
+    void InvalidateGpuOutput();
+
     bool ExecuteGpu(
         int vertexCount,
         int boneCount,

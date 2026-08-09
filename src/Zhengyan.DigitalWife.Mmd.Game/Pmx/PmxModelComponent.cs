@@ -2089,6 +2089,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 {
                     _model.LoadBaseAnimation();
                     RebuildPose(_model, nextMotionLayers);
+                    if (_model is Zhengyan.DigitalWife.Mmd.PmxModel { IsGpuSkinningOutputBound: true })
+                    {
+                        _model.Update();
+                    }
                 }
 
                 nextDirtyFlags = DirtyFlags.None;
@@ -2869,10 +2873,16 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _gpuResources.UploadPose(_model, uploadUv: true);
         if (_model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel)
         {
-            pmxModel.TryBindGpuSkinningOutput(
+            bool gpuOutputBound = pmxModel.TryBindGpuSkinningOutput(
                 _gpuResources.PositionBuffer.NativeResource!,
                 _gpuResources.NormalBuffer.NativeResource!,
                 _gpuResources.UvBuffer.NativeResource!);
+            if (gpuOutputBound)
+            {
+                // A model without motion may never become pose-dirty after setup.
+                // Dispatch once now so the newly bound Vulkan buffers contain its rest pose.
+                pmxModel.Update();
+            }
         }
 
         if (gl is not null)
@@ -3035,6 +3045,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _gpuResources.PositionBuffer.Update<Vector3>(_resetPositions);
         _gpuResources.NormalBuffer.Update<Vector3>(_resetNormals);
         _gpuResources.UvBuffer.Update<Vector2>(_resetUVs);
+        if (_model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel)
+        {
+            pmxModel.InvalidateGpuSkinningOutput();
+        }
         return true;
     }
 
