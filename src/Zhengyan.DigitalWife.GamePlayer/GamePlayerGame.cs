@@ -279,8 +279,20 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     protected override void Draw(GameTime gameTime)
     {
         _skyboxDrawnThisFrame = false;
-        _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
         _renderedSceneThisFrame = false;
+
+        if (_isLoading && GraphicsDevice.Backend == GraphicsBackend.Vulkan)
+        {
+            int loadingWidth = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+            int loadingHeight = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+            GraphicsDevice.RestoreBackBuffer();
+            GraphicsDevice.SetScissor(0, 0, loadingWidth, loadingHeight, enabled: false);
+            GraphicsDevice.SetViewport(0, 0, loadingWidth, loadingHeight);
+            _renderedSceneThisFrame = true;
+            return;
+        }
+
+        _renderTextureManager?.RenderAll(gameTime, _camera, ApplyRuntimeCamera, ApplyRuntimeCamera);
 
         if (TryDrawCameraViewports(gameTime))
         {
@@ -343,7 +355,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             int yTop = Math.Clamp((int)MathF.Round(rect.Y), 0, screenHeight - 1);
             int width = Math.Clamp((int)MathF.Round(rect.Width), 1, screenWidth - x);
             int height = Math.Clamp((int)MathF.Round(rect.Height), 1, screenHeight - yTop);
-            int y = Math.Max(screenHeight - yTop - height, 0);
+            int y = ResolveFramebufferViewportY(yTop, height, screenHeight);
 
             OrbitCamera camera = _renderTextureManager.ResolveCamera(settings.Name, _camera);
             camera.Width = width;
@@ -489,7 +501,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         int layoutWidth = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
         int layoutHeight = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
-        int viewportY = Math.Max(layoutHeight - y - height, 0);
+        int viewportY = ResolveLayoutViewportY(y, height, layoutHeight);
         DrawUnderwaterCamera(
             gameTime,
             camera,
@@ -2758,6 +2770,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     public override bool ShouldDrawComponent(DrawableGameComponent component)
     {
+        if (_isLoading && GraphicsDevice.Backend == GraphicsBackend.Vulkan)
+        {
+            return ReferenceEquals(component, _loadingScreen);
+        }
+
         if (_skyboxDrawnThisFrame && ReferenceEquals(component, _skybox))
         {
             return false;
@@ -2770,6 +2787,16 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         return GetOverlayComponents().Contains(component);
     }
+
+    private int ResolveFramebufferViewportY(int layoutY, int viewportHeight, int framebufferHeight)
+        => GraphicsDevice.Backend == GraphicsBackend.OpenGL
+            ? Math.Max(framebufferHeight - layoutY - viewportHeight, 0)
+            : Math.Max(layoutY, 0);
+
+    private int ResolveLayoutViewportY(int framebufferY, int viewportHeight, int framebufferHeight)
+        => GraphicsDevice.Backend == GraphicsBackend.OpenGL
+            ? Math.Max(framebufferHeight - framebufferY - viewportHeight, 0)
+            : Math.Max(framebufferY, 0);
 
     private static string NormalizeProjectionMode(string projectionMode)
     {
