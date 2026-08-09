@@ -42,6 +42,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private int _debugDrawVersion = 1;
     private readonly string? _initialProjectDirectory;
     private bool _restartRequested;
+    private bool _runtimeSettingsApplyPending;
 
     public GameEditorGame(
         GraphicsBackend graphicsBackend = GraphicsBackend.Auto,
@@ -183,6 +184,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             Exit();
             return;
+        }
+
+        if (_runtimeSettingsApplyPending)
+        {
+            _runtimeSettingsApplyPending = false;
+            ApplyRuntimeSettings();
         }
 
         base.Update(gameTime);
@@ -1502,10 +1509,21 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 : "[GameEditor] OpenCL disabled by project/runtime setting; using CPU");
         }
 
-        foreach (EditorPmxObject pmxObject in _pmxObjects.ToArray())
+        EditorPmxObject[] pmxObjects = _pmxObjects.ToArray();
+        if (pmxObjects.Length != 0)
+        {
+            GraphicsDevice.WaitForIdle();
+        }
+
+        foreach (EditorPmxObject pmxObject in pmxObjects)
         {
             pmxObject.Model.ReloadForCurrentComputeSetting();
         }
+    }
+
+    public void RequestRuntimeSettingsApply()
+    {
+        _runtimeSettingsApplyPending = true;
     }
 
     private string ResolveWindowTitle()

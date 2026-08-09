@@ -13,7 +13,10 @@ public sealed class PlanarReflectionRenderer : IDisposable
     }
 
     private readonly Game _game;
-    private readonly Dictionary<object, ReflectionSurfaceState> _surfaces = [];
+    // A scene can contain multiple camera viewports. Keep one target per
+    // surface/camera pair so a main viewport and a thumbnail never resize the
+    // same Vulkan texture while commands from the previous pass are recorded.
+    private readonly Dictionary<object, Dictionary<OrbitCamera, ReflectionSurfaceState>> _surfaces = [];
     private bool _isRendering;
     private bool _disposed;
     // Reflections are inspected as a full surface (for example a wall
@@ -95,7 +98,11 @@ public sealed class PlanarReflectionRenderer : IDisposable
         HashSet<object> validSurfaces = [.. waterSurfaces.Cast<object>().Concat((mirrorPlanes ?? []).Cast<object>())];
         foreach (object stale in _surfaces.Keys.Where(surface => !validSurfaces.Contains(surface)).ToArray())
         {
-            _surfaces[stale].Target.Dispose();
+            foreach (ReflectionSurfaceState state in _surfaces[stale].Values)
+            {
+                state.Target.Dispose();
+            }
+
             _surfaces.Remove(stale);
         }
 
@@ -128,7 +135,7 @@ public sealed class PlanarReflectionRenderer : IDisposable
                     }
                 }
 
-                ReflectionSurfaceState state = GetOrCreateSurfaceState(surface.Key);
+                ReflectionSurfaceState state = GetOrCreateSurfaceState(surface.Key, sourceCamera);
                 IRenderTarget target = state.Target;
                 target.EnsureSize(textureWidth, textureHeight);
 
@@ -179,23 +186,32 @@ public sealed class PlanarReflectionRenderer : IDisposable
         }
 
         _disposed = true;
-        foreach (ReflectionSurfaceState state in _surfaces.Values)
+        foreach (Dictionary<OrbitCamera, ReflectionSurfaceState> states in _surfaces.Values)
         {
-            state.Target.Dispose();
+            foreach (ReflectionSurfaceState state in states.Values)
+            {
+                state.Target.Dispose();
+            }
         }
 
         _surfaces.Clear();
     }
 
-    private ReflectionSurfaceState GetOrCreateSurfaceState(object key)
+    private ReflectionSurfaceState GetOrCreateSurfaceState(object key, OrbitCamera sourceCamera)
     {
-        if (!_surfaces.TryGetValue(key, out ReflectionSurfaceState? state))
+        if (!_surfaces.TryGetValue(key, out Dictionary<OrbitCamera, ReflectionSurfaceState>? states))
+        {
+            states = [];
+            _surfaces[key] = states;
+        }
+
+        if (!states.TryGetValue(sourceCamera, out ReflectionSurfaceState? state))
         {
             state = new ReflectionSurfaceState
             {
-                Target = _game.GraphicsDevice.CreateRenderTarget($"PlanarReflection-{_surfaces.Count + 1}")
+                Target = _game.GraphicsDevice.CreateRenderTarget($"PlanarReflection-{_surfaces.Count + 1}-{states.Count + 1}")
             };
-            _surfaces[key] = state;
+            states[sourceCamera] = state;
         }
 
         return state;

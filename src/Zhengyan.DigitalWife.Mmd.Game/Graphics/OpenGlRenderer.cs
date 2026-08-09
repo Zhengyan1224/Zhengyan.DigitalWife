@@ -139,6 +139,8 @@ public sealed class OpenGlRenderer : IRenderer
         // Silk.NET presents the OpenGL surface at the end of the window Render callback.
     }
 
+    public void WaitForIdle() => Gl.Finish();
+
     public void Dispose()
     {
         _gl?.Dispose();

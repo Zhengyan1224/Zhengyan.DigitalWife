@@ -8,7 +8,20 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProcessRenderer
 {
     private readonly VulkanRenderer _renderer;
-    private readonly IRenderTarget _capture;
+    private readonly string _name;
+    private sealed class CaptureState
+    {
+        public required IRenderTarget Target { get; init; }
+
+        public TextureView? ColorView { get; set; }
+
+        public TextureView? DepthView { get; set; }
+
+        public ResourceSet? ResourceSet { get; set; }
+    }
+
+    private readonly Dictionary<(int Width, int Height), CaptureState> _captures = [];
+    private CaptureState? _activeCapture;
     private readonly DeviceBuffer _vertices;
     private readonly DeviceBuffer _uniforms;
     private readonly ResourceLayout _layout;
@@ -16,14 +29,11 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
-    private TextureView? _boundView;
-    private TextureView? _boundDepthView;
-    private ResourceSet? _set;
 
     public VeldridUnderwaterPostProcessRenderer(VulkanRenderer renderer, string name)
     {
         _renderer = renderer;
-        _capture = renderer.CreateRenderTarget($"{name}-Capture");
+        _name = string.IsNullOrWhiteSpace(name) ? "Underwater" : name;
         ResourceFactory factory = renderer.ResourceFactory;
         float[] vertices = { -1,-1,0,0, 1,-1,1,0, -1,1,0,1, -1,1,0,1, 1,-1,1,0, 1,1,1,1 };
         _vertices = factory.CreateBuffer(new BufferDescription((uint)(vertices.Length * sizeof(float)), BufferUsage.VertexBuffer));
@@ -47,25 +57,42 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
 
     public void BeginCapture(int width, int height, Vector4 clearColor)
     {
-        _capture.EnsureSize(width, height);
-        _capture.BeginPass(clearColor);
+        width = Math.Max(width, 1);
+        height = Math.Max(height, 1);
+        if (!_captures.TryGetValue((width, height), out CaptureState? capture))
+        {
+            capture = new CaptureState
+            {
+                Target = _renderer.CreateRenderTarget($"{_name}-Capture-{width}x{height}")
+            };
+            _captures.Add((width, height), capture);
+        }
+
+        capture.Target.EnsureSize(width, height);
+        _activeCapture = capture;
+        capture.Target.BeginPass(clearColor);
     }
 
-    public void ResumeCapture() => _capture.ResumePass();
+    public void ResumeCapture()
+    {
+        _activeCapture?.Target.ResumePass();
+    }
 
     public void Draw(OrbitCamera camera, UnderwaterPostProcessSettings settings, double timeSeconds, int viewportWidth, int viewportHeight)
     {
         _ = viewportWidth; _ = viewportHeight;
+        CaptureState? capture = _activeCapture;
         if (!_renderer.IsFrameOpen
-            || _capture.NativeColorResource is not TextureView view
-            || _capture.NativeDepthResource is not TextureView depthView) return;
-        if (!ReferenceEquals(view, _boundView) || !ReferenceEquals(depthView, _boundDepthView))
+            || capture is null
+            || capture.Target.NativeColorResource is not TextureView view
+            || capture.Target.NativeDepthResource is not TextureView depthView) return;
+        if (!ReferenceEquals(view, capture.ColorView) || !ReferenceEquals(depthView, capture.DepthView))
         {
-            _set?.Dispose();
-            _set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
+            capture.ResourceSet?.Dispose();
+            capture.ResourceSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
                 _layout, _uniforms, view, _sampler, depthView, _sampler));
-            _boundView = view;
-            _boundDepthView = depthView;
+            capture.ColorView = view;
+            capture.DepthView = depthView;
         }
         UniformData data = new()
         {
@@ -86,16 +113,23 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
         commands.UpdateBuffer(_uniforms, 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices);
-        commands.SetGraphicsResourceSet(0, _set!);
+        commands.SetGraphicsResourceSet(0, capture.ResourceSet!);
         commands.Draw(6);
     }
 
     public void Dispose()
     {
-        _set?.Dispose();
+        foreach (CaptureState capture in _captures.Values)
+        {
+            capture.ResourceSet?.Dispose();
+            capture.Target.Dispose();
+        }
+
+        _captures.Clear();
+        _activeCapture = null;
         foreach ((_, Pipeline pipeline) in _pipelines) pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
-        _layout.Dispose(); _sampler.Dispose(); _uniforms.Dispose(); _vertices.Dispose(); _capture.Dispose();
+        _layout.Dispose(); _sampler.Dispose(); _uniforms.Dispose(); _vertices.Dispose();
     }
 
     private Pipeline GetPipeline(OutputDescription output)

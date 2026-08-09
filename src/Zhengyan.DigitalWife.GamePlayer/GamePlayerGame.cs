@@ -1341,7 +1341,13 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 : "[GamePlayer] OpenCL disabled by project/runtime setting; using CPU");
         }
 
-        foreach (PlayerPmxObject pmxObject in _pmxObjects.ToArray())
+        PlayerPmxObject[] pmxObjects = _pmxObjects.ToArray();
+        if (pmxObjects.Length != 0)
+        {
+            GraphicsDevice.WaitForIdle();
+        }
+
+        foreach (PlayerPmxObject pmxObject in pmxObjects)
         {
             pmxObject.Model.ReloadForCurrentComputeSetting();
         }

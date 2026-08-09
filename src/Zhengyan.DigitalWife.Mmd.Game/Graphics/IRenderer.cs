@@ -40,6 +40,8 @@ public interface IRenderer : IDisposable
 
     bool TryReadBackBufferRgba(Span<byte> destination);
 
+    void WaitForIdle();
+
     void Present();
 }
 

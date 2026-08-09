@@ -430,6 +430,21 @@ public sealed class VulkanRenderer : IRenderer
         _frameOpen = false;
     }
 
+    public void WaitForIdle()
+    {
+        if (_device is null)
+        {
+            return;
+        }
+
+        if (_frameOpen)
+        {
+            throw new InvalidOperationException("Cannot wait for Vulkan idle while a frame is being recorded.");
+        }
+
+        _device.WaitForIdle();
+    }
+
     public void Dispose()
     {
         if (_device is null)

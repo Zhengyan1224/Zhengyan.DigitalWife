@@ -78,6 +78,8 @@ public sealed class GraphicsDevice
     public bool TryReadBackBufferRgba(Span<byte> destination)
         => _renderer.TryReadBackBufferRgba(destination);
 
+    public void WaitForIdle() => _renderer.WaitForIdle();
+
     public void Clear(ClearBufferMask mask = ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit)
     {
         ClearBufferMask defaultMask = ClearBufferMask.ColorBufferBit

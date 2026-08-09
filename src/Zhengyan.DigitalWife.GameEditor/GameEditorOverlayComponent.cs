@@ -1139,7 +1139,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             window.TimingMode = NormalizeChoice(timingMode, "time_synchronized", ["time_synchronized", "frame_rate_dependent"]);
             _editorGame.Project.Runtime.UseOpenCL = useOpenCl;
             _editorGame.Project.Runtime.UseVulkanCompute = useVulkanCompute;
-            _editorGame.ApplyRuntimeSettings();
+            _editorGame.RequestRuntimeSettingsApply();
         }
 
         if (ImGui.Button("Apply To Editor Window"))
