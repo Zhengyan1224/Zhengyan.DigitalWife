@@ -8,10 +8,10 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 /// <summary>
 /// Vulkan compute implementation of the PMX CPU/OpenCL skinning contract.
-/// Dispatches use a three-slot input/output/staging ring. Completed results are
-/// consumed opportunistically so the update thread does not wait on every frame;
-/// a wait is only required for the first result or when the GPU falls behind the
-/// ring.
+/// Dispatches use a three-slot input/output/staging ring. CPU-output dispatches
+/// complete synchronously because the PMX update contract requires the returned
+/// arrays to describe the submitted pose. Once renderer buffers are bound,
+/// subsequent skinning writes directly to GPU vertex buffers.
 /// </summary>
 internal sealed unsafe class VulkanPmxSkinningCompute :
     Zhengyan.DigitalWife.Mmd.IPmxSkinningCompute,
@@ -40,7 +40,6 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     private long _submissionId;
     private long _morphRevision;
     private long _transformRevision;
-    private bool _hasCompletedOutput;
     private bool _staticInputsInitialized;
     private bool _hasMorphSnapshot;
     private bool _hasTransformSnapshot;
@@ -153,13 +152,11 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.SubmissionId = ++_submissionId;
             _nextSlot = (_nextSlot + 1) % _slots.Length;
 
-            // The first result must be valid. Subsequent frames consume the most
-            // recent completed result and avoid blocking the update thread.
-            if (!_hasCompletedOutput)
-            {
-                _renderer.Device.WaitForFence(slot.Fence);
-                RetireCompletedSlots();
-            }
+            // PmxModel.Update expects these CPU arrays to contain this dispatch,
+            // not the previous completed pose. This path is used during model
+            // initialization; normal Vulkan rendering uses ExecuteGpu instead.
+            _renderer.Device.WaitForFence(slot.Fence);
+            RetireCompletedSlots();
 
             CopyLatestOutput(updatePositions, updateNormals, updateUVs, vertexCount);
 
@@ -529,8 +526,6 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
                 slot.InFlight = false;
             }
         }
-
-        _hasCompletedOutput = true;
     }
 
     private void CopyLatestOutput(Vector3* updatePositions, Vector3* updateNormals, Vector2* updateUVs, int vertexCount)
