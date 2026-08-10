@@ -49,6 +49,7 @@ internal sealed class PmxShader : IDisposable
         UniShadowMapEnabled = gl.GetUniformLocation(Id, "u_ShadowMapEnabled");
         UniShadowMapStrength = gl.GetUniformLocation(Id, "u_ShadowMapStrength");
         UniShadowMapBias = gl.GetUniformLocation(Id, "u_ShadowMapBias");
+        UniShadowMapTexelSize = gl.GetUniformLocation(Id, "u_ShadowMapTexelSize");
         UniLightWvp0 = gl.GetUniformLocation(Id, "u_LightWVP[0]");
         UniLightWvp1 = gl.GetUniformLocation(Id, "u_LightWVP[1]");
         UniLightWvp2 = gl.GetUniformLocation(Id, "u_LightWVP[2]");
@@ -123,6 +124,8 @@ internal sealed class PmxShader : IDisposable
     public int UniShadowMapStrength { get; }
 
     public int UniShadowMapBias { get; }
+
+    public int UniShadowMapTexelSize { get; }
 
     public int UniLightWvp0 { get; }
 

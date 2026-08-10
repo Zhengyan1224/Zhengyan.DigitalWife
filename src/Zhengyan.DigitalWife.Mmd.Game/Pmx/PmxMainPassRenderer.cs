@@ -248,6 +248,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniShadowMapEnabled, 1);
         _gl.SetUniform(_shader.UniShadowMapStrength, Math.Clamp(binding.Strength, 0.0f, 1.0f));
         _gl.SetUniform(_shader.UniShadowMapBias, Math.Max(0.0f, binding.Bias));
+        _gl.SetUniform(_shader.UniShadowMapTexelSize, binding.TexelSize);
         _gl.SetUniform(_shader.UniLightWvp0, lightWvp);
         _gl.SetUniform(_shader.UniLightWvp1, lightWvp);
         _gl.SetUniform(_shader.UniLightWvp2, lightWvp);
@@ -453,7 +454,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 shadowAvailable ? 1.0f : 0.0f,
                 shadowAvailable ? Math.Clamp(shadowMap!.Value.Strength, 0.0f, 1.0f) : 0.0f,
                 shadowAvailable ? Math.Max(0.0f, shadowMap!.Value.Bias) : 0.0f,
-                0.0f)
+                shadowAvailable ? shadowMap!.Value.TexelSize.X : 0.0f)
         };
 
         CommandList commands = _renderer.CommandList;
@@ -808,7 +809,20 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
             float depth = (u_Frame.u_Parameters.w > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
                 - u_Frame.u_ShadowParameters.z;
-            return texture(sampler2D(u_ShadowMap, u_ShadowSampler), uv).r >= depth ? 1.0 : 0.0;
+            vec2 texelSize = vec2(max(u_Frame.u_ShadowParameters.w, 0.000001));
+            float visibility = 0.0;
+            for (int y = -1; y <= 1; ++y)
+            {
+                for (int x = -1; x <= 1; ++x)
+                {
+                    float storedDepth = texture(
+                        sampler2D(u_ShadowMap, u_ShadowSampler),
+                        uv + vec2(x, y) * texelSize).r;
+                    visibility += storedDepth >= depth ? 1.0 : 0.0;
+                }
+            }
+
+            return visibility / 9.0;
         }
 
         void main()

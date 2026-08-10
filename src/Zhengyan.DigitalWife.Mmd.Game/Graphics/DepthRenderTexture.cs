@@ -16,8 +16,8 @@ public sealed unsafe class DepthRenderTexture : IDisposable
         ColorRenderbufferId = _gl.GenRenderbuffer();
 
         _gl.BindTexture(GLEnum.Texture2D, DepthTextureId);
-        _gl.TexParameter(GLEnum.Texture2D, GLEnum.TextureMinFilter, (int)GLEnum.Linear);
-        _gl.TexParameter(GLEnum.Texture2D, GLEnum.TextureMagFilter, (int)GLEnum.Linear);
+        _gl.TexParameter(GLEnum.Texture2D, GLEnum.TextureMinFilter, (int)GLEnum.Nearest);
+        _gl.TexParameter(GLEnum.Texture2D, GLEnum.TextureMagFilter, (int)GLEnum.Nearest);
         _gl.TexParameter(GLEnum.Texture2D, GLEnum.TextureWrapS, (int)GLEnum.ClampToEdge);
         _gl.TexParameter(GLEnum.Texture2D, GLEnum.TextureWrapT, (int)GLEnum.ClampToEdge);
         _gl.TexParameter(GLEnum.Texture2D, (GLEnum)0x884C, 0x884E);

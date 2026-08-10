@@ -80,7 +80,10 @@ public sealed class ShadowMapRenderer : IDisposable
             Math.Clamp(shadowColor.W, 0.0f, 1.0f),
             0.0018f)
         {
-            NativeSampler = _shadowTexture.NativeSampler
+            NativeSampler = _shadowTexture.NativeSampler,
+            TexelSize = new Vector2(
+                1.0f / Math.Max(_shadowTexture.Width, 1),
+                1.0f / Math.Max(_shadowTexture.Height, 1))
         };
     }
 

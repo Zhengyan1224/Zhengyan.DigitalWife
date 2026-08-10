@@ -1796,6 +1796,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         shader.SetUniform("u_ShadowMapEnabled", 1);
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+        shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
         shader.SetUniform("u_LightWVP", lightWvp);
         shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
         shader.SetUniform("u_ShadowMap0", 3);

@@ -46,6 +46,7 @@ uniform sampler2DShadow u_ShadowMap3;
 uniform int u_ShadowMapEnabled;
 uniform float u_ShadowMapStrength;
 uniform float u_ShadowMapBias;
+uniform vec2 u_ShadowMapTexelSize;
 
 vec3 ComputeTexMulFactor(vec3 texColor, vec4 factor) {
     vec3 ret = texColor * factor.rgb;
@@ -76,7 +77,15 @@ float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord) {
     }
 
     float depth = (ndc.z * 0.5 + 0.5) - u_ShadowMapBias;
-    return texture(shadowMap, vec3(uv, depth));
+    float visibility = 0.0;
+    for(int y = -1; y <= 1; ++y) {
+        for(int x = -1; x <= 1; ++x) {
+            vec2 offset = vec2(x, y) * u_ShadowMapTexelSize;
+            visibility += texture(shadowMap, vec3(uv + offset, depth));
+        }
+    }
+
+    return visibility / 9.0;
 }
 
 void main() {

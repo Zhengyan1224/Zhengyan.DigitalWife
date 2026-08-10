@@ -110,8 +110,8 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             BackendParameters = new Vector4(
                 _renderer.RequiresProjectedTextureYFlip ? 1.0f : 0.0f,
                 _renderer.UsesZeroToOneDepthRange ? 1.0f : 0.0f,
-                0.0f,
-                0.0f)
+                shadowEnabled ? shadowMap!.Value.TexelSize.X : 0.0f,
+                shadowEnabled ? shadowMap!.Value.TexelSize.Y : 0.0f)
         };
 
         CommandList commands = _renderer.CommandList;
@@ -365,7 +365,19 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < minimumDepth || ndc.z > 1.0) return 1.0;
             float depth = (u_Frame.u_BackendParameters.y > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
                 - u_Frame.u_ShadowParameters.z;
-            float visibility = texture(sampler2D(u_ShadowMap, u_ShadowSampler), uv).r >= depth ? 1.0 : 0.0;
+            vec2 texelSize = max(u_Frame.u_BackendParameters.zw, vec2(0.000001));
+            float visibility = 0.0;
+            for (int y = -1; y <= 1; ++y)
+            {
+                for (int x = -1; x <= 1; ++x)
+                {
+                    float storedDepth = texture(
+                        sampler2D(u_ShadowMap, u_ShadowSampler),
+                        uv + vec2(x, y) * texelSize).r;
+                    visibility += storedDepth >= depth ? 1.0 : 0.0;
+                }
+            }
+            visibility /= 9.0;
             return mix(1.0 - clamp(u_Frame.u_ShadowParameters.y, 0.0, 1.0), 1.0, visibility);
         }
         void main()

@@ -29,6 +29,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformShadowMapEnabled = -1;
     private int _uniformShadowMapStrength = -1;
     private int _uniformShadowMapBias = -1;
+    private int _uniformShadowMapTexelSize = -1;
     private int _uniformPlanarReflectionTex = -1;
     private int _uniformPlanarReflectionEnabled = -1;
     private int _uniformReflectionViewProjection = -1;
@@ -346,6 +347,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _uniformShadowMapEnabled = gl.GetUniformLocation(_program, "u_ShadowMapEnabled");
         _uniformShadowMapStrength = gl.GetUniformLocation(_program, "u_ShadowMapStrength");
         _uniformShadowMapBias = gl.GetUniformLocation(_program, "u_ShadowMapBias");
+        _uniformShadowMapTexelSize = gl.GetUniformLocation(_program, "u_ShadowMapTexelSize");
         _uniformPlanarReflectionTex = gl.GetUniformLocation(_program, "u_PlanarReflectionTex");
         _uniformPlanarReflectionEnabled = gl.GetUniformLocation(_program, "u_PlanarReflectionEnabled");
         _uniformReflectionViewProjection = gl.GetUniformLocation(_program, "u_ReflectionViewProjection");
@@ -564,6 +566,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.SetUniform(_uniformLightViewProjection, shadowMap.LightViewProjection);
         gl.SetUniform(_uniformShadowMapStrength, Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         gl.SetUniform(_uniformShadowMapBias, Math.Max(0.0f, shadowMap.Bias));
+        gl.SetUniform(_uniformShadowMapTexelSize, shadowMap.TexelSize);
     }
 
     private void DrawCustomShader(GL gl, GameTime gameTime)
@@ -630,6 +633,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+        shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
     }
 
     private static void UnbindTextureSamplers(GL gl)
@@ -756,6 +760,7 @@ uniform mat4 u_LightViewProjection;
 uniform int u_ShadowMapEnabled;
 uniform float u_ShadowMapStrength;
 uniform float u_ShadowMapBias;
+uniform vec2 u_ShadowMapTexelSize;
 uniform float u_PlanarReflectionEnabled;
 uniform float u_MirrorReflectionStrength;
 
@@ -777,7 +782,16 @@ float SampleShadow()
     }
 
     float depth = (coord.z * 0.5 + 0.5) - u_ShadowMapBias;
-    float visibility = texture(u_ShadowMap, vec3(uv, depth));
+    float visibility = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            vec2 offset = vec2(x, y) * u_ShadowMapTexelSize;
+            visibility += texture(u_ShadowMap, vec3(uv + offset, depth));
+        }
+    }
+    visibility /= 9.0;
     return mix(1.0 - clamp(u_ShadowMapStrength, 0.0, 1.0), 1.0, visibility);
 }
 

@@ -121,7 +121,7 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
             SamplerAddressMode.Clamp,
             SamplerAddressMode.Clamp,
             SamplerAddressMode.Clamp,
-            SamplerFilter.MinLinear_MagLinear_MipLinear,
+            SamplerFilter.MinPoint_MagPoint_MipPoint,
             null,
             0,
             0,
