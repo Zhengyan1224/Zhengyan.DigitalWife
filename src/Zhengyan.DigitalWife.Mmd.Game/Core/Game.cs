@@ -35,6 +35,7 @@ public abstract class Game : IDisposable
         windowOptions.TopMost = Options.IsTopMost;
         windowOptions.TransparentFramebuffer = Options.TransparentFramebuffer;
         windowOptions.VSync = Options.VSync;
+        Options.Samples = AntiAliasingSamples.NormalizeRequested(Options.Samples);
         windowOptions.Samples = Options.Samples;
         RendererFactory.ConfigureWindow(ref windowOptions, RendererSelection.ResolvedBackend);
         windowOptions.PreferredDepthBufferBits = Options.PreferredDepthBufferBits;
@@ -199,7 +200,7 @@ public abstract class Game : IDisposable
 
     private void OnLoad()
     {
-        _renderer.Initialize(_window, _window.Size);
+        _renderer.Initialize(_window, _window.Size, Options.Samples);
         GraphicsDevice = new GraphicsDevice(_renderer, Options.ClearColor);
 
         // OpenCL is only a valid compute option for the OpenGL compatibility backend.

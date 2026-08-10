@@ -18,6 +18,12 @@ public sealed class GraphicsDevice
 
     public GraphicsBackend Backend => _renderer.Backend;
 
+    public string RendererName => _renderer.Name;
+
+    public int RequestedAntiAliasingSamples => _renderer.RequestedAntiAliasingSamples;
+
+    public int AntiAliasingSamples => _renderer.AntiAliasingSamples;
+
     /// <summary>
     /// Legacy OpenGL compatibility bridge. New scene code must use
     /// <see cref="Renderer"/> and <see cref="IRenderBackendServices"/> instead.

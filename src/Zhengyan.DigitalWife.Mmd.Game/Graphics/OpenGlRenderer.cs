@@ -19,13 +19,17 @@ public sealed class OpenGlRenderer : IRenderer
 
     public string Name => "OpenGL ES 3.0";
 
+    public int RequestedAntiAliasingSamples { get; private set; } = 1;
+
+    public int AntiAliasingSamples { get; private set; } = 1;
+
     public IRenderBackendServices Services => _services;
 
     public Vector2D<int> BackBufferSize { get; private set; }
 
     internal GL Gl => _gl ?? throw new InvalidOperationException("The OpenGL renderer has not been initialized.");
 
-    public void Initialize(IWindow window, Vector2D<int> backBufferSize)
+    public void Initialize(IWindow window, Vector2D<int> backBufferSize, int requestedSamples)
     {
         ArgumentNullException.ThrowIfNull(window);
         if (_gl is not null)
@@ -33,7 +37,20 @@ public sealed class OpenGlRenderer : IRenderer
             throw new InvalidOperationException("The OpenGL renderer is already initialized.");
         }
 
+        RequestedAntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
         _gl = window.CreateOpenGLES();
+        int actualSamples = 1;
+        try
+        {
+            actualSamples = Math.Max(1, Gl.GetInteger(GLEnum.Samples));
+        }
+        catch
+        {
+            // Some GLES implementations do not expose the default framebuffer sample count.
+        }
+
+        AntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FallbackToSupported(
+            RequestedAntiAliasingSamples, actualSamples);
         Resize(backBufferSize);
     }
 

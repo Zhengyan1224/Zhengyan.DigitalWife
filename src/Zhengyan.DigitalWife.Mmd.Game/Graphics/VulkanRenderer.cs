@@ -23,6 +23,11 @@ public sealed class VulkanRenderer : IRenderer
     private int _readbackHeight;
     private PixelFormat _readbackFormat;
     private VeldridUtilityPassRenderer? _utilityPasses;
+    private Texture? _multisampleColor;
+    private Texture? _multisampleDepth;
+    private Framebuffer? _multisampleFramebuffer;
+    private TextureSampleCount _sampleCount = TextureSampleCount.Count1;
+    private bool _mainColorResolved;
     private bool _frameOpen;
     private readonly IRenderBackendServices _services;
 
@@ -34,6 +39,10 @@ public sealed class VulkanRenderer : IRenderer
     public GraphicsBackend Backend => GraphicsBackend.Vulkan;
 
     public string Name => _device is null ? "Vulkan" : $"Vulkan ({_device.DeviceName})";
+
+    public int RequestedAntiAliasingSamples { get; private set; } = 1;
+
+    public int AntiAliasingSamples => (int)_sampleCount;
 
     public IRenderBackendServices Services => _services;
 
@@ -65,6 +74,8 @@ public sealed class VulkanRenderer : IRenderer
     public OutputDescription NativeOutputDescription => CurrentOutputDescription;
 
     internal OutputDescription CurrentOutputDescription { get; private set; }
+
+    private Framebuffer MainFramebuffer => _multisampleFramebuffer ?? Device.SwapchainFramebuffer;
 
     public IRenderTarget CreateRenderTarget(string name)
     {
@@ -120,8 +131,8 @@ public sealed class VulkanRenderer : IRenderer
     {
         if (_frameOpen)
         {
-            _commandList?.SetFramebuffer(Device.SwapchainFramebuffer);
-            CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+            _commandList?.SetFramebuffer(MainFramebuffer);
+            CurrentOutputDescription = MainFramebuffer.OutputDescription;
             _commandList?.SetFullViewports();
             _commandList?.SetFullScissorRects();
         }
@@ -151,6 +162,7 @@ public sealed class VulkanRenderer : IRenderer
         }
 
         Texture source = Device.SwapchainFramebuffer.ColorTargets[0].Target;
+        ResolveMainColor();
         EnsureReadbackSlots(width, height, source.Format);
 
         bool copiedResult = false;
@@ -172,8 +184,7 @@ public sealed class VulkanRenderer : IRenderer
             ReadbackSlot? available = _readbackSlots.FirstOrDefault(static slot => !slot.InFlight);
             if (available is not null)
             {
-                _commandList!.SetFramebuffer(Device.SwapchainFramebuffer);
-                _commandList.CopyTexture(source, available.Texture);
+                _commandList!.CopyTexture(source, available.Texture);
                 _pendingReadbackSlot = available;
             }
         }
@@ -253,6 +264,7 @@ public sealed class VulkanRenderer : IRenderer
         {
             _commandList!.Begin();
             _frameOpen = true;
+            _mainColorResolved = false;
         }
 
         _commandList!.SetFramebuffer(target.Framebuffer);
@@ -269,6 +281,7 @@ public sealed class VulkanRenderer : IRenderer
         {
             _commandList!.Begin();
             _frameOpen = true;
+            _mainColorResolved = false;
         }
 
         _commandList!.SetFramebuffer(target.Framebuffer);
@@ -279,8 +292,8 @@ public sealed class VulkanRenderer : IRenderer
 
     internal void EndRenderTarget(VeldridRenderTarget target)
     {
-        _commandList?.SetFramebuffer(Device.SwapchainFramebuffer);
-        CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+        _commandList?.SetFramebuffer(MainFramebuffer);
+        CurrentOutputDescription = MainFramebuffer.OutputDescription;
         _commandList?.SetFullViewports();
         _commandList?.SetFullScissorRects();
     }
@@ -291,6 +304,7 @@ public sealed class VulkanRenderer : IRenderer
         {
             _commandList!.Begin();
             _frameOpen = true;
+            _mainColorResolved = false;
         }
 
         _commandList!.SetFramebuffer(target.Framebuffer);
@@ -303,8 +317,8 @@ public sealed class VulkanRenderer : IRenderer
     internal void EndShadowMap(VeldridShadowMapTarget target)
     {
         _ = target;
-        _commandList?.SetFramebuffer(Device.SwapchainFramebuffer);
-        CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+        _commandList?.SetFramebuffer(MainFramebuffer);
+        CurrentOutputDescription = MainFramebuffer.OutputDescription;
         _commandList?.SetFullViewports();
         _commandList?.SetFullScissorRects();
     }
@@ -329,7 +343,7 @@ public sealed class VulkanRenderer : IRenderer
         }
     }
 
-    public void Initialize(IWindow window, Vector2D<int> backBufferSize)
+    public void Initialize(IWindow window, Vector2D<int> backBufferSize, int requestedSamples)
     {
         ArgumentNullException.ThrowIfNull(window);
         if (_device is not null)
@@ -337,6 +351,7 @@ public sealed class VulkanRenderer : IRenderer
             throw new InvalidOperationException("The Vulkan renderer is already initialized.");
         }
 
+        RequestedAntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
         GraphicsDeviceOptions options = new(
             debug: false,
             swapchainDepthFormat: PixelFormat.D24_UNorm_S8_UInt,
@@ -354,7 +369,6 @@ public sealed class VulkanRenderer : IRenderer
             $"UvOriginTopLeft={_device.IsUvOriginTopLeft}";
         Console.WriteLine(deviceInfo);
         _commandList = _device.ResourceFactory.CreateCommandList();
-        CurrentOutputDescription = _device.SwapchainFramebuffer.OutputDescription;
         Resize(backBufferSize);
     }
 
@@ -371,9 +385,15 @@ public sealed class VulkanRenderer : IRenderer
             throw new InvalidOperationException("Cannot resize a Vulkan swapchain while a frame is recording.");
         }
 
+        if (_multisampleFramebuffer is not null)
+        {
+            _device.WaitForIdle();
+        }
+
         _device.MainSwapchain.Resize(
             (uint)Math.Max(1, backBufferSize.X),
             (uint)Math.Max(1, backBufferSize.Y));
+        RecreateMultisampleFramebuffer();
     }
 
     public void Clear(Vector4 color)
@@ -386,8 +406,9 @@ public sealed class VulkanRenderer : IRenderer
         }
 
         commands.Begin();
-        commands.SetFramebuffer(device.SwapchainFramebuffer);
-        CurrentOutputDescription = device.SwapchainFramebuffer.OutputDescription;
+        commands.SetFramebuffer(MainFramebuffer);
+        CurrentOutputDescription = MainFramebuffer.OutputDescription;
+        _mainColorResolved = false;
         commands.ClearColorTarget(0, new RgbaFloat(color.X, color.Y, color.Z, color.W));
         commands.ClearDepthStencil(1.0f);
         _frameOpen = true;
@@ -414,6 +435,7 @@ public sealed class VulkanRenderer : IRenderer
             return;
         }
 
+        ResolveMainColor();
         commands.End();
         if (_pendingReadbackSlot is not null)
         {
@@ -467,6 +489,12 @@ public sealed class VulkanRenderer : IRenderer
             _commandList?.Dispose();
             _utilityPasses?.Dispose();
             _utilityPasses = null;
+            _multisampleFramebuffer?.Dispose();
+            _multisampleDepth?.Dispose();
+            _multisampleColor?.Dispose();
+            _multisampleFramebuffer = null;
+            _multisampleDepth = null;
+            _multisampleColor = null;
             foreach (ReadbackSlot slot in _readbackSlots) slot.Dispose();
             _readbackSlots.Clear();
             _device.Dispose();
@@ -474,6 +502,57 @@ public sealed class VulkanRenderer : IRenderer
             _pendingReadbackSlot = null;
             _device = null;
         }
+    }
+
+    private void RecreateMultisampleFramebuffer()
+    {
+        _multisampleFramebuffer?.Dispose();
+        _multisampleDepth?.Dispose();
+        _multisampleColor?.Dispose();
+        _multisampleFramebuffer = null;
+        _multisampleDepth = null;
+        _multisampleColor = null;
+
+        PixelFormat colorFormat = Device.SwapchainFramebuffer.ColorTargets[0].Target.Format;
+        int colorLimit = (int)Device.GetSampleCountLimit(colorFormat, depthFormat: false);
+        int depthLimit = (int)Device.GetSampleCountLimit(PixelFormat.D24_UNorm_S8_UInt, depthFormat: true);
+        int maximumSupported = Math.Min(colorLimit, depthLimit);
+        int actualSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FallbackToSupported(
+            RequestedAntiAliasingSamples, maximumSupported);
+        _sampleCount = (TextureSampleCount)actualSamples;
+
+        if (actualSamples <= 1)
+        {
+            CurrentOutputDescription = Device.SwapchainFramebuffer.OutputDescription;
+            return;
+        }
+
+        uint width = (uint)Math.Max(BackBufferSize.X, 1);
+        uint height = (uint)Math.Max(BackBufferSize.Y, 1);
+        _multisampleColor = ResourceFactory.CreateTexture(TextureDescription.Texture2D(
+            width, height, 1, 1, colorFormat, TextureUsage.RenderTarget, _sampleCount));
+        _multisampleDepth = ResourceFactory.CreateTexture(TextureDescription.Texture2D(
+            width, height, 1, 1, PixelFormat.D24_UNorm_S8_UInt,
+            TextureUsage.DepthStencil, _sampleCount));
+        _multisampleFramebuffer = ResourceFactory.CreateFramebuffer(
+            new FramebufferDescription(_multisampleDepth, _multisampleColor));
+        CurrentOutputDescription = _multisampleFramebuffer.OutputDescription;
+        Console.WriteLine(
+            $"[Vulkan] MSAA requested={RequestedAntiAliasingSamples}x, actual={actualSamples}x " +
+            $"(color limit={colorLimit}x, depth limit={depthLimit}x)");
+    }
+
+    private void ResolveMainColor()
+    {
+        if (!_frameOpen || _multisampleColor is null || _mainColorResolved)
+        {
+            return;
+        }
+
+        _commandList!.ResolveTexture(
+            _multisampleColor,
+            Device.SwapchainFramebuffer.ColorTargets[0].Target);
+        _mainColorResolved = true;
     }
 
     private sealed class ReadbackSlot(Texture texture, Fence fence) : IDisposable

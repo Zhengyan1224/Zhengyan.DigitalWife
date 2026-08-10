@@ -47,19 +47,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public GameEditorGame(
         GraphicsBackend graphicsBackend = GraphicsBackend.Auto,
         string? initialProjectDirectory = null)
-        : base(new GameOptions
-        {
-            GraphicsBackend = graphicsBackend,
-            Title = "Zhengyan.DigitalWife Game Editor",
-            WindowSize = new Silk.NET.Maths.Vector2D<int>(1440, 860),
-            VSync = true,
-            Samples = 4,
-            UseOpenCL = true,
-            UseVulkanCompute = false,
-            EnableAudio = true,
-            ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
-            AnimationTimingMode = AnimationTimingMode.TimeSynchronized
-        })
+        : base(CreateInitialOptions(graphicsBackend, initialProjectDirectory))
     {
         _initialProjectDirectory = string.IsNullOrWhiteSpace(initialProjectDirectory)
             ? null
@@ -88,6 +76,40 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public GraphicsBackend ActiveGraphicsBackend => GraphicsDevice.Backend;
 
     public GraphicsBackend RequestedGraphicsBackend => Options.GraphicsBackend;
+
+    private static GameOptions CreateInitialOptions(
+        GraphicsBackend graphicsBackend,
+        string? initialProjectDirectory)
+    {
+        GameOptions options = new()
+        {
+            GraphicsBackend = graphicsBackend,
+            Title = "Zhengyan.DigitalWife Game Editor",
+            WindowSize = new Silk.NET.Maths.Vector2D<int>(1440, 860),
+            VSync = true,
+            Samples = 4,
+            UseOpenCL = true,
+            UseVulkanCompute = false,
+            EnableAudio = true,
+            ClearColor = new Vector4(0.08f, 0.09f, 0.12f, 1.0f),
+            AnimationTimingMode = AnimationTimingMode.TimeSynchronized
+        };
+
+        if (!string.IsNullOrWhiteSpace(initialProjectDirectory))
+        {
+            try
+            {
+                GameProject project = GameProjectStore.Load(Path.GetFullPath(initialProjectDirectory));
+                options.Samples = AntiAliasingSamples.NormalizeRequested(project.Window.AntiAliasingSamples);
+            }
+            catch
+            {
+                // Keep the default so the editor can still create or repair the project.
+            }
+        }
+
+        return options;
+    }
 
     public void SetGraphicsBackend(GraphicsBackend backend)
     {
@@ -1399,7 +1421,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         try
         {
             RendererSelection selection = RendererFactory.Select(configuredBackend);
-            if (selection.ResolvedBackend != ActiveGraphicsBackend)
+            int requestedSamples = AntiAliasingSamples.NormalizeRequested(Project.Window.AntiAliasingSamples);
+            if (selection.ResolvedBackend != ActiveGraphicsBackend
+                || requestedSamples != Options.Samples)
             {
                 RestartEditorWithBackend(configuredBackend);
                 return;
@@ -1424,7 +1448,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             ? Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.png")
             : GameProjectPath.ToAbsolute(ProjectDirectory, Project.Window.IconPath);
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
-        UpdateStatus($"Applied window settings. Active graphics backend: {ActiveGraphicsBackend.ToSettingValue()}.");
+        UpdateStatus(
+            $"Applied window settings. Active graphics backend: {ActiveGraphicsBackend.ToSettingValue()}, " +
+            $"MSAA: {GraphicsDevice.AntiAliasingSamples}x.");
     }
 
     private void RestartEditorWithBackend(GraphicsBackend backend)

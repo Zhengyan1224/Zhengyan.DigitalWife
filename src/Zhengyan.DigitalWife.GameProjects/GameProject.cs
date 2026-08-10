@@ -328,6 +328,8 @@ public sealed class GameWindowSettings
     public bool Resizable { get; set; } = true;
 
     public string TimingMode { get; set; } = "time_synchronized";
+
+    public int AntiAliasingSamples { get; set; } = 4;
 }
 
 public sealed class DesktopSpriteTrayMenuItemSettings

@@ -1060,6 +1060,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         string timingMode = window.TimingMode;
         string graphicsBackend = GraphicsBackendNames.Parse(
             _editorGame.Project.Runtime.GraphicsBackend).ToSettingValue();
+        int antiAliasingSamples = AntiAliasingSamples.NormalizeRequested(window.AntiAliasingSamples);
+        string antiAliasing = $"{antiAliasingSamples}x";
         bool useOpenCl = _editorGame.Project.Runtime.UseOpenCL;
         bool useVulkanCompute = _editorGame.Project.Runtime.UseVulkanCompute;
         bool changed = false;
@@ -1103,12 +1105,26 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Fullscreen", ref fullscreen);
         changed |= ImGui.Checkbox("Resizable", ref resizable);
         changed |= DrawStringCombo("Timing Mode", ref timingMode, ["time_synchronized", "frame_rate_dependent"]);
+        if (DrawStringCombo("Anti-aliasing (MSAA)", ref antiAliasing, ["1x", "2x", "4x", "8x", "16x"]))
+        {
+            antiAliasingSamples = antiAliasing switch
+            {
+                "2x" => 2,
+                "4x" => 4,
+                "8x" => 8,
+                "16x" => 16,
+                _ => 1
+            };
+            changed = true;
+        }
         if (DrawStringCombo("Graphics backend", ref graphicsBackend, ["Auto", "OpenGL", "Vulkan"]))
         {
             _editorGame.SetGraphicsBackend(GraphicsBackendNames.Parse(graphicsBackend));
         }
 
-        ImGui.TextDisabled($"Active: {_editorGame.ActiveGraphicsBackend.ToSettingValue()}");
+        ImGui.TextDisabled(
+            $"Active: {_editorGame.ActiveGraphicsBackend.ToSettingValue()}, " +
+            $"MSAA {_editorGame.GraphicsDevice.AntiAliasingSamples}x");
         GraphicsBackend configuredBackend = GraphicsBackendNames.Parse(graphicsBackend);
         GraphicsBackend computeBackend = configuredBackend == GraphicsBackend.Auto
             ? _editorGame.ActiveGraphicsBackend
@@ -1137,6 +1153,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             window.Fullscreen = desktopSpriteMode ? false : fullscreen;
             window.Resizable = resizable;
             window.TimingMode = NormalizeChoice(timingMode, "time_synchronized", ["time_synchronized", "frame_rate_dependent"]);
+            window.AntiAliasingSamples = AntiAliasingSamples.NormalizeRequested(antiAliasingSamples);
             _editorGame.Project.Runtime.UseOpenCL = useOpenCl;
             _editorGame.Project.Runtime.UseVulkanCompute = useVulkanCompute;
             _editorGame.RequestRuntimeSettingsApply();
@@ -1147,7 +1164,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             _editorGame.ApplyWindowSettings();
         }
 
-        ImGui.TextWrapped("GamePlayer applies these settings on project load. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. OpenGL can use OpenCL for PMX skinning; Vulkan can use Vulkan Compute. Either path falls back to CPU if initialization fails. Applying a different graphics backend saves the project and restarts GameEditor automatically.");
+        ImGui.TextWrapped("GamePlayer applies these settings on project load. MSAA uses the highest supported sample count at or below the project setting; 1x disables it. Desktop sprite mode uses a transparent, borderless, topmost window and forces windowed mode. Click-through excludes transparent pixels from mouse input so clicks pass to the desktop or apps underneath. Drag button controls which mouse button moves the desktop sprite window. OpenGL can use OpenCL for PMX skinning; Vulkan can use Vulkan Compute. Either path falls back to CPU if initialization fails. Applying a different graphics backend or MSAA setting saves the project and restarts GameEditor automatically.");
         ImGui.PopID();
     }
 

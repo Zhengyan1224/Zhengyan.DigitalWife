@@ -102,6 +102,10 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         string iconPath = Path.Combine(AppContext.BaseDirectory, "Resources", "Logo", "logo.png");
         WindowIconLoader.TrySetWindowIconFromFile(Window, iconPath);
+        Console.WriteLine(
+            $"[GamePlayer] Graphics backend: {GraphicsDevice.Backend}; renderer: {GraphicsDevice.RendererName}; " +
+            $"MSAA requested={GraphicsDevice.RequestedAntiAliasingSamples}x, " +
+            $"actual={GraphicsDevice.AntiAliasingSamples}x");
     }
 
     private static GameOptions CreateInitialOptions(
@@ -135,6 +139,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 ?? GraphicsBackendNames.Parse(project.Runtime.GraphicsBackend);
             options.UseOpenCL = project.Runtime.UseOpenCL;
             options.UseVulkanCompute = project.Runtime.UseVulkanCompute;
+            options.Samples = AntiAliasingSamples.NormalizeRequested(project.Window.AntiAliasingSamples);
             options.Title = string.IsNullOrWhiteSpace(project.Window.Title) ? options.Title : project.Window.Title;
             options.WindowSize = new Silk.NET.Maths.Vector2D<int>(
                 Math.Max(320, project.Window.Width),

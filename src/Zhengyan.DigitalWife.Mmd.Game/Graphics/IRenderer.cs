@@ -14,7 +14,11 @@ public interface IRenderer : IDisposable
 
     Vector2D<int> BackBufferSize { get; }
 
-    void Initialize(IWindow window, Vector2D<int> backBufferSize);
+    void Initialize(IWindow window, Vector2D<int> backBufferSize, int requestedSamples);
+
+    int RequestedAntiAliasingSamples { get; }
+
+    int AntiAliasingSamples { get; }
 
     void Resize(Vector2D<int> backBufferSize);
 
