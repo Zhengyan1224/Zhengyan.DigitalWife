@@ -71,24 +71,36 @@ public sealed class LocalLightShadowRenderer : IDisposable
         {
             foreach ((int packedIndex, PointLightData light) in points)
             {
+                float nearPlane = GetNearPlane(light.Range);
                 Matrix4x4[] matrices = new Matrix4x4[LocalLightShadowLimits.PointFacesPerLight];
                 Vector4[] rects = new Vector4[LocalLightShadowLimits.PointFacesPerLight];
                 for (int face = 0; face < LocalLightShadowLimits.PointFacesPerLight; face++)
                 {
                     GetPointFace(face, out Vector3 direction, out Vector3 up);
-                    matrices[face] = CreatePointViewProjection(light, direction, up);
+                    matrices[face] = CreatePointViewProjection(light, direction, up, nearPlane);
                     rects[face] = BeginTile(tileIndex++, tileSize);
                     DrawCasters(casters, matrices[face]);
                 }
-                pointBindings.Add(new PointLightShadowBinding(packedIndex, matrices, rects));
+                pointBindings.Add(new PointLightShadowBinding(
+                    packedIndex,
+                    nearPlane,
+                    light.Range,
+                    matrices,
+                    rects));
             }
 
             foreach ((int packedIndex, SpotLightData light) in spots)
             {
-                Matrix4x4 matrix = CreateSpotViewProjection(light);
+                float nearPlane = GetNearPlane(light.Range);
+                Matrix4x4 matrix = CreateSpotViewProjection(light, nearPlane);
                 Vector4 rect = BeginTile(tileIndex++, tileSize);
                 DrawCasters(casters, matrix);
-                spotBindings.Add(new SpotLightShadowBinding(packedIndex, matrix, rect));
+                spotBindings.Add(new SpotLightShadowBinding(
+                    packedIndex,
+                    nearPlane,
+                    light.Range,
+                    matrix,
+                    rect));
             }
         }
         finally
@@ -104,7 +116,9 @@ public sealed class LocalLightShadowRenderer : IDisposable
             PointLights = pointBindings,
             SpotLights = spotBindings,
             Strength = Math.Clamp(shadowStrength, 0.0f, 1.0f),
-            Bias = 0.0022f,
+            // World-space receiver offset. The shader converts it to the
+            // non-linear perspective depth range for each light and fragment.
+            Bias = 0.015f,
             TexelSize = new Vector2(1.0f / Math.Max(_atlas.Width, 1), 1.0f / Math.Max(_atlas.Height, 1))
         };
         _lastRenderedFrame = gameTime.FrameCount;
@@ -171,22 +185,35 @@ public sealed class LocalLightShadowRenderer : IDisposable
         return selected;
     }
 
-    private static Matrix4x4 CreatePointViewProjection(PointLightData light, Vector3 direction, Vector3 up)
+    private static Matrix4x4 CreatePointViewProjection(
+        PointLightData light,
+        Vector3 direction,
+        Vector3 up,
+        float nearPlane)
     {
-        float near = Math.Clamp(light.Range * 0.0025f, 0.02f, 0.25f);
         Matrix4x4 view = Matrix4x4.CreateLookAt(light.Position, light.Position + direction, up);
-        Matrix4x4 projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI * 0.5f, 1.0f, near, light.Range);
+        Matrix4x4 projection = Matrix4x4.CreatePerspectiveFieldOfView(
+            MathF.PI * 0.5f,
+            1.0f,
+            nearPlane,
+            light.Range);
         return view * projection;
     }
 
-    private static Matrix4x4 CreateSpotViewProjection(SpotLightData light)
+    private static Matrix4x4 CreateSpotViewProjection(SpotLightData light, float nearPlane)
     {
         Vector3 direction = Vector3.Normalize(light.Direction);
         Vector3 up = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
-        float near = Math.Clamp(light.Range * 0.0025f, 0.02f, 0.25f);
         float fieldOfView = Math.Clamp(light.OuterConeAngleDegrees * 2.0f, 1.0f, 179.0f) * MathF.PI / 180.0f;
         return Matrix4x4.CreateLookAt(light.Position, light.Position + direction, up)
-            * Matrix4x4.CreatePerspectiveFieldOfView(fieldOfView, 1.0f, near, light.Range);
+            * Matrix4x4.CreatePerspectiveFieldOfView(fieldOfView, 1.0f, nearPlane, light.Range);
+    }
+
+    private static float GetNearPlane(float range)
+    {
+        float minimum = Math.Min(0.02f, range * 0.1f);
+        float maximum = Math.Min(0.25f, range * 0.5f);
+        return Math.Clamp(range * 0.0025f, minimum, maximum);
     }
 
     private static void GetPointFace(int face, out Vector3 direction, out Vector3 up)

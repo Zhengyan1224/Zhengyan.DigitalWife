@@ -306,7 +306,11 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         for (int slot = 0; slot < binding.PointLights.Count && slot < LocalLightShadowLimits.MaxShadowedPointLights; slot++)
         {
             PointLightShadowBinding light = binding.PointLights[slot];
-            pointMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+            pointMeta[slot] = new Vector4(
+                light.PackedLightIndex,
+                light.NearPlane,
+                light.FarPlane,
+                0.0f);
             for (int face = 0; face < LocalLightShadowLimits.PointFacesPerLight; face++)
             {
                 int index = slot * LocalLightShadowLimits.PointFacesPerLight + face;
@@ -320,7 +324,11 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         for (int slot = 0; slot < binding.SpotLights.Count && slot < LocalLightShadowLimits.MaxShadowedSpotLights; slot++)
         {
             SpotLightShadowBinding light = binding.SpotLights[slot];
-            spotMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+            spotMeta[slot] = new Vector4(
+                light.PackedLightIndex,
+                light.NearPlane,
+                light.FarPlane,
+                0.0f);
             _gl.SetUniform(_shader.UniSpotLightShadowMatrices[slot], inverseView * light.LightViewProjection);
             _gl.SetUniform(_shader.UniSpotLightShadowAtlasRects[slot], light.AtlasRect);
         }
@@ -982,7 +990,23 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             return visibility / 9.0;
         }
 
-        float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect)
+        float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surfaceNdotL)
+        {
+            float nearPlane = max(depthRange.x, 0.0001);
+            float farPlane = max(depthRange.y, nearPlane + 0.0001);
+            float lightDistance = max(abs(clipCoord.w), nearPlane);
+            float perspectiveScale = nearPlane * farPlane / max(farPlane - nearPlane, 0.0001);
+            float slopeScale = 1.0 + (1.0 - clamp(surfaceNdotL, 0.0, 1.0));
+            float depthRangeScale = u_Frame.u_Parameters.w > 0.5 ? 1.0 : 0.5;
+            return u_Frame.u_LocalShadowMeta.w * slopeScale * perspectiveScale
+                / (lightDistance * lightDistance) * depthRangeScale;
+        }
+
+        float SampleLocalShadow(
+            vec4 clipCoord,
+            vec4 atlasRect,
+            vec2 depthRange,
+            float surfaceNdotL)
         {
             vec3 ndc = clipCoord.xyz / max(abs(clipCoord.w), 0.0001);
             vec2 localUv = ndc.xy * 0.5 + 0.5;
@@ -999,7 +1023,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             }
 
             float depth = (u_Frame.u_Parameters.w > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
-                - u_Frame.u_LocalShadowMeta.w;
+                - ComputeLocalShadowDepthBias(clipCoord, depthRange, surfaceNdotL);
             vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
             vec2 texelSize = u_Frame.u_LocalShadowAtlasParameters.xy;
             vec2 minimumUv = atlasRect.xy + texelSize;
@@ -1139,7 +1163,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                     int faceIndex = shadowSlot * 6 + SelectPointShadowFace(worldLightToSurface);
                     float visibility = SampleLocalShadow(
                         u_Frame.u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
-                        u_Frame.u_PointLightShadowAtlasRect[faceIndex]);
+                        u_Frame.u_PointLightShadowAtlasRect[faceIndex],
+                        u_Frame.u_PointLightShadowMeta[shadowSlot].yz,
+                        pointNdotL);
                     radiance *= mix(1.0 - u_Frame.u_LocalShadowMeta.z, 1.0, visibility);
                 }
                 pointDiffuse += radiance * pointNdotL;
@@ -1179,7 +1205,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 {
                     float visibility = SampleLocalShadow(
                         u_Frame.u_SpotLightShadowMatrix[shadowSlot] * vec4(vs_Pos, 1.0),
-                        u_Frame.u_SpotLightShadowAtlasRect[shadowSlot]);
+                        u_Frame.u_SpotLightShadowAtlasRect[shadowSlot],
+                        u_Frame.u_SpotLightShadowMeta[shadowSlot].yz,
+                        spotNdotL);
                     radiance *= mix(1.0 - u_Frame.u_LocalShadowMeta.z, 1.0, visibility);
                 }
                 spotDiffuse += radiance * spotNdotL;

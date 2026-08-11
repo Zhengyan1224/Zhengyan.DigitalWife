@@ -12,11 +12,15 @@ public static class LocalLightShadowLimits
 
 public sealed record PointLightShadowBinding(
     int PackedLightIndex,
+    float NearPlane,
+    float FarPlane,
     IReadOnlyList<Matrix4x4> FaceViewProjections,
     IReadOnlyList<Vector4> AtlasRects);
 
 public sealed record SpotLightShadowBinding(
     int PackedLightIndex,
+    float NearPlane,
+    float FarPlane,
     Matrix4x4 LightViewProjection,
     Vector4 AtlasRect);
 

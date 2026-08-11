@@ -107,14 +107,25 @@ float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord) {
     return visibility / 9.0;
 }
 
-float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect) {
+float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surfaceNdotL) {
+    float nearPlane = max(depthRange.x, 0.0001);
+    float farPlane = max(depthRange.y, nearPlane + 0.0001);
+    float lightDistance = max(abs(clipCoord.w), nearPlane);
+    float perspectiveScale = nearPlane * farPlane / max(farPlane - nearPlane, 0.0001);
+    float slopeScale = 1.0 + (1.0 - clamp(surfaceNdotL, 0.0, 1.0));
+    return u_LocalShadowBias * slopeScale * perspectiveScale
+        / (lightDistance * lightDistance) * 0.5;
+}
+
+float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect, vec2 depthRange, float surfaceNdotL) {
     vec3 ndc = clipCoord.xyz / max(abs(clipCoord.w), 0.0001);
     vec2 localUv = ndc.xy * 0.5 + 0.5;
     if(localUv.x < 0.0 || localUv.x > 1.0 || localUv.y < 0.0 || localUv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) {
         return 1.0;
     }
 
-    float depth = ndc.z * 0.5 + 0.5 - u_LocalShadowBias;
+    float depth = ndc.z * 0.5 + 0.5
+        - ComputeLocalShadowDepthBias(clipCoord, depthRange, surfaceNdotL);
     vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
     vec2 minimumUv = atlasRect.xy + u_LocalShadowTexelSize;
     vec2 maximumUv = atlasRect.xy + atlasRect.zw - u_LocalShadowTexelSize;
@@ -232,7 +243,9 @@ void main() {
             int faceIndex = shadowSlot * 6 + SelectPointShadowFace(worldLightToSurface);
             float visibility = SampleLocalShadow(
                 u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
-                u_PointLightShadowAtlasRect[faceIndex]);
+                u_PointLightShadowAtlasRect[faceIndex],
+                u_PointLightShadowMeta[shadowSlot].yz,
+                pointNdotL);
             radiance *= mix(1.0 - u_LocalShadowStrength, 1.0, visibility);
         }
         pointDiffuse += radiance * pointNdotL;
@@ -267,7 +280,9 @@ void main() {
         if(shadowSlot >= 0 && shadowSlot < 4 && u_LocalShadowStrength > 0.0) {
             float visibility = SampleLocalShadow(
                 u_SpotLightShadowMatrix[shadowSlot] * vec4(vs_Pos, 1.0),
-                u_SpotLightShadowAtlasRect[shadowSlot]);
+                u_SpotLightShadowAtlasRect[shadowSlot],
+                u_SpotLightShadowMeta[shadowSlot].yz,
+                spotNdotL);
             radiance *= mix(1.0 - u_LocalShadowStrength, 1.0, visibility);
         }
         spotDiffuse += radiance * spotNdotL;

@@ -168,7 +168,11 @@ internal sealed unsafe class PmxGpuResources : IDisposable
             for (int slot = 0; slot < binding.PointLights.Count && slot < LocalLightShadowLimits.MaxShadowedPointLights; slot++)
             {
                 PointLightShadowBinding light = binding.PointLights[slot];
-                pointMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+                pointMeta[slot] = new Vector4(
+                    light.PackedLightIndex,
+                    light.NearPlane,
+                    light.FarPlane,
+                    0.0f);
                 for (int face = 0; face < LocalLightShadowLimits.PointFacesPerLight; face++)
                 {
                     int index = slot * LocalLightShadowLimits.PointFacesPerLight + face;
@@ -182,7 +186,11 @@ internal sealed unsafe class PmxGpuResources : IDisposable
             for (int slot = 0; slot < binding.SpotLights.Count && slot < LocalLightShadowLimits.MaxShadowedSpotLights; slot++)
             {
                 SpotLightShadowBinding light = binding.SpotLights[slot];
-                spotMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+                spotMeta[slot] = new Vector4(
+                    light.PackedLightIndex,
+                    light.NearPlane,
+                    light.FarPlane,
+                    0.0f);
                 spotMatrices[slot] = inverseView * light.LightViewProjection;
                 spotRects[slot] = light.AtlasRect;
             }
