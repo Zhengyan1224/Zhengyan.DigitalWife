@@ -297,6 +297,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniLocalShadowStrength, Math.Clamp(binding.Strength, 0.0f, 1.0f));
         _gl.SetUniform(_shader.UniLocalShadowBias, Math.Max(binding.Bias, 0.0f));
         _gl.SetUniform(_shader.UniLocalShadowTexelSize, binding.TexelSize);
+        _gl.SetUniform(_shader.UniLocalShadowInverseView, inverseView);
         Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
         Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
         pointMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
@@ -845,6 +846,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_SpotLightConeParameters[16];
             vec4 u_LocalShadowMeta;
             vec4 u_LocalShadowAtlasParameters;
+            mat4 u_LocalShadowInverseView;
             vec4 u_PointLightShadowMeta[2];
             vec4 u_SpotLightShadowMeta[4];
             mat4 u_PointLightShadowMatrix[12];
@@ -895,6 +897,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_SpotLightConeParameters[16];
             vec4 u_LocalShadowMeta;
             vec4 u_LocalShadowAtlasParameters;
+            mat4 u_LocalShadowInverseView;
             vec4 u_PointLightShadowMeta[2];
             vec4 u_SpotLightShadowMeta[4];
             mat4 u_PointLightShadowMatrix[12];
@@ -1132,7 +1135,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 int shadowSlot = FindPointShadowSlot(i);
                 if (shadowSlot >= 0 && shadowSlot < 2 && u_Frame.u_LocalShadowMeta.z > 0.0)
                 {
-                    int faceIndex = shadowSlot * 6 + SelectPointShadowFace(-toLight);
+                    vec3 worldLightToSurface = mat3(u_Frame.u_LocalShadowInverseView) * (-toLight);
+                    int faceIndex = shadowSlot * 6 + SelectPointShadowFace(worldLightToSurface);
                     float visibility = SampleLocalShadow(
                         u_Frame.u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
                         u_Frame.u_PointLightShadowAtlasRect[faceIndex]);

@@ -54,6 +54,7 @@ internal sealed class PmxShader : IDisposable
         UniLocalShadowStrength = gl.GetUniformLocation(Id, "u_LocalShadowStrength");
         UniLocalShadowBias = gl.GetUniformLocation(Id, "u_LocalShadowBias");
         UniLocalShadowTexelSize = gl.GetUniformLocation(Id, "u_LocalShadowTexelSize");
+        UniLocalShadowInverseView = gl.GetUniformLocation(Id, "u_LocalShadowInverseView");
         UniPointLightShadowMeta = GetUniformArray(gl, Id, "u_PointLightShadowMeta", LocalLightShadowLimits.MaxShadowedPointLights);
         UniSpotLightShadowMeta = GetUniformArray(gl, Id, "u_SpotLightShadowMeta", LocalLightShadowLimits.MaxShadowedSpotLights);
         UniPointLightShadowMatrices = GetUniformArray(gl, Id, "u_PointLightShadowMatrix", LocalLightShadowLimits.MaxPointShadowFaces);
@@ -140,6 +141,8 @@ internal sealed class PmxShader : IDisposable
     public int UniLocalShadowBias { get; }
 
     public int UniLocalShadowTexelSize { get; }
+
+    public int UniLocalShadowInverseView { get; }
 
     public int[] UniPointLightShadowMeta { get; }
 

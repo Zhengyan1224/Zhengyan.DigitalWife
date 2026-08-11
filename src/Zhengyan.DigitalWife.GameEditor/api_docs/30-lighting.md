@@ -222,6 +222,6 @@ torch.set_spot_light_direction(0.0, -0.4, -1.0)
 
 点光源与射灯共用一张 4096x4096 局部光阴影图集，并且每帧只生成一次。点光源最多占用 12 个图块，射灯最多占用 4 个图块；超过预算的光源仍会照明，但不投射阴影。当前局部光阴影仅支持 PMX 投射和接收，贴图矩形面仍只接收平行光阴影。
 
-自定义 GLSL 可读取 `u_SpotLightCount`、`u_SpotLightPositionRange[16]`、`u_SpotLightDirectionOuterCosine[16]`、`u_SpotLightColorIntensity[16]` 和 `u_SpotLightConeParameters[16]`。如需接收局部光阴影，还可声明 `u_LocalShadowAtlas`、`u_LocalShadowStrength`、`u_LocalShadowBias`、`u_LocalShadowTexelSize`、`u_PointLightShadowMeta[2]`、`u_PointLightShadowMatrix[12]`、`u_PointLightShadowAtlasRect[12]`、`u_SpotLightShadowMeta[4]`、`u_SpotLightShadowMatrix[4]` 和 `u_SpotLightShadowAtlasRect[4]`；每个 meta 元素的 `x` 是对应阴影槽使用的已打包光源索引，阴影图集绑定在 texture unit 7。未声明这些 uniform 的旧 GLSL 仍可运行，但不会自动获得局部光阴影。
+自定义 GLSL 可读取 `u_SpotLightCount`、`u_SpotLightPositionRange[16]`、`u_SpotLightDirectionOuterCosine[16]`、`u_SpotLightColorIntensity[16]` 和 `u_SpotLightConeParameters[16]`。如需接收局部光阴影，还可声明 `u_LocalShadowAtlas`、`u_LocalShadowStrength`、`u_LocalShadowBias`、`u_LocalShadowTexelSize`、`u_LocalShadowInverseView`、`u_PointLightShadowMeta[2]`、`u_PointLightShadowMatrix[12]`、`u_PointLightShadowAtlasRect[12]`、`u_SpotLightShadowMeta[4]`、`u_SpotLightShadowMatrix[4]` 和 `u_SpotLightShadowAtlasRect[4]`；点光源需要用 `u_LocalShadowInverseView` 把视图空间的“光源到片元”方向转换到世界空间后选择六面阴影槽。每个 meta 元素的 `x` 是对应阴影槽使用的已打包光源索引，阴影图集绑定在 texture unit 7。未声明这些 uniform 的旧 GLSL 仍可运行，但不会自动获得局部光阴影。
 
 自定义 Vulkan SPIR-V 可从 `PmxFrame` 中读取对应光照与局部阴影字段。局部阴影字段追加在原字段之后；frame resource set 的 `PmxLocalShadowAtlas` 和 `PmxLocalShadowSampler` 分别位于 binding 3、4。旧 SPIR-V 可以忽略追加字段和资源，新 shader 需要保持该固定 descriptor 契约。

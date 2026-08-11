@@ -136,6 +136,7 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         public fixed float SpotLightConeParameters[SpotLightPacking.MaxLights * 4];
         public Vector4 LocalShadowMeta;
         public Vector4 LocalShadowAtlasParameters;
+        public Matrix4x4 LocalShadowInverseView;
         public fixed float PointLightShadowMeta[LocalLightShadowLimits.MaxShadowedPointLights * 4];
         public fixed float SpotLightShadowMeta[LocalLightShadowLimits.MaxShadowedSpotLights * 4];
         public fixed float PointLightShadowMatrices[LocalLightShadowLimits.MaxPointShadowFaces * 16];
@@ -192,6 +193,7 @@ internal sealed unsafe class PmxGpuResources : IDisposable
                 Math.Clamp(binding.Strength, 0.0f, 1.0f),
                 Math.Max(binding.Bias, 0.0f));
             data.LocalShadowAtlasParameters = new Vector4(binding.TexelSize, 0.0f, 0.0f);
+            data.LocalShadowInverseView = inverseView;
         }
 
         fixed (float* pointMetaDestination = data.PointLightShadowMeta)

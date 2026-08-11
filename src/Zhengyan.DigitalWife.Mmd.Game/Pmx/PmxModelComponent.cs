@@ -1860,6 +1860,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         shader.SetUniform("u_LocalShadowStrength", Math.Clamp(binding.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_LocalShadowBias", Math.Max(binding.Bias, 0.0f));
         shader.SetUniform("u_LocalShadowTexelSize", binding.TexelSize);
+        shader.SetUniform("u_LocalShadowInverseView", inverseView);
         Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
         Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
         pointMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));

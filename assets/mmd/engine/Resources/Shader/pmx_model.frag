@@ -34,6 +34,7 @@ uniform sampler2DShadow u_LocalShadowAtlas;
 uniform float u_LocalShadowStrength;
 uniform float u_LocalShadowBias;
 uniform vec2 u_LocalShadowTexelSize;
+uniform mat4 u_LocalShadowInverseView;
 uniform vec4 u_PointLightShadowMeta[2];
 uniform vec4 u_SpotLightShadowMeta[4];
 uniform mat4 u_PointLightShadowMatrix[12];
@@ -227,7 +228,8 @@ void main() {
         vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff;
         int shadowSlot = FindPointShadowSlot(i);
         if(shadowSlot >= 0 && shadowSlot < 2 && u_LocalShadowStrength > 0.0) {
-            int faceIndex = shadowSlot * 6 + SelectPointShadowFace(-toLight);
+            vec3 worldLightToSurface = mat3(u_LocalShadowInverseView) * (-toLight);
+            int faceIndex = shadowSlot * 6 + SelectPointShadowFace(worldLightToSurface);
             float visibility = SampleLocalShadow(
                 u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
                 u_PointLightShadowAtlasRect[faceIndex]);
