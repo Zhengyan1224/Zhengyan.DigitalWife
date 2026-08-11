@@ -25,7 +25,7 @@ internal interface IPmxMainPassRenderer : IDisposable
         float ambientLightStrength,
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
-        bool enableShadow,
+        bool receiveShadow,
         ShadowMapBinding? shadowMap,
         LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -90,7 +90,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         float ambientLightStrength,
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
-        bool enableShadow,
+        bool receiveShadow,
         ShadowMapBinding? shadowMap,
         LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -109,11 +109,11 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
             LightColor = new Vector4(lightColor, 1.0f),
             LightDirection = new Vector4(viewSpaceLightDirection, 0.0f),
             AmbientLightColor = new Vector4(ambientLightColor, 1.0f),
-            Parameters = new Vector4(ambientLightStrength, enableShadow ? 1.0f : 0.0f, 0.0f, 0.0f)
+            Parameters = new Vector4(ambientLightStrength, receiveShadow ? 1.0f : 0.0f, 0.0f, 0.0f)
         };
         PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
         PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
-        PmxGpuResources.SetLocalLightShadows(ref frameData, enableShadow ? localLightShadowMap : null, view);
+        PmxGpuResources.SetLocalLightShadows(ref frameData, receiveShadow ? localLightShadowMap : null, view);
         resources.UploadFrameUniforms(frameData);
 
         _gl.Enable(GLEnum.DepthTest);
@@ -137,8 +137,8 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniShadowMap1, 4);
         _gl.SetUniform(_shader.UniShadowMap2, 5);
         _gl.SetUniform(_shader.UniShadowMap3, 6);
-        ApplyShadowMap(world, enableShadow ? shadowMap : null);
-        ApplyLocalLightShadows(view, enableShadow ? localLightShadowMap : null);
+        ApplyShadowMap(world, receiveShadow ? shadowMap : null);
+        ApplyLocalLightShadows(view, receiveShadow ? localLightShadowMap : null);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -521,7 +521,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         float ambientLightStrength,
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
-        bool enableShadow,
+        bool receiveShadow,
         ShadowMapBinding? shadowMap,
         LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -540,7 +540,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         VeldridSampler? shadowSampler = shadowMap?.NativeSampler as VeldridSampler;
         TextureView? localShadowTexture = localLightShadowMap?.NativeTexture as TextureView;
         VeldridSampler? localShadowSampler = localLightShadowMap?.NativeSampler as VeldridSampler;
-        bool shadowAvailable = enableShadow && shadowTexture is not null && shadowSampler is not null;
+        bool shadowAvailable = receiveShadow && shadowTexture is not null && shadowSampler is not null;
         Matrix4x4 shadowLightViewProjection = shadowAvailable
             ? world * shadowMap!.Value.LightViewProjection
             : Matrix4x4.Identity;
@@ -555,7 +555,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             AmbientLightColor = new Vector4(ambientLightColor, 1.0f),
             Parameters = new Vector4(
                 ambientLightStrength,
-                enableShadow ? 1.0f : 0.0f,
+                receiveShadow ? 1.0f : 0.0f,
                 _renderer.RequiresProjectedTextureYFlip ? 1.0f : 0.0f,
                 _renderer.UsesZeroToOneDepthRange ? 1.0f : 0.0f),
             ShadowLightViewProjection = shadowLightViewProjection,
@@ -567,7 +567,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         };
         PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
         PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
-        PmxGpuResources.SetLocalLightShadows(ref frameData, enableShadow ? localLightShadowMap : null, view);
+        PmxGpuResources.SetLocalLightShadows(ref frameData, receiveShadow ? localLightShadowMap : null, view);
 
         CommandList commands = _renderer.CommandList;
         commands.UpdateBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
@@ -581,8 +581,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             resources,
             shadowTexture,
             shadowSampler,
-            enableShadow ? localShadowTexture : null,
-            enableShadow ? localShadowSampler : null);
+            receiveShadow ? localShadowTexture : null,
+            receiveShadow ? localShadowSampler : null);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)

@@ -99,6 +99,7 @@ Entity.SetPhysicsGravityMagnitude(49.0f);
 
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
+Entity.ReceiveShadow = true;
 Entity.DrawShadowInMainPass = false;
 ```
 
@@ -118,6 +119,7 @@ gravity_magnitude = entity.physics_gravity_magnitude
 
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
+entity.set_receive_shadow(True)
 entity.set_draw_shadow_in_main_pass(False)
 ```
 
@@ -137,8 +139,8 @@ entity.set_draw_shadow_in_main_pass(False)
 - `EnableWaterInteraction` 仅对粒子系统有意义。只有粒子实体和水面实体都开启水体交互时，系统才会按每个活跃粒子的位置和当前尺寸做近似球检测，并在接触水面时触发波纹。
 - `KillOnWaterContact` 仅对粒子系统有意义。开启后，接触水面的粒子会在当前帧结束；关闭时粒子会穿过水面继续运动。
 - `WaterInteractionEnabled`、`WaterInteractionRadius`、`WaterInteractionStrength`、`ParticleRippleMinIntervalSeconds`、`ParticleRippleMergeDistance`、`RippleLifetimeSeconds`、`RippleWaveSpeed`、`RippleFrequency`、`RippleNormalStrength` 仅对 `water_surface` 有意义。
-- `EnableEdge`、`EnableShadow`、`DrawShadowInMainPass` 仅对 PMX 有意义。
-- GameEditor/GamePlayer 使用方向光 shadow map 和点光源/射灯共用的局部光阴影图集。`EnableShadow = true` 时 PMX 会写入已启用光源的 shadow map 并在主渲染中接收阴影；`false` 时不参与任何 shadow map。
+- `EnableEdge`、`EnableShadow`、`ReceiveShadow`、`DrawShadowInMainPass` 仅对 PMX 有意义。
+- GameEditor/GamePlayer 使用方向光 shadow map 和点光源/射灯共用的局部光阴影图集。`EnableShadow` 控制 PMX 是否写入这些 shadow map，`ReceiveShadow` 独立控制 PMX 主材质是否采样这些阴影；因此模型可以只投射、只接收、同时投射和接收，或者两者都关闭。
 - shadow map 需要实际的接收面，例如场景 PMX 模型里的地面或开启 `Receive shadow` 的 3D 贴图矩形面。它不会像旧平面投影阴影那样自动投到固定高度平面。
 - `DrawShadowInMainPass` 是兼容旧示例程序的平面投影阴影开关。GameEditor/GamePlayer 已经不依赖它，通常保持默认即可。
 - `PlayMotion` / `PauseMotion` 只改变播放状态，不会清掉已加载动作层。

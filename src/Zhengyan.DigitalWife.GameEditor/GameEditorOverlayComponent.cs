@@ -2020,6 +2020,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool isPlaying = entity.IsPlaying;
         bool enableEdge = entity.EnableEdge;
         bool enableShadow = entity.EnableShadow;
+        bool receiveShadow = entity.ReceiveShadow;
         bool drawShadowInMainPass = entity.DrawShadowInMainPass;
         float playbackSpeed = entity.PlaybackSpeed;
         bool loopMotion = entity.LoopMotion;
@@ -2082,7 +2083,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         if (string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
         {
             changed |= ImGui.Checkbox("Edge", ref enableEdge);
-            changed |= ImGui.Checkbox("Shadow", ref enableShadow);
+            changed |= ImGui.Checkbox("Cast shadow", ref enableShadow);
+            changed |= ImGui.Checkbox("Receive shadow", ref receiveShadow);
             changed |= ImGui.Checkbox("Draw shadow in main pass (legacy)", ref drawShadowInMainPass);
         }
 
@@ -2104,6 +2106,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             entity.ResetPhysicsOnMotionLoop = resetPhysicsOnMotionLoop;
             entity.EnableEdge = enableEdge;
             entity.EnableShadow = enableShadow;
+            entity.ReceiveShadow = receiveShadow;
             entity.DrawShadowInMainPass = drawShadowInMainPass;
             _editorGame.ApplySelectedEntityToRuntime();
         }

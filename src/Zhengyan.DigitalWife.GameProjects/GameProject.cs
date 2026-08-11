@@ -747,6 +747,8 @@ public sealed class GameEntity
 
     public bool EnableShadow { get; set; } = true;
 
+    public bool ReceiveShadow { get; set; } = true;
+
     public bool DrawShadowInMainPass { get; set; }
 
     public float PlaybackSpeed { get; set; } = 1.0f;

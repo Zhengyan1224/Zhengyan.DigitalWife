@@ -397,6 +397,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public bool EnableShadow { get; set; } = true;
 
+    public bool ReceiveShadow { get; set; } = true;
+
     public bool DrawShadowInMainPass { get; set; } = true;
 
     public Matrix4x4 World => Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateFromQuaternion(Rotation) * Matrix4x4.CreateTranslation(Position);
@@ -1587,7 +1589,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 AmbientLightStrength,
                 PointLights,
                 SpotLights,
-                EnableShadow,
+                ReceiveShadow,
                 ShadowMap,
                 LocalLightShadowMap,
                 ResolveMaterialOverrideTextureHandle);
@@ -1821,7 +1823,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     private void ApplyCustomShaderShadowUniforms(CustomShaderProgram shader, Matrix4x4 transform)
     {
-        if (!EnableShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
+        if (!ReceiveShadow || ShadowMap is not { TextureId: not 0 } shadowMap)
         {
             shader.SetUniform("u_ShadowMapEnabled", 0);
             return;
@@ -1848,7 +1850,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
     private void ApplyCustomShaderLocalShadowUniforms(CustomShaderProgram shader)
     {
         shader.SetUniform("u_LocalShadowAtlas", 7);
-        if (!EnableShadow
+        if (!ReceiveShadow
             || LocalLightShadowMap is not { TextureId: not 0 } binding
             || Camera is null
             || !Matrix4x4.Invert(Camera.View, out Matrix4x4 inverseView))

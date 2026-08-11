@@ -594,6 +594,19 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool ReceiveShadow
+    {
+        get => _model?.ReceiveShadow ?? _definition.ReceiveShadow;
+        set
+        {
+            _definition.ReceiveShadow = value;
+            if (_model is not null)
+            {
+                _model.ReceiveShadow = value;
+            }
+        }
+    }
+
     public bool EnableWaterInteraction
     {
         get => string.Equals(_definition.Type, "particle_system", StringComparison.OrdinalIgnoreCase)
@@ -1990,6 +2003,7 @@ public sealed class RuntimeEntity
             _definition.ResetPhysicsOnMotionLoop = _model.ResetPhysicsOnMotionLoop;
             _definition.EnableEdge = _model.EnableEdge;
             _definition.EnableShadow = _model.EnableShadow;
+            _definition.ReceiveShadow = _model.ReceiveShadow;
             _definition.DrawShadowInMainPass = _model.DrawShadowInMainPass;
         }
         else if (_particle is not null)

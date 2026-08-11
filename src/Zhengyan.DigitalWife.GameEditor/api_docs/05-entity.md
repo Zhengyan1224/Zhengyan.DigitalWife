@@ -59,7 +59,8 @@ keywords:
 | `PhysicsGravityDirection` | `physics_gravity_direction` | PMX 归一化重力方向。Python 用 `set_physics_gravity_direction` 修改。 |
 | `PhysicsGravityMagnitude` | `physics_gravity_magnitude` | PMX 非负重力大小。Python 用 `set_physics_gravity_magnitude` 修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
-| `EnableShadow` | 无直接快照字段 | PMX 是否参与 shadow map 阴影。开启时会投射并接收阴影；关闭时不参与。Python 用 `set_shadow_enabled` 修改。 |
+| `EnableShadow` | 无直接快照字段 | PMX 是否向方向光、点光源和射灯的 shadow map 投射阴影。Python 用 `set_shadow_enabled` 修改。 |
+| `ReceiveShadow` | `receive_shadow` | PMX 是否在主材质上接收方向光、点光源和射灯阴影。Python 用 `set_receive_shadow` 修改。 |
 | `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
 | `KillOnWaterContact` | `kill_on_water_contact` | 粒子系统粒子接触水面后是否立即消失。Python 用 `set_kill_on_water_contact` 修改。 |
 | `WaterInteractionEnabled` | `water_interaction_enabled` | 水面对象是否启用水体交互检测。Python 用 `set_water_interaction_enabled` 修改。 |
@@ -99,6 +100,7 @@ Entity.PhysicsGravityDirection = -Vector3.UnitY;
 Entity.PhysicsGravityMagnitude = 98.0f;
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
+Entity.ReceiveShadow = true;
 Entity.EnableWaterInteraction = true;
 Entity.KillOnWaterContact = true;
 Entity.WaterInteractionEnabled = true;
@@ -134,6 +136,7 @@ entity.set_physics_gravity_direction(0.0, -1.0, 0.0)
 entity.set_physics_gravity_magnitude(98.0)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
+entity.set_receive_shadow(True)
 entity.set_enable_water_interaction(True)
 entity.set_kill_on_water_contact(True)
 entity.set_water_interaction_enabled(True)
@@ -159,7 +162,8 @@ C# 额外可读/可写属性：
 | `PhysicsGravityDirection` | PMX 归一化重力方向。 |
 | `PhysicsGravityMagnitude` | PMX 非负重力大小，设为 `0` 时无重力。 |
 | `EnableEdge` | PMX 是否绘制描边。 |
-| `EnableShadow` | PMX 是否参与 shadow map 阴影。 |
+| `EnableShadow` | PMX 是否向 shadow map 投射阴影。 |
+| `ReceiveShadow` | PMX 是否接收方向光和局部光阴影。 |
 | `EnableWaterInteraction` | 粒子系统是否参与水体交互。 |
 | `KillOnWaterContact` | 粒子系统粒子接触水面后是否立即消失。 |
 | `WaterInteractionEnabled` | 水面对象是否启用水体交互检测。 |

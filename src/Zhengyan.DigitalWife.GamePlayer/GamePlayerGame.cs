@@ -2462,6 +2462,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         model.ResetPhysicsOnMotionLoop = entity.ResetPhysicsOnMotionLoop;
         model.EnableEdge = entity.EnableEdge;
         model.EnableShadow = entity.EnableShadow;
+        model.ReceiveShadow = entity.ReceiveShadow;
         model.DrawShadowInMainPass = entity.DrawShadowInMainPass;
         if (entity.MotionLayers.Count != 0)
         {

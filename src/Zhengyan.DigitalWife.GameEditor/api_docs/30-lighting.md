@@ -164,7 +164,7 @@ scene.point_lights.clear()
 - 当前每次 PMX 绘制最多使用前 16 个已启用且参数有效的点光源；场景可以保存更多光源，但超出的光源不会进入该次绘制。
 - 当前点光源影响 PMX 主材质，不改变无光照粒子、UI、调试线和 2D Sprite。
 - 开启 `Cast shadows` 后，前 2 个参数有效且开启阴影的点光源会生成实时阴影。每个点光源需要渲染 6 个方向，因此应只给真正需要的光源开启。
-- PMX 的 `EnableShadow` 同时控制它是否写入局部光阴影图以及是否在主材质中接收局部光阴影，与平行光阴影规则一致。
+- PMX 的 `EnableShadow` 控制是否写入方向光和局部光阴影图；`ReceiveShadow` 独立控制主材质是否接收平行光、点光源和射灯阴影。
 - 自定义 GLSL 可读取 `u_LightColor`、`u_LightDir`、`u_AmbientLightColor`、`u_AmbientLightStrength`、`u_PointLightCount`、`u_PointLightPositionRange[16]` 和 `u_PointLightColorIntensity[16]`。
 - 自定义 Vulkan SPIR-V 可从 `PmxFrame` 读取相同的全局光照和点光源数据；点光源字段追加在原有字段末尾，旧字段偏移未改变。
 
