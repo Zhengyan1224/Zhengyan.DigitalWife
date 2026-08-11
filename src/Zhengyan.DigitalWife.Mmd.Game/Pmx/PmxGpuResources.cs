@@ -134,6 +134,80 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         public fixed float SpotLightDirectionOuterCosines[SpotLightPacking.MaxLights * 4];
         public fixed float SpotLightColorIntensities[SpotLightPacking.MaxLights * 4];
         public fixed float SpotLightConeParameters[SpotLightPacking.MaxLights * 4];
+        public Vector4 LocalShadowMeta;
+        public Vector4 LocalShadowAtlasParameters;
+        public fixed float PointLightShadowMeta[LocalLightShadowLimits.MaxShadowedPointLights * 4];
+        public fixed float SpotLightShadowMeta[LocalLightShadowLimits.MaxShadowedSpotLights * 4];
+        public fixed float PointLightShadowMatrices[LocalLightShadowLimits.MaxPointShadowFaces * 16];
+        public fixed float PointLightShadowAtlasRects[LocalLightShadowLimits.MaxPointShadowFaces * 4];
+        public fixed float SpotLightShadowMatrices[LocalLightShadowLimits.MaxShadowedSpotLights * 16];
+        public fixed float SpotLightShadowAtlasRects[LocalLightShadowLimits.MaxShadowedSpotLights * 4];
+    }
+
+    public static void SetLocalLightShadows(
+        ref PmxFrameUniformData data,
+        LocalLightShadowBinding? binding,
+        Matrix4x4 view)
+    {
+        Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
+        Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
+        Span<Matrix4x4> pointMatrices = stackalloc Matrix4x4[LocalLightShadowLimits.MaxPointShadowFaces];
+        Span<Vector4> pointRects = stackalloc Vector4[LocalLightShadowLimits.MaxPointShadowFaces];
+        Span<Matrix4x4> spotMatrices = stackalloc Matrix4x4[LocalLightShadowLimits.MaxShadowedSpotLights];
+        Span<Vector4> spotRects = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
+        pointMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
+        spotMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
+        pointMatrices.Clear();
+        pointRects.Clear();
+        spotMatrices.Clear();
+        spotRects.Clear();
+
+        if (binding is not null && Matrix4x4.Invert(view, out Matrix4x4 inverseView))
+        {
+            for (int slot = 0; slot < binding.PointLights.Count && slot < LocalLightShadowLimits.MaxShadowedPointLights; slot++)
+            {
+                PointLightShadowBinding light = binding.PointLights[slot];
+                pointMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+                for (int face = 0; face < LocalLightShadowLimits.PointFacesPerLight; face++)
+                {
+                    int index = slot * LocalLightShadowLimits.PointFacesPerLight + face;
+                    if (face < light.FaceViewProjections.Count)
+                        pointMatrices[index] = inverseView * light.FaceViewProjections[face];
+                    if (face < light.AtlasRects.Count)
+                        pointRects[index] = light.AtlasRects[face];
+                }
+            }
+
+            for (int slot = 0; slot < binding.SpotLights.Count && slot < LocalLightShadowLimits.MaxShadowedSpotLights; slot++)
+            {
+                SpotLightShadowBinding light = binding.SpotLights[slot];
+                spotMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+                spotMatrices[slot] = inverseView * light.LightViewProjection;
+                spotRects[slot] = light.AtlasRect;
+            }
+
+            data.LocalShadowMeta = new Vector4(
+                Math.Min(binding.PointLights.Count, LocalLightShadowLimits.MaxShadowedPointLights),
+                Math.Min(binding.SpotLights.Count, LocalLightShadowLimits.MaxShadowedSpotLights),
+                Math.Clamp(binding.Strength, 0.0f, 1.0f),
+                Math.Max(binding.Bias, 0.0f));
+            data.LocalShadowAtlasParameters = new Vector4(binding.TexelSize, 0.0f, 0.0f);
+        }
+
+        fixed (float* pointMetaDestination = data.PointLightShadowMeta)
+        fixed (float* spotMetaDestination = data.SpotLightShadowMeta)
+        fixed (float* pointMatrixDestination = data.PointLightShadowMatrices)
+        fixed (float* pointRectDestination = data.PointLightShadowAtlasRects)
+        fixed (float* spotMatrixDestination = data.SpotLightShadowMatrices)
+        fixed (float* spotRectDestination = data.SpotLightShadowAtlasRects)
+        {
+            pointMeta.CopyTo(new Span<Vector4>(pointMetaDestination, LocalLightShadowLimits.MaxShadowedPointLights));
+            spotMeta.CopyTo(new Span<Vector4>(spotMetaDestination, LocalLightShadowLimits.MaxShadowedSpotLights));
+            pointMatrices.CopyTo(new Span<Matrix4x4>(pointMatrixDestination, LocalLightShadowLimits.MaxPointShadowFaces));
+            pointRects.CopyTo(new Span<Vector4>(pointRectDestination, LocalLightShadowLimits.MaxPointShadowFaces));
+            spotMatrices.CopyTo(new Span<Matrix4x4>(spotMatrixDestination, LocalLightShadowLimits.MaxShadowedSpotLights));
+            spotRects.CopyTo(new Span<Vector4>(spotRectDestination, LocalLightShadowLimits.MaxShadowedSpotLights));
+        }
     }
 
     public static void SetSpotLights(

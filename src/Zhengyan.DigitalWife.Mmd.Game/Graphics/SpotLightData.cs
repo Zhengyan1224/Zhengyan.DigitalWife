@@ -61,6 +61,19 @@ internal static class SpotLightPacking
 {
     public const int MaxLights = 16;
 
+    public static bool IsValid(SpotLightData light)
+    {
+        return light.Enabled
+            && IsFinite(light.Position)
+            && IsFinite(light.Direction)
+            && IsFinite(light.Color)
+            && float.IsFinite(light.Intensity)
+            && float.IsFinite(light.Range)
+            && light.Direction.LengthSquared() > 1e-8f
+            && light.Intensity > 0.0f
+            && light.Range > 0.0f;
+    }
+
     public static int PackViewSpace(
         IReadOnlyList<SpotLightData>? lights,
         Matrix4x4 view,
@@ -85,15 +98,7 @@ internal static class SpotLightPacking
                 break;
             }
 
-            if (!light.Enabled
-                || !IsFinite(light.Position)
-                || !IsFinite(light.Direction)
-                || !IsFinite(light.Color)
-                || !float.IsFinite(light.Intensity)
-                || !float.IsFinite(light.Range)
-                || light.Direction.LengthSquared() <= 1e-8f
-                || light.Intensity <= 0.0f
-                || light.Range <= 0.0f)
+            if (!IsValid(light))
             {
                 continue;
             }

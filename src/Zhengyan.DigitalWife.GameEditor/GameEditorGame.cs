@@ -35,6 +35,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private SceneRenderTextureManager? _renderTextureManager;
     private PlanarReflectionRenderer? _planarReflectionRenderer;
     private ShadowMapRenderer? _shadowMapRenderer;
+    private LocalLightShadowRenderer? _localLightShadowRenderer;
     private IUnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
     private SkyboxComponent? _skybox;
     private string _statusMessage = "Ready.";
@@ -161,6 +162,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _renderTextureManager = new SceneRenderTextureManager(this, () => Project.Scene, GetRenderTextureExcludedComponents);
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _shadowMapRenderer = new ShadowMapRenderer(this);
+        _localLightShadowRenderer = new LocalLightShadowRenderer(this);
         _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
             .CreateUnderwaterPostProcessRenderer("EditorUnderwater");
 
@@ -422,7 +424,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         int targetHeight,
         Action? restoreRenderTarget = null)
     {
-        if (_shadowMapRenderer is null || _sceneRenderTarget is null)
+        if (_shadowMapRenderer is null || _localLightShadowRenderer is null || _sceneRenderTarget is null)
         {
             return;
         }
@@ -438,10 +440,19 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             targetHeight,
             restore);
 
+        _localLightShadowRenderer.Render(
+            gameTime,
+            _pmxObjects.Select(item => item.Model).ToArray(),
+            _pointLights,
+            _spotLights,
+            Project.Scene.Lighting.ShadowColor.W,
+            restore);
+
         ShadowMapBinding? binding = _shadowMapRenderer.CurrentBinding;
         foreach (EditorPmxObject item in _pmxObjects)
         {
             item.Model.ShadowMap = binding;
+            item.Model.LocalLightShadowMap = _localLightShadowRenderer.CurrentBinding;
         }
 
         foreach (EditorPlaneObject item in _planeObjects)
@@ -623,6 +634,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ClearSceneRuntime();
         _shadowMapRenderer?.Dispose();
         _shadowMapRenderer = null;
+        _localLightShadowRenderer?.Dispose();
+        _localLightShadowRenderer = null;
         _underwaterPostProcessRenderer?.Dispose();
         _underwaterPostProcessRenderer = null;
         _planarReflectionRenderer?.Dispose();

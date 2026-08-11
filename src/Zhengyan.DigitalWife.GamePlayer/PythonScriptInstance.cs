@@ -553,6 +553,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def set_point_light_range(self, range):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_range", "value": range})
 
+                   def set_point_light_casts_shadows(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_casts_shadows", "flag": bool(enabled)})
+
                    def set_spot_light_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_enabled", "flag": bool(enabled)})
 
@@ -573,6 +576,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_spot_light_outer_cone_angle(self, degrees):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_outer_cone_angle", "value": degrees})
+
+                   def set_spot_light_casts_shadows(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_casts_shadows", "flag": bool(enabled)})
 
                    def translate(self, x, y, z):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "translate", "x": x, "y": y, "z": z})
@@ -4248,6 +4254,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_point_light_range" when command.Value.HasValue:
                 entity.PointLightRange = (float)command.Value.Value;
                 break;
+            case "set_point_light_casts_shadows" when command.Flag.HasValue:
+                entity.PointLightCastsShadows = command.Flag.Value;
+                break;
             case "set_spot_light_enabled" when command.Flag.HasValue:
                 entity.SpotLightEnabled = command.Flag.Value;
                 break;
@@ -4268,6 +4277,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_spot_light_outer_cone_angle" when command.Value.HasValue:
                 entity.SpotLightOuterConeAngleDegrees = (float)command.Value.Value;
+                break;
+            case "set_spot_light_casts_shadows" when command.Flag.HasValue:
+                entity.SpotLightCastsShadows = command.Flag.Value;
                 break;
             case "translate" when TryGetVector(command, out float x, out float y, out float z):
                 entity.Translate(x, y, z);

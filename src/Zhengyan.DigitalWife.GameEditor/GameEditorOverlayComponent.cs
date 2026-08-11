@@ -4500,10 +4500,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector3 color = light.Color.ToVector3();
         float intensity = light.Intensity;
         float range = light.Range;
+        bool castShadows = light.CastShadows;
         bool changed = ImGui.Checkbox("Enabled##pointLight", ref enabled);
         changed |= ImGui.ColorEdit3("Color##pointLight", ref color);
         changed |= ImGui.DragFloat("Intensity##pointLight", ref intensity, 0.02f, 0.0f, 100.0f, "%.2f");
         changed |= ImGui.DragFloat("Range##pointLight", ref range, 0.05f, 0.01f, 10000.0f, "%.2f");
+        changed |= ImGui.Checkbox("Cast shadows##pointLight", ref castShadows);
         if (!changed)
         {
             return;
@@ -4513,6 +4515,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         light.Color = Vector3Dto.FromVector3(Vector3.Max(color, Vector3.Zero));
         light.Intensity = Math.Clamp(intensity, 0.0f, 100.0f);
         light.Range = Math.Clamp(range, 0.01f, 10000.0f);
+        light.CastShadows = castShadows;
         _editorGame.ApplySelectedEntityToRuntime();
     }
 
@@ -4527,12 +4530,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         float range = light.Range;
         float innerAngle = light.InnerConeAngleDegrees;
         float outerAngle = light.OuterConeAngleDegrees;
+        bool castShadows = light.CastShadows;
         bool changed = ImGui.Checkbox("Enabled##spotLight", ref enabled);
         changed |= ImGui.ColorEdit3("Color##spotLight", ref color);
         changed |= ImGui.DragFloat("Intensity##spotLight", ref intensity, 0.02f, 0.0f, 100.0f, "%.2f");
         changed |= ImGui.DragFloat("Range##spotLight", ref range, 0.05f, 0.01f, 10000.0f, "%.2f");
         changed |= ImGui.SliderFloat("Inner cone half-angle##spotLight", ref innerAngle, 0.0f, 89.0f, "%.1f deg");
         changed |= ImGui.SliderFloat("Outer cone half-angle##spotLight", ref outerAngle, 0.1f, 89.5f, "%.1f deg");
+        changed |= ImGui.Checkbox("Cast shadows##spotLight", ref castShadows);
         if (!changed)
         {
             return;
@@ -4546,6 +4551,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         light.Range = Math.Clamp(range, 0.01f, 10000.0f);
         light.InnerConeAngleDegrees = innerAngle;
         light.OuterConeAngleDegrees = outerAngle;
+        light.CastShadows = castShadows;
         _editorGame.ApplySelectedEntityToRuntime();
     }
 

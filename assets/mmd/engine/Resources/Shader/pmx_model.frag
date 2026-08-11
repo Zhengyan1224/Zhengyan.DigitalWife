@@ -30,6 +30,16 @@ uniform vec4 u_SpotLightPositionRange[16];
 uniform vec4 u_SpotLightDirectionOuterCosine[16];
 uniform vec4 u_SpotLightColorIntensity[16];
 uniform vec4 u_SpotLightConeParameters[16];
+uniform sampler2DShadow u_LocalShadowAtlas;
+uniform float u_LocalShadowStrength;
+uniform float u_LocalShadowBias;
+uniform vec2 u_LocalShadowTexelSize;
+uniform vec4 u_PointLightShadowMeta[2];
+uniform vec4 u_SpotLightShadowMeta[4];
+uniform mat4 u_PointLightShadowMatrix[12];
+uniform vec4 u_PointLightShadowAtlasRect[12];
+uniform mat4 u_SpotLightShadowMatrix[4];
+uniform vec4 u_SpotLightShadowAtlasRect[4];
 
 uniform int u_TexMode;
 uniform sampler2D u_Tex;
@@ -94,6 +104,48 @@ float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord) {
     }
 
     return visibility / 9.0;
+}
+
+float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect) {
+    vec3 ndc = clipCoord.xyz / max(abs(clipCoord.w), 0.0001);
+    vec2 localUv = ndc.xy * 0.5 + 0.5;
+    if(localUv.x < 0.0 || localUv.x > 1.0 || localUv.y < 0.0 || localUv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+
+    float depth = ndc.z * 0.5 + 0.5 - u_LocalShadowBias;
+    vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
+    vec2 minimumUv = atlasRect.xy + u_LocalShadowTexelSize;
+    vec2 maximumUv = atlasRect.xy + atlasRect.zw - u_LocalShadowTexelSize;
+    float visibility = 0.0;
+    for(int y = 0; y <= 1; ++y) {
+        for(int x = 0; x <= 1; ++x) {
+            vec2 offset = (vec2(x, y) - vec2(0.5)) * u_LocalShadowTexelSize;
+            visibility += texture(u_LocalShadowAtlas, vec3(clamp(atlasUv + offset, minimumUv, maximumUv), depth));
+        }
+    }
+    return visibility * 0.25;
+}
+
+int SelectPointShadowFace(vec3 direction) {
+    vec3 absoluteDirection = abs(direction);
+    if(absoluteDirection.x >= absoluteDirection.y && absoluteDirection.x >= absoluteDirection.z) return direction.x >= 0.0 ? 0 : 1;
+    if(absoluteDirection.y >= absoluteDirection.z) return direction.y >= 0.0 ? 2 : 3;
+    return direction.z >= 0.0 ? 4 : 5;
+}
+
+int FindPointShadowSlot(int packedLightIndex) {
+    for(int slot = 0; slot < 2; ++slot) {
+        if(int(u_PointLightShadowMeta[slot].x) == packedLightIndex) return slot;
+    }
+    return -1;
+}
+
+int FindSpotShadowSlot(int packedLightIndex) {
+    for(int slot = 0; slot < 4; ++slot) {
+        if(int(u_SpotLightShadowMeta[slot].x) == packedLightIndex) return slot;
+    }
+    return -1;
 }
 
 void main() {
@@ -173,6 +225,14 @@ void main() {
         float pointNdotL = max(dot(nor, pointDirection), 0.0);
         float falloff = max(1.0 - distanceToLight / range, 0.0);
         vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff;
+        int shadowSlot = FindPointShadowSlot(i);
+        if(shadowSlot >= 0 && shadowSlot < 2 && u_LocalShadowStrength > 0.0) {
+            int faceIndex = shadowSlot * 6 + SelectPointShadowFace(-toLight);
+            float visibility = SampleLocalShadow(
+                u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
+                u_PointLightShadowAtlasRect[faceIndex]);
+            radiance *= mix(1.0 - u_LocalShadowStrength, 1.0, visibility);
+        }
         pointDiffuse += radiance * pointNdotL;
         if(u_SpecularPower > 0.0 && pointNdotL > 0.0) {
             vec3 pointHalfVec = normalize(eyeDir + pointDirection);
@@ -201,6 +261,13 @@ void main() {
         float spotNdotL = max(dot(nor, surfaceToLight), 0.0);
         float falloff = max(1.0 - distanceToLight / range, 0.0);
         vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff * cone;
+        int shadowSlot = FindSpotShadowSlot(i);
+        if(shadowSlot >= 0 && shadowSlot < 4 && u_LocalShadowStrength > 0.0) {
+            float visibility = SampleLocalShadow(
+                u_SpotLightShadowMatrix[shadowSlot] * vec4(vs_Pos, 1.0),
+                u_SpotLightShadowAtlasRect[shadowSlot]);
+            radiance *= mix(1.0 - u_LocalShadowStrength, 1.0, visibility);
+        }
         spotDiffuse += radiance * spotNdotL;
         if(u_SpecularPower > 0.0 && spotNdotL > 0.0) {
             vec3 spotHalfVec = normalize(eyeDir + surfaceToLight);

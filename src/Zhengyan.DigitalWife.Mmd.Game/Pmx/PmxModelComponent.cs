@@ -312,6 +312,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public ShadowMapBinding? ShadowMap { get; set; }
 
+    public LocalLightShadowBinding? LocalLightShadowMap { get; set; }
+
     public bool IsPlaying
     {
         get => _isPlaying;
@@ -1587,6 +1589,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 SpotLights,
                 EnableShadow,
                 ShadowMap,
+                LocalLightShadowMap,
                 ResolveMaterialOverrideTextureHandle);
         }
 
@@ -1734,6 +1737,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             shader.SetUniform($"u_SpotLightConeParameters[{i}]", spotCones[i]);
         }
         ApplyCustomShaderShadowUniforms(shader, transform);
+        ApplyCustomShaderLocalShadowUniforms(shader);
         shader.ApplyUniforms(_customShaderUniforms);
 
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in _meshes)
@@ -1772,6 +1776,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
             _lastOpaqueMeshDrawCount++;
         }
 
+        gl.ActiveTexture(TextureUnit.Texture7);
+        gl.BindTexture(GLEnum.Texture2D, 0);
         gl.ActiveTexture(TextureUnit.Texture6);
         gl.BindTexture(GLEnum.Texture2D, 0);
         gl.ActiveTexture(TextureUnit.Texture5);
@@ -1837,6 +1843,55 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture4);
         BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture5);
         BindShadowTexture(Game.GraphicsDevice.Gl, shadowMap.TextureId, TextureUnit.Texture6);
+    }
+
+    private void ApplyCustomShaderLocalShadowUniforms(CustomShaderProgram shader)
+    {
+        shader.SetUniform("u_LocalShadowAtlas", 7);
+        if (!EnableShadow
+            || LocalLightShadowMap is not { TextureId: not 0 } binding
+            || Camera is null
+            || !Matrix4x4.Invert(Camera.View, out Matrix4x4 inverseView))
+        {
+            shader.SetUniform("u_LocalShadowStrength", 0.0f);
+            return;
+        }
+
+        shader.SetUniform("u_LocalShadowStrength", Math.Clamp(binding.Strength, 0.0f, 1.0f));
+        shader.SetUniform("u_LocalShadowBias", Math.Max(binding.Bias, 0.0f));
+        shader.SetUniform("u_LocalShadowTexelSize", binding.TexelSize);
+        Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
+        Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
+        pointMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
+        spotMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
+
+        for (int slot = 0; slot < binding.PointLights.Count && slot < LocalLightShadowLimits.MaxShadowedPointLights; slot++)
+        {
+            PointLightShadowBinding light = binding.PointLights[slot];
+            pointMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+            for (int face = 0; face < LocalLightShadowLimits.PointFacesPerLight; face++)
+            {
+                int index = slot * LocalLightShadowLimits.PointFacesPerLight + face;
+                if (face < light.FaceViewProjections.Count)
+                    shader.SetUniform($"u_PointLightShadowMatrix[{index}]", inverseView * light.FaceViewProjections[face]);
+                if (face < light.AtlasRects.Count)
+                    shader.SetUniform($"u_PointLightShadowAtlasRect[{index}]", light.AtlasRects[face]);
+            }
+        }
+
+        for (int slot = 0; slot < binding.SpotLights.Count && slot < LocalLightShadowLimits.MaxShadowedSpotLights; slot++)
+        {
+            SpotLightShadowBinding light = binding.SpotLights[slot];
+            spotMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+            shader.SetUniform($"u_SpotLightShadowMatrix[{slot}]", inverseView * light.LightViewProjection);
+            shader.SetUniform($"u_SpotLightShadowAtlasRect[{slot}]", light.AtlasRect);
+        }
+
+        for (int i = 0; i < pointMeta.Length; i++) shader.SetUniform($"u_PointLightShadowMeta[{i}]", pointMeta[i]);
+        for (int i = 0; i < spotMeta.Length; i++) shader.SetUniform($"u_SpotLightShadowMeta[{i}]", spotMeta[i]);
+        GL gl = Game!.GraphicsDevice.Gl;
+        gl.ActiveTexture(TextureUnit.Texture7);
+        gl.BindTexture(GLEnum.Texture2D, binding.TextureId);
     }
 
     private static void BindShadowTexture(GL gl, uint textureId, TextureUnit unit)

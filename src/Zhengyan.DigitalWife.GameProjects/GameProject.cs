@@ -694,8 +694,8 @@ public sealed class PointLightSettings
 
     public float Range { get; set; } = 8.0f;
 
-    // Reserved by the scene contract so point-light shadow maps can be added
-    // without changing serialized projects or the scripting API.
+    // Enables real-time PMX shadow rendering for this light, subject to the
+    // local-light shadow budget.
     public bool CastShadows { get; set; }
 }
 
@@ -713,8 +713,8 @@ public sealed class SpotLightSettings
 
     public float OuterConeAngleDegrees { get; set; } = 28.0f;
 
-    // Reserved so spotlight shadow maps can be added without changing the
-    // serialized scene or scripting contracts.
+    // Enables real-time PMX shadow rendering for this light, subject to the
+    // local-light shadow budget.
     public bool CastShadows { get; set; }
 }
 

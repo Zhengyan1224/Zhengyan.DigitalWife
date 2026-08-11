@@ -86,6 +86,7 @@ Python 的 `directional_color`、`directional_direction`、`ambient_color` 和 `
 | `Intensity` | `PointLightIntensity` | `point_light_intensity` | 光照强度，必须为非负数。 |
 | `Range` | `PointLightRange` | `point_light_range` | 世界空间作用半径，必须大于零。 |
 | `Position` | `Position` | `position` | 点光源的世界空间位置。 |
+| `Cast shadows` | `PointLightCastsShadows` | `point_light_casts_shadows`, `set_point_light_casts_shadows(value)` | 是否为该点光源生成 PMX 实时阴影。 |
 
 编辑器预览会绘制灯泡线框，选中时还会显示作用范围。GamePlayer 不绘制这些辅助线。
 
@@ -104,6 +105,7 @@ if (IsStart)
     lamp.PointLightEnabled = true;
     lamp.PointLightIntensity = 2.5f;
     lamp.PointLightRange = 8.0f;
+    lamp.PointLightCastsShadows = true;
     lamp.SetPointLightColor(1.0f, 0.7f, 0.4f);
     lamp.SetPosition(0.0f, 2.5f, 1.0f);
 }
@@ -138,6 +140,7 @@ def start(entity, scene, input, audio):
 
     lamp.set_point_light_intensity(2.5)
     lamp.set_point_light_range(8.0)
+    lamp.set_point_light_casts_shadows(True)
     lamp.set_point_light_color(1.0, 0.7, 0.4)
     lamp.set_position(0.0, 2.5, 1.0)
 ```
@@ -160,7 +163,8 @@ scene.point_lights.clear()
 - OpenGL 与 Vulkan 使用相同的平行光、环境光和点光源参数。
 - 当前每次 PMX 绘制最多使用前 16 个已启用且参数有效的点光源；场景可以保存更多光源，但超出的光源不会进入该次绘制。
 - 当前点光源影响 PMX 主材质，不改变无光照粒子、UI、调试线和 2D Sprite。
-- `CastShadows` / `PointLightCastsShadows` 已在数据和脚本契约中预留，但当前版本不生成点光源阴影贴图。
+- 开启 `Cast shadows` 后，前 2 个参数有效且开启阴影的点光源会生成实时阴影。每个点光源需要渲染 6 个方向，因此应只给真正需要的光源开启。
+- PMX 的 `EnableShadow` 同时控制它是否写入局部光阴影图以及是否在主材质中接收局部光阴影，与平行光阴影规则一致。
 - 自定义 GLSL 可读取 `u_LightColor`、`u_LightDir`、`u_AmbientLightColor`、`u_AmbientLightStrength`、`u_PointLightCount`、`u_PointLightPositionRange[16]` 和 `u_PointLightColorIntensity[16]`。
 - 自定义 Vulkan SPIR-V 可从 `PmxFrame` 读取相同的全局光照和点光源数据；点光源字段追加在原有字段末尾，旧字段偏移未改变。
 
@@ -177,7 +181,7 @@ scene.point_lights.clear()
 | 范围 | `SpotLightRange` | `spot_light_range`, `set_spot_light_range(value)` | 必须大于零。 |
 | 内锥角 | `SpotLightInnerConeAngleDegrees` | `spot_light_inner_cone_angle_degrees`, `set_spot_light_inner_cone_angle(value)` | 单侧半角，单位为度。 |
 | 外锥角 | `SpotLightOuterConeAngleDegrees` | `spot_light_outer_cone_angle_degrees`, `set_spot_light_outer_cone_angle(value)` | 单侧半角，必须大于内锥角。 |
-| 阴影 | `SpotLightCastsShadows` | `spot_light_casts_shadows` | 仅预留，当前不渲染射灯阴影。 |
+| 阴影 | `SpotLightCastsShadows` | `spot_light_casts_shadows`, `set_spot_light_casts_shadows(value)` | 是否为该射灯生成 PMX 实时阴影。 |
 
 ### C# 射灯集合
 
@@ -192,6 +196,7 @@ RuntimeEntity torch = Scene.SpotLights.Add(
     innerConeAngleDegrees: 10.0f,
     outerConeAngleDegrees: 22.0f);
 torch.SpotLightEnabled = true;
+torch.SpotLightCastsShadows = true;
 torch.SetSpotLightDirection(0.0f, -0.4f, -1.0f);
 ```
 
@@ -209,9 +214,14 @@ torch = scene.spot_lights.add(
     range=14.0,
     inner_cone_angle_degrees=10.0,
     outer_cone_angle_degrees=22.0)
+torch.set_spot_light_casts_shadows(True)
 torch.set_spot_light_direction(0.0, -0.4, -1.0)
 ```
 
-`scene.spot_lights.get`、`remove`、`clear`、`count` 和 `all` 均可用。OpenGL 与 Vulkan 每次 PMX 绘制最多使用 16 个参数有效的射灯。当前实现包含漫反射、高光、距离衰减和锥角平滑衰减，但暂不生成射灯阴影贴图。
+`scene.spot_lights.get`、`remove`、`clear`、`count` 和 `all` 均可用。OpenGL 与 Vulkan 每次 PMX 绘制最多使用 16 个参数有效的射灯，其中前 4 个参数有效且开启阴影的射灯会生成实时阴影。当前实现包含漫反射、高光、距离衰减、锥角平滑衰减和 PMX 阴影。
 
-自定义 GLSL 可读取 `u_SpotLightCount`、`u_SpotLightPositionRange[16]`、`u_SpotLightDirectionOuterCosine[16]`、`u_SpotLightColorIntensity[16]` 和 `u_SpotLightConeParameters[16]`。自定义 Vulkan SPIR-V 可从 `PmxFrame` 中读取对应字段；这些字段追加在点光源字段之后，已有字段偏移保持不变，也为后续射灯 shadow-map pass 保留了扩展位置。
+点光源与射灯共用一张 4096x4096 局部光阴影图集，并且每帧只生成一次。点光源最多占用 12 个图块，射灯最多占用 4 个图块；超过预算的光源仍会照明，但不投射阴影。当前局部光阴影仅支持 PMX 投射和接收，贴图矩形面仍只接收平行光阴影。
+
+自定义 GLSL 可读取 `u_SpotLightCount`、`u_SpotLightPositionRange[16]`、`u_SpotLightDirectionOuterCosine[16]`、`u_SpotLightColorIntensity[16]` 和 `u_SpotLightConeParameters[16]`。如需接收局部光阴影，还可声明 `u_LocalShadowAtlas`、`u_LocalShadowStrength`、`u_LocalShadowBias`、`u_LocalShadowTexelSize`、`u_PointLightShadowMeta[2]`、`u_PointLightShadowMatrix[12]`、`u_PointLightShadowAtlasRect[12]`、`u_SpotLightShadowMeta[4]`、`u_SpotLightShadowMatrix[4]` 和 `u_SpotLightShadowAtlasRect[4]`；每个 meta 元素的 `x` 是对应阴影槽使用的已打包光源索引，阴影图集绑定在 texture unit 7。未声明这些 uniform 的旧 GLSL 仍可运行，但不会自动获得局部光阴影。
+
+自定义 Vulkan SPIR-V 可从 `PmxFrame` 中读取对应光照与局部阴影字段。局部阴影字段追加在原字段之后；frame resource set 的 `PmxLocalShadowAtlas` 和 `PmxLocalShadowSampler` 分别位于 binding 3、4。旧 SPIR-V 可以忽略追加字段和资源，新 shader 需要保持该固定 descriptor 契约。

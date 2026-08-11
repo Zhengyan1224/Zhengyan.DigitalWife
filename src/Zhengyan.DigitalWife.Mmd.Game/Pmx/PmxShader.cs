@@ -50,6 +50,16 @@ internal sealed class PmxShader : IDisposable
         UniSpotLightConeParameters = Enumerable.Range(0, SpotLightPacking.MaxLights)
             .Select(index => gl.GetUniformLocation(Id, $"u_SpotLightConeParameters[{index}]"))
             .ToArray();
+        UniLocalShadowAtlas = gl.GetUniformLocation(Id, "u_LocalShadowAtlas");
+        UniLocalShadowStrength = gl.GetUniformLocation(Id, "u_LocalShadowStrength");
+        UniLocalShadowBias = gl.GetUniformLocation(Id, "u_LocalShadowBias");
+        UniLocalShadowTexelSize = gl.GetUniformLocation(Id, "u_LocalShadowTexelSize");
+        UniPointLightShadowMeta = GetUniformArray(gl, Id, "u_PointLightShadowMeta", LocalLightShadowLimits.MaxShadowedPointLights);
+        UniSpotLightShadowMeta = GetUniformArray(gl, Id, "u_SpotLightShadowMeta", LocalLightShadowLimits.MaxShadowedSpotLights);
+        UniPointLightShadowMatrices = GetUniformArray(gl, Id, "u_PointLightShadowMatrix", LocalLightShadowLimits.MaxPointShadowFaces);
+        UniPointLightShadowAtlasRects = GetUniformArray(gl, Id, "u_PointLightShadowAtlasRect", LocalLightShadowLimits.MaxPointShadowFaces);
+        UniSpotLightShadowMatrices = GetUniformArray(gl, Id, "u_SpotLightShadowMatrix", LocalLightShadowLimits.MaxShadowedSpotLights);
+        UniSpotLightShadowAtlasRects = GetUniformArray(gl, Id, "u_SpotLightShadowAtlasRect", LocalLightShadowLimits.MaxShadowedSpotLights);
         UniTexMode = gl.GetUniformLocation(Id, "u_TexMode");
         UniTex = gl.GetUniformLocation(Id, "u_Tex");
         UniTexMulFactor = gl.GetUniformLocation(Id, "u_TexMulFactor");
@@ -123,6 +133,26 @@ internal sealed class PmxShader : IDisposable
 
     public int[] UniSpotLightConeParameters { get; }
 
+    public int UniLocalShadowAtlas { get; }
+
+    public int UniLocalShadowStrength { get; }
+
+    public int UniLocalShadowBias { get; }
+
+    public int UniLocalShadowTexelSize { get; }
+
+    public int[] UniPointLightShadowMeta { get; }
+
+    public int[] UniSpotLightShadowMeta { get; }
+
+    public int[] UniPointLightShadowMatrices { get; }
+
+    public int[] UniPointLightShadowAtlasRects { get; }
+
+    public int[] UniSpotLightShadowMatrices { get; }
+
+    public int[] UniSpotLightShadowAtlasRects { get; }
+
     public int UniTexMode { get; }
 
     public int UniTex { get; }
@@ -177,6 +207,13 @@ internal sealed class PmxShader : IDisposable
     {
         _gl.DeleteProgram(Id);
         GC.SuppressFinalize(this);
+    }
+
+    private static int[] GetUniformArray(GL gl, uint program, string name, int count)
+    {
+        return Enumerable.Range(0, count)
+            .Select(index => gl.GetUniformLocation(program, $"{name}[{index}]"))
+            .ToArray();
     }
 }
 

@@ -504,6 +504,28 @@ public sealed class VulkanRenderer : IRenderer
         }
     }
 
+    internal void SetShadowMapRegion(int x, int y, int width, int height)
+    {
+        if (!_frameOpen || _commandList is null)
+        {
+            return;
+        }
+
+        _commandList.SetViewport(0, new Viewport(
+            Math.Max(x, 0),
+            Math.Max(y, 0),
+            Math.Max(width, 1),
+            Math.Max(height, 1),
+            0.0f,
+            1.0f));
+        _commandList.SetScissorRect(
+            0,
+            (uint)Math.Max(x, 0),
+            (uint)Math.Max(y, 0),
+            (uint)Math.Max(width, 1),
+            (uint)Math.Max(height, 1));
+    }
+
     private void RecreateMultisampleFramebuffer()
     {
         _multisampleFramebuffer?.Dispose();

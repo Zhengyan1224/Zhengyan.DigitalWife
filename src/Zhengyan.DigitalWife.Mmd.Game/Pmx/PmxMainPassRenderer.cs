@@ -27,6 +27,7 @@ internal interface IPmxMainPassRenderer : IDisposable
         IReadOnlyList<SpotLightData> spotLights,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
+        LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
         int materialIndexOffset = 0);
 }
@@ -91,6 +92,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         IReadOnlyList<SpotLightData> spotLights,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
+        LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
         int materialIndexOffset = 0)
     {
@@ -111,6 +113,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         };
         PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
         PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
+        PmxGpuResources.SetLocalLightShadows(ref frameData, enableShadow ? localLightShadowMap : null, view);
         resources.UploadFrameUniforms(frameData);
 
         _gl.Enable(GLEnum.DepthTest);
@@ -135,6 +138,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniShadowMap2, 5);
         _gl.SetUniform(_shader.UniShadowMap3, 6);
         ApplyShadowMap(world, enableShadow ? shadowMap : null);
+        ApplyLocalLightShadows(view, enableShadow ? localLightShadowMap : null);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -281,6 +285,54 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         }
     }
 
+    private void ApplyLocalLightShadows(Matrix4x4 view, LocalLightShadowBinding? binding)
+    {
+        _gl.SetUniform(_shader.UniLocalShadowAtlas, 7);
+        if (binding is null || binding.TextureId == 0 || !Matrix4x4.Invert(view, out Matrix4x4 inverseView))
+        {
+            _gl.SetUniform(_shader.UniLocalShadowStrength, 0.0f);
+            return;
+        }
+
+        _gl.SetUniform(_shader.UniLocalShadowStrength, Math.Clamp(binding.Strength, 0.0f, 1.0f));
+        _gl.SetUniform(_shader.UniLocalShadowBias, Math.Max(binding.Bias, 0.0f));
+        _gl.SetUniform(_shader.UniLocalShadowTexelSize, binding.TexelSize);
+        Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
+        Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
+        pointMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
+        spotMeta.Fill(new Vector4(-1.0f, 0.0f, 0.0f, 0.0f));
+
+        for (int slot = 0; slot < binding.PointLights.Count && slot < LocalLightShadowLimits.MaxShadowedPointLights; slot++)
+        {
+            PointLightShadowBinding light = binding.PointLights[slot];
+            pointMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+            for (int face = 0; face < LocalLightShadowLimits.PointFacesPerLight; face++)
+            {
+                int index = slot * LocalLightShadowLimits.PointFacesPerLight + face;
+                if (face < light.FaceViewProjections.Count)
+                    _gl.SetUniform(_shader.UniPointLightShadowMatrices[index], inverseView * light.FaceViewProjections[face]);
+                if (face < light.AtlasRects.Count)
+                    _gl.SetUniform(_shader.UniPointLightShadowAtlasRects[index], light.AtlasRects[face]);
+            }
+        }
+
+        for (int slot = 0; slot < binding.SpotLights.Count && slot < LocalLightShadowLimits.MaxShadowedSpotLights; slot++)
+        {
+            SpotLightShadowBinding light = binding.SpotLights[slot];
+            spotMeta[slot] = new Vector4(light.PackedLightIndex, 0.0f, 0.0f, 0.0f);
+            _gl.SetUniform(_shader.UniSpotLightShadowMatrices[slot], inverseView * light.LightViewProjection);
+            _gl.SetUniform(_shader.UniSpotLightShadowAtlasRects[slot], light.AtlasRect);
+        }
+
+        for (int i = 0; i < pointMeta.Length; i++)
+            _gl.SetUniform(_shader.UniPointLightShadowMeta[i], pointMeta[i]);
+        for (int i = 0; i < spotMeta.Length; i++)
+            _gl.SetUniform(_shader.UniSpotLightShadowMeta[i], spotMeta[i]);
+
+        _gl.ActiveTexture(TextureUnit.Texture7);
+        _gl.BindTexture(GLEnum.Texture2D, binding.TextureId);
+    }
+
     private void ApplyPointLights(IReadOnlyList<PointLightData> pointLights, Matrix4x4 view)
     {
         Span<Vector4> positionRanges = stackalloc Vector4[PointLightPacking.MaxLights];
@@ -383,7 +435,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         _frameLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("PmxFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxShadowMap", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
-            new ResourceLayoutElementDescription("PmxShadowSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
+            new ResourceLayoutElementDescription("PmxShadowSampler", ResourceKind.Sampler, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("PmxLocalShadowAtlas", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("PmxLocalShadowSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         _materialLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("PmxMaterial", ResourceKind.UniformBuffer, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxBaseTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
@@ -394,10 +448,12 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             new ResourceLayoutElementDescription("PmxToonSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
         VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
-        _fallbackFrameSetKey = new FrameSetKey(fallbackTexture, fallbackSampler);
+        _fallbackFrameSetKey = new FrameSetKey(fallbackTexture, fallbackSampler, fallbackTexture, fallbackSampler);
         _frameSets[_fallbackFrameSetKey] = factory.CreateResourceSet(new ResourceSetDescription(
             _frameLayout,
             RequireDeviceBuffer(resources.FrameUniformBuffer),
+            fallbackTexture,
+            fallbackSampler,
             fallbackTexture,
             fallbackSampler));
 
@@ -458,6 +514,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         IReadOnlyList<SpotLightData> spotLights,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
+        LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
         int materialIndexOffset = 0)
     {
@@ -472,6 +529,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(lightDirection, view));
         TextureView? shadowTexture = shadowMap?.NativeTexture as TextureView;
         VeldridSampler? shadowSampler = shadowMap?.NativeSampler as VeldridSampler;
+        TextureView? localShadowTexture = localLightShadowMap?.NativeTexture as TextureView;
+        VeldridSampler? localShadowSampler = localLightShadowMap?.NativeSampler as VeldridSampler;
         bool shadowAvailable = enableShadow && shadowTexture is not null && shadowSampler is not null;
         Matrix4x4 shadowLightViewProjection = shadowAvailable
             ? world * shadowMap!.Value.LightViewProjection
@@ -499,6 +558,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         };
         PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
         PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
+        PmxGpuResources.SetLocalLightShadows(ref frameData, enableShadow ? localLightShadowMap : null, view);
 
         CommandList commands = _renderer.CommandList;
         commands.UpdateBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
@@ -508,7 +568,12 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
         PipelineBundle pipelines = GetPipelineBundle(_renderer.CurrentOutputDescription);
         commands.SetPipeline(pipelines.Culled);
-        ResourceSet frameSet = GetFrameSet(resources, shadowTexture, shadowSampler);
+        ResourceSet frameSet = GetFrameSet(
+            resources,
+            shadowTexture,
+            shadowSampler,
+            enableShadow ? localShadowTexture : null,
+            enableShadow ? localShadowSampler : null);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -613,11 +678,17 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
     private ResourceSet GetFrameSet(
         PmxGpuResources resources,
         TextureView? shadowTexture,
-        VeldridSampler? shadowSampler)
+        VeldridSampler? shadowSampler,
+        TextureView? localShadowTexture,
+        VeldridSampler? localShadowSampler)
     {
         TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
         VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
-        FrameSetKey key = new(shadowTexture ?? fallbackTexture, shadowSampler ?? fallbackSampler);
+        FrameSetKey key = new(
+            shadowTexture ?? fallbackTexture,
+            shadowSampler ?? fallbackSampler,
+            localShadowTexture ?? fallbackTexture,
+            localShadowSampler ?? fallbackSampler);
         if (_frameSets.TryGetValue(key, out ResourceSet? resourceSet))
         {
             return resourceSet;
@@ -635,7 +706,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             _frameLayout,
             RequireDeviceBuffer(resources.FrameUniformBuffer),
             key.Texture,
-            key.Sampler));
+            key.Sampler,
+            key.LocalShadowTexture,
+            key.LocalShadowSampler));
         _frameSets[key] = resourceSet;
         return resourceSet;
     }
@@ -743,7 +816,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
     private sealed record PipelineBundle(OutputDescription OutputDescription, Pipeline Culled, Pipeline DoubleSided);
 
     private readonly record struct MaterialSetKey(PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
-    private readonly record struct FrameSetKey(TextureView Texture, VeldridSampler Sampler);
+    private readonly record struct FrameSetKey(
+        TextureView Texture,
+        VeldridSampler Sampler,
+        TextureView LocalShadowTexture,
+        VeldridSampler LocalShadowSampler);
 
     private const string VertexShaderSource = """
         layout(set = 0, binding = 0, std140) uniform PmxFrame
@@ -766,6 +843,14 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_SpotLightDirectionOuterCosine[16];
             vec4 u_SpotLightColorIntensity[16];
             vec4 u_SpotLightConeParameters[16];
+            vec4 u_LocalShadowMeta;
+            vec4 u_LocalShadowAtlasParameters;
+            vec4 u_PointLightShadowMeta[2];
+            vec4 u_SpotLightShadowMeta[4];
+            mat4 u_PointLightShadowMatrix[12];
+            vec4 u_PointLightShadowAtlasRect[12];
+            mat4 u_SpotLightShadowMatrix[4];
+            vec4 u_SpotLightShadowAtlasRect[4];
         } u_Frame;
 
         layout(location = 0) in vec3 in_Pos;
@@ -808,10 +893,20 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_SpotLightDirectionOuterCosine[16];
             vec4 u_SpotLightColorIntensity[16];
             vec4 u_SpotLightConeParameters[16];
+            vec4 u_LocalShadowMeta;
+            vec4 u_LocalShadowAtlasParameters;
+            vec4 u_PointLightShadowMeta[2];
+            vec4 u_SpotLightShadowMeta[4];
+            mat4 u_PointLightShadowMatrix[12];
+            vec4 u_PointLightShadowAtlasRect[12];
+            mat4 u_SpotLightShadowMatrix[4];
+            vec4 u_SpotLightShadowAtlasRect[4];
         } u_Frame;
 
         layout(set = 0, binding = 1) uniform texture2D u_ShadowMap;
         layout(set = 0, binding = 2) uniform sampler u_ShadowSampler;
+        layout(set = 0, binding = 3) uniform texture2D u_LocalShadowAtlas;
+        layout(set = 0, binding = 4) uniform sampler u_LocalShadowSampler;
 
         layout(set = 1, binding = 0, std140) uniform PmxMaterial
         {
@@ -882,6 +977,73 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             }
 
             return visibility / 9.0;
+        }
+
+        float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect)
+        {
+            vec3 ndc = clipCoord.xyz / max(abs(clipCoord.w), 0.0001);
+            vec2 localUv = ndc.xy * 0.5 + 0.5;
+            if (u_Frame.u_Parameters.z > 0.5)
+            {
+                localUv.y = 1.0 - localUv.y;
+            }
+
+            float minimumDepth = u_Frame.u_Parameters.w > 0.5 ? 0.0 : -1.0;
+            if (localUv.x < 0.0 || localUv.x > 1.0 || localUv.y < 0.0 || localUv.y > 1.0
+                || ndc.z < minimumDepth || ndc.z > 1.0)
+            {
+                return 1.0;
+            }
+
+            float depth = (u_Frame.u_Parameters.w > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
+                - u_Frame.u_LocalShadowMeta.w;
+            vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
+            vec2 texelSize = u_Frame.u_LocalShadowAtlasParameters.xy;
+            vec2 minimumUv = atlasRect.xy + texelSize;
+            vec2 maximumUv = atlasRect.xy + atlasRect.zw - texelSize;
+            float visibility = 0.0;
+            for (int y = 0; y <= 1; ++y)
+            {
+                for (int x = 0; x <= 1; ++x)
+                {
+                    vec2 offset = (vec2(x, y) - vec2(0.5)) * texelSize;
+                    float storedDepth = texture(
+                        sampler2D(u_LocalShadowAtlas, u_LocalShadowSampler),
+                        clamp(atlasUv + offset, minimumUv, maximumUv)).r;
+                    visibility += storedDepth >= depth ? 1.0 : 0.0;
+                }
+            }
+            return visibility * 0.25;
+        }
+
+        int SelectPointShadowFace(vec3 direction)
+        {
+            vec3 absoluteDirection = abs(direction);
+            if (absoluteDirection.x >= absoluteDirection.y && absoluteDirection.x >= absoluteDirection.z)
+                return direction.x >= 0.0 ? 0 : 1;
+            if (absoluteDirection.y >= absoluteDirection.z)
+                return direction.y >= 0.0 ? 2 : 3;
+            return direction.z >= 0.0 ? 4 : 5;
+        }
+
+        int FindPointShadowSlot(int packedLightIndex)
+        {
+            for (int slot = 0; slot < 2; ++slot)
+            {
+                if (int(u_Frame.u_PointLightShadowMeta[slot].x) == packedLightIndex)
+                    return slot;
+            }
+            return -1;
+        }
+
+        int FindSpotShadowSlot(int packedLightIndex)
+        {
+            for (int slot = 0; slot < 4; ++slot)
+            {
+                if (int(u_Frame.u_SpotLightShadowMeta[slot].x) == packedLightIndex)
+                    return slot;
+            }
+            return -1;
         }
 
         void main()
@@ -967,6 +1129,15 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 float pointNdotL = max(dot(normal, pointDirection), 0.0);
                 float falloff = max(1.0 - distanceToLight / range, 0.0);
                 vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff;
+                int shadowSlot = FindPointShadowSlot(i);
+                if (shadowSlot >= 0 && shadowSlot < 2 && u_Frame.u_LocalShadowMeta.z > 0.0)
+                {
+                    int faceIndex = shadowSlot * 6 + SelectPointShadowFace(-toLight);
+                    float visibility = SampleLocalShadow(
+                        u_Frame.u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
+                        u_Frame.u_PointLightShadowAtlasRect[faceIndex]);
+                    radiance *= mix(1.0 - u_Frame.u_LocalShadowMeta.z, 1.0, visibility);
+                }
                 pointDiffuse += radiance * pointNdotL;
                 if (u_Material.u_Specular.a > 0.0 && pointNdotL > 0.0)
                 {
@@ -999,6 +1170,14 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 float spotNdotL = max(dot(normal, surfaceToLight), 0.0);
                 float falloff = max(1.0 - distanceToLight / range, 0.0);
                 vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff * cone;
+                int shadowSlot = FindSpotShadowSlot(i);
+                if (shadowSlot >= 0 && shadowSlot < 4 && u_Frame.u_LocalShadowMeta.z > 0.0)
+                {
+                    float visibility = SampleLocalShadow(
+                        u_Frame.u_SpotLightShadowMatrix[shadowSlot] * vec4(vs_Pos, 1.0),
+                        u_Frame.u_SpotLightShadowAtlasRect[shadowSlot]);
+                    radiance *= mix(1.0 - u_Frame.u_LocalShadowMeta.z, 1.0, visibility);
+                }
                 spotDiffuse += radiance * spotNdotL;
                 if (u_Material.u_Specular.a > 0.0 && spotNdotL > 0.0)
                 {

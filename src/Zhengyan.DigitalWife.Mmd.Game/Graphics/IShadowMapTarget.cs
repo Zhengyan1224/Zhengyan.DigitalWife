@@ -17,6 +17,7 @@ public interface IShadowMapTarget : IDisposable
 
     void EnsureSize(int width, int height);
     void BeginPass();
+    void BeginRegion(int x, int y, int width, int height);
     void EndPass();
 }
 
@@ -58,6 +59,16 @@ internal sealed class OpenGlShadowMapTarget : IShadowMapTarget
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _texture.Gl.ColorMask(true, true, true, true);
+    }
+
+    public void BeginRegion(int x, int y, int width, int height)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _texture.Gl.Viewport(
+            Math.Max(x, 0),
+            Math.Max(y, 0),
+            (uint)Math.Max(width, 1),
+            (uint)Math.Max(height, 1));
     }
 
     public void Dispose()
@@ -141,6 +152,12 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _renderer.EndShadowMap(this);
+    }
+
+    public void BeginRegion(int x, int y, int width, int height)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _renderer.SetShadowMapRegion(x, y, width, height);
     }
 
     public void Dispose()
