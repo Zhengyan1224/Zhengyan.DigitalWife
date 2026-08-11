@@ -20,6 +20,9 @@ public sealed class RuntimeScene
     private readonly RuntimeDialogueBubbleManager _bubble;
     private readonly RuntimeNetwork _network;
     private readonly RuntimePerformance _performance;
+    private readonly RuntimePointLightCollection _pointLights;
+    private readonly RuntimeSpotLightCollection _spotLights;
+    private readonly RuntimeLighting _lighting;
     private readonly Action<string> _requestSceneChange;
     private readonly Action<RuntimeEntity, string> _dispatchSpeechEvent;
     private readonly Func<RuntimeEntity, string, RuntimeLlmToolCall, Task<string?>> _invokeLlmTool;
@@ -41,6 +44,11 @@ public sealed class RuntimeScene
         RuntimeDialogueBubbleManager bubble,
         RuntimeNetwork network,
         RuntimePerformance performance,
+        Action lightingChanged,
+        Func<string?, string, System.Numerics.Vector3, System.Numerics.Vector3, float, float, bool, RuntimeEntity> addPointLight,
+        Func<string, bool> removePointLight,
+        Func<string?, string, System.Numerics.Vector3, System.Numerics.Vector3, System.Numerics.Vector3, float, float, float, float, bool, RuntimeEntity> addSpotLight,
+        Func<string, bool> removeSpotLight,
         Action<RuntimeEntity, string> dispatchSpeechEvent,
         Func<RuntimeEntity, string, RuntimeLlmToolCall, Task<string?>> invokeLlmTool,
         Action<string> requestSceneChange)
@@ -61,6 +69,9 @@ public sealed class RuntimeScene
         _bubble = bubble;
         _network = network;
         _performance = performance;
+        _lighting = new RuntimeLighting(scene.Lighting, lightingChanged);
+        _pointLights = new RuntimePointLightCollection(() => _entitiesById.Values, addPointLight, removePointLight);
+        _spotLights = new RuntimeSpotLightCollection(() => _entitiesById.Values, addSpotLight, removeSpotLight);
         _dispatchSpeechEvent = dispatchSpeechEvent;
         _invokeLlmTool = invokeLlmTool;
         _requestSceneChange = requestSceneChange;
@@ -99,6 +110,12 @@ public sealed class RuntimeScene
     public RuntimeNetwork Network => _network;
 
     public RuntimePerformance Performance => _performance;
+
+    public RuntimePointLightCollection PointLights => _pointLights;
+
+    public RuntimeSpotLightCollection SpotLights => _spotLights;
+
+    public RuntimeLighting Lighting => _lighting;
 
     public double Fps => _performance.Fps;
 

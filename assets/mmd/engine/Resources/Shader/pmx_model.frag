@@ -22,6 +22,14 @@ uniform vec3 u_LightColor;
 uniform vec3 u_LightDir;
 uniform vec3 u_AmbientLightColor;
 uniform float u_AmbientLightStrength;
+uniform int u_PointLightCount;
+uniform vec4 u_PointLightPositionRange[16];
+uniform vec4 u_PointLightColorIntensity[16];
+uniform int u_SpotLightCount;
+uniform vec4 u_SpotLightPositionRange[16];
+uniform vec4 u_SpotLightDirectionOuterCosine[16];
+uniform vec4 u_SpotLightColorIntensity[16];
+uniform vec4 u_SpotLightConeParameters[16];
 
 uniform int u_TexMode;
 uniform sampler2D u_Tex;
@@ -149,8 +157,62 @@ void main() {
         specular += pow(max(0.0, dot(halfVec, nor)), u_SpecularPower) * specularColor;
     }
 
-    vec3 color = baseColor * litColor;
+    vec3 pointDiffuse = vec3(0.0);
+    vec3 pointSpecular = vec3(0.0);
+    for(int i = 0; i < min(u_PointLightCount, 16); ++i) {
+        vec4 positionRange = u_PointLightPositionRange[i];
+        vec4 colorIntensity = u_PointLightColorIntensity[i];
+        vec3 toLight = positionRange.xyz - vs_Pos;
+        float distanceToLight = length(toLight);
+        float range = max(positionRange.w, 0.0001);
+        if(distanceToLight >= range) {
+            continue;
+        }
+
+        vec3 pointDirection = toLight / max(distanceToLight, 0.0001);
+        float pointNdotL = max(dot(nor, pointDirection), 0.0);
+        float falloff = max(1.0 - distanceToLight / range, 0.0);
+        vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff;
+        pointDiffuse += radiance * pointNdotL;
+        if(u_SpecularPower > 0.0 && pointNdotL > 0.0) {
+            vec3 pointHalfVec = normalize(eyeDir + pointDirection);
+            pointSpecular += pow(max(0.0, dot(pointHalfVec, nor)), u_SpecularPower)
+                * u_Specular * radiance;
+        }
+    }
+
+    vec3 spotDiffuse = vec3(0.0);
+    vec3 spotSpecular = vec3(0.0);
+    for(int i = 0; i < min(u_SpotLightCount, 16); ++i) {
+        vec4 positionRange = u_SpotLightPositionRange[i];
+        vec4 directionOuter = u_SpotLightDirectionOuterCosine[i];
+        vec4 colorIntensity = u_SpotLightColorIntensity[i];
+        vec3 lightToSurface = vs_Pos - positionRange.xyz;
+        float distanceToLight = length(lightToSurface);
+        float range = max(positionRange.w, 0.0001);
+        if(distanceToLight >= range) {
+            continue;
+        }
+
+        vec3 fromLight = lightToSurface / max(distanceToLight, 0.0001);
+        float cone = smoothstep(directionOuter.w, u_SpotLightConeParameters[i].x,
+            dot(fromLight, normalize(directionOuter.xyz)));
+        vec3 surfaceToLight = -fromLight;
+        float spotNdotL = max(dot(nor, surfaceToLight), 0.0);
+        float falloff = max(1.0 - distanceToLight / range, 0.0);
+        vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff * cone;
+        spotDiffuse += radiance * spotNdotL;
+        if(u_SpecularPower > 0.0 && spotNdotL > 0.0) {
+            vec3 spotHalfVec = normalize(eyeDir + surfaceToLight);
+            spotSpecular += pow(max(0.0, dot(spotHalfVec, nor)), u_SpecularPower)
+                * u_Specular * radiance;
+        }
+    }
+
+    vec3 color = baseColor * (litColor + pointDiffuse + spotDiffuse);
     color += specular;
+    color += pointSpecular;
+    color += spotSpecular;
     color += ambientColor;
     color = clamp(color, 0.0, 1.0);
 

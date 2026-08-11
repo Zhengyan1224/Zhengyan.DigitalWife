@@ -357,6 +357,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                import time
                import urllib.error
                import urllib.request
+               import uuid
 
                COMMAND_MARKER = "__DW_COMMANDS__"
                FLUSH_MARKER = "__DW_FLUSH__"
@@ -522,10 +523,56 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.ripple_wave_speed = float(data.get("rippleWaveSpeed", 0.0))
                        self.ripple_frequency = float(data.get("rippleFrequency", 0.0))
                        self.ripple_normal_strength = float(data.get("rippleNormalStrength", 0.0))
+                       self.point_light_enabled = bool(data.get("pointLightEnabled", False))
+                       self.point_light_color = data.get("pointLightColor", [1.0, 1.0, 1.0])
+                       self.point_light_intensity = float(data.get("pointLightIntensity", 1.0))
+                       self.point_light_range = float(data.get("pointLightRange", 8.0))
+                       self.point_light_casts_shadows = bool(data.get("pointLightCastsShadows", False))
+                       self.spot_light_enabled = bool(data.get("spotLightEnabled", False))
+                       self.spot_light_direction = data.get("spotLightDirection", [0.0, 0.0, -1.0])
+                       self.spot_light_color = data.get("spotLightColor", [1.0, 1.0, 1.0])
+                       self.spot_light_intensity = float(data.get("spotLightIntensity", 1.0))
+                       self.spot_light_range = float(data.get("spotLightRange", 12.0))
+                       self.spot_light_inner_cone_angle_degrees = float(data.get("spotLightInnerConeAngleDegrees", 18.0))
+                       self.spot_light_outer_cone_angle_degrees = float(data.get("spotLightOuterConeAngleDegrees", 28.0))
+                       self.spot_light_casts_shadows = bool(data.get("spotLightCastsShadows", False))
                        self._commands = commands
 
                    def set_position(self, x, y, z):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_position", "x": x, "y": y, "z": z})
+
+                   def set_point_light_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_enabled", "flag": bool(enabled)})
+
+                   def set_point_light_color(self, red, green, blue):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_color", "colorR": red, "colorG": green, "colorB": blue})
+
+                   def set_point_light_intensity(self, intensity):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_intensity", "value": intensity})
+
+                   def set_point_light_range(self, range):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_range", "value": range})
+
+                   def set_spot_light_enabled(self, enabled):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_enabled", "flag": bool(enabled)})
+
+                   def set_spot_light_color(self, red, green, blue):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_color", "colorR": red, "colorG": green, "colorB": blue})
+
+                   def set_spot_light_direction(self, x, y, z):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_direction", "x": x, "y": y, "z": z})
+
+                   def set_spot_light_intensity(self, intensity):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_intensity", "value": intensity})
+
+                   def set_spot_light_range(self, range):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_range", "value": range})
+
+                   def set_spot_light_inner_cone_angle(self, degrees):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_inner_cone_angle", "value": degrees})
+
+                   def set_spot_light_outer_cone_angle(self, degrees):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_spot_light_outer_cone_angle", "value": degrees})
 
                    def translate(self, x, y, z):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "translate", "x": x, "y": y, "z": z})
@@ -1708,6 +1755,135 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def touch_point_to_ray(self, touch):
                        return self.screen_point_to_ray(touch.x, touch.y)
 
+               class PointLights:
+                   def __init__(self, scene, commands):
+                       self._scene = scene
+                       self._commands = commands
+
+                   @property
+                   def all(self):
+                       return [Entity(item, self._commands) for item in self._scene._entities if str(item.get("type", "")).lower().replace("-", "_").replace(" ", "_") in ("point_light", "pointlight")]
+
+                   @property
+                   def count(self):
+                       return len(self.all)
+
+                   def get(self, id_or_name):
+                       for light in self.all:
+                           if light.id == id_or_name or light.name == id_or_name:
+                               return light
+                       return None
+
+                   def add(self, name, position=(0.0, 2.0, 0.0), color=(1.0, 1.0, 1.0), intensity=1.0, range=8.0, enabled=True):
+                       light_id = uuid.uuid4().hex
+                       data = {
+                           "id": light_id,
+                           "name": str(name or "Point Light"),
+                           "type": "point_light",
+                           "position": [float(position[0]), float(position[1]), float(position[2])],
+                           "scale": [1.0, 1.0, 1.0],
+                           "rotation": [0.0, 0.0, 0.0, 1.0],
+                           "pointLightEnabled": bool(enabled),
+                           "pointLightColor": [float(color[0]), float(color[1]), float(color[2])],
+                           "pointLightIntensity": float(intensity),
+                           "pointLightRange": float(range),
+                           "pointLightCastsShadows": False
+                       }
+                       self._scene._entities.append(data)
+                       self._commands.append({
+                           "target": "point_lights", "action": "add", "entity": light_id,
+                           "name": data["name"], "x": data["position"][0], "y": data["position"][1], "z": data["position"][2],
+                           "colorR": data["pointLightColor"][0], "colorG": data["pointLightColor"][1], "colorB": data["pointLightColor"][2],
+                           "value": data["pointLightIntensity"], "radius": data["pointLightRange"], "flag": data["pointLightEnabled"]
+                       })
+                       return Entity(data, self._commands)
+
+                   def remove(self, light_or_id):
+                       light_id = light_or_id.id if isinstance(light_or_id, Entity) else str(light_or_id)
+                       self._commands.append({"target": "point_lights", "action": "remove", "entity": light_id})
+                       self._scene._entities = [item for item in self._scene._entities if item.get("id") != light_id and item.get("name") != light_id]
+
+                   def clear(self):
+                       self._commands.append({"target": "point_lights", "action": "clear"})
+                       self._scene._entities = [item for item in self._scene._entities if str(item.get("type", "")).lower().replace("-", "_").replace(" ", "_") not in ("point_light", "pointlight")]
+
+               class SpotLights:
+                   def __init__(self, scene, commands):
+                       self._scene = scene
+                       self._commands = commands
+
+                   @property
+                   def all(self):
+                       return [Entity(item, self._commands) for item in self._scene._entities if str(item.get("type", "")).lower().replace("-", "_").replace(" ", "_") in ("spot_light", "spotlight")]
+
+                   @property
+                   def count(self):
+                       return len(self.all)
+
+                   def get(self, id_or_name):
+                       for light in self.all:
+                           if light.id == id_or_name or light.name == id_or_name:
+                               return light
+                       return None
+
+                   def add(self, name, position=(0.0, 2.0, 0.0), direction=(0.0, 0.0, -1.0), color=(1.0, 1.0, 1.0), intensity=1.0, range=12.0, inner_cone_angle_degrees=18.0, outer_cone_angle_degrees=28.0, enabled=True):
+                       light_id = uuid.uuid4().hex
+                       data = {
+                           "id": light_id,
+                           "name": str(name or "Spot Light"),
+                           "type": "spot_light",
+                           "position": [float(position[0]), float(position[1]), float(position[2])],
+                           "scale": [1.0, 1.0, 1.0],
+                           "rotation": [0.0, 0.0, 0.0, 1.0],
+                           "spotLightEnabled": bool(enabled),
+                           "spotLightDirection": [float(direction[0]), float(direction[1]), float(direction[2])],
+                           "spotLightColor": [float(color[0]), float(color[1]), float(color[2])],
+                           "spotLightIntensity": float(intensity),
+                           "spotLightRange": float(range),
+                           "spotLightInnerConeAngleDegrees": float(inner_cone_angle_degrees),
+                           "spotLightOuterConeAngleDegrees": float(outer_cone_angle_degrees),
+                           "spotLightCastsShadows": False
+                       }
+                       self._scene._entities.append(data)
+                       self._commands.append({
+                           "target": "spot_lights", "action": "add", "entity": light_id,
+                           "name": data["name"], "x": data["position"][0], "y": data["position"][1], "z": data["position"][2],
+                           "directionX": data["spotLightDirection"][0], "directionY": data["spotLightDirection"][1], "directionZ": data["spotLightDirection"][2],
+                           "colorR": data["spotLightColor"][0], "colorG": data["spotLightColor"][1], "colorB": data["spotLightColor"][2],
+                           "value": data["spotLightIntensity"], "radius": data["spotLightRange"],
+                           "innerConeAngle": data["spotLightInnerConeAngleDegrees"], "outerConeAngle": data["spotLightOuterConeAngleDegrees"], "flag": data["spotLightEnabled"]
+                       })
+                       return Entity(data, self._commands)
+
+                   def remove(self, light_or_id):
+                       light_id = light_or_id.id if isinstance(light_or_id, Entity) else str(light_or_id)
+                       self._commands.append({"target": "spot_lights", "action": "remove", "entity": light_id})
+                       self._scene._entities = [item for item in self._scene._entities if item.get("id") != light_id and item.get("name") != light_id]
+
+                   def clear(self):
+                       self._commands.append({"target": "spot_lights", "action": "clear"})
+                       self._scene._entities = [item for item in self._scene._entities if str(item.get("type", "")).lower().replace("-", "_").replace(" ", "_") not in ("spot_light", "spotlight")]
+
+               class Lighting:
+                   def __init__(self, data, commands):
+                       self.directional_color = data.get("directionalColor", [1.0, 1.0, 1.0])
+                       self.directional_direction = data.get("directionalDirection", [-0.5, -1.0, -0.5])
+                       self.ambient_color = data.get("ambientColor", [0.65, 0.65, 0.65])
+                       self.ambient_strength = float(data.get("ambientStrength", 0.25))
+                       self._commands = commands
+
+                   def set_directional_color(self, red, green, blue):
+                       self._commands.append({"target": "lighting", "action": "set_directional_color", "colorR": red, "colorG": green, "colorB": blue})
+
+                   def set_directional_direction(self, x, y, z):
+                       self._commands.append({"target": "lighting", "action": "set_directional_direction", "x": x, "y": y, "z": z})
+
+                   def set_ambient_color(self, red, green, blue):
+                       self._commands.append({"target": "lighting", "action": "set_ambient_color", "colorR": red, "colorG": green, "colorB": blue})
+
+                   def set_ambient_strength(self, strength):
+                       self._commands.append({"target": "lighting", "action": "set_ambient_strength", "value": strength})
+
                class Scene:
                    def __init__(self, data, commands):
                        self.name = data.get("name", "")
@@ -1736,6 +1912,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.asr = AsrClient(self, commands)
                        self.realtime_voice = RealtimeVoiceClient(self, commands)
                        self.bubble = BubbleManager(self, self._bubble, commands)
+                       self.point_lights = PointLights(self, commands)
+                       self.spot_lights = SpotLights(self, commands)
+                       self.lighting = Lighting(data.get("lighting", {}), commands)
                        self._commands = commands
 
                    def get_entity(self, id_or_name):
@@ -3207,6 +3386,24 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 continue;
             }
 
+            if (string.Equals(command.Target, "point_lights", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyPointLightCommand(command, scene);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "spot_lights", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplySpotLightCommand(command, scene);
+                continue;
+            }
+
+            if (string.Equals(command.Target, "lighting", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyLightingCommand(command, scene);
+                continue;
+            }
+
             if (string.Equals(command.Target, "llm", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyLlmCommand(command, currentEntity, scene);
@@ -3954,12 +4151,123 @@ internal sealed class PythonScriptInstance : IScriptInstance
         }
     }
 
+    private static void ApplyPointLightCommand(PythonCommand command, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "add" when command.X.HasValue && command.Y.HasValue && command.Z.HasValue:
+                scene.PointLights.AddWithId(
+                    command.Entity,
+                    command.Name ?? "Point Light",
+                    new Vector3((float)command.X.Value, (float)command.Y.Value, (float)command.Z.Value),
+                    new Vector3(
+                        (float)(command.ColorR ?? 1.0),
+                        (float)(command.ColorG ?? 1.0),
+                        (float)(command.ColorB ?? 1.0)),
+                    (float)(command.Value ?? 1.0),
+                    (float)(command.Radius ?? 8.0),
+                    command.Flag ?? true);
+                break;
+            case "remove" when !string.IsNullOrWhiteSpace(command.Entity):
+                scene.PointLights.Remove(command.Entity);
+                break;
+            case "clear":
+                scene.PointLights.Clear();
+                break;
+        }
+    }
+
+    private static void ApplySpotLightCommand(PythonCommand command, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "add" when command.X.HasValue && command.Y.HasValue && command.Z.HasValue
+                && command.DirectionX.HasValue && command.DirectionY.HasValue && command.DirectionZ.HasValue:
+                scene.SpotLights.AddWithId(
+                    command.Entity,
+                    command.Name ?? "Spot Light",
+                    new Vector3((float)command.X.Value, (float)command.Y.Value, (float)command.Z.Value),
+                    new Vector3((float)command.DirectionX.Value, (float)command.DirectionY.Value, (float)command.DirectionZ.Value),
+                    new Vector3((float)(command.ColorR ?? 1.0), (float)(command.ColorG ?? 1.0), (float)(command.ColorB ?? 1.0)),
+                    (float)(command.Value ?? 1.0),
+                    (float)(command.Radius ?? 12.0),
+                    (float)(command.InnerConeAngle ?? 18.0),
+                    (float)(command.OuterConeAngle ?? 28.0),
+                    command.Flag ?? true);
+                break;
+            case "remove" when !string.IsNullOrWhiteSpace(command.Entity):
+                scene.SpotLights.Remove(command.Entity);
+                break;
+            case "clear":
+                scene.SpotLights.Clear();
+                break;
+        }
+    }
+
+    private static void ApplyLightingCommand(PythonCommand command, RuntimeScene scene)
+    {
+        switch (command.Action?.ToLowerInvariant())
+        {
+            case "set_directional_color" when command.ColorR.HasValue && command.ColorG.HasValue && command.ColorB.HasValue:
+                scene.Lighting.SetDirectionalColor(
+                    (float)command.ColorR.Value,
+                    (float)command.ColorG.Value,
+                    (float)command.ColorB.Value);
+                break;
+            case "set_directional_direction" when TryGetVector(command, out float x, out float y, out float z):
+                scene.Lighting.SetDirectionalDirection(x, y, z);
+                break;
+            case "set_ambient_color" when command.ColorR.HasValue && command.ColorG.HasValue && command.ColorB.HasValue:
+                scene.Lighting.SetAmbientColor(
+                    (float)command.ColorR.Value,
+                    (float)command.ColorG.Value,
+                    (float)command.ColorB.Value);
+                break;
+            case "set_ambient_strength" when command.Value.HasValue:
+                scene.Lighting.AmbientStrength = (float)command.Value.Value;
+                break;
+        }
+    }
+
     private void ApplyEntityCommand(PythonCommand command, RuntimeEntity entity, RuntimeEntity callbackEntity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio)
     {
         switch (command.Action?.ToLowerInvariant())
         {
             case "set_position" when TryGetVector(command, out float x, out float y, out float z):
                 entity.SetPosition(x, y, z);
+                break;
+            case "set_point_light_enabled" when command.Flag.HasValue:
+                entity.PointLightEnabled = command.Flag.Value;
+                break;
+            case "set_point_light_color" when command.ColorR.HasValue && command.ColorG.HasValue && command.ColorB.HasValue:
+                entity.SetPointLightColor((float)command.ColorR.Value, (float)command.ColorG.Value, (float)command.ColorB.Value);
+                break;
+            case "set_point_light_intensity" when command.Value.HasValue:
+                entity.PointLightIntensity = (float)command.Value.Value;
+                break;
+            case "set_point_light_range" when command.Value.HasValue:
+                entity.PointLightRange = (float)command.Value.Value;
+                break;
+            case "set_spot_light_enabled" when command.Flag.HasValue:
+                entity.SpotLightEnabled = command.Flag.Value;
+                break;
+            case "set_spot_light_color" when command.ColorR.HasValue && command.ColorG.HasValue && command.ColorB.HasValue:
+                entity.SetSpotLightColor((float)command.ColorR.Value, (float)command.ColorG.Value, (float)command.ColorB.Value);
+                break;
+            case "set_spot_light_direction" when TryGetVector(command, out float sx, out float sy, out float sz):
+                entity.SetSpotLightDirection(sx, sy, sz);
+                break;
+            case "set_spot_light_intensity" when command.Value.HasValue:
+                entity.SpotLightIntensity = (float)command.Value.Value;
+                break;
+            case "set_spot_light_range" when command.Value.HasValue:
+                entity.SpotLightRange = (float)command.Value.Value;
+                break;
+            case "set_spot_light_inner_cone_angle" when command.Value.HasValue:
+                entity.SpotLightInnerConeAngleDegrees = (float)command.Value.Value;
+                break;
+            case "set_spot_light_outer_cone_angle" when command.Value.HasValue:
+                entity.SpotLightOuterConeAngleDegrees = (float)command.Value.Value;
                 break;
             case "translate" when TryGetVector(command, out float x, out float y, out float z):
                 entity.Translate(x, y, z);
@@ -4559,6 +4867,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     Camera = PythonCamera.FromRuntime(scene.Camera),
                     Window = PythonWindow.FromRuntime(scene.Window),
                     Runtime = PythonRuntime.FromRuntime(scene.Runtime),
+                    Lighting = PythonLighting.FromRuntime(scene.Lighting),
                     Llm = PythonLlmSettings.FromRuntime(scene.Llm),
                     Asr = PythonAsrSettings.FromRuntime(scene.Asr),
                     RealtimeVoice = PythonRealtimeVoiceSettings.FromRuntime(scene.RealtimeVoice),
@@ -4797,6 +5106,32 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float RippleNormalStrength { get; set; }
 
+        public bool PointLightEnabled { get; set; }
+
+        public float[] PointLightColor { get; set; } = [1.0f, 1.0f, 1.0f];
+
+        public float PointLightIntensity { get; set; }
+
+        public float PointLightRange { get; set; }
+
+        public bool PointLightCastsShadows { get; set; }
+
+        public bool SpotLightEnabled { get; set; }
+
+        public float[] SpotLightDirection { get; set; } = [0.0f, 0.0f, -1.0f];
+
+        public float[] SpotLightColor { get; set; } = [1.0f, 1.0f, 1.0f];
+
+        public float SpotLightIntensity { get; set; }
+
+        public float SpotLightRange { get; set; }
+
+        public float SpotLightInnerConeAngleDegrees { get; set; }
+
+        public float SpotLightOuterConeAngleDegrees { get; set; }
+
+        public bool SpotLightCastsShadows { get; set; }
+
         public static PythonEntity FromRuntime(RuntimeEntity entity)
         {
             PythonCollider[] colliders = entity.EffectiveColliders
@@ -4847,7 +5182,20 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 RippleLifetimeSeconds = entity.RippleLifetimeSeconds,
                 RippleWaveSpeed = entity.RippleWaveSpeed,
                 RippleFrequency = entity.RippleFrequency,
-                RippleNormalStrength = entity.RippleNormalStrength
+                RippleNormalStrength = entity.RippleNormalStrength,
+                PointLightEnabled = entity.PointLightEnabled,
+                PointLightColor = [entity.PointLightColor.X, entity.PointLightColor.Y, entity.PointLightColor.Z],
+                PointLightIntensity = entity.PointLightIntensity,
+                PointLightRange = entity.PointLightRange,
+                PointLightCastsShadows = entity.PointLightCastsShadows,
+                SpotLightEnabled = entity.SpotLightEnabled,
+                SpotLightDirection = [entity.SpotLightDirection.X, entity.SpotLightDirection.Y, entity.SpotLightDirection.Z],
+                SpotLightColor = [entity.SpotLightColor.X, entity.SpotLightColor.Y, entity.SpotLightColor.Z],
+                SpotLightIntensity = entity.SpotLightIntensity,
+                SpotLightRange = entity.SpotLightRange,
+                SpotLightInnerConeAngleDegrees = entity.SpotLightInnerConeAngleDegrees,
+                SpotLightOuterConeAngleDegrees = entity.SpotLightOuterConeAngleDegrees,
+                SpotLightCastsShadows = entity.SpotLightCastsShadows
             };
         }
     }
@@ -5027,6 +5375,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public PythonRuntime Runtime { get; set; } = new();
 
+        public PythonLighting Lighting { get; set; } = new();
+
         public PythonLlmSettings Llm { get; set; } = new();
 
         public PythonAsrSettings Asr { get; set; } = new();
@@ -5041,6 +5391,28 @@ internal sealed class PythonScriptInstance : IScriptInstance
     }
 
     private sealed class PythonNetwork;
+
+    private sealed class PythonLighting
+    {
+        public float[] DirectionalColor { get; set; } = [1.0f, 1.0f, 1.0f];
+
+        public float[] DirectionalDirection { get; set; } = [-0.5f, -1.0f, -0.5f];
+
+        public float[] AmbientColor { get; set; } = [0.65f, 0.65f, 0.65f];
+
+        public float AmbientStrength { get; set; } = 0.25f;
+
+        public static PythonLighting FromRuntime(RuntimeLighting lighting)
+        {
+            return new PythonLighting
+            {
+                DirectionalColor = [lighting.DirectionalColor.X, lighting.DirectionalColor.Y, lighting.DirectionalColor.Z],
+                DirectionalDirection = [lighting.DirectionalDirection.X, lighting.DirectionalDirection.Y, lighting.DirectionalDirection.Z],
+                AmbientColor = [lighting.AmbientColor.X, lighting.AmbientColor.Y, lighting.AmbientColor.Z],
+                AmbientStrength = lighting.AmbientStrength
+            };
+        }
+    }
 
     private sealed class PythonBubbleState
     {
@@ -5714,6 +6086,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public double? Height { get; set; }
 
         public double? Radius { get; set; }
+
+        public double? InnerConeAngle { get; set; }
+
+        public double? OuterConeAngle { get; set; }
 
         public double? SizeX { get; set; }
 

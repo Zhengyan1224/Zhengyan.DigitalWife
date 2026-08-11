@@ -126,6 +126,57 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         public Vector4 Parameters;
         public Matrix4x4 ShadowLightViewProjection;
         public Vector4 ShadowParameters;
+        public Vector4 PointLightMeta;
+        public fixed float PointLightPositionRanges[PointLightPacking.MaxLights * 4];
+        public fixed float PointLightColorIntensities[PointLightPacking.MaxLights * 4];
+        public Vector4 SpotLightMeta;
+        public fixed float SpotLightPositionRanges[SpotLightPacking.MaxLights * 4];
+        public fixed float SpotLightDirectionOuterCosines[SpotLightPacking.MaxLights * 4];
+        public fixed float SpotLightColorIntensities[SpotLightPacking.MaxLights * 4];
+        public fixed float SpotLightConeParameters[SpotLightPacking.MaxLights * 4];
+    }
+
+    public static void SetSpotLights(
+        ref PmxFrameUniformData data,
+        IReadOnlyList<SpotLightData>? lights,
+        Matrix4x4 view)
+    {
+        Span<Vector4> positionRanges = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> directionOuterCosines = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> colorIntensities = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> coneParameters = stackalloc Vector4[SpotLightPacking.MaxLights];
+        int count = SpotLightPacking.PackViewSpace(
+            lights, view, positionRanges, directionOuterCosines, colorIntensities, coneParameters);
+        data.SpotLightMeta = new Vector4(count, 0.0f, 0.0f, 0.0f);
+
+        fixed (float* destinationPositions = data.SpotLightPositionRanges)
+        fixed (float* destinationDirections = data.SpotLightDirectionOuterCosines)
+        fixed (float* destinationColors = data.SpotLightColorIntensities)
+        fixed (float* destinationCones = data.SpotLightConeParameters)
+        {
+            positionRanges.CopyTo(new Span<Vector4>(destinationPositions, SpotLightPacking.MaxLights));
+            directionOuterCosines.CopyTo(new Span<Vector4>(destinationDirections, SpotLightPacking.MaxLights));
+            colorIntensities.CopyTo(new Span<Vector4>(destinationColors, SpotLightPacking.MaxLights));
+            coneParameters.CopyTo(new Span<Vector4>(destinationCones, SpotLightPacking.MaxLights));
+        }
+    }
+
+    public static void SetPointLights(
+        ref PmxFrameUniformData data,
+        IReadOnlyList<PointLightData>? lights,
+        Matrix4x4 view)
+    {
+        Span<Vector4> positionRanges = stackalloc Vector4[PointLightPacking.MaxLights];
+        Span<Vector4> colorIntensities = stackalloc Vector4[PointLightPacking.MaxLights];
+        int count = PointLightPacking.PackViewSpace(lights, view, positionRanges, colorIntensities);
+        data.PointLightMeta = new Vector4(count, 0.0f, 0.0f, 0.0f);
+
+        fixed (float* destinationPositions = data.PointLightPositionRanges)
+        fixed (float* destinationColors = data.PointLightColorIntensities)
+        {
+            positionRanges.CopyTo(new Span<Vector4>(destinationPositions, PointLightPacking.MaxLights));
+            colorIntensities.CopyTo(new Span<Vector4>(destinationColors, PointLightPacking.MaxLights));
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

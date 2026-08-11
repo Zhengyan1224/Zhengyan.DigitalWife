@@ -70,6 +70,9 @@ scene.flush()
 | `Scene.Window` | `scene.window` | 窗口控制。 |
 | `Scene.Runtime` | `scene.runtime` | 运行时项目设置控制。 |
 | `Scene.Camera` | `scene.camera` | 相机控制。 |
+| `Scene.Lighting` | `scene.lighting` | 平行光和环境光控制。 |
+| `Scene.PointLights` | `scene.point_lights` | 点光源查询、创建、修改和删除。 |
+| `Scene.SpotLights` | `scene.spot_lights` | 射灯查询、创建、修改和删除。 |
 | `Scene.Physics` | `scene.physics` | 场景级 Collider 射线检测和地面采样。 |
 | `Scene.Navigation` | 暂无 | C# NavMesh 烘焙和路径查询。 |
 | `Scene.Debug` | `scene.debug` | 调试绘制。 |

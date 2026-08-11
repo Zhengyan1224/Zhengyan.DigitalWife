@@ -25,6 +25,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly List<RuntimeParticleObject> _particleObjects = [];
     private readonly List<RuntimeWaterObject> _waterObjects = [];
     private readonly List<RuntimePlaneObject> _planeObjects = [];
+    private readonly List<PointLightData> _pointLights = [];
+    private readonly List<SpotLightData> _spotLights = [];
     private readonly List<(RuntimeEntity Entity, List<IScriptInstance> Scripts, string Name)> _scriptTargets = [];
     private readonly List<IScriptInstance> _loadingScripts = [];
     private readonly Queue<LoadingStep> _loadingSteps = [];
@@ -269,6 +271,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         _dispatcher.Pump();
+        RefreshPointLights();
+        RefreshSpotLights();
     }
 
     protected override void LateUpdate(GameTime gameTime)
@@ -1023,6 +1027,11 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 new RuntimeDialogueBubbleManager(),
                 new RuntimeNetwork(),
                 _runtimePerformance,
+                RefreshSceneLighting,
+                AddRuntimePointLight,
+                RemoveRuntimePointLight,
+                AddRuntimeSpotLight,
+                RemoveRuntimeSpotLight,
                 DispatchSpeechEvent,
                 InvokeLlmTool,
                 RequestSceneChange);
@@ -1498,6 +1507,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _planeObjects.Clear();
         _entitiesById.Clear();
         _entitiesByName.Clear();
+        _pointLights.Clear();
+        _spotLights.Clear();
         _waterRippleTimes.Clear();
 
         DisposeAudioRuntime();
@@ -1513,6 +1524,20 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     private void LoadEntity(GameEntity entity)
     {
+        if (IsPointLightEntity(entity))
+        {
+            RegisterRuntimeEntity(new RuntimeEntity(entity, ResolveProjectPath));
+            RefreshPointLights();
+            return;
+        }
+
+        if (IsSpotLightEntity(entity))
+        {
+            RegisterRuntimeEntity(new RuntimeEntity(entity, ResolveProjectPath));
+            RefreshSpotLights();
+            return;
+        }
+
         if (string.Equals(entity.Type, "particle_system", StringComparison.OrdinalIgnoreCase))
         {
             LoadParticleEntity(entity);
@@ -2838,6 +2863,247 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         model.AmbientLightColor = lighting.AmbientColor.ToVector3();
         model.AmbientLightStrength = lighting.AmbientStrength;
         model.ShadowColor = lighting.ShadowColor.ToVector4();
+        model.PointLights = _pointLights;
+        model.SpotLights = _spotLights;
+    }
+
+    private void RefreshSceneLighting()
+    {
+        foreach (PlayerPmxObject item in _pmxObjects)
+        {
+            ApplyLightingToModel(item.Model);
+        }
+    }
+
+    private void RefreshPointLights()
+    {
+        _pointLights.Clear();
+        foreach (RuntimeEntity entity in _entitiesById.Values)
+        {
+            if (!entity.IsPointLight)
+            {
+                continue;
+            }
+
+            _pointLights.Add(new PointLightData(
+                entity.Position,
+                entity.PointLightColor,
+                entity.PointLightIntensity,
+                entity.PointLightRange,
+                entity.PointLightEnabled,
+                entity.PointLightCastsShadows));
+        }
+    }
+
+    private void RefreshSpotLights()
+    {
+        _spotLights.Clear();
+        foreach (RuntimeEntity entity in _entitiesById.Values)
+        {
+            if (!entity.IsSpotLight)
+            {
+                continue;
+            }
+
+            _spotLights.Add(new SpotLightData(
+                entity.Position,
+                entity.SpotLightDirection,
+                entity.SpotLightColor,
+                entity.SpotLightIntensity,
+                entity.SpotLightRange,
+                entity.SpotLightInnerConeAngleDegrees,
+                entity.SpotLightOuterConeAngleDegrees,
+                entity.SpotLightEnabled,
+                entity.SpotLightCastsShadows));
+        }
+    }
+
+    private RuntimeEntity AddRuntimeSpotLight(
+        string? requestedId,
+        string name,
+        Vector3 position,
+        Vector3 direction,
+        Vector3 color,
+        float intensity,
+        float range,
+        float innerConeAngleDegrees,
+        float outerConeAngleDegrees,
+        bool enabled)
+    {
+        if (!IsFinite(position) || !IsFinite(direction) || !IsFinite(color) || direction.LengthSquared() <= 1e-8f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(direction), "Spotlight position, direction, and color must be finite; direction must be non-zero.");
+        }
+        if (!float.IsFinite(intensity) || intensity < 0.0f) throw new ArgumentOutOfRangeException(nameof(intensity));
+        if (!float.IsFinite(range) || range <= 0.0f) throw new ArgumentOutOfRangeException(nameof(range));
+        if (!float.IsFinite(innerConeAngleDegrees) || innerConeAngleDegrees < 0.0f || innerConeAngleDegrees > 89.0f)
+            throw new ArgumentOutOfRangeException(nameof(innerConeAngleDegrees));
+        if (!float.IsFinite(outerConeAngleDegrees) || outerConeAngleDegrees <= innerConeAngleDegrees || outerConeAngleDegrees > 89.5f)
+            throw new ArgumentOutOfRangeException(nameof(outerConeAngleDegrees));
+
+        string id = string.IsNullOrWhiteSpace(requestedId) || _entitiesById.ContainsKey(requestedId)
+            ? Guid.NewGuid().ToString("N")
+            : requestedId;
+        string baseName = string.IsNullOrWhiteSpace(name) ? "Spot Light" : name.Trim();
+        string uniqueName = baseName;
+        for (int suffix = 2; _entitiesByName.ContainsKey(uniqueName); suffix++) uniqueName = $"{baseName} {suffix}";
+
+        GameEntity definition = new()
+        {
+            Id = id,
+            Name = uniqueName,
+            Type = "spot_light",
+            Transform = new TransformSettings { Position = Vector3Dto.FromVector3(position) },
+            SpotLight = new SpotLightSettings
+            {
+                Enabled = enabled,
+                Color = Vector3Dto.FromVector3(Vector3.Max(color, Vector3.Zero)),
+                Intensity = intensity,
+                Range = range,
+                InnerConeAngleDegrees = innerConeAngleDegrees,
+                OuterConeAngleDegrees = outerConeAngleDegrees
+            }
+        };
+        Project.Scene.Entities.Add(definition);
+        RuntimeEntity runtimeEntity = new(definition, ResolveProjectPath)
+        {
+            SpotLightDirection = direction
+        };
+        if (_runtimeScene is not null) runtimeEntity.AttachScene(_runtimeScene);
+        RegisterRuntimeEntity(runtimeEntity);
+        RefreshSpotLights();
+        return runtimeEntity;
+    }
+
+    private bool RemoveRuntimeSpotLight(string idOrName)
+    {
+        RuntimeEntity? entity = ResolveRuntimeEntity(idOrName);
+        if (entity is null || !entity.IsSpotLight)
+        {
+            return false;
+        }
+
+        _entitiesById.Remove(entity.Id);
+        if (_entitiesByName.TryGetValue(entity.Name, out RuntimeEntity? byName) && ReferenceEquals(byName, entity))
+        {
+            _entitiesByName.Remove(entity.Name);
+        }
+        Project.Scene.Entities.Remove(entity.Definition);
+        foreach ((RuntimeEntity targetEntity, List<IScriptInstance> scripts, _) in _scriptTargets
+            .Where(target => ReferenceEquals(target.Entity, entity)).ToArray())
+        {
+            _scriptTargets.RemoveAll(target => ReferenceEquals(target.Entity, targetEntity));
+            foreach (IScriptInstance script in scripts) script.Dispose();
+        }
+        RefreshSpotLights();
+        return true;
+    }
+
+    private RuntimeEntity AddRuntimePointLight(
+        string? requestedId,
+        string name,
+        Vector3 position,
+        Vector3 color,
+        float intensity,
+        float range,
+        bool enabled)
+    {
+        if (!IsFinite(position) || !IsFinite(color))
+        {
+            throw new ArgumentOutOfRangeException(nameof(position), "Point-light position and color must be finite.");
+        }
+
+        if (!float.IsFinite(intensity) || intensity < 0.0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(intensity), "Point-light intensity must be finite and non-negative.");
+        }
+
+        if (!float.IsFinite(range) || range <= 0.0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(range), "Point-light range must be finite and positive.");
+        }
+
+        string id = string.IsNullOrWhiteSpace(requestedId) || _entitiesById.ContainsKey(requestedId)
+            ? Guid.NewGuid().ToString("N")
+            : requestedId;
+        string baseName = string.IsNullOrWhiteSpace(name) ? "Point Light" : name.Trim();
+        string uniqueName = baseName;
+        for (int suffix = 2; _entitiesByName.ContainsKey(uniqueName); suffix++)
+        {
+            uniqueName = $"{baseName} {suffix}";
+        }
+
+        GameEntity definition = new()
+        {
+            Id = id,
+            Name = uniqueName,
+            Type = "point_light",
+            Transform = new TransformSettings { Position = Vector3Dto.FromVector3(position) },
+            PointLight = new PointLightSettings
+            {
+                Enabled = enabled,
+                Color = Vector3Dto.FromVector3(Vector3.Max(color, Vector3.Zero)),
+                Intensity = MathF.Max(0.0f, intensity),
+                Range = MathF.Max(0.001f, range)
+            }
+        };
+        Project.Scene.Entities.Add(definition);
+        RuntimeEntity runtimeEntity = new(definition, ResolveProjectPath);
+        if (_runtimeScene is not null)
+        {
+            runtimeEntity.AttachScene(_runtimeScene);
+        }
+
+        RegisterRuntimeEntity(runtimeEntity);
+        RefreshPointLights();
+        return runtimeEntity;
+    }
+
+    private bool RemoveRuntimePointLight(string idOrName)
+    {
+        RuntimeEntity? entity = ResolveRuntimeEntity(idOrName);
+        if (entity is null || !entity.IsPointLight)
+        {
+            return false;
+        }
+
+        _entitiesById.Remove(entity.Id);
+        if (_entitiesByName.TryGetValue(entity.Name, out RuntimeEntity? byName) && ReferenceEquals(byName, entity))
+        {
+            _entitiesByName.Remove(entity.Name);
+        }
+
+        Project.Scene.Entities.Remove(entity.Definition);
+        foreach ((RuntimeEntity targetEntity, List<IScriptInstance> scripts, _) in _scriptTargets
+            .Where(target => ReferenceEquals(target.Entity, entity))
+            .ToArray())
+        {
+            _scriptTargets.RemoveAll(target => ReferenceEquals(target.Entity, targetEntity));
+            foreach (IScriptInstance script in scripts)
+            {
+                script.Dispose();
+            }
+        }
+
+        RefreshPointLights();
+        return true;
+    }
+
+    private static bool IsPointLightEntity(GameEntity entity)
+    {
+        string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized is "point_light" or "pointlight";
+    }
+
+    private static bool IsSpotLightEntity(GameEntity entity)
+    {
+        string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized is "spot_light" or "spotlight";
+    }
+
+    private static bool IsFinite(Vector3 value)
+    {
+        return float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
     }
 
     private static Quaternion ToQuaternion(Vector3 degrees)

@@ -2,6 +2,7 @@ using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
+using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
 using Zhengyan.DigitalWife.Mmd.Game.Speech;
@@ -62,6 +63,162 @@ public sealed class RuntimeEntity
     public string Type => _definition.Type;
 
     public bool IsPmxModel => _model is not null;
+
+    public bool IsPointLight => NormalizeEntityType(Type) is "point_light" or "pointlight";
+
+    public bool IsSpotLight => NormalizeEntityType(Type) is "spot_light" or "spotlight";
+
+    public bool PointLightEnabled
+    {
+        get => IsPointLight && _definition.PointLight.Enabled;
+        set
+        {
+            if (IsPointLight) _definition.PointLight.Enabled = value;
+        }
+    }
+
+    public Vector3 PointLightColor
+    {
+        get => _definition.PointLight.Color.ToVector3();
+        set
+        {
+            EnsureFinite(value, nameof(value));
+            if (IsPointLight) _definition.PointLight.Color = Vector3Dto.FromVector3(Vector3.Max(value, Vector3.Zero));
+        }
+    }
+
+    public float PointLightIntensity
+    {
+        get => _definition.PointLight.Intensity;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0.0f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsPointLight) _definition.PointLight.Intensity = value;
+        }
+    }
+
+    public float PointLightRange
+    {
+        get => _definition.PointLight.Range;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0.0f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsPointLight) _definition.PointLight.Range = value;
+        }
+    }
+
+    public bool PointLightCastsShadows
+    {
+        get => IsPointLight && _definition.PointLight.CastShadows;
+        set
+        {
+            if (IsPointLight) _definition.PointLight.CastShadows = value;
+        }
+    }
+
+    public void SetPointLightColor(float red, float green, float blue)
+    {
+        PointLightColor = new Vector3(red, green, blue);
+    }
+
+    public bool SpotLightEnabled
+    {
+        get => IsSpotLight && _definition.SpotLight.Enabled;
+        set
+        {
+            if (IsSpotLight) _definition.SpotLight.Enabled = value;
+        }
+    }
+
+    public Vector3 SpotLightColor
+    {
+        get => _definition.SpotLight.Color.ToVector3();
+        set
+        {
+            EnsureFinite(value, nameof(value));
+            if (IsSpotLight) _definition.SpotLight.Color = Vector3Dto.FromVector3(Vector3.Max(value, Vector3.Zero));
+        }
+    }
+
+    public Vector3 SpotLightDirection
+    {
+        get => SpotLightTransform.GetDirection(Rotation);
+        set
+        {
+            EnsureFinite(value, nameof(value));
+            if (value.LengthSquared() <= 1e-8f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsSpotLight) Rotation = SpotLightTransform.CreateRotation(value);
+        }
+    }
+
+    public float SpotLightIntensity
+    {
+        get => _definition.SpotLight.Intensity;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0.0f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsSpotLight) _definition.SpotLight.Intensity = value;
+        }
+    }
+
+    public float SpotLightRange
+    {
+        get => _definition.SpotLight.Range;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0.0f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsSpotLight) _definition.SpotLight.Range = value;
+        }
+    }
+
+    public float SpotLightInnerConeAngleDegrees
+    {
+        get => _definition.SpotLight.InnerConeAngleDegrees;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0.0f || value > 89.0f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsSpotLight)
+            {
+                _definition.SpotLight.InnerConeAngleDegrees = value;
+                _definition.SpotLight.OuterConeAngleDegrees = MathF.Max(
+                    _definition.SpotLight.OuterConeAngleDegrees, value + 0.01f);
+            }
+        }
+    }
+
+    public float SpotLightOuterConeAngleDegrees
+    {
+        get => _definition.SpotLight.OuterConeAngleDegrees;
+        set
+        {
+            if (!float.IsFinite(value) || value <= 0.0f || value > 89.5f) throw new ArgumentOutOfRangeException(nameof(value));
+            if (IsSpotLight)
+            {
+                _definition.SpotLight.OuterConeAngleDegrees = value;
+                _definition.SpotLight.InnerConeAngleDegrees = MathF.Min(
+                    _definition.SpotLight.InnerConeAngleDegrees, value - 0.01f);
+            }
+        }
+    }
+
+    public bool SpotLightCastsShadows
+    {
+        get => IsSpotLight && _definition.SpotLight.CastShadows;
+        set
+        {
+            if (IsSpotLight) _definition.SpotLight.CastShadows = value;
+        }
+    }
+
+    public void SetSpotLightColor(float red, float green, float blue)
+    {
+        SpotLightColor = new Vector3(red, green, blue);
+    }
+
+    public void SetSpotLightDirection(float x, float y, float z)
+    {
+        SpotLightDirection = new Vector3(x, y, z);
+    }
 
     public IReadOnlyList<string> MaterialNames => _model?.MaterialNames ?? [];
 
@@ -1661,6 +1818,21 @@ public sealed class RuntimeEntity
     internal void AttachScene(RuntimeScene scene)
     {
         _scene = scene;
+    }
+
+    internal GameEntity Definition => _definition;
+
+    private static string NormalizeEntityType(string? type)
+    {
+        return (type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+    }
+
+    private static void EnsureFinite(Vector3 value, string parameterName)
+    {
+        if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "Vector components must be finite.");
+        }
     }
 
     internal void DispatchSpeechCallback(string callbackName)

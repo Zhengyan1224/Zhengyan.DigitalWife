@@ -300,6 +300,10 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public float AmbientLightStrength { get; set; } = 0.2f;
 
+    public IReadOnlyList<PointLightData> PointLights { get; set; } = Array.Empty<PointLightData>();
+
+    public IReadOnlyList<SpotLightData> SpotLights { get; set; } = Array.Empty<SpotLightData>();
+
     public Vector4 ShadowColor { get; set; } = new(0.17f, 0.17f, 0.17f, 0.7f);
 
     public Vector3 LightDirection { get; set; } = new(-0.5f, -1.0f, -0.5f);
@@ -1579,6 +1583,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 LightDirection,
                 AmbientLightColor,
                 AmbientLightStrength,
+                PointLights,
+                SpotLights,
                 EnableShadow,
                 ShadowMap,
                 ResolveMaterialOverrideTextureHandle);
@@ -1704,6 +1710,29 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         shader.SetUniform("u_LightDir", viewSpaceLightDirection);
         shader.SetUniform("u_AmbientLightColor", AmbientLightColor);
         shader.SetUniform("u_AmbientLightStrength", AmbientLightStrength);
+        Span<Vector4> pointPositions = stackalloc Vector4[PointLightPacking.MaxLights];
+        Span<Vector4> pointColors = stackalloc Vector4[PointLightPacking.MaxLights];
+        int pointLightCount = PointLightPacking.PackViewSpace(PointLights, Camera.View, pointPositions, pointColors);
+        shader.SetUniform("u_PointLightCount", pointLightCount);
+        for (int i = 0; i < pointLightCount; i++)
+        {
+            shader.SetUniform($"u_PointLightPositionRange[{i}]", pointPositions[i]);
+            shader.SetUniform($"u_PointLightColorIntensity[{i}]", pointColors[i]);
+        }
+        Span<Vector4> spotPositions = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> spotDirections = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> spotColors = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> spotCones = stackalloc Vector4[SpotLightPacking.MaxLights];
+        int spotLightCount = SpotLightPacking.PackViewSpace(
+            SpotLights, Camera.View, spotPositions, spotDirections, spotColors, spotCones);
+        shader.SetUniform("u_SpotLightCount", spotLightCount);
+        for (int i = 0; i < spotLightCount; i++)
+        {
+            shader.SetUniform($"u_SpotLightPositionRange[{i}]", spotPositions[i]);
+            shader.SetUniform($"u_SpotLightDirectionOuterCosine[{i}]", spotDirections[i]);
+            shader.SetUniform($"u_SpotLightColorIntensity[{i}]", spotColors[i]);
+            shader.SetUniform($"u_SpotLightConeParameters[{i}]", spotCones[i]);
+        }
         ApplyCustomShaderShadowUniforms(shader, transform);
         shader.ApplyUniforms(_customShaderUniforms);
 

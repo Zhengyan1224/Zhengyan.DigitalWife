@@ -684,6 +684,40 @@ public sealed class LightingSettings
     public Vector4Dto ClearColor { get; set; } = new(0.08f, 0.09f, 0.12f, 1.0f);
 }
 
+public sealed class PointLightSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    public Vector3Dto Color { get; set; } = Vector3Dto.One;
+
+    public float Intensity { get; set; } = 1.0f;
+
+    public float Range { get; set; } = 8.0f;
+
+    // Reserved by the scene contract so point-light shadow maps can be added
+    // without changing serialized projects or the scripting API.
+    public bool CastShadows { get; set; }
+}
+
+public sealed class SpotLightSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    public Vector3Dto Color { get; set; } = Vector3Dto.One;
+
+    public float Intensity { get; set; } = 1.0f;
+
+    public float Range { get; set; } = 12.0f;
+
+    public float InnerConeAngleDegrees { get; set; } = 18.0f;
+
+    public float OuterConeAngleDegrees { get; set; } = 28.0f;
+
+    // Reserved so spotlight shadow maps can be added without changing the
+    // serialized scene or scripting contracts.
+    public bool CastShadows { get; set; }
+}
+
 public sealed class SkyboxSettings
 {
     public bool Enabled { get; set; }
@@ -767,6 +801,10 @@ public sealed class GameEntity
     public WaterSurfaceSettings Water { get; set; } = new();
 
     public TexturedPlaneSettings Plane { get; set; } = new();
+
+    public PointLightSettings PointLight { get; set; } = new();
+
+    public SpotLightSettings SpotLight { get; set; } = new();
 
     public PmxRelationSettings Relation { get; set; } = new();
 

@@ -1962,6 +1962,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 "particle_system" => "[FX]",
                 "water_surface" => "[Water]",
                 "textured_plane" => "[Plane]",
+                "point_light" or "pointlight" => "[Light]",
+                "spot_light" or "spotlight" => "[Spot]",
                 "empty" or "empty_object" or "game_object" => "[Empty]",
                 _ => "[PMX]"
             };
@@ -2030,11 +2032,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         float physicsGravityMagnitude = MathF.Max(0.0f, entity.PhysicsGravityMagnitude);
         bool physicsGravityChanged = false;
         bool changed = false;
+        bool isPointLight = GameEditorGame.IsPointLightEntity(entity);
+        bool isSpotLight = GameEditorGame.IsSpotLightEntity(entity);
         changed |= ImGui.DragFloat3("Position", ref position, 0.02f);
-        changed |= ImGui.DragFloat3("Rotation", ref rotation, 0.5f);
-        changed |= ImGui.DragFloat3("Scale", ref scale, 0.01f, 0.001f, 100.0f);
+        if (!isPointLight)
+        {
+            changed |= ImGui.DragFloat3("Rotation", ref rotation, 0.5f);
+        }
+        if (!isPointLight && !isSpotLight)
+        {
+            changed |= ImGui.DragFloat3("Scale", ref scale, 0.01f, 0.001f, 100.0f);
+        }
 
-        changed |= ImGui.Checkbox("Play animation", ref isPlaying);
+        if (!isPointLight && !isSpotLight)
+        {
+            changed |= ImGui.Checkbox("Play animation", ref isPlaying);
+        }
         if (string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
         {
             changed |= ImGui.DragFloat("Playback speed", ref playbackSpeed, 0.01f, 0.0f, 5.0f, "%.2f");
@@ -2066,9 +2079,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             changed |= ImGui.Checkbox("Reset physics on loop", ref resetPhysicsOnMotionLoop);
         }
 
-        changed |= ImGui.Checkbox("Edge", ref enableEdge);
-        changed |= ImGui.Checkbox("Shadow", ref enableShadow);
-        changed |= ImGui.Checkbox("Draw shadow in main pass (legacy)", ref drawShadowInMainPass);
+        if (string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
+        {
+            changed |= ImGui.Checkbox("Edge", ref enableEdge);
+            changed |= ImGui.Checkbox("Shadow", ref enableShadow);
+            changed |= ImGui.Checkbox("Draw shadow in main pass (legacy)", ref drawShadowInMainPass);
+        }
 
         if (changed)
         {
@@ -2110,6 +2126,14 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         else if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
         {
             DrawPlaneInspector(entity);
+        }
+        else if (GameEditorGame.IsPointLightEntity(entity))
+        {
+            DrawPointLightInspector(entity);
+        }
+        else if (GameEditorGame.IsSpotLightEntity(entity))
+        {
+            DrawSpotLightInspector(entity);
         }
 
         if (ImGui.Button("Reload Runtime Object"))
@@ -3675,6 +3699,17 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             TryRun(_editorGame.AddWaterSurfaceEntity);
         }
 
+        ImGui.SeparatorText("Lighting");
+        if (ImGui.Button("Add Point Light"))
+        {
+            TryRun(_editorGame.AddPointLightEntity);
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Add Spot Light"))
+        {
+            TryRun(_editorGame.AddSpotLightEntity);
+        }
+
         for (int i = 0; i < _editorGame.Project.Scene.Audio.Count; i++)
         {
             AudioAsset audio = _editorGame.Project.Scene.Audio[i];
@@ -4454,6 +4489,64 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.RippleNormalStrength = Math.Max(0.0f, rippleNormalStrength);
             _editorGame.ApplySelectedWaterToRuntime();
         }
+    }
+
+    private void DrawPointLightInspector(GameEntity entity)
+    {
+        PointLightSettings light = entity.PointLight ??= new PointLightSettings();
+        ImGui.SeparatorText("Point Light");
+
+        bool enabled = light.Enabled;
+        Vector3 color = light.Color.ToVector3();
+        float intensity = light.Intensity;
+        float range = light.Range;
+        bool changed = ImGui.Checkbox("Enabled##pointLight", ref enabled);
+        changed |= ImGui.ColorEdit3("Color##pointLight", ref color);
+        changed |= ImGui.DragFloat("Intensity##pointLight", ref intensity, 0.02f, 0.0f, 100.0f, "%.2f");
+        changed |= ImGui.DragFloat("Range##pointLight", ref range, 0.05f, 0.01f, 10000.0f, "%.2f");
+        if (!changed)
+        {
+            return;
+        }
+
+        light.Enabled = enabled;
+        light.Color = Vector3Dto.FromVector3(Vector3.Max(color, Vector3.Zero));
+        light.Intensity = Math.Clamp(intensity, 0.0f, 100.0f);
+        light.Range = Math.Clamp(range, 0.01f, 10000.0f);
+        _editorGame.ApplySelectedEntityToRuntime();
+    }
+
+    private void DrawSpotLightInspector(GameEntity entity)
+    {
+        SpotLightSettings light = entity.SpotLight ??= new SpotLightSettings();
+        ImGui.SeparatorText("Spot Light");
+
+        bool enabled = light.Enabled;
+        Vector3 color = light.Color.ToVector3();
+        float intensity = light.Intensity;
+        float range = light.Range;
+        float innerAngle = light.InnerConeAngleDegrees;
+        float outerAngle = light.OuterConeAngleDegrees;
+        bool changed = ImGui.Checkbox("Enabled##spotLight", ref enabled);
+        changed |= ImGui.ColorEdit3("Color##spotLight", ref color);
+        changed |= ImGui.DragFloat("Intensity##spotLight", ref intensity, 0.02f, 0.0f, 100.0f, "%.2f");
+        changed |= ImGui.DragFloat("Range##spotLight", ref range, 0.05f, 0.01f, 10000.0f, "%.2f");
+        changed |= ImGui.SliderFloat("Inner cone half-angle##spotLight", ref innerAngle, 0.0f, 89.0f, "%.1f deg");
+        changed |= ImGui.SliderFloat("Outer cone half-angle##spotLight", ref outerAngle, 0.1f, 89.5f, "%.1f deg");
+        if (!changed)
+        {
+            return;
+        }
+
+        innerAngle = Math.Clamp(innerAngle, 0.0f, 89.0f);
+        outerAngle = Math.Clamp(outerAngle, innerAngle + 0.01f, 89.5f);
+        light.Enabled = enabled;
+        light.Color = Vector3Dto.FromVector3(Vector3.Max(color, Vector3.Zero));
+        light.Intensity = Math.Clamp(intensity, 0.0f, 100.0f);
+        light.Range = Math.Clamp(range, 0.01f, 10000.0f);
+        light.InnerConeAngleDegrees = innerAngle;
+        light.OuterConeAngleDegrees = outerAngle;
+        _editorGame.ApplySelectedEntityToRuntime();
     }
 
     private void DrawPlaneInspector(GameEntity entity)

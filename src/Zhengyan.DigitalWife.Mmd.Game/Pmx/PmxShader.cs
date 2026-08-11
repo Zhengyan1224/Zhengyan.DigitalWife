@@ -30,6 +30,26 @@ internal sealed class PmxShader : IDisposable
         UniLightDir = gl.GetUniformLocation(Id, "u_LightDir");
         UniAmbientLightColor = gl.GetUniformLocation(Id, "u_AmbientLightColor");
         UniAmbientLightStrength = gl.GetUniformLocation(Id, "u_AmbientLightStrength");
+        UniPointLightCount = gl.GetUniformLocation(Id, "u_PointLightCount");
+        UniPointLightPositionRanges = Enumerable.Range(0, PointLightPacking.MaxLights)
+            .Select(index => gl.GetUniformLocation(Id, $"u_PointLightPositionRange[{index}]"))
+            .ToArray();
+        UniPointLightColorIntensities = Enumerable.Range(0, PointLightPacking.MaxLights)
+            .Select(index => gl.GetUniformLocation(Id, $"u_PointLightColorIntensity[{index}]"))
+            .ToArray();
+        UniSpotLightCount = gl.GetUniformLocation(Id, "u_SpotLightCount");
+        UniSpotLightPositionRanges = Enumerable.Range(0, SpotLightPacking.MaxLights)
+            .Select(index => gl.GetUniformLocation(Id, $"u_SpotLightPositionRange[{index}]"))
+            .ToArray();
+        UniSpotLightDirectionOuterCosines = Enumerable.Range(0, SpotLightPacking.MaxLights)
+            .Select(index => gl.GetUniformLocation(Id, $"u_SpotLightDirectionOuterCosine[{index}]"))
+            .ToArray();
+        UniSpotLightColorIntensities = Enumerable.Range(0, SpotLightPacking.MaxLights)
+            .Select(index => gl.GetUniformLocation(Id, $"u_SpotLightColorIntensity[{index}]"))
+            .ToArray();
+        UniSpotLightConeParameters = Enumerable.Range(0, SpotLightPacking.MaxLights)
+            .Select(index => gl.GetUniformLocation(Id, $"u_SpotLightConeParameters[{index}]"))
+            .ToArray();
         UniTexMode = gl.GetUniformLocation(Id, "u_TexMode");
         UniTex = gl.GetUniformLocation(Id, "u_Tex");
         UniTexMulFactor = gl.GetUniformLocation(Id, "u_TexMulFactor");
@@ -86,6 +106,22 @@ internal sealed class PmxShader : IDisposable
     public int UniAmbientLightColor { get; }
 
     public int UniAmbientLightStrength { get; }
+
+    public int UniPointLightCount { get; }
+
+    public int[] UniPointLightPositionRanges { get; }
+
+    public int[] UniPointLightColorIntensities { get; }
+
+    public int UniSpotLightCount { get; }
+
+    public int[] UniSpotLightPositionRanges { get; }
+
+    public int[] UniSpotLightDirectionOuterCosines { get; }
+
+    public int[] UniSpotLightColorIntensities { get; }
+
+    public int[] UniSpotLightConeParameters { get; }
 
     public int UniTexMode { get; }
 

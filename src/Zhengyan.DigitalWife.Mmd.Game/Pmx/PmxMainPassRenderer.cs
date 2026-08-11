@@ -23,6 +23,8 @@ internal interface IPmxMainPassRenderer : IDisposable
         Vector3 lightDirection,
         Vector3 ambientLightColor,
         float ambientLightStrength,
+        IReadOnlyList<PointLightData> pointLights,
+        IReadOnlyList<SpotLightData> spotLights,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -85,6 +87,8 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         Vector3 lightDirection,
         Vector3 ambientLightColor,
         float ambientLightStrength,
+        IReadOnlyList<PointLightData> pointLights,
+        IReadOnlyList<SpotLightData> spotLights,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -94,7 +98,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         Matrix4x4 worldView = world * view;
         Matrix4x4 worldViewProjection = worldView * projection;
         Vector3 viewSpaceLightDirection = Vector3.Normalize(Vector3.TransformNormal(lightDirection, view));
-        resources.UploadFrameUniforms(new PmxGpuResources.PmxFrameUniformData
+        PmxGpuResources.PmxFrameUniformData frameData = new()
         {
             World = world,
             View = view,
@@ -104,7 +108,10 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
             LightDirection = new Vector4(viewSpaceLightDirection, 0.0f),
             AmbientLightColor = new Vector4(ambientLightColor, 1.0f),
             Parameters = new Vector4(ambientLightStrength, enableShadow ? 1.0f : 0.0f, 0.0f, 0.0f)
-        });
+        };
+        PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
+        PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
+        resources.UploadFrameUniforms(frameData);
 
         _gl.Enable(GLEnum.DepthTest);
         _gl.Enable(GLEnum.Blend);
@@ -121,6 +128,8 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniLightDir, viewSpaceLightDirection);
         _gl.SetUniform(_shader.UniAmbientLightColor, ambientLightColor);
         _gl.SetUniform(_shader.UniAmbientLightStrength, ambientLightStrength);
+        ApplyPointLights(pointLights, view);
+        ApplySpotLights(spotLights, view);
         _gl.SetUniform(_shader.UniShadowMap0, 3);
         _gl.SetUniform(_shader.UniShadowMap1, 4);
         _gl.SetUniform(_shader.UniShadowMap2, 5);
@@ -272,6 +281,36 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         }
     }
 
+    private void ApplyPointLights(IReadOnlyList<PointLightData> pointLights, Matrix4x4 view)
+    {
+        Span<Vector4> positionRanges = stackalloc Vector4[PointLightPacking.MaxLights];
+        Span<Vector4> colorIntensities = stackalloc Vector4[PointLightPacking.MaxLights];
+        int count = PointLightPacking.PackViewSpace(pointLights, view, positionRanges, colorIntensities);
+        _gl.SetUniform(_shader.UniPointLightCount, count);
+        for (int i = 0; i < count; i++)
+        {
+            _gl.SetUniform(_shader.UniPointLightPositionRanges[i], positionRanges[i]);
+            _gl.SetUniform(_shader.UniPointLightColorIntensities[i], colorIntensities[i]);
+        }
+    }
+
+    private void ApplySpotLights(IReadOnlyList<SpotLightData> spotLights, Matrix4x4 view)
+    {
+        Span<Vector4> positions = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> directions = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> colors = stackalloc Vector4[SpotLightPacking.MaxLights];
+        Span<Vector4> cones = stackalloc Vector4[SpotLightPacking.MaxLights];
+        int count = SpotLightPacking.PackViewSpace(spotLights, view, positions, directions, colors, cones);
+        _gl.SetUniform(_shader.UniSpotLightCount, count);
+        for (int i = 0; i < count; i++)
+        {
+            _gl.SetUniform(_shader.UniSpotLightPositionRanges[i], positions[i]);
+            _gl.SetUniform(_shader.UniSpotLightDirectionOuterCosines[i], directions[i]);
+            _gl.SetUniform(_shader.UniSpotLightColorIntensities[i], colors[i]);
+            _gl.SetUniform(_shader.UniSpotLightConeParameters[i], cones[i]);
+        }
+    }
+
     private static float GetTextureMode(ITexture2D? texture)
     {
         return texture is null
@@ -415,6 +454,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         Vector3 lightDirection,
         Vector3 ambientLightColor,
         float ambientLightStrength,
+        IReadOnlyList<PointLightData> pointLights,
+        IReadOnlyList<SpotLightData> spotLights,
         bool enableShadow,
         ShadowMapBinding? shadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -456,6 +497,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 shadowAvailable ? Math.Max(0.0f, shadowMap!.Value.Bias) : 0.0f,
                 shadowAvailable ? shadowMap!.Value.TexelSize.X : 0.0f)
         };
+        PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
+        PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
 
         CommandList commands = _renderer.CommandList;
         commands.UpdateBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
@@ -715,6 +758,14 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_Parameters;
             mat4 u_ShadowWVP;
             vec4 u_ShadowParameters;
+            vec4 u_PointLightMeta;
+            vec4 u_PointLightPositionRange[16];
+            vec4 u_PointLightColorIntensity[16];
+            vec4 u_SpotLightMeta;
+            vec4 u_SpotLightPositionRange[16];
+            vec4 u_SpotLightDirectionOuterCosine[16];
+            vec4 u_SpotLightColorIntensity[16];
+            vec4 u_SpotLightConeParameters[16];
         } u_Frame;
 
         layout(location = 0) in vec3 in_Pos;
@@ -749,6 +800,14 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_Parameters;
             mat4 u_ShadowWVP;
             vec4 u_ShadowParameters;
+            vec4 u_PointLightMeta;
+            vec4 u_PointLightPositionRange[16];
+            vec4 u_PointLightColorIntensity[16];
+            vec4 u_SpotLightMeta;
+            vec4 u_SpotLightPositionRange[16];
+            vec4 u_SpotLightDirectionOuterCosine[16];
+            vec4 u_SpotLightColorIntensity[16];
+            vec4 u_SpotLightConeParameters[16];
         } u_Frame;
 
         layout(set = 0, binding = 1) uniform texture2D u_ShadowMap;
@@ -889,9 +948,70 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                     * u_Material.u_Specular.rgb * u_Frame.u_LightColor.rgb;
             }
 
+            vec3 pointDiffuse = vec3(0.0);
+            vec3 pointSpecular = vec3(0.0);
+            int pointLightCount = min(int(u_Frame.u_PointLightMeta.x + 0.5), 16);
+            for (int i = 0; i < pointLightCount; ++i)
+            {
+                vec4 positionRange = u_Frame.u_PointLightPositionRange[i];
+                vec4 colorIntensity = u_Frame.u_PointLightColorIntensity[i];
+                vec3 toLight = positionRange.xyz - vs_Pos;
+                float distanceToLight = length(toLight);
+                float range = max(positionRange.w, 0.0001);
+                if (distanceToLight >= range)
+                {
+                    continue;
+                }
+
+                vec3 pointDirection = toLight / max(distanceToLight, 0.0001);
+                float pointNdotL = max(dot(normal, pointDirection), 0.0);
+                float falloff = max(1.0 - distanceToLight / range, 0.0);
+                vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff;
+                pointDiffuse += radiance * pointNdotL;
+                if (u_Material.u_Specular.a > 0.0 && pointNdotL > 0.0)
+                {
+                    vec3 pointHalfVector = normalize(eyeDir + pointDirection);
+                    pointSpecular += pow(max(0.0, dot(pointHalfVector, normal)), u_Material.u_Specular.a)
+                        * u_Material.u_Specular.rgb * radiance;
+                }
+            }
+
+            vec3 spotDiffuse = vec3(0.0);
+            vec3 spotSpecular = vec3(0.0);
+            int spotLightCount = min(int(u_Frame.u_SpotLightMeta.x + 0.5), 16);
+            for (int i = 0; i < spotLightCount; ++i)
+            {
+                vec4 positionRange = u_Frame.u_SpotLightPositionRange[i];
+                vec4 directionOuter = u_Frame.u_SpotLightDirectionOuterCosine[i];
+                vec4 colorIntensity = u_Frame.u_SpotLightColorIntensity[i];
+                vec3 lightToSurface = vs_Pos - positionRange.xyz;
+                float distanceToLight = length(lightToSurface);
+                float range = max(positionRange.w, 0.0001);
+                if (distanceToLight >= range)
+                {
+                    continue;
+                }
+
+                vec3 fromLight = lightToSurface / max(distanceToLight, 0.0001);
+                float cone = smoothstep(directionOuter.w, u_Frame.u_SpotLightConeParameters[i].x,
+                    dot(fromLight, normalize(directionOuter.xyz)));
+                vec3 surfaceToLight = -fromLight;
+                float spotNdotL = max(dot(normal, surfaceToLight), 0.0);
+                float falloff = max(1.0 - distanceToLight / range, 0.0);
+                vec3 radiance = colorIntensity.rgb * colorIntensity.a * falloff * falloff * cone;
+                spotDiffuse += radiance * spotNdotL;
+                if (u_Material.u_Specular.a > 0.0 && spotNdotL > 0.0)
+                {
+                    vec3 spotHalfVector = normalize(eyeDir + surfaceToLight);
+                    spotSpecular += pow(max(0.0, dot(spotHalfVector, normal)), u_Material.u_Specular.a)
+                        * u_Material.u_Specular.rgb * radiance;
+                }
+            }
+
             vec3 ambient = albedo * u_Material.u_Ambient.rgb
                 * u_Frame.u_AmbientLightColor.rgb * u_Frame.u_Parameters.x;
-            out_Color = vec4(clamp((baseColor * litColor) + specular + ambient, vec3(0.0), vec3(1.0)), alpha);
+            out_Color = vec4(clamp((baseColor * (litColor + pointDiffuse + spotDiffuse))
+                + specular + pointSpecular + spotSpecular + ambient, vec3(0.0), vec3(1.0)), alpha);
         }
         """;
 }

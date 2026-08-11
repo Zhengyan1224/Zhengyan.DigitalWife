@@ -21,6 +21,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly List<EditorParticleObject> _particleObjects = [];
     private readonly List<EditorWaterObject> _waterObjects = [];
     private readonly List<EditorPlaneObject> _planeObjects = [];
+    private readonly List<PointLightData> _pointLights = [];
+    private readonly List<SpotLightData> _spotLights = [];
     private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioClip> _audioClips = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioSource> _audioSources = new(StringComparer.OrdinalIgnoreCase);
@@ -183,6 +185,16 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             DrawOrder = 905
         });
 
+        _ = AddComponent(new EditorPointLightGizmoComponent(this, _camera)
+        {
+            DrawOrder = 910
+        });
+
+        _ = AddComponent(new EditorSpotLightGizmoComponent(this, _camera)
+        {
+            DrawOrder = 912
+        });
+
         _overlay = AddComponent(new GameEditorOverlayComponent(this)
         {
             DrawOrder = int.MaxValue,
@@ -213,6 +225,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             _runtimeSettingsApplyPending = false;
             ApplyRuntimeSettings();
         }
+
+        RefreshPointLights();
+        RefreshSpotLights();
 
         base.Update(gameTime);
     }
@@ -1146,6 +1161,52 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
     }
 
+    public void AddPointLightEntity()
+    {
+        int lightNumber = Project.Scene.Entities.Count(entity => IsPointLightEntity(entity)) + 1;
+        GameEntity entity = new()
+        {
+            Name = $"Point Light {lightNumber}",
+            Type = "point_light",
+            Transform = new TransformSettings
+            {
+                Position = new Vector3Dto(0.0f, 2.0f, 0.0f),
+                RotationDegrees = Vector3Dto.Zero,
+                Scale = Vector3Dto.One
+            },
+            PointLight = new PointLightSettings()
+        };
+
+        Project.Scene.Entities.Add(entity);
+        SelectedEntityIndex = Project.Scene.Entities.Count - 1;
+        RefreshPointLights();
+        InvalidateDebugDraw();
+        UpdateStatus($"Added point light: {entity.Name}");
+    }
+
+    public void AddSpotLightEntity()
+    {
+        int lightNumber = Project.Scene.Entities.Count(IsSpotLightEntity) + 1;
+        GameEntity entity = new()
+        {
+            Name = $"Spot Light {lightNumber}",
+            Type = "spot_light",
+            Transform = new TransformSettings
+            {
+                Position = new Vector3Dto(0.0f, 2.0f, 0.0f),
+                RotationDegrees = new Vector3Dto(-25.0f, 0.0f, 0.0f),
+                Scale = Vector3Dto.One
+            },
+            SpotLight = new SpotLightSettings()
+        };
+
+        Project.Scene.Entities.Add(entity);
+        SelectedEntityIndex = Project.Scene.Entities.Count - 1;
+        RefreshSpotLights();
+        InvalidateDebugDraw();
+        UpdateStatus($"Added spotlight: {entity.Name}");
+    }
+
     public void AddEmptyEntity()
     {
         GameEntity entity = new()
@@ -1318,6 +1379,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         RemoveWaterRippleEntries(entity.Id);
+        RefreshPointLights();
+        RefreshSpotLights();
         ApplyAllRelationsToRuntime();
         SelectedEntityIndex = Math.Min(SelectedEntityIndex, Project.Scene.Entities.Count - 1);
         InvalidateDebugDraw();
@@ -1347,6 +1410,22 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         if (string.Equals(entity.Type, "textured_plane", StringComparison.OrdinalIgnoreCase))
         {
             ApplySelectedPlaneToRuntime();
+            return;
+        }
+
+        if (IsPointLightEntity(entity))
+        {
+            RefreshPointLights();
+            InvalidateDebugDraw();
+            UpdateStatus($"Updated point light: {entity.Name}");
+            return;
+        }
+
+        if (IsSpotLightEntity(entity))
+        {
+            RefreshSpotLights();
+            InvalidateDebugDraw();
+            UpdateStatus($"Updated spotlight: {entity.Name}");
             return;
         }
 
@@ -1949,6 +2028,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         excluded.AddRange(Components.OfType<EditorDebugAxesComponent>());
         excluded.AddRange(Components.OfType<EditorColliderWireframeComponent>());
+        excluded.AddRange(Components.OfType<EditorPointLightGizmoComponent>());
+        excluded.AddRange(Components.OfType<EditorSpotLightGizmoComponent>());
         return excluded;
     }
 
@@ -1979,6 +2060,18 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
         return normalized is "empty" or "empty_object" or "game_object";
+    }
+
+    internal static bool IsPointLightEntity(GameEntity entity)
+    {
+        string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized is "point_light" or "pointlight";
+    }
+
+    internal static bool IsSpotLightEntity(GameEntity entity)
+    {
+        string normalized = (entity.Type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized is "spot_light" or "spotlight";
     }
 
     public void PlayOrPauseAudio(AudioAsset audioAsset)
@@ -2128,6 +2221,20 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         if (!string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
         {
+            if (IsPointLightEntity(entity))
+            {
+                RefreshPointLights();
+                UpdateStatus($"Loaded point light: {entity.Name}");
+                return true;
+            }
+
+            if (IsSpotLightEntity(entity))
+            {
+                RefreshSpotLights();
+                UpdateStatus($"Loaded spotlight: {entity.Name}");
+                return true;
+            }
+
             if (IsEmptyEntity(entity))
             {
                 UpdateStatus($"Loaded empty object: {entity.Name}");
@@ -2523,6 +2630,53 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         model.AmbientLightColor = lighting.AmbientColor.ToVector3();
         model.AmbientLightStrength = lighting.AmbientStrength;
         model.ShadowColor = lighting.ShadowColor.ToVector4();
+        model.PointLights = _pointLights;
+        model.SpotLights = _spotLights;
+    }
+
+    private void RefreshPointLights()
+    {
+        _pointLights.Clear();
+        foreach (GameEntity entity in Project.Scene.Entities)
+        {
+            if (!IsPointLightEntity(entity))
+            {
+                continue;
+            }
+
+            PointLightSettings light = entity.PointLight ??= new PointLightSettings();
+            _pointLights.Add(new PointLightData(
+                entity.Transform.Position.ToVector3(),
+                light.Color.ToVector3(),
+                light.Intensity,
+                light.Range,
+                light.Enabled,
+                light.CastShadows));
+        }
+    }
+
+    private void RefreshSpotLights()
+    {
+        _spotLights.Clear();
+        foreach (GameEntity entity in Project.Scene.Entities)
+        {
+            if (!IsSpotLightEntity(entity))
+            {
+                continue;
+            }
+
+            SpotLightSettings light = entity.SpotLight ??= new SpotLightSettings();
+            _spotLights.Add(new SpotLightData(
+                entity.Transform.Position.ToVector3(),
+                SpotLightTransform.GetDirectionFromEulerDegrees(entity.Transform.RotationDegrees.ToVector3()),
+                light.Color.ToVector3(),
+                light.Intensity,
+                light.Range,
+                light.InnerConeAngleDegrees,
+                light.OuterConeAngleDegrees,
+                light.Enabled,
+                light.CastShadows));
+        }
     }
 
     private void UpdateWaterInteractions(GameTime gameTime)
