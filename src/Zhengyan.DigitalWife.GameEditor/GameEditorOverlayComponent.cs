@@ -50,6 +50,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         "side_scroller",
         "cinematic_follow",
         "orbital_follow",
+        "vmd",
         "custom"
     ];
 
@@ -2248,6 +2249,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         lightingChanged |= ImGui.ColorEdit3("Ambient color", ref ambientColor);
         lightingChanged |= ImGui.SliderFloat("Ambient strength", ref ambientStrength, 0.0f, 2.0f);
         lightingChanged |= ImGui.ColorEdit4("Clear color", ref clearColor);
+        lightingChanged |= DrawVmdPlaybackSettings(scene.Lighting.Vmd, "lightingVmd");
         if (lightingChanged)
         {
             scene.Lighting.LightDirection = Vector3Dto.FromVector3(lightDirection);
@@ -2381,6 +2383,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 changed |= ImGui.DragFloat("Orthographic size", ref orthoSize, 0.05f, 0.01f, 10000.0f);
                 changed |= ImGui.DragFloat("Near clip", ref nearClip, 0.01f, 0.001f, 10000.0f);
                 changed |= ImGui.DragFloat("Far clip", ref farClip, 1.0f, 0.01f, 1000000.0f);
+                changed |= DrawVmdPlaybackSettings(camera.Camera.Vmd, $"cameraVmd{i}");
                 if (ImGui.TreeNode("Viewport"))
                 {
                     changed |= ImGui.Checkbox("Enable viewport", ref viewportEnabled);
@@ -2433,6 +2436,63 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             scene.Cameras.RemoveAt(removeIndex);
             _editorGame.ApplyCameraSettings();
         }
+    }
+
+    private bool DrawVmdPlaybackSettings(VmdPlaybackSettings settings, string id)
+    {
+        bool changed = false;
+        ImGui.PushID(id);
+        if (ImGui.TreeNode("VMD animation"))
+        {
+            string path = settings.Path;
+            bool playing = settings.IsPlaying;
+            bool loop = settings.Loop;
+            float speed = settings.PlaybackSpeed;
+            float frame = settings.Frame;
+            changed |= DrawTextInputWithPaste("VMD path", ref path, 1024, "vmdPath");
+            MotionAsset? selectedMotion = _editorGame.Project.Scene.Motions.FirstOrDefault(item =>
+                string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase));
+            string motionPreview = selectedMotion?.Name ?? "(select motion asset)";
+            if (ImGui.BeginCombo("Motion asset", motionPreview))
+            {
+                foreach (MotionAsset motion in _editorGame.Project.Scene.Motions)
+                {
+                    bool selected = string.Equals(motion.Path, path, StringComparison.OrdinalIgnoreCase);
+                    if (ImGui.Selectable($"{motion.Name}##{motion.Path}", selected))
+                    {
+                        path = motion.Path;
+                        changed = true;
+                    }
+                }
+
+                ImGui.EndCombo();
+            }
+            changed |= ImGui.Checkbox("Play", ref playing);
+            changed |= ImGui.Checkbox("Loop", ref loop);
+            changed |= ImGui.DragFloat("Playback speed", ref speed, 0.01f, 0.0f, 10.0f);
+            changed |= ImGui.DragFloat("Frame", ref frame, 1.0f, 0.0f, 1000000.0f);
+            if (ImGui.Button("Restart"))
+            {
+                frame = 0.0f;
+                playing = true;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                settings.Path = GameProjectPath.NormalizePathText(path);
+                settings.IsPlaying = playing;
+                settings.Loop = loop;
+                settings.PlaybackSpeed = Math.Max(0.0f, speed);
+                settings.Frame = Math.Max(0.0f, frame);
+            }
+
+            ImGui.TextDisabled("Camera/light tracks are independent. VMD ground-shadow frames are ignored.");
+            ImGui.TreePop();
+        }
+
+        ImGui.PopID();
+        return changed;
     }
 
     private void DrawRenderTexturesInspector(GameProjectScene scene)

@@ -12,6 +12,7 @@ keywords:
   - look_at
   - fps
   - cursor
+  - vmd
 ---
 
 # Camera API
@@ -30,6 +31,32 @@ keywords:
 ## API 内容
 
 相机支持多相机、主相机、投影参数、相机控制模式、射线、Render Texture 绑定。
+
+## VMD 相机动画
+
+每台场景相机都能独立绑定一个 VMD。GameEditor 在 `Cameras -> <camera> -> VMD animation` 中设置路径、播放、循环、速度和当前帧。VMD 以 30 FPS 推进，相机位置、目标点、FOV 和透视/正交标记会随动作更新。
+
+```csharp
+Scene.Camera.SetCameraVmd("Main Camera", "assets/motions/camera.vmd", loop: true, playbackSpeed: 1.0f);
+Scene.Camera.PauseCameraVmd("Main Camera");
+Scene.Camera.SeekCameraVmd("Main Camera", 120.0f);
+Scene.Camera.SetCameraVmdLoop("Main Camera", true);
+Scene.Camera.SetCameraVmdPlaybackSpeed("Main Camera", 0.75f);
+Scene.Camera.PlayCameraVmd("Main Camera", restart: false);
+Scene.Camera.ClearCameraVmd("Main Camera");
+```
+
+```python
+scene.camera.set_camera_vmd("Main Camera", "assets/motions/camera.vmd", loop=True, playback_speed=1.0)
+scene.camera.pause_camera_vmd("Main Camera")
+scene.camera.seek_camera_vmd("Main Camera", 120.0)
+scene.camera.set_camera_vmd_loop("Main Camera", True)
+scene.camera.set_camera_vmd_playback_speed("Main Camera", 0.75)
+scene.camera.play_camera_vmd("Main Camera", restart=False)
+scene.camera.clear_camera_vmd("Main Camera")
+```
+
+`SetCameraVmd` 会把对应相机控制模式切换为 `vmd`，从而避免鼠标或跟随控制器覆盖动作结果。不同相机可以加载不同 VMD；Render Texture 和多 Viewport 相机也会使用各自的动画状态。
 
 常用属性：
 

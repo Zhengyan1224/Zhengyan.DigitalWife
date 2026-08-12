@@ -176,6 +176,18 @@ public sealed class RuntimeCamera
 
     public IReadOnlyList<string> RenderTextureNames => _scene.RenderTextures.Select(renderTexture => renderTexture.Name).ToArray();
 
+    public string CameraVmdPath(string cameraName) => FindSceneCamera(cameraName)?.Camera.Vmd.Path ?? string.Empty;
+
+    public bool CameraVmdIsPlaying(string cameraName) => FindSceneCamera(cameraName)?.Camera.Vmd.IsPlaying ?? false;
+
+    public float CameraVmdFrame(string cameraName) => FindSceneCamera(cameraName)?.Camera.Vmd.Frame ?? 0.0f;
+
+    public string MainCameraVmdPath => CameraVmdPath(MainCamera);
+
+    public bool MainCameraVmdIsPlaying => CameraVmdIsPlaying(MainCamera);
+
+    public float MainCameraVmdFrame => CameraVmdFrame(MainCamera);
+
     public string RenderTexture(string renderTextureName) => ToRenderTextureReference(renderTextureName);
 
     public void SetMainCamera(string cameraName)
@@ -212,6 +224,72 @@ public sealed class RuntimeCamera
         if (camera.IsMain)
         {
             ApplyCameraSettings(_camera, camera.Camera);
+        }
+    }
+
+    public void SetCameraVmd(string cameraName, string path, bool loop = true, float playbackSpeed = 1.0f, bool play = true)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is null)
+        {
+            return;
+        }
+
+        camera.Camera.Vmd.Path = path ?? string.Empty;
+        camera.Camera.Vmd.Loop = loop;
+        camera.Camera.Vmd.PlaybackSpeed = Math.Max(0.0f, playbackSpeed);
+        camera.Camera.Vmd.Frame = 0.0f;
+        camera.Camera.Vmd.IsPlaying = play;
+        camera.Camera.ControlMode = "vmd";
+        if (camera.IsMain)
+        {
+            _controller.SetMode("vmd");
+        }
+    }
+
+    public void PlayCameraVmd(string cameraName, bool restart = false)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is null) return;
+        if (restart) camera.Camera.Vmd.Frame = 0.0f;
+        camera.Camera.Vmd.IsPlaying = true;
+    }
+
+    public void PauseCameraVmd(string cameraName)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is not null) camera.Camera.Vmd.IsPlaying = false;
+    }
+
+    public void SeekCameraVmd(string cameraName, float frame)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is not null) camera.Camera.Vmd.Frame = Math.Max(0.0f, frame);
+    }
+
+    public void SetCameraVmdLoop(string cameraName, bool loop)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is not null) camera.Camera.Vmd.Loop = loop;
+    }
+
+    public void SetCameraVmdPlaybackSpeed(string cameraName, float playbackSpeed)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is not null) camera.Camera.Vmd.PlaybackSpeed = Math.Max(0.0f, playbackSpeed);
+    }
+
+    public void ClearCameraVmd(string cameraName)
+    {
+        SceneCameraSettings? camera = FindSceneCamera(cameraName);
+        if (camera is null) return;
+        camera.Camera.Vmd.Path = string.Empty;
+        camera.Camera.Vmd.IsPlaying = false;
+        camera.Camera.Vmd.Frame = 0.0f;
+        if (string.Equals(camera.Camera.ControlMode, "vmd", StringComparison.OrdinalIgnoreCase))
+        {
+            camera.Camera.ControlMode = "custom";
+            if (camera.IsMain) _controller.SetMode("custom");
         }
     }
 

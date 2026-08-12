@@ -217,6 +217,9 @@ internal sealed class RuntimeCameraControllerComponent(
             case "custom":
                 Custom();
                 break;
+            case "vmd":
+                SetMode("vmd");
+                break;
             case "editor":
             default:
                 EditorOrbit(OrbitSensitivity, PanSensitivity, ZoomSensitivity);
@@ -346,6 +349,7 @@ internal sealed class RuntimeCameraControllerComponent(
         switch (Mode)
         {
             case "custom":
+            case "vmd":
                 _dragFirstMove = true;
                 return;
             case "fixed":
@@ -888,6 +892,7 @@ internal sealed class RuntimeCameraControllerComponent(
             "ortho_top" => "top_down",
             "cinematic" or "cinematic_follow" or "smooth_follow" => "cinematic_follow",
             "orbital" or "orbital_follow" or "auto_orbit" => "orbital_follow",
+            "motion" or "vmd_motion" => "vmd",
             "static" => "fixed",
             "script" or "scripted" => "custom",
             "" => "editor",

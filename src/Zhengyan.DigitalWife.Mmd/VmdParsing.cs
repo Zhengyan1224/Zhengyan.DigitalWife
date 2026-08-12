@@ -56,7 +56,8 @@ public class VmdCamera(BinaryReader binaryReader)
 
     public uint ViewAngle { get; } = binaryReader.ReadUInt32();
 
-    public bool IsPerspective { get; } = binaryReader.ReadBoolean();
+    // VMD stores 0 for perspective enabled and 1 for perspective disabled.
+    public bool IsPerspective { get; } = !binaryReader.ReadBoolean();
 }
 
 public class VmdLight(BinaryReader binaryReader)

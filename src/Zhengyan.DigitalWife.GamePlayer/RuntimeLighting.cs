@@ -92,6 +92,42 @@ public sealed class RuntimeLighting
         AmbientColor = new Vector3(red, green, blue);
     }
 
+    public string VmdPath => _settings.Vmd.Path;
+
+    public bool VmdIsPlaying => _settings.Vmd.IsPlaying;
+
+    public float VmdFrame => _settings.Vmd.Frame;
+
+    public void SetVmd(string path, bool loop = true, float playbackSpeed = 1.0f, bool play = true)
+    {
+        _settings.Vmd.Path = path ?? string.Empty;
+        _settings.Vmd.Loop = loop;
+        _settings.Vmd.PlaybackSpeed = Math.Max(0.0f, playbackSpeed);
+        _settings.Vmd.Frame = 0.0f;
+        _settings.Vmd.IsPlaying = play;
+    }
+
+    public void PlayVmd(bool restart = false)
+    {
+        if (restart) _settings.Vmd.Frame = 0.0f;
+        _settings.Vmd.IsPlaying = true;
+    }
+
+    public void PauseVmd() => _settings.Vmd.IsPlaying = false;
+
+    public void SeekVmd(float frame) => _settings.Vmd.Frame = Math.Max(0.0f, frame);
+
+    public void SetVmdLoop(bool loop) => _settings.Vmd.Loop = loop;
+
+    public void SetVmdPlaybackSpeed(float playbackSpeed) => _settings.Vmd.PlaybackSpeed = Math.Max(0.0f, playbackSpeed);
+
+    public void ClearVmd()
+    {
+        _settings.Vmd.Path = string.Empty;
+        _settings.Vmd.IsPlaying = false;
+        _settings.Vmd.Frame = 0.0f;
+    }
+
     private static Vector3 ValidateColor(Vector3 color, string parameterName)
     {
         ValidateFinite(color, parameterName);

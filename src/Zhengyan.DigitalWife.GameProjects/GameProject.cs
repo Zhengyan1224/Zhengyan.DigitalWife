@@ -616,6 +616,8 @@ public sealed class CameraSettings
     public float NearClipPlane { get; set; } = 0.1f;
 
     public float FarClipPlane { get; set; } = 1000.0f;
+
+    public VmdPlaybackSettings Vmd { get; set; } = new();
 }
 
 public sealed class SceneCameraSettings
@@ -682,6 +684,21 @@ public sealed class LightingSettings
     public Vector4Dto ShadowColor { get; set; } = new(0.17f, 0.17f, 0.17f, 0.7f);
 
     public Vector4Dto ClearColor { get; set; } = new(0.08f, 0.09f, 0.12f, 1.0f);
+
+    public VmdPlaybackSettings Vmd { get; set; } = new();
+}
+
+public sealed class VmdPlaybackSettings
+{
+    public string Path { get; set; } = string.Empty;
+
+    public bool IsPlaying { get; set; }
+
+    public bool Loop { get; set; } = true;
+
+    public float PlaybackSpeed { get; set; } = 1.0f;
+
+    public float Frame { get; set; }
 }
 
 public sealed class PointLightSettings

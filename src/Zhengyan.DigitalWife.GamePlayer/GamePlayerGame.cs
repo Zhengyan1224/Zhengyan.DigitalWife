@@ -37,6 +37,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly Dictionary<string, AudioSource> _audioSources = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ScriptHost _scriptHost;
+    private readonly SceneVmdAnimationController _sceneVmdAnimations;
     private LoadingScreenComponent? _loadingScreen;
     private RuntimeGuiOverlayComponent? _guiOverlay;
     private RuntimeCameraControllerComponent? _cameraController;
@@ -81,6 +82,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _projectDirectory = projectSession.ProjectDirectory;
         _saveDirectory = projectSession.SaveDirectory;
         _scriptHost = new ScriptHost(_projectDirectory);
+        _sceneVmdAnimations = new SceneVmdAnimationController(ResolveProjectPath);
     }
 
     public GameProject Project { get; private set; } = new();
@@ -284,7 +286,25 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             return;
         }
 
+        if (_sceneVmdAnimations.Update(Project.Scene, (float)gameTime.ElapsedSeconds))
+        {
+            ApplyAnimatedSceneVmdState();
+        }
+
         UpdateWaterInteractions(gameTime);
+    }
+
+    private void ApplyAnimatedSceneVmdState()
+    {
+        EnsureSceneCameras();
+        SceneCameraSettings main = Project.Scene.Cameras.First(camera => camera.IsMain);
+        _camera.SetLookAt(main.Camera.Position.ToVector3(), main.Camera.Target.ToVector3());
+        _camera.Fov = main.Camera.Fov;
+        _camera.ProjectionMode = NormalizeProjectionMode(main.Camera.ProjectionMode) == "orthographic"
+            ? CameraProjectionMode.Orthographic
+            : CameraProjectionMode.Perspective;
+        _renderTextureManager?.SyncCameras(_camera);
+        RefreshSceneLighting();
     }
 
     protected override void Draw(GameTime gameTime)
@@ -670,6 +690,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     protected override void UnloadContent()
     {
+        _sceneVmdAnimations.Dispose();
         ClearRuntimeScene();
         _shadowMapRenderer?.Dispose();
         _shadowMapRenderer = null;

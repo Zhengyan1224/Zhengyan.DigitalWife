@@ -16,6 +16,7 @@ keywords:
   - spotlight
   - intensity
   - range
+  - vmd
 ---
 
 # 光照 API
@@ -32,6 +33,32 @@ keywords:
 | 说明 | 动态控制平行光、环境光、点光源和射灯。 |
 
 ## 平行光和环境光
+
+### VMD 光照动画
+
+场景光照可独立加载光照 VMD，不要求与相机使用同一文件。VMD 光照帧控制平行光颜色和方向，按 30 FPS 播放；环境光保持项目或脚本设置。VMD 内的地面阴影帧被引擎明确忽略，不会改变现有方向光、点光源或射灯阴影设置。
+
+```csharp
+Scene.Lighting.SetVmd("assets/motions/light.vmd", loop: true, playbackSpeed: 1.0f);
+Scene.Lighting.PauseVmd();
+Scene.Lighting.SeekVmd(90.0f);
+Scene.Lighting.SetVmdLoop(true);
+Scene.Lighting.SetVmdPlaybackSpeed(0.75f);
+Scene.Lighting.PlayVmd(restart: false);
+Scene.Lighting.ClearVmd();
+```
+
+```python
+scene.lighting.set_vmd("assets/motions/light.vmd", loop=True, playback_speed=1.0)
+scene.lighting.pause_vmd()
+scene.lighting.seek_vmd(90.0)
+scene.lighting.set_vmd_loop(True)
+scene.lighting.set_vmd_playback_speed(0.75)
+scene.lighting.play_vmd(restart=False)
+scene.lighting.clear_vmd()
+```
+
+C# 可读取 `VmdPath`、`VmdIsPlaying` 和 `VmdFrame`。GameEditor 的场景 Lighting 区域提供相同的路径、播放、循环、速度和帧控制。
 
 `Scene.Lighting` / `scene.lighting` 控制当前场景的全局平行光和环境光。修改会立即同步到当前已经加载的 PMX 模型，不需要重新加载场景。
 

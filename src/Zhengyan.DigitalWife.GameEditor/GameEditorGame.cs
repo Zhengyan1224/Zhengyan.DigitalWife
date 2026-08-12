@@ -28,6 +28,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly Dictionary<string, AudioSource> _audioSources = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _resourceImportCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _statusLog = [];
+    private readonly SceneVmdAnimationController _sceneVmdAnimations;
 
     private SceneRenderTarget? _sceneRenderTarget;
     private OrbitCameraController? _cameraController;
@@ -58,6 +59,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         ProjectDirectory = GameProjectStore.CreateDefaultProjectDirectory();
         Project = CreateDefaultProject();
         Project.Runtime.GraphicsBackend = graphicsBackend.ToSettingValue();
+        _sceneVmdAnimations = new SceneVmdAnimationController(path => GameProjectPath.ToAbsolute(ProjectDirectory, path));
     }
 
     public GameProject Project { get; private set; }
@@ -236,7 +238,25 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     protected override void LateUpdate(GameTime gameTime)
     {
+        if (_sceneVmdAnimations.Update(Project.Scene, (float)gameTime.ElapsedSeconds))
+        {
+            ApplyAnimatedSceneVmdState();
+        }
+
         UpdateWaterInteractions(gameTime);
+    }
+
+    private void ApplyAnimatedSceneVmdState()
+    {
+        EnsureSceneCameras();
+        SceneCameraSettings main = Project.Scene.Cameras.First(camera => camera.IsMain);
+        _camera.SetLookAt(main.Camera.Position.ToVector3(), main.Camera.Target.ToVector3());
+        _camera.Fov = main.Camera.Fov;
+        _camera.ProjectionMode = NormalizeProjectionMode(main.Camera.ProjectionMode) == "orthographic"
+            ? CameraProjectionMode.Orthographic
+            : CameraProjectionMode.Perspective;
+        _renderTextureManager?.SyncCameras(_camera);
+        ApplySceneSettings();
     }
 
     protected override void Draw(GameTime gameTime)
@@ -631,6 +651,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
     protected override void UnloadContent()
     {
+        _sceneVmdAnimations.Dispose();
         ClearSceneRuntime();
         _shadowMapRenderer?.Dispose();
         _shadowMapRenderer = null;
@@ -1704,6 +1725,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         GameProjectScene scene = Project.Scene;
         scene.LoadingScreen.BackgroundImagePath = ImportOptionalResource(scene.LoadingScreen.BackgroundImagePath, "loading", ref imported, warnings);
         scene.Skybox.TexturePath = ImportOptionalResource(scene.Skybox.TexturePath, "skybox", ref imported, warnings);
+        scene.Lighting.Vmd.Path = ImportOptionalResource(scene.Lighting.Vmd.Path, "motions", ref imported, warnings);
+
+        foreach (SceneCameraSettings camera in scene.Cameras)
+        {
+            camera.Camera.Vmd.Path = ImportOptionalResource(camera.Camera.Vmd.Path, "motions", ref imported, warnings);
+        }
 
         foreach (AudioAsset audio in scene.Audio)
         {

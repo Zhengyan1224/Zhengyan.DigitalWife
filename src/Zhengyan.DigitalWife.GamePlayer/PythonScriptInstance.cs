@@ -1610,6 +1610,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.orthographic_size = data.get("orthographicSize", 5)
                        self.near_clip_plane = data.get("nearClipPlane", 0.1)
                        self.far_clip_plane = data.get("farClipPlane", 1000)
+                       self.vmd_path = data.get("vmdPath", "")
+                       self.vmd_is_playing = bool(data.get("vmdIsPlaying", False))
+                       self.vmd_frame = float(data.get("vmdFrame", 0.0))
                        self.width = max(data.get("width", 1), 1)
                        self.height = max(data.get("height", 1), 1)
                        self._commands = commands
@@ -1654,6 +1657,27 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_camera_look_at(self, camera_name, px, py, pz, tx, ty, tz):
                        self._commands.append({"target": "camera", "action": "set_camera_look_at", "name": camera_name, "x": px, "y": py, "z": pz, "targetX": tx, "targetY": ty, "targetZ": tz})
+
+                   def set_camera_vmd(self, camera_name, path, loop=True, playback_speed=1.0, play=True):
+                       self._commands.append({"target": "camera", "action": "set_camera_vmd", "name": camera_name, "path": path, "flag": bool(loop), "speed": playback_speed, "play": bool(play)})
+
+                   def play_camera_vmd(self, camera_name, restart=False):
+                       self._commands.append({"target": "camera", "action": "play_camera_vmd", "name": camera_name, "flag": bool(restart)})
+
+                   def pause_camera_vmd(self, camera_name):
+                       self._commands.append({"target": "camera", "action": "pause_camera_vmd", "name": camera_name})
+
+                   def seek_camera_vmd(self, camera_name, frame):
+                       self._commands.append({"target": "camera", "action": "seek_camera_vmd", "name": camera_name, "value": frame})
+
+                   def set_camera_vmd_loop(self, camera_name, loop):
+                       self._commands.append({"target": "camera", "action": "set_camera_vmd_loop", "name": camera_name, "flag": bool(loop)})
+
+                   def set_camera_vmd_playback_speed(self, camera_name, speed):
+                       self._commands.append({"target": "camera", "action": "set_camera_vmd_playback_speed", "name": camera_name, "speed": speed})
+
+                   def clear_camera_vmd(self, camera_name):
+                       self._commands.append({"target": "camera", "action": "clear_camera_vmd", "name": camera_name})
 
                    def bind_render_texture_camera(self, render_texture_name, camera_name):
                        self._commands.append({"target": "camera", "action": "bind_render_texture_camera", "name": render_texture_name, "camera": camera_name})
@@ -1880,6 +1904,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.directional_direction = data.get("directionalDirection", [-0.5, -1.0, -0.5])
                        self.ambient_color = data.get("ambientColor", [0.65, 0.65, 0.65])
                        self.ambient_strength = float(data.get("ambientStrength", 0.25))
+                       self.vmd_path = data.get("vmdPath", "")
+                       self.vmd_is_playing = bool(data.get("vmdIsPlaying", False))
+                       self.vmd_frame = float(data.get("vmdFrame", 0.0))
                        self._commands = commands
 
                    def set_directional_color(self, red, green, blue):
@@ -1893,6 +1920,27 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_ambient_strength(self, strength):
                        self._commands.append({"target": "lighting", "action": "set_ambient_strength", "value": strength})
+
+                   def set_vmd(self, path, loop=True, playback_speed=1.0, play=True):
+                       self._commands.append({"target": "lighting", "action": "set_vmd", "path": path, "flag": bool(loop), "speed": playback_speed, "play": bool(play)})
+
+                   def play_vmd(self, restart=False):
+                       self._commands.append({"target": "lighting", "action": "play_vmd", "flag": bool(restart)})
+
+                   def pause_vmd(self):
+                       self._commands.append({"target": "lighting", "action": "pause_vmd"})
+
+                   def seek_vmd(self, frame):
+                       self._commands.append({"target": "lighting", "action": "seek_vmd", "value": frame})
+
+                   def set_vmd_loop(self, loop):
+                       self._commands.append({"target": "lighting", "action": "set_vmd_loop", "flag": bool(loop)})
+
+                   def set_vmd_playback_speed(self, speed):
+                       self._commands.append({"target": "lighting", "action": "set_vmd_playback_speed", "speed": speed})
+
+                   def clear_vmd(self):
+                       self._commands.append({"target": "lighting", "action": "clear_vmd"})
 
                class Scene:
                    def __init__(self, data, commands):
@@ -3516,6 +3564,27 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     target.Y,
                     target.Z);
                 break;
+            case "set_camera_vmd" when !string.IsNullOrWhiteSpace(command.Name) && command.Path is not null:
+                camera.SetCameraVmd(command.Name!, command.Path, command.Flag ?? true, (float)(command.Speed ?? 1.0), command.Play ?? true);
+                break;
+            case "play_camera_vmd" when !string.IsNullOrWhiteSpace(command.Name):
+                camera.PlayCameraVmd(command.Name!, command.Flag ?? false);
+                break;
+            case "pause_camera_vmd" when !string.IsNullOrWhiteSpace(command.Name):
+                camera.PauseCameraVmd(command.Name!);
+                break;
+            case "seek_camera_vmd" when !string.IsNullOrWhiteSpace(command.Name) && command.Value.HasValue:
+                camera.SeekCameraVmd(command.Name!, (float)command.Value.Value);
+                break;
+            case "set_camera_vmd_loop" when !string.IsNullOrWhiteSpace(command.Name) && command.Flag.HasValue:
+                camera.SetCameraVmdLoop(command.Name!, command.Flag.Value);
+                break;
+            case "set_camera_vmd_playback_speed" when !string.IsNullOrWhiteSpace(command.Name) && command.Speed.HasValue:
+                camera.SetCameraVmdPlaybackSpeed(command.Name!, (float)command.Speed.Value);
+                break;
+            case "clear_camera_vmd" when !string.IsNullOrWhiteSpace(command.Name):
+                camera.ClearCameraVmd(command.Name!);
+                break;
             case "bind_render_texture_camera" when !string.IsNullOrWhiteSpace(command.Name) && !string.IsNullOrWhiteSpace(command.Camera):
                 camera.BindRenderTextureCamera(command.Name!, command.Camera!);
                 break;
@@ -4235,6 +4304,27 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_ambient_strength" when command.Value.HasValue:
                 scene.Lighting.AmbientStrength = (float)command.Value.Value;
+                break;
+            case "set_vmd" when command.Path is not null:
+                scene.Lighting.SetVmd(command.Path, command.Flag ?? true, (float)(command.Speed ?? 1.0), command.Play ?? true);
+                break;
+            case "play_vmd":
+                scene.Lighting.PlayVmd(command.Flag ?? false);
+                break;
+            case "pause_vmd":
+                scene.Lighting.PauseVmd();
+                break;
+            case "seek_vmd" when command.Value.HasValue:
+                scene.Lighting.SeekVmd((float)command.Value.Value);
+                break;
+            case "set_vmd_loop" when command.Flag.HasValue:
+                scene.Lighting.SetVmdLoop(command.Flag.Value);
+                break;
+            case "set_vmd_playback_speed" when command.Speed.HasValue:
+                scene.Lighting.SetVmdPlaybackSpeed((float)command.Speed.Value);
+                break;
+            case "clear_vmd":
+                scene.Lighting.ClearVmd();
                 break;
         }
     }
@@ -5424,6 +5514,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float AmbientStrength { get; set; } = 0.25f;
 
+        public string VmdPath { get; set; } = string.Empty;
+
+        public bool VmdIsPlaying { get; set; }
+
+        public float VmdFrame { get; set; }
+
         public static PythonLighting FromRuntime(RuntimeLighting lighting)
         {
             return new PythonLighting
@@ -5431,7 +5527,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 DirectionalColor = [lighting.DirectionalColor.X, lighting.DirectionalColor.Y, lighting.DirectionalColor.Z],
                 DirectionalDirection = [lighting.DirectionalDirection.X, lighting.DirectionalDirection.Y, lighting.DirectionalDirection.Z],
                 AmbientColor = [lighting.AmbientColor.X, lighting.AmbientColor.Y, lighting.AmbientColor.Z],
-                AmbientStrength = lighting.AmbientStrength
+                AmbientStrength = lighting.AmbientStrength,
+                VmdPath = lighting.VmdPath,
+                VmdIsPlaying = lighting.VmdIsPlaying,
+                VmdFrame = lighting.VmdFrame
             };
         }
     }
@@ -5656,6 +5755,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float FarClipPlane { get; set; }
 
+        public string VmdPath { get; set; } = string.Empty;
+
+        public bool VmdIsPlaying { get; set; }
+
+        public float VmdFrame { get; set; }
+
         public int Width { get; set; }
 
         public string Title { get; set; } = string.Empty;
@@ -5680,6 +5785,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 OrthographicSize = camera.OrthographicSize,
                 NearClipPlane = camera.NearClipPlane,
                 FarClipPlane = camera.FarClipPlane,
+                VmdPath = camera.MainCameraVmdPath,
+                VmdIsPlaying = camera.MainCameraVmdIsPlaying,
+                VmdFrame = camera.MainCameraVmdFrame,
                 Width = camera.Width,
                 Height = camera.Height
             };
@@ -6234,6 +6342,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public int? SpeakerId { get; set; }
 
         public double? Speed { get; set; }
+
+        public bool? Play { get; set; }
 
         public bool? BindComponentTransform { get; set; }
 
