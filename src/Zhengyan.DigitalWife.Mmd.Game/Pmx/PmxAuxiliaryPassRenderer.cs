@@ -149,8 +149,6 @@ internal sealed unsafe class OpenGlPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassR
         resources.GroundShadowUniformBuffer.Update(new ReadOnlySpan<PmxGpuResources.PmxGroundShadowUniformData>(in data));
 
         _gl.Enable(GLEnum.DepthTest);
-        _gl.Enable(GLEnum.PolygonOffsetFill);
-        _gl.PolygonOffset(-1.0f, -1.0f);
         _gl.DepthMask(false);
         if (shadowColor.W < 1.0f)
         {
@@ -183,7 +181,6 @@ internal sealed unsafe class OpenGlPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassR
         _gl.UseProgram(0);
         _gl.DepthMask(true);
         _gl.Disable(GLEnum.StencilTest);
-        _gl.Disable(GLEnum.PolygonOffsetFill);
         return count;
     }
 
@@ -202,7 +199,9 @@ internal sealed unsafe class OpenGlPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassR
         resources.ShadowDepthUniformBuffer.Update(new ReadOnlySpan<PmxGpuResources.PmxShadowDepthUniformData>(in data));
         _gl.Enable(GLEnum.DepthTest);
         _gl.Enable(GLEnum.PolygonOffsetFill);
-        _gl.PolygonOffset(1.5f, 2.0f);
+        // Keep the slope term for self-shadow acne, but avoid the implementation-dependent
+        // constant units term which can detach contact shadows on floating-point depth maps.
+        _gl.PolygonOffset(1.5f, 0.0f);
         _gl.DepthMask(true);
         _gl.Disable(GLEnum.Blend);
         _gl.UseProgram(_shadowDepthShader.Id);
