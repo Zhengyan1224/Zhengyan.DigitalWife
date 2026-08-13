@@ -40,14 +40,18 @@ public class VmdNodeController(MMDNode @object) : VmdAnimationController<VmdNode
 
                 float timeRange = (float)key1.Time - key0.Time;
                 float time = (t - key0.Time) / timeRange;
-                float tx_x = key0.TxBezier.FindBezierX(time);
-                float ty_x = key0.TyBezier.FindBezierX(time);
-                float tz_x = key0.TzBezier.FindBezierX(time);
-                float rot_x = key0.RotBezier.FindBezierX(time);
-                float tx_y = key0.TxBezier.EvalY(tx_x);
-                float ty_y = key0.TyBezier.EvalY(ty_x);
-                float tz_y = key0.TzBezier.EvalY(tz_x);
-                float rot_y = key0.RotBezier.EvalY(rot_x);
+                // VMD stores the interpolation curve for [key0, key1] on key1.
+                // Adjacent integer frames have no in-between MMD sample, so keep
+                // key0 until evaluation reaches key1 exactly.
+                float curveTime = timeRange <= 1.0f ? 0.0f : time;
+                float tx_x = key1.TxBezier.FindBezierX(curveTime);
+                float ty_x = key1.TyBezier.FindBezierX(curveTime);
+                float tz_x = key1.TzBezier.FindBezierX(curveTime);
+                float rot_x = key1.RotBezier.FindBezierX(curveTime);
+                float tx_y = key1.TxBezier.EvalY(tx_x);
+                float ty_y = key1.TyBezier.EvalY(ty_x);
+                float tz_y = key1.TzBezier.EvalY(tz_x);
+                float rot_y = key1.RotBezier.EvalY(rot_x);
 
                 vt = MathHelper.Lerp(key0.Translate, key1.Translate, new Vector3(tx_y, ty_y, tz_y));
                 q = Quaternion.Slerp(key0.Rotate, key1.Rotate, rot_y);
