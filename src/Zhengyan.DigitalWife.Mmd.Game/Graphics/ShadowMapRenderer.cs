@@ -54,7 +54,13 @@ public sealed class ShadowMapRenderer : IDisposable
         }
 
         Bounds3 bounds = ComputeSceneBounds(casters, planeReceivers);
-        Matrix4x4 lightViewProjection = CreateLightViewProjection(bounds, lightDirection, out float nearDistance, out float farDistance);
+        Matrix4x4 lightViewProjection = CreateLightViewProjection(
+            bounds,
+            lightDirection,
+            _resolution,
+            out float nearDistance,
+            out float farDistance,
+            out float worldUnitsPerTexel);
 
         _shadowTexture.EnsureSize(_resolution, _resolution);
         _shadowTexture.BeginPass();
@@ -62,7 +68,7 @@ public sealed class ShadowMapRenderer : IDisposable
         {
             foreach (PmxModelComponent model in casters)
             {
-                model.DrawShadowDepthPass(lightViewProjection);
+                model.DrawShadowDepthPass(lightViewProjection, 2.0f / 16777216.0f);
             }
         }
         finally
@@ -83,7 +89,8 @@ public sealed class ShadowMapRenderer : IDisposable
             NativeSampler = _shadowTexture.NativeSampler,
             TexelSize = new Vector2(
                 1.0f / Math.Max(_shadowTexture.Width, 1),
-                1.0f / Math.Max(_shadowTexture.Height, 1))
+                1.0f / Math.Max(_shadowTexture.Height, 1)),
+            NormalOffset = worldUnitsPerTexel * 0.75f
         };
     }
 
@@ -149,8 +156,10 @@ public sealed class ShadowMapRenderer : IDisposable
     private static Matrix4x4 CreateLightViewProjection(
         Bounds3 bounds,
         Vector3 lightDirection,
+        int resolution,
         out float nearDistance,
-        out float farDistance)
+        out float farDistance,
+        out float worldUnitsPerTexel)
     {
         Vector3 direction = lightDirection.LengthSquared() > 0.0001f
             ? Vector3.Normalize(lightDirection)
@@ -181,6 +190,8 @@ public sealed class ShadowMapRenderer : IDisposable
 
         nearDistance = 0.0f;
         farDistance = depth;
+        worldUnitsPerTexel = MathF.Max(halfWidth * 2.0f, halfHeight * 2.0f)
+            / Math.Max(resolution, 1);
         return view * projection;
     }
 

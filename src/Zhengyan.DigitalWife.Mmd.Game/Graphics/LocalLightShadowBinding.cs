@@ -33,6 +33,7 @@ public sealed class LocalLightShadowBinding
     public float Strength { get; init; } = 0.7f;
     public float Bias { get; init; } = 0.0018f;
     public Vector2 TexelSize { get; init; }
+    public float NormalOffset { get; init; }
 
     public uint TextureId => Texture.LegacyTextureId;
     public object? NativeTexture => Texture.NativeResource;

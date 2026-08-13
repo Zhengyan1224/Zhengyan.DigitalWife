@@ -254,6 +254,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         if (shadowMap is not { TextureId: not 0 } binding)
         {
             _gl.SetUniform(_shader.UniShadowMapEnabled, 0);
+            _gl.SetUniform(_shader.UniShadowNormalOffset, 0.0f);
             return;
         }
 
@@ -262,6 +263,11 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.SetUniform(_shader.UniShadowMapStrength, Math.Clamp(binding.Strength, 0.0f, 1.0f));
         _gl.SetUniform(_shader.UniShadowMapBias, Math.Max(0.0f, binding.Bias));
         _gl.SetUniform(_shader.UniShadowMapTexelSize, binding.TexelSize);
+        float scaleX = new Vector3(world.M11, world.M12, world.M13).Length();
+        float scaleY = new Vector3(world.M21, world.M22, world.M23).Length();
+        float scaleZ = new Vector3(world.M31, world.M32, world.M33).Length();
+        float minimumScale = Math.Max(Math.Min(scaleX, Math.Min(scaleY, scaleZ)), 0.0001f);
+        _gl.SetUniform(_shader.UniShadowNormalOffset, Math.Max(binding.NormalOffset, 0.0f) / minimumScale);
         _gl.SetUniform(_shader.UniLightWvp0, lightWvp);
         _gl.SetUniform(_shader.UniLightWvp1, lightWvp);
         _gl.SetUniform(_shader.UniLightWvp2, lightWvp);
@@ -291,12 +297,14 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         if (binding is null || binding.TextureId == 0 || !Matrix4x4.Invert(view, out Matrix4x4 inverseView))
         {
             _gl.SetUniform(_shader.UniLocalShadowStrength, 0.0f);
+            _gl.SetUniform(_shader.UniLocalShadowNormalOffset, 0.0f);
             return;
         }
 
         _gl.SetUniform(_shader.UniLocalShadowStrength, Math.Clamp(binding.Strength, 0.0f, 1.0f));
         _gl.SetUniform(_shader.UniLocalShadowBias, Math.Max(binding.Bias, 0.0f));
         _gl.SetUniform(_shader.UniLocalShadowTexelSize, binding.TexelSize);
+        _gl.SetUniform(_shader.UniLocalShadowNormalOffset, Math.Max(binding.NormalOffset, 0.0f));
         _gl.SetUniform(_shader.UniLocalShadowInverseView, inverseView);
         Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
         Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];
@@ -568,6 +576,13 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
         PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
         PmxGpuResources.SetLocalLightShadows(ref frameData, receiveShadow ? localLightShadowMap : null, view);
+        float scaleX = new Vector3(world.M11, world.M12, world.M13).Length();
+        float scaleY = new Vector3(world.M21, world.M22, world.M23).Length();
+        float scaleZ = new Vector3(world.M31, world.M32, world.M33).Length();
+        float minimumScale = Math.Max(Math.Min(scaleX, Math.Min(scaleY, scaleZ)), 0.0001f);
+        frameData.LocalShadowAtlasParameters.W = shadowAvailable
+            ? Math.Max(shadowMap!.Value.NormalOffset, 0.0f) / minimumScale
+            : 0.0f;
 
         CommandList commands = _renderer.CommandList;
         commands.UpdateBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
@@ -878,7 +893,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vs_Pos = (worldView * vec4(in_Pos, 1.0)).xyz;
             vs_Nor = mat3(worldView) * in_Nor;
             vs_UV = vec2(in_UV.x, -in_UV.y);
-            vs_ShadowPos = u_Frame.u_ShadowWVP * vec4(in_Pos, 1.0);
+            vec3 viewNormal = normalize(mat3(worldView) * in_Nor);
+            float surfaceNdotL = clamp(dot(viewNormal, normalize(-u_Frame.u_LightDir.xyz)), 0.0, 1.0);
+            float normalOffset = u_Frame.u_LocalShadowAtlasParameters.w * (2.0 - surfaceNdotL);
+            vec3 offsetModelPosition = in_Pos + normalize(in_Nor) * normalOffset;
+            vs_ShadowPos = u_Frame.u_ShadowWVP * vec4(offsetModelPosition, 1.0);
         }
         """;
 
@@ -1177,8 +1196,10 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 {
                     vec3 worldLightToSurface = mat3(u_Frame.u_LocalShadowInverseView) * (-toLight);
                     int faceIndex = shadowSlot * 6 + SelectPointShadowFace(worldLightToSurface);
+                    vec3 shadowPosition = vs_Pos + normal * u_Frame.u_LocalShadowAtlasParameters.z
+                        * (2.0 - pointNdotL);
                     float visibility = SampleLocalShadow(
-                        u_Frame.u_PointLightShadowMatrix[faceIndex] * vec4(vs_Pos, 1.0),
+                        u_Frame.u_PointLightShadowMatrix[faceIndex] * vec4(shadowPosition, 1.0),
                         u_Frame.u_PointLightShadowAtlasRect[faceIndex],
                         u_Frame.u_PointLightShadowMeta[shadowSlot].yz,
                         pointNdotL);
@@ -1219,8 +1240,10 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 int shadowSlot = FindSpotShadowSlot(i);
                 if (shadowSlot >= 0 && shadowSlot < 4 && u_Frame.u_LocalShadowMeta.z > 0.0)
                 {
+                    vec3 shadowPosition = vs_Pos + normal * u_Frame.u_LocalShadowAtlasParameters.z
+                        * (2.0 - spotNdotL);
                     float visibility = SampleLocalShadow(
-                        u_Frame.u_SpotLightShadowMatrix[shadowSlot] * vec4(vs_Pos, 1.0),
+                        u_Frame.u_SpotLightShadowMatrix[shadowSlot] * vec4(shadowPosition, 1.0),
                         u_Frame.u_SpotLightShadowAtlasRect[shadowSlot],
                         u_Frame.u_SpotLightShadowMeta[shadowSlot].yz,
                         spotNdotL);

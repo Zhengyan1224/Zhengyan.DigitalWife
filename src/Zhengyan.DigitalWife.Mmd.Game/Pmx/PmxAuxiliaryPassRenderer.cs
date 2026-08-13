@@ -27,7 +27,8 @@ internal interface IPmxAuxiliaryPassRenderer : IDisposable
     int DrawShadowDepth(
         PmxGpuResources resources,
         IReadOnlyList<Zhengyan.DigitalWife.Mmd.MMDMesh> meshes,
-        Matrix4x4 worldLightViewProjection);
+        Matrix4x4 worldLightViewProjection,
+        float depthBias);
 }
 
 internal static class PmxAuxiliaryPassRendererFactory
@@ -189,12 +190,19 @@ internal sealed unsafe class OpenGlPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassR
     public int DrawShadowDepth(
         PmxGpuResources resources,
         IReadOnlyList<Zhengyan.DigitalWife.Mmd.MMDMesh> meshes,
-        Matrix4x4 worldLightViewProjection)
+        Matrix4x4 worldLightViewProjection,
+        float depthBias)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        PmxGpuResources.PmxShadowDepthUniformData data = new() { WorldLightViewProjection = worldLightViewProjection };
+        PmxGpuResources.PmxShadowDepthUniformData data = new()
+        {
+            WorldLightViewProjection = worldLightViewProjection,
+            Parameters = new Vector4(Math.Max(depthBias, 0.0f), 0.0f, 0.0f, 0.0f)
+        };
         resources.ShadowDepthUniformBuffer.Update(new ReadOnlySpan<PmxGpuResources.PmxShadowDepthUniformData>(in data));
         _gl.Enable(GLEnum.DepthTest);
+        _gl.Enable(GLEnum.PolygonOffsetFill);
+        _gl.PolygonOffset(1.5f, 2.0f);
         _gl.DepthMask(true);
         _gl.Disable(GLEnum.Blend);
         _gl.UseProgram(_shadowDepthShader.Id);
@@ -220,6 +228,7 @@ internal sealed unsafe class OpenGlPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassR
         _gl.BindVertexArray(0);
         _gl.UseProgram(0);
         _gl.Disable(GLEnum.CullFace);
+        _gl.Disable(GLEnum.PolygonOffsetFill);
         return count;
     }
 
@@ -359,7 +368,8 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
     public int DrawShadowDepth(
         PmxGpuResources resources,
         IReadOnlyList<Zhengyan.DigitalWife.Mmd.MMDMesh> meshes,
-        Matrix4x4 worldLightViewProjection)
+        Matrix4x4 worldLightViewProjection,
+        float depthBias)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_renderer.IsFrameOpen) return 0;
@@ -368,7 +378,11 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         commands.SetPipeline(pipelines.Culled);
         commands.SetVertexBuffer(0, RequireDeviceBuffer(resources.PositionBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        PmxGpuResources.PmxShadowDepthUniformData data = new() { WorldLightViewProjection = worldLightViewProjection };
+        PmxGpuResources.PmxShadowDepthUniformData data = new()
+        {
+            WorldLightViewProjection = worldLightViewProjection,
+            Parameters = new Vector4(Math.Max(depthBias, 0.0f), 0.0f, 0.0f, 0.0f)
+        };
         commands.UpdateBuffer(RequireDeviceBuffer(resources.ShadowDepthUniformBuffer), 0, data);
 
         int count = 0;
@@ -584,12 +598,23 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         layout(set = 0, binding = 0, std140) uniform PmxShadowDepth
         {
             mat4 u_WorldLightViewProjection;
+            vec4 u_Parameters;
         } u_Depth;
         layout(location = 0) in vec3 in_Pos;
-        void main() { gl_Position = u_Depth.u_WorldLightViewProjection * vec4(in_Pos, 1.0); }
+        layout(location = 0) out float vs_ConstantDepthBias;
+        void main()
+        {
+            gl_Position = u_Depth.u_WorldLightViewProjection * vec4(in_Pos, 1.0);
+            vs_ConstantDepthBias = u_Depth.u_Parameters.x;
+        }
         """;
 
     private const string DepthFragmentShaderSource = """
-        void main() { }
+        layout(location = 0) in float vs_ConstantDepthBias;
+        void main()
+        {
+            float slope = max(abs(dFdx(gl_FragCoord.z)), abs(dFdy(gl_FragCoord.z)));
+            gl_FragDepth = gl_FragCoord.z + slope * 1.5 + vs_ConstantDepthBias * 2.0;
+        }
         """;
 }

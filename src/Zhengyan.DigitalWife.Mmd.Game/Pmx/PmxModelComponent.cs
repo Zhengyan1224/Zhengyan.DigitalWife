@@ -1638,7 +1638,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
     }
 
-    public void DrawShadowDepthPass(Matrix4x4 lightViewProjection)
+    public void DrawShadowDepthPass(Matrix4x4 lightViewProjection, float depthBias = 0.0f)
     {
         if (!CanRenderShadowDepth())
         {
@@ -1648,7 +1648,8 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _ = _auxiliaryPassRenderer!.DrawShadowDepth(
             _gpuResources!,
             _meshes,
-            World * lightViewProjection);
+            World * lightViewProjection,
+            Math.Max(depthBias, 0.0f));
     }
 
     private bool CanRenderShadowDepth()
@@ -1834,6 +1835,11 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
         shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
+        float scaleX = new Vector3(transform.M11, transform.M12, transform.M13).Length();
+        float scaleY = new Vector3(transform.M21, transform.M22, transform.M23).Length();
+        float scaleZ = new Vector3(transform.M31, transform.M32, transform.M33).Length();
+        float minimumScale = Math.Max(Math.Min(scaleX, Math.Min(scaleY, scaleZ)), 0.0001f);
+        shader.SetUniform("u_ShadowNormalOffset", Math.Max(shadowMap.NormalOffset, 0.0f) / minimumScale);
         shader.SetUniform("u_LightWVP", lightWvp);
         shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
         shader.SetUniform("u_ShadowMap0", 3);
@@ -1862,6 +1868,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         shader.SetUniform("u_LocalShadowStrength", Math.Clamp(binding.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_LocalShadowBias", Math.Max(binding.Bias, 0.0f));
         shader.SetUniform("u_LocalShadowTexelSize", binding.TexelSize);
+        shader.SetUniform("u_LocalShadowNormalOffset", Math.Max(binding.NormalOffset, 0.0f));
         shader.SetUniform("u_LocalShadowInverseView", inverseView);
         Span<Vector4> pointMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedPointLights];
         Span<Vector4> spotMeta = stackalloc Vector4[LocalLightShadowLimits.MaxShadowedSpotLights];

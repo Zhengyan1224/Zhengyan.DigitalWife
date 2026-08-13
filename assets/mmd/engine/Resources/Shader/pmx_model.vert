@@ -15,6 +15,8 @@ out vec4 vs_shadowMapCoord[NUM_SHADOWMAP];
 uniform mat4 u_WV;
 uniform mat4 u_WVP;
 uniform mat4 u_LightWVP[NUM_SHADOWMAP];
+uniform vec3 u_LightDir;
+uniform float u_ShadowNormalOffset;
 
 void main() {
     gl_Position = u_WVP * vec4(in_Pos, 1.0);
@@ -23,6 +25,9 @@ void main() {
     vs_UV = vec2(in_UV.x, -in_UV.y);
 
     for(int i = 0; i < NUM_SHADOWMAP; i++) {
-        vs_shadowMapCoord[i] = u_LightWVP[i] * vec4(in_Pos, 1.0);
+        float surfaceNdotL = clamp(dot(normalize(vs_Nor), normalize(-u_LightDir)), 0.0, 1.0);
+        float normalOffset = u_ShadowNormalOffset * (2.0 - surfaceNdotL);
+        vec3 offsetPosition = in_Pos + normalize(in_Nor) * normalOffset;
+        vs_shadowMapCoord[i] = u_LightWVP[i] * vec4(offsetPosition, 1.0);
     }
 }

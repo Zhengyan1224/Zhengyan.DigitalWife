@@ -200,7 +200,10 @@ internal sealed unsafe class PmxGpuResources : IDisposable
                 Math.Min(binding.SpotLights.Count, LocalLightShadowLimits.MaxShadowedSpotLights),
                 Math.Clamp(binding.Strength, 0.0f, 1.0f),
                 Math.Max(binding.Bias, 0.0f));
-            data.LocalShadowAtlasParameters = new Vector4(binding.TexelSize, 0.0f, 0.0f);
+            data.LocalShadowAtlasParameters = new Vector4(
+                binding.TexelSize,
+                Math.Max(binding.NormalOffset, 0.0f),
+                0.0f);
             data.LocalShadowInverseView = inverseView;
         }
 
@@ -298,5 +301,6 @@ internal sealed unsafe class PmxGpuResources : IDisposable
     public struct PmxShadowDepthUniformData
     {
         public Matrix4x4 WorldLightViewProjection;
+        public Vector4 Parameters;
     }
 }

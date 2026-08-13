@@ -79,7 +79,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
                     GetPointFace(face, out Vector3 direction, out Vector3 up);
                     matrices[face] = CreatePointViewProjection(light, direction, up, nearPlane);
                     rects[face] = BeginTile(tileIndex++, tileSize);
-                    DrawCasters(casters, matrices[face]);
+                    DrawCasters(casters, matrices[face], 2.0f / 16777216.0f);
                 }
                 pointBindings.Add(new PointLightShadowBinding(
                     packedIndex,
@@ -94,7 +94,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
                 float nearPlane = GetNearPlane(light.Range);
                 Matrix4x4 matrix = CreateSpotViewProjection(light, nearPlane);
                 Vector4 rect = BeginTile(tileIndex++, tileSize);
-                DrawCasters(casters, matrix);
+                DrawCasters(casters, matrix, 2.0f / 16777216.0f);
                 spotBindings.Add(new SpotLightShadowBinding(
                     packedIndex,
                     nearPlane,
@@ -119,6 +119,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
             // World-space receiver offset. The shader converts it to the
             // non-linear perspective depth range for each light and fragment.
             Bias = 0.015f,
+            NormalOffset = 0.0075f,
             TexelSize = new Vector2(1.0f / Math.Max(_atlas.Width, 1), 1.0f / Math.Max(_atlas.Height, 1))
         };
         _lastRenderedFrame = gameTime.FrameCount;
@@ -147,11 +148,14 @@ public sealed class LocalLightShadowRenderer : IDisposable
             (float)size / _atlas.Height);
     }
 
-    private static void DrawCasters(IEnumerable<PmxModelComponent> casters, Matrix4x4 lightViewProjection)
+    private static void DrawCasters(
+        IEnumerable<PmxModelComponent> casters,
+        Matrix4x4 lightViewProjection,
+        float depthBias)
     {
         foreach (PmxModelComponent model in casters)
         {
-            model.DrawShadowDepthPass(lightViewProjection);
+            model.DrawShadowDepthPass(lightViewProjection, depthBias);
         }
     }
 

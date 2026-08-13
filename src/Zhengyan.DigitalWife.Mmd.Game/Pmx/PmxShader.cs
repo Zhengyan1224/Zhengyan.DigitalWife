@@ -54,6 +54,7 @@ internal sealed class PmxShader : IDisposable
         UniLocalShadowStrength = gl.GetUniformLocation(Id, "u_LocalShadowStrength");
         UniLocalShadowBias = gl.GetUniformLocation(Id, "u_LocalShadowBias");
         UniLocalShadowTexelSize = gl.GetUniformLocation(Id, "u_LocalShadowTexelSize");
+        UniLocalShadowNormalOffset = gl.GetUniformLocation(Id, "u_LocalShadowNormalOffset");
         UniLocalShadowInverseView = gl.GetUniformLocation(Id, "u_LocalShadowInverseView");
         UniPointLightShadowMeta = GetUniformArray(gl, Id, "u_PointLightShadowMeta", LocalLightShadowLimits.MaxShadowedPointLights);
         UniSpotLightShadowMeta = GetUniformArray(gl, Id, "u_SpotLightShadowMeta", LocalLightShadowLimits.MaxShadowedSpotLights);
@@ -81,6 +82,7 @@ internal sealed class PmxShader : IDisposable
         UniShadowMapStrength = gl.GetUniformLocation(Id, "u_ShadowMapStrength");
         UniShadowMapBias = gl.GetUniformLocation(Id, "u_ShadowMapBias");
         UniShadowMapTexelSize = gl.GetUniformLocation(Id, "u_ShadowMapTexelSize");
+        UniShadowNormalOffset = gl.GetUniformLocation(Id, "u_ShadowNormalOffset");
         UniLightWvp0 = gl.GetUniformLocation(Id, "u_LightWVP[0]");
         UniLightWvp1 = gl.GetUniformLocation(Id, "u_LightWVP[1]");
         UniLightWvp2 = gl.GetUniformLocation(Id, "u_LightWVP[2]");
@@ -142,6 +144,8 @@ internal sealed class PmxShader : IDisposable
 
     public int UniLocalShadowTexelSize { get; }
 
+    public int UniLocalShadowNormalOffset { get; }
+
     public int UniLocalShadowInverseView { get; }
 
     public int[] UniPointLightShadowMeta { get; }
@@ -195,6 +199,8 @@ internal sealed class PmxShader : IDisposable
     public int UniShadowMapBias { get; }
 
     public int UniShadowMapTexelSize { get; }
+
+    public int UniShadowNormalOffset { get; }
 
     public int UniLightWvp0 { get; }
 
