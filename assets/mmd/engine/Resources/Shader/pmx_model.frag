@@ -88,23 +88,34 @@ float ComputeTextureAlpha(float textureAlpha) {
     return textureAlpha;
 }
 
-float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord) {
+float ComputeDirectionalShadowDepthBias(float surfaceNdotL) {
+    float grazingAngle = 1.0 - clamp(surfaceNdotL, 0.0, 1.0);
+    return u_ShadowMapBias * (1.0 + grazingAngle * 2.0);
+}
+
+float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord, float surfaceNdotL) {
     vec3 ndc = clipCoord.xyz / max(abs(clipCoord.w), 0.0001);
     vec2 uv = ndc.xy * 0.5 + 0.5;
     if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) {
         return 1.0;
     }
 
-    float depth = (ndc.z * 0.5 + 0.5) - u_ShadowMapBias;
+    float depth = (ndc.z * 0.5 + 0.5) - ComputeDirectionalShadowDepthBias(surfaceNdotL);
+    vec2 filterRadius = u_ShadowMapTexelSize * 2.0;
+    vec2 minimumUv = filterRadius;
+    vec2 maximumUv = vec2(1.0) - filterRadius;
     float visibility = 0.0;
-    for(int y = -1; y <= 1; ++y) {
-        for(int x = -1; x <= 1; ++x) {
+    float totalWeight = 0.0;
+    for(int y = -2; y <= 2; ++y) {
+        for(int x = -2; x <= 2; ++x) {
+            float weight = float(3 - abs(x)) * float(3 - abs(y));
             vec2 offset = vec2(x, y) * u_ShadowMapTexelSize;
-            visibility += texture(shadowMap, vec3(uv + offset, depth));
+            visibility += texture(shadowMap, vec3(clamp(uv + offset, minimumUv, maximumUv), depth)) * weight;
+            totalWeight += weight;
         }
     }
 
-    return visibility / 9.0;
+    return visibility / totalWeight;
 }
 
 float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surfaceNdotL) {
@@ -112,7 +123,7 @@ float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surface
     float farPlane = max(depthRange.y, nearPlane + 0.0001);
     float lightDistance = max(abs(clipCoord.w), nearPlane);
     float perspectiveScale = nearPlane * farPlane / max(farPlane - nearPlane, 0.0001);
-    float slopeScale = 1.0 + (1.0 - clamp(surfaceNdotL, 0.0, 1.0));
+    float slopeScale = 1.0 + (1.0 - clamp(surfaceNdotL, 0.0, 1.0)) * 2.0;
     return u_LocalShadowBias * slopeScale * perspectiveScale
         / (lightDistance * lightDistance) * 0.5;
 }
@@ -127,16 +138,22 @@ float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect, vec2 depthRange, float s
     float depth = ndc.z * 0.5 + 0.5
         - ComputeLocalShadowDepthBias(clipCoord, depthRange, surfaceNdotL);
     vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
-    vec2 minimumUv = atlasRect.xy + u_LocalShadowTexelSize;
-    vec2 maximumUv = atlasRect.xy + atlasRect.zw - u_LocalShadowTexelSize;
+    vec2 filterRadius = u_LocalShadowTexelSize * 2.0;
+    vec2 minimumUv = atlasRect.xy + filterRadius;
+    vec2 maximumUv = atlasRect.xy + atlasRect.zw - filterRadius;
     float visibility = 0.0;
-    for(int y = 0; y <= 1; ++y) {
-        for(int x = 0; x <= 1; ++x) {
-            vec2 offset = (vec2(x, y) - vec2(0.5)) * u_LocalShadowTexelSize;
-            visibility += texture(u_LocalShadowAtlas, vec3(clamp(atlasUv + offset, minimumUv, maximumUv), depth));
+    float totalWeight = 0.0;
+    for(int y = -2; y <= 2; ++y) {
+        for(int x = -2; x <= 2; ++x) {
+            float weight = float(3 - abs(x)) * float(3 - abs(y));
+            vec2 offset = vec2(x, y) * u_LocalShadowTexelSize;
+            visibility += texture(
+                u_LocalShadowAtlas,
+                vec3(clamp(atlasUv + offset, minimumUv, maximumUv), depth)) * weight;
+            totalWeight += weight;
         }
     }
-    return visibility * 0.25;
+    return visibility / totalWeight;
 }
 
 int SelectPointShadowFace(vec3 direction) {
@@ -170,7 +187,7 @@ void main() {
     float alpha = u_Alpha;
 
     if(u_ShadowMapEnabled != 0) {
-        float visibility = SampleShadowMap(u_ShadowMap0, vs_shadowMapCoord[0]);
+        float visibility = SampleShadowMap(u_ShadowMap0, vs_shadowMapCoord[0], ndotl);
         float shadowFactor = mix(1.0 - clamp(u_ShadowMapStrength, 0.0, 1.0), 1.0, visibility);
         ndotl *= shadowFactor;
         toonCoord = mix(0.0, toonCoord, shadowFactor);
