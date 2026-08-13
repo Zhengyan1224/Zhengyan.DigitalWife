@@ -3,7 +3,7 @@ using Zhengyan.DigitalWife.Mmd;
 
 namespace Zhengyan.DigitalWife.GameProjects;
 
-public readonly record struct VmdCameraPose(Vector3 Position, Vector3 Target, float Fov, bool Perspective);
+public readonly record struct VmdCameraPose(Vector3 Position, Vector3 Target, Vector3 Up, float Fov, bool Perspective);
 
 public readonly record struct VmdLightPose(Vector3 Color, Vector3 Position);
 
@@ -117,13 +117,22 @@ public sealed class VmdSceneAnimationPlayer : IDisposable
         float distance = Lerp(a.Distance, b.Distance, td);
         float fov = Lerp(a.ViewAngle, b.ViewAngle, tf);
         Quaternion rotation = Quaternion.CreateFromYawPitchRoll(
-            -rotate.Y,
+            rotate.Y,
             -rotate.X,
-            rotate.Z);
+            -rotate.Z);
         Vector3 forward = Vector3.Transform(-Vector3.UnitZ, rotation);
+        Vector3 up = Vector3.Transform(Vector3.UnitY, rotation);
+        if (up.LengthSquared() < 1e-8f)
+        {
+            up = Vector3.UnitY;
+        }
+        else
+        {
+            up = Vector3.Normalize(up);
+        }
         // VMD camera distance is conventionally negative. Keep the MMD
         // convention so a zero-rotation camera looks toward the interest point.
-        pose = new VmdCameraPose(interest + (forward * distance), interest, fov, a.IsPerspective);
+        pose = new VmdCameraPose(interest + (forward * distance), interest, up, fov, a.IsPerspective);
         return true;
     }
 

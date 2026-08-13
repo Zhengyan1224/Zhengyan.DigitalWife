@@ -618,6 +618,13 @@ public sealed class CameraSettings
     public float FarClipPlane { get; set; } = 1000.0f;
 
     public VmdPlaybackSettings Vmd { get; set; } = new();
+
+    // VMD camera roll is transient animation state and is not part of the project file.
+    [JsonIgnore]
+    public Vector3Dto VmdUp { get; set; } = new(0.0f, 1.0f, 0.0f);
+
+    [JsonIgnore]
+    public bool VmdHasUp { get; set; }
 }
 
 public sealed class SceneCameraSettings

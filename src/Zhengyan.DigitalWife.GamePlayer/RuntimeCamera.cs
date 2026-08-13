@@ -623,7 +623,14 @@ public sealed class RuntimeCamera
 
     private static void ApplyCameraSettings(OrbitCamera target, CameraSettings settings)
     {
-        target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3());
+        if (settings.VmdHasUp)
+        {
+            target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3(), settings.VmdUp.ToVector3());
+        }
+        else
+        {
+            target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3());
+        }
         target.ProjectionMode = NormalizeProjectionMode(settings.ProjectionMode) == "orthographic"
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;

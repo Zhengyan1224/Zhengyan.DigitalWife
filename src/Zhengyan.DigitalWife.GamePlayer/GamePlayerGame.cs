@@ -298,13 +298,25 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         EnsureSceneCameras();
         SceneCameraSettings main = Project.Scene.Cameras.First(camera => camera.IsMain);
-        _camera.SetLookAt(main.Camera.Position.ToVector3(), main.Camera.Target.ToVector3());
+        SetCameraLookAt(_camera, main.Camera);
         _camera.Fov = main.Camera.Fov;
         _camera.ProjectionMode = NormalizeProjectionMode(main.Camera.ProjectionMode) == "orthographic"
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;
         _renderTextureManager?.SyncCameras(_camera);
         RefreshSceneLighting();
+    }
+
+    private static void SetCameraLookAt(OrbitCamera target, CameraSettings settings)
+    {
+        if (settings.VmdHasUp)
+        {
+            target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3(), settings.VmdUp.ToVector3());
+        }
+        else
+        {
+            target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3());
+        }
     }
 
     protected override void Draw(GameTime gameTime)
@@ -2738,7 +2750,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         camera = mainCamera.Camera;
         Project.Scene.Camera = camera;
         Project.Scene.MainCamera = mainCamera.Name;
-        _camera.SetLookAt(camera.Position.ToVector3(), camera.Target.ToVector3());
+        SetCameraLookAt(_camera, camera);
         _camera.ProjectionMode = NormalizeProjectionMode(camera.ProjectionMode) == "orthographic"
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;

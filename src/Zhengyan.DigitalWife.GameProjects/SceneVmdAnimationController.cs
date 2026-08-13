@@ -19,6 +19,7 @@ public sealed class SceneVmdAnimationController : IDisposable
         HashSet<string> activeIds = new(StringComparer.OrdinalIgnoreCase);
         foreach (SceneCameraSettings camera in scene.Cameras)
         {
+            camera.Camera.VmdHasUp = false;
             string id = string.IsNullOrWhiteSpace(camera.Id) ? camera.Name : camera.Id;
             activeIds.Add(id);
             if (!_cameraPlayers.TryGetValue(id, out VmdSceneAnimationPlayer? player))
@@ -39,6 +40,8 @@ public sealed class SceneVmdAnimationController : IDisposable
             {
                 camera.Camera.Position = Vector3Dto.FromVector3(pose.Position);
                 camera.Camera.Target = Vector3Dto.FromVector3(pose.Target);
+                camera.Camera.VmdUp = Vector3Dto.FromVector3(pose.Up);
+                camera.Camera.VmdHasUp = true;
                 camera.Camera.Fov = Math.Clamp(pose.Fov, 1.0f, 179.0f);
                 camera.Camera.ProjectionMode = pose.Perspective ? "perspective" : "orthographic";
                 changed = true;

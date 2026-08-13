@@ -264,7 +264,14 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
 
     private static void ApplyCameraSettings(OrbitCamera target, CameraSettings settings)
     {
-        target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3());
+        if (settings.VmdHasUp)
+        {
+            target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3(), settings.VmdUp.ToVector3());
+        }
+        else
+        {
+            target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3());
+        }
         target.ProjectionMode = NormalizeProjectionMode(settings.ProjectionMode) == "orthographic"
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;
@@ -278,7 +285,7 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
     {
         target.Width = source.Width;
         target.Height = source.Height;
-        target.SetLookAt(source.Position, source.Target);
+        target.SetLookAt(source.Position, source.Target, source.Up);
         target.ProjectionMode = source.ProjectionMode;
         target.Fov = source.Fov;
         target.OrthographicSize = source.OrthographicSize;
