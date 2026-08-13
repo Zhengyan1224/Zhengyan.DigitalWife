@@ -118,7 +118,7 @@ public sealed class VmdSceneAnimationPlayer : IDisposable
         float fov = Lerp(a.ViewAngle, b.ViewAngle, tf);
         Quaternion rotation = Quaternion.CreateFromYawPitchRoll(
             rotate.Y,
-            -rotate.X,
+            rotate.X,
             -rotate.Z);
         Vector3 forward = Vector3.Transform(-Vector3.UnitZ, rotation);
         Vector3 up = Vector3.Transform(Vector3.UnitY, rotation);
@@ -183,9 +183,10 @@ public sealed class VmdSceneAnimationPlayer : IDisposable
             return x;
         }
 
+        // Camera interpolation groups are packed as x1, x2, y1, y2.
         float x1 = interpolation[offset] / 127.0f;
-        float y1 = interpolation[offset + 1] / 127.0f;
-        float x2 = interpolation[offset + 2] / 127.0f;
+        float x2 = interpolation[offset + 1] / 127.0f;
+        float y1 = interpolation[offset + 2] / 127.0f;
         float y2 = interpolation[offset + 3] / 127.0f;
         float low = 0.0f;
         float high = 1.0f;
