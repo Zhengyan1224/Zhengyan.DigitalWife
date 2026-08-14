@@ -399,6 +399,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public bool ReceiveShadow { get; set; } = true;
 
+    /// <summary>Shadow display mode for shadows received by this PMX: smooth or toon.</summary>
+    public string ReceiveShadowMode { get; set; } = "smooth";
+
     public bool DrawShadowInMainPass { get; set; } = true;
 
     public Matrix4x4 World => Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateFromQuaternion(Rotation) * Matrix4x4.CreateTranslation(Position);
@@ -1590,6 +1593,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 PointLights,
                 SpotLights,
                 ReceiveShadow,
+                NormalizeReceiveShadowMode(ReceiveShadowMode),
                 ShadowMap,
                 LocalLightShadowMap,
                 ResolveMaterialOverrideTextureHandle);
@@ -2620,6 +2624,13 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         }
 
         return name.Trim();
+    }
+
+    private static string NormalizeReceiveShadowMode(string? mode)
+    {
+        return string.Equals(mode, "toon", StringComparison.OrdinalIgnoreCase)
+            ? "toon"
+            : "smooth";
     }
 
     private void MarkDirty(DirtyFlags flags)

@@ -501,6 +501,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.physics_gravity_direction = data.get("physicsGravityDirection", [0.0, -1.0, 0.0])
                        self.physics_gravity_magnitude = float(data.get("physicsGravityMagnitude", 98.0))
                        self.receive_shadow = bool(data.get("receiveShadow", True))
+                       self.receive_shadow_mode = str(data.get("receiveShadowMode", "smooth"))
                        self.colliders = data.get("colliders", [])
                        self.collider = data.get("collider", {})
                        self.enable_water_interaction = bool(data.get("enableWaterInteraction", False))
@@ -631,6 +632,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_receive_shadow(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_receive_shadow", "flag": bool(enabled)})
+
+                   def set_receive_shadow_mode(self, mode):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "set_receive_shadow_mode", "mode": str(mode)})
 
                    def set_enable_water_interaction(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_water_interaction_enabled", "flag": bool(enabled)})
@@ -4426,6 +4430,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_receive_shadow" when command.Flag.HasValue:
                 entity.ReceiveShadow = command.Flag.Value;
                 break;
+            case "set_receive_shadow_mode" when !string.IsNullOrWhiteSpace(command.Mode):
+                entity.ReceiveShadowMode = command.Mode;
+                break;
             case "set_water_interaction_enabled" when command.Flag.HasValue:
                 entity.EnableWaterInteraction = command.Flag.Value;
                 break;
@@ -5171,6 +5178,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public bool ReceiveShadow { get; set; } = true;
 
+        public string ReceiveShadowMode { get; set; } = "smooth";
+
         public PythonCollider Collider { get; set; } = new();
 
         public PythonCollider[] Colliders { get; set; } = [];
@@ -5272,6 +5281,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 PhysicsGravityDirection = [entity.PhysicsGravityDirection.X, entity.PhysicsGravityDirection.Y, entity.PhysicsGravityDirection.Z],
                 PhysicsGravityMagnitude = entity.PhysicsGravityMagnitude,
                 ReceiveShadow = entity.ReceiveShadow,
+                ReceiveShadowMode = entity.ReceiveShadowMode,
                 Collider = colliders.FirstOrDefault() ?? new PythonCollider(),
                 Colliders = colliders,
                 EnableWaterInteraction = entity.EnableWaterInteraction,

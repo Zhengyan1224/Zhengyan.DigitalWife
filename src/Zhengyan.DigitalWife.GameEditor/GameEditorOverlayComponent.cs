@@ -2022,6 +2022,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool enableEdge = entity.EnableEdge;
         bool enableShadow = entity.EnableShadow;
         bool receiveShadow = entity.ReceiveShadow;
+        string receiveShadowMode = string.Equals(entity.ReceiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase)
+            ? "toon"
+            : "smooth";
+        string[] receiveShadowModes = ["Smooth PCF", "Toon levels"];
+        int receiveShadowModeIndex = receiveShadowMode == "toon" ? 1 : 0;
         bool drawShadowInMainPass = entity.DrawShadowInMainPass;
         float playbackSpeed = entity.PlaybackSpeed;
         bool loopMotion = entity.LoopMotion;
@@ -2086,6 +2091,11 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             changed |= ImGui.Checkbox("Edge", ref enableEdge);
             changed |= ImGui.Checkbox("Cast shadow", ref enableShadow);
             changed |= ImGui.Checkbox("Receive shadow", ref receiveShadow);
+            if (ImGui.Combo("Received shadow display", ref receiveShadowModeIndex, receiveShadowModes, receiveShadowModes.Length))
+            {
+                receiveShadowMode = receiveShadowModeIndex == 1 ? "toon" : "smooth";
+                changed = true;
+            }
             changed |= ImGui.Checkbox("Draw shadow in main pass (legacy)", ref drawShadowInMainPass);
         }
 
@@ -2108,6 +2118,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             entity.EnableEdge = enableEdge;
             entity.EnableShadow = enableShadow;
             entity.ReceiveShadow = receiveShadow;
+            entity.ReceiveShadowMode = receiveShadowMode;
             entity.DrawShadowInMainPass = drawShadowInMainPass;
             _editorGame.ApplySelectedEntityToRuntime();
         }

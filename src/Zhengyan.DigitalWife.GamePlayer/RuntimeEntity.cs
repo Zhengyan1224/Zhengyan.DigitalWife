@@ -607,6 +607,20 @@ public sealed class RuntimeEntity
         }
     }
 
+    public string ReceiveShadowMode
+    {
+        get => _model?.ReceiveShadowMode ?? NormalizeReceiveShadowMode(_definition.ReceiveShadowMode);
+        set
+        {
+            string normalized = NormalizeReceiveShadowMode(value);
+            _definition.ReceiveShadowMode = normalized;
+            if (_model is not null)
+            {
+                _model.ReceiveShadowMode = normalized;
+            }
+        }
+    }
+
     public bool EnableWaterInteraction
     {
         get => string.Equals(_definition.Type, "particle_system", StringComparison.OrdinalIgnoreCase)
@@ -1840,6 +1854,13 @@ public sealed class RuntimeEntity
         return (type ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
     }
 
+    private static string NormalizeReceiveShadowMode(string? mode)
+    {
+        return string.Equals(mode, "toon", StringComparison.OrdinalIgnoreCase)
+            ? "toon"
+            : "smooth";
+    }
+
     private static void EnsureFinite(Vector3 value, string parameterName)
     {
         if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || !float.IsFinite(value.Z))
@@ -2004,6 +2025,7 @@ public sealed class RuntimeEntity
             _definition.EnableEdge = _model.EnableEdge;
             _definition.EnableShadow = _model.EnableShadow;
             _definition.ReceiveShadow = _model.ReceiveShadow;
+            _definition.ReceiveShadowMode = _model.ReceiveShadowMode;
             _definition.DrawShadowInMainPass = _model.DrawShadowInMainPass;
         }
         else if (_particle is not null)

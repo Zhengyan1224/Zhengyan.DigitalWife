@@ -61,6 +61,7 @@ keywords:
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
 | `EnableShadow` | 无直接快照字段 | PMX 是否向方向光、点光源和射灯的 shadow map 投射阴影。Python 用 `set_shadow_enabled` 修改。 |
 | `ReceiveShadow` | `receive_shadow` | PMX 是否在主材质上接收方向光、点光源和射灯阴影。Python 用 `set_receive_shadow` 修改。 |
+| `ReceiveShadowMode` | `receive_shadow_mode` | PMX 接收阴影的显示模式：`smooth` 保持连续 PCF 灰度，`toon` 使用明确的受光/受影两档。Python 用 `set_receive_shadow_mode("smooth" 或 "toon")` 修改。 |
 | `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
 | `KillOnWaterContact` | `kill_on_water_contact` | 粒子系统粒子接触水面后是否立即消失。Python 用 `set_kill_on_water_contact` 修改。 |
 | `WaterInteractionEnabled` | `water_interaction_enabled` | 水面对象是否启用水体交互检测。Python 用 `set_water_interaction_enabled` 修改。 |
@@ -101,6 +102,7 @@ Entity.PhysicsGravityMagnitude = 98.0f;
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
 Entity.ReceiveShadow = true;
+Entity.ReceiveShadowMode = "toon"; // "smooth" or "toon"
 Entity.EnableWaterInteraction = true;
 Entity.KillOnWaterContact = true;
 Entity.WaterInteractionEnabled = true;
@@ -137,6 +139,7 @@ entity.set_physics_gravity_magnitude(98.0)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
 entity.set_receive_shadow(True)
+entity.set_receive_shadow_mode("toon")  # "smooth" or "toon"
 entity.set_enable_water_interaction(True)
 entity.set_kill_on_water_contact(True)
 entity.set_water_interaction_enabled(True)

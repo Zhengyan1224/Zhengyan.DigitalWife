@@ -26,6 +26,7 @@ internal interface IPmxMainPassRenderer : IDisposable
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
         bool receiveShadow,
+        string receiveShadowMode,
         ShadowMapBinding? shadowMap,
         LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -91,6 +92,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
         bool receiveShadow,
+        string receiveShadowMode,
         ShadowMapBinding? shadowMap,
         LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -122,6 +124,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.DepthMask(true);
         _gl.UseProgram(_shader.Id);
         _gl.BindVertexArray(_vao);
+        _gl.SetUniform(_shader.UniShadowDisplayMode, string.Equals(receiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
         _gl.SetUniform(_shader.UniWVP, worldViewProjection);
         _gl.SetUniform(_shader.UniWV, worldView);
         _gl.SetUniform(_shader.UniTex, 0);
@@ -530,6 +533,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
         bool receiveShadow,
+        string receiveShadowMode,
         ShadowMapBinding? shadowMap,
         LocalLightShadowBinding? localLightShadowMap,
         Func<int, RuntimeTextureHandle?>? resolveTextureOverride,
@@ -573,6 +577,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 shadowAvailable ? Math.Max(0.0f, shadowMap!.Value.Bias) : 0.0f,
                 shadowAvailable ? shadowMap!.Value.TexelSize.X : 0.0f)
         };
+        frameData.ShadowDisplayParameters = new Vector4(
+            string.Equals(receiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase) ? 1.0f : 0.0f,
+            0.0f,
+            0.0f,
+            0.0f);
         PmxGpuResources.SetPointLights(ref frameData, pointLights, view);
         PmxGpuResources.SetSpotLights(ref frameData, spotLights, view);
         PmxGpuResources.SetLocalLightShadows(ref frameData, receiveShadow ? localLightShadowMap : null, view);
@@ -876,6 +885,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_PointLightShadowAtlasRect[12];
             mat4 u_SpotLightShadowMatrix[4];
             vec4 u_SpotLightShadowAtlasRect[4];
+            vec4 u_ShadowDisplayParameters;
         } u_Frame;
 
         layout(location = 0) in vec3 in_Pos;
@@ -931,6 +941,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec4 u_PointLightShadowAtlasRect[12];
             mat4 u_SpotLightShadowMatrix[4];
             vec4 u_SpotLightShadowAtlasRect[4];
+            vec4 u_ShadowDisplayParameters;
         } u_Frame;
 
         layout(set = 0, binding = 1) uniform texture2D u_ShadowMap;
@@ -982,6 +993,13 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             return u_Frame.u_ShadowParameters.z * (1.0 + grazingAngle * 2.0);
         }
 
+        float ApplyReceivedShadow(float visibility, float strength)
+        {
+            if (u_Frame.u_ShadowDisplayParameters.x > 0.5)
+                visibility = step(0.5, visibility);
+            return mix(1.0 - clamp(strength, 0.0, 1.0), 1.0, visibility);
+        }
+
         float SampleShadowMap(float surfaceNdotL)
         {
             vec3 ndc = vs_ShadowPos.xyz / max(abs(vs_ShadowPos.w), 0.0001);
@@ -1000,25 +1018,22 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             float depth = (u_Frame.u_Parameters.w > 0.5 ? ndc.z : ndc.z * 0.5 + 0.5)
                 - ComputeDirectionalShadowDepthBias(surfaceNdotL);
             vec2 texelSize = vec2(max(u_Frame.u_ShadowParameters.w, 0.000001));
-            vec2 filterRadius = texelSize * 2.0;
+            vec2 filterRadius = texelSize;
             vec2 minimumUv = filterRadius;
             vec2 maximumUv = vec2(1.0) - filterRadius;
             float visibility = 0.0;
-            float totalWeight = 0.0;
-            for (int y = -2; y <= 2; ++y)
+            for (int y = -1; y <= 1; ++y)
             {
-                for (int x = -2; x <= 2; ++x)
+                for (int x = -1; x <= 1; ++x)
                 {
-                    float weight = float(3 - abs(x)) * float(3 - abs(y));
                     float storedDepth = texture(
                         sampler2D(u_ShadowMap, u_ShadowSampler),
                         clamp(uv + vec2(x, y) * texelSize, minimumUv, maximumUv)).r;
-                    visibility += (storedDepth >= depth ? 1.0 : 0.0) * weight;
-                    totalWeight += weight;
+                    visibility += storedDepth >= depth ? 1.0 : 0.0;
                 }
             }
 
-            return visibility / totalWeight;
+            return visibility / 9.0;
         }
 
         float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surfaceNdotL)
@@ -1057,25 +1072,22 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 - ComputeLocalShadowDepthBias(clipCoord, depthRange, surfaceNdotL);
             vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
             vec2 texelSize = u_Frame.u_LocalShadowAtlasParameters.xy;
-            vec2 filterRadius = texelSize * 2.0;
+            vec2 filterRadius = texelSize;
             vec2 minimumUv = atlasRect.xy + filterRadius;
             vec2 maximumUv = atlasRect.xy + atlasRect.zw - filterRadius;
             float visibility = 0.0;
-            float totalWeight = 0.0;
-            for (int y = -2; y <= 2; ++y)
+            for (int y = 0; y <= 1; ++y)
             {
-                for (int x = -2; x <= 2; ++x)
+                for (int x = 0; x <= 1; ++x)
                 {
-                    float weight = float(3 - abs(x)) * float(3 - abs(y));
-                    vec2 offset = vec2(x, y) * texelSize;
+                    vec2 offset = (vec2(x, y) - vec2(0.5)) * texelSize;
                     float storedDepth = texture(
                         sampler2D(u_LocalShadowAtlas, u_LocalShadowSampler),
                         clamp(atlasUv + offset, minimumUv, maximumUv)).r;
-                    visibility += (storedDepth >= depth ? 1.0 : 0.0) * weight;
-                    totalWeight += weight;
+                    visibility += storedDepth >= depth ? 1.0 : 0.0;
                 }
             }
-            return visibility / totalWeight;
+            return visibility * 0.25;
         }
 
         int SelectPointShadowFace(vec3 direction)
@@ -1121,7 +1133,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             if (u_Frame.u_ShadowParameters.x > 0.5)
             {
                 float visibility = SampleShadowMap(ndotl);
-                float shadowFactor = mix(1.0 - clamp(u_Frame.u_ShadowParameters.y, 0.0, 1.0), 1.0, visibility);
+                float shadowFactor = ApplyReceivedShadow(visibility, u_Frame.u_ShadowParameters.y);
                 ndotl *= shadowFactor;
                 toonCoord = mix(0.0, toonCoord, shadowFactor);
             }
@@ -1203,7 +1215,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                         u_Frame.u_PointLightShadowAtlasRect[faceIndex],
                         u_Frame.u_PointLightShadowMeta[shadowSlot].yz,
                         pointNdotL);
-                    radiance *= mix(1.0 - u_Frame.u_LocalShadowMeta.z, 1.0, visibility);
+                    radiance *= ApplyReceivedShadow(visibility, u_Frame.u_LocalShadowMeta.z);
                 }
                 pointDiffuse += radiance * pointNdotL;
                 if (u_Material.u_Specular.a > 0.0 && pointNdotL > 0.0)
@@ -1247,7 +1259,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                         u_Frame.u_SpotLightShadowAtlasRect[shadowSlot],
                         u_Frame.u_SpotLightShadowMeta[shadowSlot].yz,
                         spotNdotL);
-                    radiance *= mix(1.0 - u_Frame.u_LocalShadowMeta.z, 1.0, visibility);
+                    radiance *= ApplyReceivedShadow(visibility, u_Frame.u_LocalShadowMeta.z);
                 }
                 spotDiffuse += radiance * spotNdotL;
                 if (u_Material.u_Specular.a > 0.0 && spotNdotL > 0.0)

@@ -216,7 +216,7 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 
 `Mirror reflection` 控制水面是否启用平面镜面反射。开启后 GameEditor/GamePlayer 会在水面绘制前用镜像相机把场景额外渲染到离屏纹理，水面 shader 再采样这张反射纹理并叠加法线扰动和 Fresnel；关闭时水面会退回更偏普通水色/环境渐变的渲染。脚本层可通过水面实体的 `MirrorReflectionEnabled` 或 Python 的 `set_mirror_reflection_enabled(...)` 在运行时切换。
 
-阴影说明：GameEditor/GamePlayer 使用单张方向光 shadow map 替代旧的平面投影地面阴影。PMX 的 `Enable shadow` 控制是否投射并接收 shadow map 阴影；3D 贴图矩形面的 `Receive shadow` 控制是否接收阴影。shadow map 需要实际的接收面，例如场景 PMX 模型里的地面或 3D 贴图矩形面，不会像旧平面投影阴影那样自动投到固定高度平面。旧的 `DrawShadowInMainPass` 主要用于兼容其它旧示例程序，GameEditor/GamePlayer 通常不需要修改它。
+阴影说明：GameEditor/GamePlayer 使用单张方向光 shadow map 替代旧的平面投影地面阴影。PMX 的 `Enable shadow` 控制是否投射并接收 shadow map 阴影；`Receive shadow` 控制是否接收阴影；`Received shadow display` 可选择 `Smooth PCF`（默认，保留连续灰度）或 `Toon levels`（受光/受影两档）。3D 贴图矩形面的 `Receive shadow` 控制是否接收阴影。shadow map 需要实际的接收面，例如场景 PMX 模型里的地面或 3D 贴图矩形面，不会像旧平面投影阴影那样自动投到固定高度平面。旧的 `DrawShadowInMainPass` 主要用于兼容其它旧示例程序，GameEditor/GamePlayer 通常不需要修改它。
 
 性能注意：每个启用镜面反射的水面或 3D 贴图矩形面至少会多一次场景渲染。复杂场景、多个水面、多个镜面或多个相机视口会显著增加 GPU 开销。反射过程会跳过镜面，水面自身的反射过程也会跳过其它反射水面，以避免递归反射；镜面反射仍会绘制水面。
 

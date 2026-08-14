@@ -100,6 +100,7 @@ Entity.SetPhysicsGravityMagnitude(49.0f);
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
 Entity.ReceiveShadow = true;
+Entity.ReceiveShadowMode = "toon"; // "smooth" or "toon"
 Entity.DrawShadowInMainPass = false;
 ```
 
@@ -120,6 +121,7 @@ gravity_magnitude = entity.physics_gravity_magnitude
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
 entity.set_receive_shadow(True)
+entity.set_receive_shadow_mode("toon")  # "smooth" or "toon"
 entity.set_draw_shadow_in_main_pass(False)
 ```
 

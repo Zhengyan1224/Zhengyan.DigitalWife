@@ -2397,6 +2397,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         model.EnableEdge = entity.EnableEdge;
         model.EnableShadow = entity.EnableShadow;
         model.ReceiveShadow = entity.ReceiveShadow;
+        model.ReceiveShadowMode = entity.ReceiveShadowMode;
         model.DrawShadowInMainPass = entity.DrawShadowInMainPass;
         model.SetMotionLayers(entity.MotionLayers
             .Where(layer => !string.IsNullOrWhiteSpace(layer.Path))

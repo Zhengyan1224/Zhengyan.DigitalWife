@@ -67,6 +67,7 @@ uniform int u_ShadowMapEnabled;
 uniform float u_ShadowMapStrength;
 uniform float u_ShadowMapBias;
 uniform vec2 u_ShadowMapTexelSize;
+uniform int u_ShadowDisplayMode;
 
 vec3 ComputeTexMulFactor(vec3 texColor, vec4 factor) {
     vec3 ret = texColor * factor.rgb;
@@ -102,21 +103,18 @@ float SampleShadowMap(sampler2DShadow shadowMap, vec4 clipCoord, float surfaceNd
     }
 
     float depth = (ndc.z * 0.5 + 0.5) - ComputeDirectionalShadowDepthBias(surfaceNdotL);
-    vec2 filterRadius = u_ShadowMapTexelSize * 2.0;
+    vec2 filterRadius = u_ShadowMapTexelSize;
     vec2 minimumUv = filterRadius;
     vec2 maximumUv = vec2(1.0) - filterRadius;
     float visibility = 0.0;
-    float totalWeight = 0.0;
-    for(int y = -2; y <= 2; ++y) {
-        for(int x = -2; x <= 2; ++x) {
-            float weight = float(3 - abs(x)) * float(3 - abs(y));
+    for(int y = -1; y <= 1; ++y) {
+        for(int x = -1; x <= 1; ++x) {
             vec2 offset = vec2(x, y) * u_ShadowMapTexelSize;
-            visibility += texture(shadowMap, vec3(clamp(uv + offset, minimumUv, maximumUv), depth)) * weight;
-            totalWeight += weight;
+            visibility += texture(shadowMap, vec3(clamp(uv + offset, minimumUv, maximumUv), depth));
         }
     }
 
-    return visibility / totalWeight;
+    return visibility / 9.0;
 }
 
 float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surfaceNdotL) {
@@ -139,22 +137,28 @@ float SampleLocalShadow(vec4 clipCoord, vec4 atlasRect, vec2 depthRange, float s
     float depth = ndc.z * 0.5 + 0.5
         - ComputeLocalShadowDepthBias(clipCoord, depthRange, surfaceNdotL);
     vec2 atlasUv = atlasRect.xy + localUv * atlasRect.zw;
-    vec2 filterRadius = u_LocalShadowTexelSize * 2.0;
+    vec2 filterRadius = u_LocalShadowTexelSize;
     vec2 minimumUv = atlasRect.xy + filterRadius;
     vec2 maximumUv = atlasRect.xy + atlasRect.zw - filterRadius;
     float visibility = 0.0;
-    float totalWeight = 0.0;
-    for(int y = -2; y <= 2; ++y) {
-        for(int x = -2; x <= 2; ++x) {
-            float weight = float(3 - abs(x)) * float(3 - abs(y));
-            vec2 offset = vec2(x, y) * u_LocalShadowTexelSize;
+    for(int y = 0; y <= 1; ++y) {
+        for(int x = 0; x <= 1; ++x) {
+            vec2 offset = (vec2(x, y) - vec2(0.5)) * u_LocalShadowTexelSize;
             visibility += texture(
                 u_LocalShadowAtlas,
-                vec3(clamp(atlasUv + offset, minimumUv, maximumUv), depth)) * weight;
-            totalWeight += weight;
+                vec3(clamp(atlasUv + offset, minimumUv, maximumUv), depth));
         }
     }
-    return visibility / totalWeight;
+    return visibility * 0.25;
+}
+
+float ApplyReceivedShadow(float visibility, float strength) {
+    // Toon mode intentionally keeps only lit/shadowed levels. The PCF lookup
+    // still anti-aliases the geometric edge, but does not expose its gray bands.
+    if(u_ShadowDisplayMode != 0) {
+        visibility = step(0.5, visibility);
+    }
+    return mix(1.0 - clamp(strength, 0.0, 1.0), 1.0, visibility);
 }
 
 int SelectPointShadowFace(vec3 direction) {
@@ -189,7 +193,7 @@ void main() {
 
     if(u_ShadowMapEnabled != 0) {
         float visibility = SampleShadowMap(u_ShadowMap0, vs_shadowMapCoord[0], ndotl);
-        float shadowFactor = mix(1.0 - clamp(u_ShadowMapStrength, 0.0, 1.0), 1.0, visibility);
+        float shadowFactor = ApplyReceivedShadow(visibility, u_ShadowMapStrength);
         ndotl *= shadowFactor;
         toonCoord = mix(0.0, toonCoord, shadowFactor);
     }
@@ -265,7 +269,7 @@ void main() {
                 u_PointLightShadowAtlasRect[faceIndex],
                 u_PointLightShadowMeta[shadowSlot].yz,
                 pointNdotL);
-            radiance *= mix(1.0 - u_LocalShadowStrength, 1.0, visibility);
+            radiance *= ApplyReceivedShadow(visibility, u_LocalShadowStrength);
         }
         pointDiffuse += radiance * pointNdotL;
         if(u_SpecularPower > 0.0 && pointNdotL > 0.0) {
@@ -303,7 +307,7 @@ void main() {
                 u_SpotLightShadowAtlasRect[shadowSlot],
                 u_SpotLightShadowMeta[shadowSlot].yz,
                 spotNdotL);
-            radiance *= mix(1.0 - u_LocalShadowStrength, 1.0, visibility);
+            radiance *= ApplyReceivedShadow(visibility, u_LocalShadowStrength);
         }
         spotDiffuse += radiance * spotNdotL;
         if(u_SpecularPower > 0.0 && spotNdotL > 0.0) {
