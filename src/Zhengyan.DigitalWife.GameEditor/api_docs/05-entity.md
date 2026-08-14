@@ -60,6 +60,7 @@ keywords:
 | `PhysicsGravityMagnitude` | `physics_gravity_magnitude` | PMX 非负重力大小。Python 用 `set_physics_gravity_magnitude` 修改。 |
 | `EnableEdge` | 无直接快照字段 | PMX 是否绘制描边。Python 用 `set_edge_enabled` 修改。 |
 | `EnableShadow` | 无直接快照字段 | PMX 是否向方向光、点光源和射灯的 shadow map 投射阴影。Python 用 `set_shadow_enabled` 修改。 |
+| `ParticleCastsShadows` | `particle_casts_shadows` | 粒子系统是否向方向光、点光源和射灯 shadow map 投射阴影；粒子本身不接收阴影。Python 用 `set_particle_casts_shadows` 修改。 |
 | `ReceiveShadow` | `receive_shadow` | PMX 是否在主材质上接收方向光、点光源和射灯阴影。Python 用 `set_receive_shadow` 修改。 |
 | `ReceiveShadowMode` | `receive_shadow_mode` | PMX 接收阴影的显示模式：`smooth` 保持连续 PCF 灰度，`toon` 使用明确的受光/受影两档。Python 用 `set_receive_shadow_mode("smooth" 或 "toon")` 修改。 |
 | `EnableWaterInteraction` | `enable_water_interaction` | 粒子系统是否参与水体交互。Python 用 `set_enable_water_interaction` 修改。 |
@@ -101,6 +102,7 @@ Entity.PhysicsGravityDirection = -Vector3.UnitY;
 Entity.PhysicsGravityMagnitude = 98.0f;
 Entity.EnableEdge = true;
 Entity.EnableShadow = true;
+Entity.ParticleCastsShadows = true;
 Entity.ReceiveShadow = true;
 Entity.ReceiveShadowMode = "toon"; // "smooth" or "toon"
 Entity.EnableWaterInteraction = true;
@@ -138,6 +140,7 @@ entity.set_physics_gravity_direction(0.0, -1.0, 0.0)
 entity.set_physics_gravity_magnitude(98.0)
 entity.set_edge_enabled(True)
 entity.set_shadow_enabled(True)
+entity.set_particle_casts_shadows(True)
 entity.set_receive_shadow(True)
 entity.set_receive_shadow_mode("toon")  # "smooth" or "toon"
 entity.set_enable_water_interaction(True)

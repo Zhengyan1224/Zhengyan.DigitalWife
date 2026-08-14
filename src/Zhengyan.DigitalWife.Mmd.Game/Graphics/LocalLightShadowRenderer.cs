@@ -1,4 +1,5 @@
 using System.Numerics;
+using Zhengyan.DigitalWife.Mmd.Game.Components;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
@@ -30,6 +31,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
     public void Render(
         GameTime gameTime,
         IReadOnlyList<PmxModelComponent> pmxModels,
+        IReadOnlyList<ParticleSystemComponent> particleSystems,
         IReadOnlyList<PointLightData> pointLights,
         IReadOnlyList<SpotLightData> spotLights,
         float shadowStrength,
@@ -45,7 +47,10 @@ public sealed class LocalLightShadowRenderer : IDisposable
         List<PmxModelComponent> casters = pmxModels
             .Where(model => model.Visible && model.EnableShadow)
             .ToList();
-        if (casters.Count == 0 || shadowStrength <= 0.001f)
+        List<ParticleSystemComponent> particleCasters = particleSystems
+            .Where(particle => particle.Visible && particle.CastShadows)
+            .ToList();
+        if ((casters.Count == 0 && particleCasters.Count == 0) || shadowStrength <= 0.001f)
         {
             CurrentBinding = null;
             _lastRenderedFrame = gameTime.FrameCount;
@@ -79,7 +84,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
                     GetPointFace(face, out Vector3 direction, out Vector3 up);
                     matrices[face] = CreatePointViewProjection(light, direction, up, nearPlane);
                     rects[face] = BeginTile(tileIndex++, tileSize);
-                    DrawCasters(casters, matrices[face], 2.0f / 16777216.0f);
+                    DrawCasters(casters, particleCasters, matrices[face], 2.0f / 16777216.0f);
                 }
                 pointBindings.Add(new PointLightShadowBinding(
                     packedIndex,
@@ -94,7 +99,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
                 float nearPlane = GetNearPlane(light.Range);
                 Matrix4x4 matrix = CreateSpotViewProjection(light, nearPlane);
                 Vector4 rect = BeginTile(tileIndex++, tileSize);
-                DrawCasters(casters, matrix, 2.0f / 16777216.0f);
+                DrawCasters(casters, particleCasters, matrix, 2.0f / 16777216.0f);
                 spotBindings.Add(new SpotLightShadowBinding(
                     packedIndex,
                     nearPlane,
@@ -150,12 +155,17 @@ public sealed class LocalLightShadowRenderer : IDisposable
 
     private static void DrawCasters(
         IEnumerable<PmxModelComponent> casters,
+        IEnumerable<ParticleSystemComponent> particleCasters,
         Matrix4x4 lightViewProjection,
         float depthBias)
     {
         foreach (PmxModelComponent model in casters)
         {
             model.DrawShadowDepthPass(lightViewProjection, depthBias);
+        }
+        foreach (ParticleSystemComponent particle in particleCasters)
+        {
+            particle.DrawShadowDepthPass(lightViewProjection, depthBias);
         }
     }
 

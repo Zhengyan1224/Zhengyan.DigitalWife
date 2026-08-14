@@ -583,13 +583,31 @@ public sealed class RuntimeEntity
 
     public bool EnableShadow
     {
-        get => _model?.EnableShadow ?? _definition.EnableShadow;
+        get => _model?.EnableShadow ?? _particle?.CastShadows ?? _definition.EnableShadow;
         set
         {
             _definition.EnableShadow = value;
             if (_model is not null)
             {
                 _model.EnableShadow = value;
+            }
+            if (_particle is not null)
+            {
+                _definition.Particle.CastShadows = value;
+                _particle.CastShadows = value;
+            }
+        }
+    }
+
+    public bool ParticleCastsShadows
+    {
+        get => _particle?.CastShadows ?? _definition.Particle.CastShadows;
+        set
+        {
+            _definition.Particle.CastShadows = value;
+            if (_particle is not null)
+            {
+                _particle.CastShadows = value;
             }
         }
     }
@@ -2034,6 +2052,7 @@ public sealed class RuntimeEntity
             _definition.IsPlaying = _particle.Enabled;
             _definition.Particle.SimulationSpeed = _particle.SimulationSpeed;
             _definition.Particle.Opacity = _particle.Opacity;
+            _definition.Particle.CastShadows = _particle.CastShadows;
         }
         else if (_water is not null)
         {

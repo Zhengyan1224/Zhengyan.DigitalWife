@@ -4006,6 +4006,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         bool randomizeInitialAge = particle.RandomizeInitialAge;
         bool useTextureColor = particle.UseTextureColor;
         bool preventDarkening = particle.PreventDarkening;
+        bool castShadows = particle.CastShadows;
         string[] blendModes = ["alpha", "additive"];
         string[] orientationModes = ["billboard", "velocityAligned"];
         string[] texturePresets = ["softCircle", "streak", "flame"];
@@ -4063,6 +4064,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Combo("Texture preset", ref texturePresetIndex, texturePresets, texturePresets.Length);
         changed |= ImGui.Checkbox("Use texture color", ref useTextureColor);
         changed |= ImGui.Checkbox("Prevent darkening", ref preventDarkening);
+        changed |= ImGui.Checkbox("Cast shadows", ref castShadows);
         changed |= ImGui.ColorEdit4("Start color", ref startColor);
         changed |= ImGui.ColorEdit4("End color", ref endColor);
         if (DrawPathInput("Texture path", ref texturePath, 1024, "particleTexturePath"))
@@ -4102,6 +4104,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             particle.TexturePreset = texturePresets[Math.Clamp(texturePresetIndex, 0, texturePresets.Length - 1)];
             particle.UseTextureColor = useTextureColor;
             particle.PreventDarkening = preventDarkening;
+            particle.CastShadows = castShadows;
             particle.StartColor = Vector4Dto.FromVector4(startColor);
             particle.EndColor = Vector4Dto.FromVector4(endColor);
             particle.TexturePath = string.IsNullOrWhiteSpace(texturePath) ? null : texturePath.Trim();

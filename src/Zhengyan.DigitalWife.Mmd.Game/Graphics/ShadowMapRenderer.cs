@@ -31,6 +31,7 @@ public sealed class ShadowMapRenderer : IDisposable
     public void Render(
         GameTime gameTime,
         IReadOnlyList<PmxModelComponent> pmxModels,
+        IReadOnlyList<ParticleSystemComponent> particleSystems,
         IReadOnlyList<TexturedPlaneComponent> planeReceivers,
         Vector3 lightDirection,
         Vector4 shadowColor,
@@ -41,19 +42,23 @@ public sealed class ShadowMapRenderer : IDisposable
         _ = gameTime;
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(pmxModels);
+        ArgumentNullException.ThrowIfNull(particleSystems);
         ArgumentNullException.ThrowIfNull(planeReceivers);
         ArgumentNullException.ThrowIfNull(restoreRenderTarget);
 
         List<PmxModelComponent> casters = pmxModels
             .Where(model => model.Visible && model.EnableShadow)
             .ToList();
-        if (casters.Count == 0 || shadowColor.W <= 0.001f)
+        List<ParticleSystemComponent> particleCasters = particleSystems
+            .Where(particle => particle.Visible && particle.CastShadows)
+            .ToList();
+        if ((casters.Count == 0 && particleCasters.Count == 0) || shadowColor.W <= 0.001f)
         {
             CurrentBinding = null;
             return;
         }
 
-        Bounds3 bounds = ComputeSceneBounds(casters, planeReceivers);
+        Bounds3 bounds = ComputeSceneBounds(casters, particleCasters, planeReceivers);
         Matrix4x4 lightViewProjection = CreateLightViewProjection(
             bounds,
             lightDirection,
@@ -69,6 +74,10 @@ public sealed class ShadowMapRenderer : IDisposable
             foreach (PmxModelComponent model in casters)
             {
                 model.DrawShadowDepthPass(lightViewProjection, 2.0f / 16777216.0f);
+            }
+            foreach (ParticleSystemComponent particle in particleCasters)
+            {
+                particle.DrawShadowDepthPass(lightViewProjection, 2.0f / 16777216.0f);
             }
         }
         finally
@@ -107,6 +116,7 @@ public sealed class ShadowMapRenderer : IDisposable
 
     private static Bounds3 ComputeSceneBounds(
         IReadOnlyList<PmxModelComponent> casters,
+        IReadOnlyList<ParticleSystemComponent> particleCasters,
         IReadOnlyList<TexturedPlaneComponent> planeReceivers)
     {
         Bounds3 bounds = new();
@@ -132,6 +142,15 @@ public sealed class ShadowMapRenderer : IDisposable
                     y == 0 ? localMin.Y : localMax.Y,
                     z == 0 ? localMin.Z : localMax.Z);
                 bounds.Encapsulate(Vector3.Transform(corner, world));
+            }
+        }
+
+        foreach (ParticleSystemComponent particle in particleCasters)
+        {
+            if (particle.TryGetShadowBounds(out Vector3 minimum, out Vector3 maximum))
+            {
+                bounds.Encapsulate(minimum);
+                bounds.Encapsulate(maximum);
             }
         }
 

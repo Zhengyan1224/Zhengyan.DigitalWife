@@ -45,6 +45,10 @@ public interface IParticlePassRenderer : IDisposable
     void Draw<T>(ReadOnlySpan<T> vertices, int vertexCount, ITexture2D fallbackTexture,
         RuntimeTextureHandle? runtimeTexture, Matrix4x4 viewProjection, float opacity,
         Vector4 startColor, Vector4 endColor, bool useTextureColor, bool additive) where T : unmanaged;
+
+    void DrawShadow<T>(ReadOnlySpan<T> vertices, int vertexCount, ITexture2D fallbackTexture,
+        RuntimeTextureHandle? runtimeTexture, Matrix4x4 lightViewProjection, float opacity,
+        Vector4 startColor, Vector4 endColor, float depthBias) where T : unmanaged;
 }
 
 public interface IWaterPassRenderer : IDisposable

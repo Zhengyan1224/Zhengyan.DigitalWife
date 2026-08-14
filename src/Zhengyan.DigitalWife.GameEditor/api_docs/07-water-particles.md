@@ -29,6 +29,7 @@ keywords:
 水体交互涉及两类实体：
 
 - `particle_system`
+  - `ParticleCastsShadows`：是否把粒子 alpha-tested 几何写入方向光、点光源和射灯的 shadow map。粒子只投射阴影，不采样阴影。
   - `EnableWaterInteraction`
   - `KillOnWaterContact`
 - `water_surface`
@@ -60,6 +61,7 @@ RuntimeEntity? pond = Scene.GetEntity("Pond");
 
 if (rain is not null && pond is not null)
 {
+    rain.ParticleCastsShadows = true;
     rain.EnableWaterInteraction = true;
     rain.KillOnWaterContact = true;
 
@@ -90,6 +92,7 @@ rain = scene.get_entity("Rain FX")
 pond = scene.get_entity("Pond")
 
 if rain is not None and pond is not None:
+    rain.set_particle_casts_shadows(True)
     rain.set_enable_water_interaction(True)
     rain.set_kill_on_water_contact(True)
 

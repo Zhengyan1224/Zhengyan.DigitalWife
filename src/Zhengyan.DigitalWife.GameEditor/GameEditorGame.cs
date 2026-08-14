@@ -465,6 +465,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _shadowMapRenderer.Render(
             gameTime,
             _pmxObjects.Select(item => item.Model).ToArray(),
+            _particleObjects.Select(item => item.Component).ToArray(),
             _planeObjects.Select(item => item.Component).ToArray(),
             Project.Scene.Lighting.LightDirection.ToVector3(),
             Project.Scene.Lighting.ShadowColor.ToVector4(),
@@ -475,6 +476,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _localLightShadowRenderer.Render(
             gameTime,
             _pmxObjects.Select(item => item.Model).ToArray(),
+            _particleObjects.Select(item => item.Component).ToArray(),
             _pointLights,
             _spotLights,
             Project.Scene.Lighting.ShadowColor.W,

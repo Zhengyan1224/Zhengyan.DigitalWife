@@ -99,6 +99,8 @@ public static class ParticleSystemPresetStore
 
         public bool PreventDarkening { get; set; }
 
+        public bool CastShadows { get; set; }
+
         public static ParticlePresetDocument FromSettings(ParticleSystemSettings settings)
         {
             return new ParticlePresetDocument
@@ -127,7 +129,8 @@ public static class ParticleSystemPresetStore
                 TexturePreset = settings.TexturePreset,
                 TexturePath = settings.TexturePath,
                 UseTextureColor = settings.UseTextureColor,
-                PreventDarkening = settings.PreventDarkening
+                PreventDarkening = settings.PreventDarkening,
+                CastShadows = settings.CastShadows
             };
         }
 
@@ -159,7 +162,8 @@ public static class ParticleSystemPresetStore
                 TexturePreset = TexturePreset,
                 TexturePath = string.IsNullOrWhiteSpace(TexturePath) ? null : TexturePath.Trim(),
                 UseTextureColor = UseTextureColor,
-                PreventDarkening = PreventDarkening
+                PreventDarkening = PreventDarkening,
+                CastShadows = CastShadows
             };
         }
     }

@@ -18,6 +18,7 @@ public static class ParticleEntitySettingsMapper
 
         return new ParticleEntitySettings
         {
+            CastShadows = settings.CastShadows,
             ParticleCount = settings.ParticleCount,
             SpawnBoxHalfExtents = Vector3Dto.FromVector3(settings.SpawnBoxHalfExtents),
             BaseVelocity = Vector3Dto.FromVector3(settings.BaseVelocity),
@@ -54,6 +55,7 @@ public static class ParticleEntitySettingsMapper
         ParticleSystemSettings result = new()
         {
             Name = string.IsNullOrWhiteSpace(settings.Preset) ? "Particles" : settings.Preset,
+            CastShadows = settings.CastShadows,
             ParticleCount = settings.ParticleCount,
             SpawnBoxHalfExtents = settings.SpawnBoxHalfExtents.ToVector3(),
             BaseVelocity = settings.BaseVelocity.ToVector3(),

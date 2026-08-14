@@ -1163,6 +1163,8 @@ public sealed class ParticleEntitySettings
 {
     public string Preset { get; set; } = "sakura";
 
+    public bool CastShadows { get; set; }
+
     public bool EnableWaterInteraction { get; set; }
 
     public bool KillOnWaterContact { get; set; }

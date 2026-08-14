@@ -15,8 +15,11 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
+    private readonly Shader[] _shadowShaders;
+    private readonly ShaderSetDescription _shadowShaderSet;
     private readonly Dictionary<TextureView, ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, bool Additive, Pipeline Pipeline)> _pipelines = [];
+    private readonly List<(OutputDescription Output, Pipeline Pipeline)> _shadowPipelines = [];
 
     public VeldridParticleRenderer(VulkanRenderer renderer, uint initialCapacityBytes)
     {
@@ -39,6 +42,10 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
                 new VertexElementDescription("Uv", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2),
                 new VertexElementDescription("Life", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float1))],
             _shaders);
+        _shadowShaders = factory.CreateFromSpirv(
+            VulkanShaderCompiler.CompileSource("particle_shadow.vert", ShadowVertexSource, ShaderStages.Vertex),
+            VulkanShaderCompiler.CompileSource("particle_shadow.frag", ShadowFragmentSource, ShaderStages.Fragment));
+        _shadowShaderSet = new ShaderSetDescription(_shaderSet.VertexLayouts, _shadowShaders);
     }
 
     public void Draw<T>(ReadOnlySpan<T> vertices, int vertexCount, ITexture2D fallbackTexture,
@@ -72,11 +79,44 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         commands.Draw((uint)vertexCount);
     }
 
+    public void DrawShadow<T>(ReadOnlySpan<T> vertices, int vertexCount, ITexture2D fallbackTexture,
+        RuntimeTextureHandle? runtimeTexture, Matrix4x4 lightViewProjection, float opacity,
+        Vector4 startColor, Vector4 endColor, float depthBias) where T : unmanaged
+    {
+        if (!_renderer.IsFrameOpen || vertexCount <= 0) return;
+        TextureView? view = runtimeTexture?.NativeResource as TextureView ?? fallbackTexture.NativeResource as TextureView;
+        if (view is null) return;
+        uint bytes = checked((uint)(vertexCount * Marshal.SizeOf<T>()));
+        EnsureCapacity(bytes);
+        if (!_sets.TryGetValue(view, out ResourceSet? set))
+        {
+            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms, view, _sampler));
+            _sets.Add(view, set);
+        }
+
+        UniformData data = new()
+        {
+            ViewProjection = lightViewProjection,
+            StartColor = startColor,
+            EndColor = endColor,
+            Parameters = new Vector4(Math.Clamp(opacity, 0, 1), 0, Math.Max(depthBias, 0), 0)
+        };
+        CommandList commands = _renderer.CommandList;
+        commands.UpdateBuffer(_vertices, 0, vertices[..vertexCount]);
+        commands.UpdateBuffer(_uniforms, 0, data);
+        commands.SetPipeline(GetShadowPipeline(_renderer.CurrentOutputDescription));
+        commands.SetVertexBuffer(0, _vertices);
+        commands.SetGraphicsResourceSet(0, set);
+        commands.Draw((uint)vertexCount);
+    }
+
     public void Dispose()
     {
         foreach (ResourceSet set in _sets.Values) set.Dispose();
         foreach ((_, _, Pipeline pipeline) in _pipelines) pipeline.Dispose();
+        foreach ((_, Pipeline pipeline) in _shadowPipelines) pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
+        foreach (Shader shader in _shadowShaders) shader.Dispose();
         _layout.Dispose();
         _sampler.Dispose();
         _uniforms.Dispose();
@@ -112,6 +152,22 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         return created;
     }
 
+    private Pipeline GetShadowPipeline(OutputDescription output)
+    {
+        foreach ((OutputDescription candidate, Pipeline pipeline) in _shadowPipelines)
+            if (candidate.Equals(output)) return pipeline;
+        Pipeline created = _renderer.ResourceFactory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
+            BlendStateDescription.SingleDisabled,
+            new DepthStencilStateDescription(true, true, ComparisonKind.LessEqual),
+            RasterizerStateDescription.CullNone,
+            PrimitiveTopology.TriangleList,
+            _shadowShaderSet,
+            [_layout],
+            output));
+        _shadowPipelines.Add((output, created));
+        return created;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct UniformData
     {
@@ -144,6 +200,31 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
             color.a*=sampled.a*frame.parameters.x;
             if(color.a<=0.001) discard;
             out_Color=color;
+        }
+        """;
+
+    private const string ShadowVertexSource = """
+        layout(set=0,binding=0,std140) uniform ParticleFrame { mat4 viewProjection; vec4 startColor; vec4 endColor; vec4 parameters; } frame;
+        layout(location=0) in vec3 in_Pos;
+        layout(location=1) in vec2 in_Uv;
+        layout(location=2) in float in_Life;
+        layout(location=0) out vec2 vs_Uv;
+        layout(location=1) out float vs_Life;
+        void main(){ gl_Position=frame.viewProjection*vec4(in_Pos,1.0); vs_Uv=in_Uv; vs_Life=in_Life; }
+        """;
+
+    private const string ShadowFragmentSource = """
+        layout(set=0,binding=0,std140) uniform ParticleFrame { mat4 viewProjection; vec4 startColor; vec4 endColor; vec4 parameters; } frame;
+        layout(set=0,binding=1) uniform texture2D particleTexture;
+        layout(set=0,binding=2) uniform sampler particleSampler;
+        layout(location=0) in vec2 vs_Uv;
+        layout(location=1) in float vs_Life;
+        void main(){
+            float particleAlpha=mix(frame.startColor.a,frame.endColor.a,clamp(vs_Life,0.0,1.0));
+            float alpha=texture(sampler2D(particleTexture,particleSampler),vs_Uv).a*particleAlpha*frame.parameters.x;
+            if(alpha<=0.05) discard;
+            float slope=max(abs(dFdx(gl_FragCoord.z)),abs(dFdy(gl_FragCoord.z)));
+            gl_FragDepth=gl_FragCoord.z+slope*1.5+frame.parameters.z*2.0;
         }
         """;
 }

@@ -78,6 +78,8 @@ public sealed class ParticleSystemSettings
 
     public bool PreventDarkening { get; set; }
 
+    public bool CastShadows { get; set; }
+
     public void Validate()
     {
         if (ParticleCount <= 0)
@@ -124,7 +126,8 @@ public sealed class ParticleSystemSettings
             TexturePreset = TexturePreset,
             TexturePath = TexturePath,
             UseTextureColor = UseTextureColor,
-            PreventDarkening = PreventDarkening
+            PreventDarkening = PreventDarkening,
+            CastShadows = CastShadows
         };
     }
 }
@@ -345,6 +348,13 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     private int _uniformStartColor = -1;
     private int _uniformEndColor = -1;
     private int _uniformUseTextureColor = -1;
+    private uint _shadowProgram;
+    private int _uniformShadowViewProjection = -1;
+    private int _uniformShadowTexture = -1;
+    private int _uniformShadowOpacity = -1;
+    private int _uniformShadowStartColor = -1;
+    private int _uniformShadowEndColor = -1;
+    private int _uniformShadowDepthBias = -1;
     private Vector3 _position = Vector3.Zero;
 
     public ParticleSystemComponent(OrbitCamera camera, ParticleSystemSettings settings)
@@ -391,6 +401,12 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
     public float SimulationSpeed { get; set; } = 1.0f;
 
     public float Opacity { get; set; } = 1.0f;
+
+    public bool CastShadows
+    {
+        get => _settings.CastShadows;
+        set => _settings.CastShadows = value;
+    }
 
     public int ParticleCount => _particles.Length;
 
@@ -520,6 +536,7 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
 
         GL gl = Game.GraphicsDevice.Gl;
         _program = gl.CreateShaderProgramFromSource(VertexShaderSource, FragmentShaderSource);
+        _shadowProgram = gl.CreateShaderProgramFromSource(ShadowVertexShaderSource, ShadowFragmentShaderSource);
         _vao = gl.GenVertexArray();
         _vertexBuffer = gl.GenBuffer();
         _texture = CreateTexture(gl, _settings);
@@ -544,6 +561,12 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         _uniformStartColor = gl.GetUniformLocation(_program, "u_StartColor");
         _uniformEndColor = gl.GetUniformLocation(_program, "u_EndColor");
         _uniformUseTextureColor = gl.GetUniformLocation(_program, "u_UseTextureColor");
+        _uniformShadowViewProjection = gl.GetUniformLocation(_shadowProgram, "u_LightViewProjection");
+        _uniformShadowTexture = gl.GetUniformLocation(_shadowProgram, "u_Texture");
+        _uniformShadowOpacity = gl.GetUniformLocation(_shadowProgram, "u_Opacity");
+        _uniformShadowStartColor = gl.GetUniformLocation(_shadowProgram, "u_StartColor");
+        _uniformShadowEndColor = gl.GetUniformLocation(_shadowProgram, "u_EndColor");
+        _uniformShadowDepthBias = gl.GetUniformLocation(_shadowProgram, "u_DepthBias");
 
         ResetParticles(_settings.RandomizeInitialAge);
     }
@@ -659,6 +682,105 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
         gl.Disable(GLEnum.Blend);
     }
 
+    public void DrawShadowDepthPass(Matrix4x4 lightViewProjection, float depthBias = 0.0f)
+    {
+        if (!CastShadows || !Visible || Opacity <= 0.001f || Game is null)
+        {
+            return;
+        }
+
+        int vertexCount = BuildVertices();
+        if (vertexCount <= 0)
+        {
+            return;
+        }
+
+        if (_backendRenderer is not null && _backendTexture is not null)
+        {
+            _backendRenderer.DrawShadow<ParticleVertex>(
+                new ReadOnlySpan<ParticleVertex>(_vertices),
+                vertexCount,
+                _backendTexture,
+                ResolveTextureHandle(),
+                lightViewProjection,
+                Opacity,
+                _settings.StartColor,
+                _settings.EndColor,
+                depthBias);
+            return;
+        }
+
+        if ((_texture is null && !IsRuntimeTextureReference(_settings.TexturePath))
+            || _shadowProgram == 0
+            || _vao == 0)
+        {
+            return;
+        }
+
+        GL gl = Game.GraphicsDevice.Gl;
+        gl.Disable(GLEnum.StencilTest);
+        gl.Disable(GLEnum.CullFace);
+        gl.Disable(GLEnum.Blend);
+        gl.Enable(GLEnum.DepthTest);
+        gl.Enable(GLEnum.PolygonOffsetFill);
+        gl.PolygonOffset(1.5f, 0.0f);
+        gl.DepthMask(true);
+        gl.UseProgram(_shadowProgram);
+        gl.BindVertexArray(_vao);
+        gl.ActiveTexture(TextureUnit.Texture0);
+        gl.BindTexture(GLEnum.Texture2D, ResolveTextureId());
+        gl.SetUniform(_uniformShadowViewProjection, lightViewProjection);
+        gl.Uniform1(_uniformShadowTexture, 0);
+        gl.Uniform1(_uniformShadowOpacity, Math.Clamp(Opacity, 0.0f, 1.0f));
+        gl.Uniform4(_uniformShadowStartColor, _settings.StartColor.X, _settings.StartColor.Y, _settings.StartColor.Z, _settings.StartColor.W);
+        gl.Uniform4(_uniformShadowEndColor, _settings.EndColor.X, _settings.EndColor.Y, _settings.EndColor.Z, _settings.EndColor.W);
+        gl.Uniform1(_uniformShadowDepthBias, Math.Max(depthBias, 0.0f));
+
+        fixed (ParticleVertex* vertexPtr = _vertices)
+        {
+            gl.BindBuffer(GLEnum.ArrayBuffer, _vertexBuffer);
+            gl.BufferSubData(GLEnum.ArrayBuffer, 0, (uint)(vertexCount * sizeof(ParticleVertex)), vertexPtr);
+            gl.BindBuffer(GLEnum.ArrayBuffer, 0);
+        }
+
+        gl.DrawArrays(GLEnum.Triangles, 0, (uint)vertexCount);
+        gl.BindTexture(GLEnum.Texture2D, 0);
+        gl.BindVertexArray(0);
+        gl.UseProgram(0);
+        gl.Disable(GLEnum.PolygonOffsetFill);
+    }
+
+    public bool TryGetShadowBounds(out Vector3 minimum, out Vector3 maximum)
+    {
+        minimum = new Vector3(float.PositiveInfinity);
+        maximum = new Vector3(float.NegativeInfinity);
+        bool hasValue = false;
+
+        foreach (ref readonly ParticleState particle in _particles.AsSpan())
+        {
+            if (particle.Lifetime <= 0.0f || particle.Age >= particle.Lifetime)
+            {
+                continue;
+            }
+
+            float lifeT = Math.Clamp(particle.Age / particle.Lifetime, 0.0f, 1.0f);
+            float alpha = Lerp(_settings.StartColor.W, _settings.EndColor.W, lifeT) * Opacity;
+            if (alpha <= ShadowAlphaCutoff)
+            {
+                continue;
+            }
+
+            float size = particle.Size * Lerp(_settings.StartSizeScale, _settings.EndSizeScale, lifeT);
+            float radius = size * 0.5f * MathF.Max(MathF.Abs(_settings.WidthScale), MathF.Abs(_settings.HeightScale));
+            Vector3 extent = new(radius);
+            minimum = Vector3.Min(minimum, particle.Position - extent);
+            maximum = Vector3.Max(maximum, particle.Position + extent);
+            hasValue = true;
+        }
+
+        return hasValue;
+    }
+
     public override void Dispose()
     {
         _texture?.Dispose();
@@ -674,11 +796,13 @@ public sealed unsafe class ParticleSystemComponent : DrawableGameComponent
             gl.DeleteBuffer(_vertexBuffer);
             gl.DeleteVertexArray(_vao);
             gl.DeleteProgram(_program);
+            gl.DeleteProgram(_shadowProgram);
         }
 
         _vertexBuffer = 0;
         _vao = 0;
         _program = 0;
+        _shadowProgram = 0;
 
         base.Dispose();
     }
@@ -1091,6 +1215,54 @@ void main()
         discard;
     }
     out_Color = color;
+}
+""";
+
+    private const float ShadowAlphaCutoff = 0.05f;
+
+    private const string ShadowVertexShaderSource = """
+#version 300 es
+
+layout (location = 0) in vec3 in_Pos;
+layout (location = 1) in vec2 in_Uv;
+layout (location = 2) in float in_LifeT;
+
+uniform mat4 u_LightViewProjection;
+
+out vec2 vs_Uv;
+out float vs_LifeT;
+
+void main()
+{
+    vs_Uv = in_Uv;
+    vs_LifeT = in_LifeT;
+    gl_Position = u_LightViewProjection * vec4(in_Pos, 1.0);
+}
+""";
+
+    private const string ShadowFragmentShaderSource = """
+#version 300 es
+
+precision highp float;
+
+in vec2 vs_Uv;
+in float vs_LifeT;
+
+uniform sampler2D u_Texture;
+uniform float u_Opacity;
+uniform vec4 u_StartColor;
+uniform vec4 u_EndColor;
+uniform float u_DepthBias;
+
+void main()
+{
+    float particleAlpha = mix(u_StartColor.a, u_EndColor.a, clamp(vs_LifeT, 0.0, 1.0));
+    float alpha = texture(u_Texture, vs_Uv).a * particleAlpha * u_Opacity;
+    if (alpha <= 0.05) {
+        discard;
+    }
+    float slope = max(abs(dFdx(gl_FragCoord.z)), abs(dFdy(gl_FragCoord.z)));
+    gl_FragDepth = gl_FragCoord.z + slope * 1.5 + u_DepthBias * 2.0;
 }
 """;
 }
