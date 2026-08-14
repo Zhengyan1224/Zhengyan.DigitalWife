@@ -261,7 +261,7 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         Matrix4x4 lightWvp = world * binding.LightViewProjection;
         _gl.SetUniform(_shader.UniShadowMapEnabled, 1);
         _gl.SetUniform(_shader.UniShadowMapStrength, Math.Clamp(binding.Strength, 0.0f, 1.0f));
-        _gl.SetUniform(_shader.UniShadowMapBias, Math.Max(0.0f, binding.Bias));
+        _gl.SetUniform(_shader.UniShadowMapBias, ShadowDepthBias.ToOpenGlComparisonSpace(binding.Bias));
         _gl.SetUniform(_shader.UniShadowMapTexelSize, binding.TexelSize);
         float scaleX = new Vector3(world.M11, world.M12, world.M13).Length();
         float scaleY = new Vector3(world.M21, world.M22, world.M23).Length();

@@ -565,7 +565,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         gl.SetUniform(_uniformShadowMapEnabled, 1);
         gl.SetUniform(_uniformLightViewProjection, shadowMap.LightViewProjection);
         gl.SetUniform(_uniformShadowMapStrength, Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
-        gl.SetUniform(_uniformShadowMapBias, Math.Max(0.0f, shadowMap.Bias));
+        gl.SetUniform(_uniformShadowMapBias, ShadowDepthBias.ToOpenGlComparisonSpace(shadowMap.Bias));
         gl.SetUniform(_uniformShadowMapTexelSize, shadowMap.TexelSize);
     }
 
@@ -632,7 +632,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         shader.SetUniform("u_ShadowMapEnabled", 1);
         shader.SetUniform("u_LightViewProjection", shadowMap.LightViewProjection);
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
-        shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+        shader.SetUniform("u_ShadowMapBias", ShadowDepthBias.ToOpenGlComparisonSpace(shadowMap.Bias));
         shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
     }
 

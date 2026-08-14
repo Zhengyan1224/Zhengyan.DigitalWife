@@ -1833,7 +1833,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         Matrix4x4 lightWvp = transform * shadowMap.LightViewProjection;
         shader.SetUniform("u_ShadowMapEnabled", 1);
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
-        shader.SetUniform("u_ShadowMapBias", Math.Max(0.0f, shadowMap.Bias));
+        shader.SetUniform("u_ShadowMapBias", ShadowDepthBias.ToOpenGlComparisonSpace(shadowMap.Bias));
         shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
         float scaleX = new Vector3(transform.M11, transform.M12, transform.M13).Length();
         float scaleY = new Vector3(transform.M21, transform.M22, transform.M23).Length();
