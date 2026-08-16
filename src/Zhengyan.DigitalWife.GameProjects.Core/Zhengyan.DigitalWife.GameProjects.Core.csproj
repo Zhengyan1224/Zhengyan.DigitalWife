@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0-android</TargetFramework>
+        <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Zhengyan.DigitalWife.Abstractions\Zhengyan.DigitalWife.Abstractions.csproj" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProject.cs" Link="GameProject.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectPackage.cs" Link="GameProjectPackage.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectPath.cs" Link="GameProjectPath.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectStore.cs" Link="GameProjectStore.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\AndroidProjectCompatibility.cs" Link="AndroidProjectCompatibility.cs" />
+    </ItemGroup>
+
+</Project>

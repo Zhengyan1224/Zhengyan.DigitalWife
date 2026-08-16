@@ -779,7 +779,20 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             }
         }
 
-        ImGui.TextWrapped("GamePlayer can load either the development project directory or the exported .dwgame package. Split packages are written as .dwgame.001, .dwgame.002, ... and GamePlayer can start from the .dwgame path or the first .001 part. Encryption prevents casual editing, but the password must still be provided at runtime.");
+        ImGui.SameLine();
+        if (ImGui.Button("Check Android Compatibility"))
+        {
+            try
+            {
+                _ = _editorGame.CheckAndroidCompatibility();
+            }
+            catch (Exception ex)
+            {
+                _editorGame.UpdateStatus($"Android compatibility check failed: {ex.Message}");
+            }
+        }
+
+        ImGui.TextWrapped("GamePlayer can load either the development project directory or the exported .dwgame package. Split packages are written as .dwgame.001, .dwgame.002, ... and GamePlayer can start from the .dwgame path or the first .001 part. Encryption prevents casual editing, but the password must still be provided at runtime. Android projects support C# scripts only; desktop sprite features are ignored.");
         ImGui.PopID();
     }
 

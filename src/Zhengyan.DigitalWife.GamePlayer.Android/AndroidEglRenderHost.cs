@@ -1,0 +1,270 @@
+using Android.Opengl;
+using Android.Util;
+using Android.Views;
+using System.Numerics;
+using Zhengyan.DigitalWife.GameProjects;
+using EGLConfig = Android.Opengl.EGLConfig;
+using EGLContext = Android.Opengl.EGLContext;
+using EGLDisplay = Android.Opengl.EGLDisplay;
+using EGLSurface = Android.Opengl.EGLSurface;
+
+namespace Zhengyan.DigitalWife.GamePlayer.Android;
+
+internal sealed class AndroidEglRenderHost : IDisposable
+{
+    private const string LogTag = "ZhengyanGamePlayer";
+    private const int EglContextClientVersion = 0x3098;
+    private const int EglOpenGlEs2Bit = 0x0004;
+    private const int EglOpenGlEs3BitKhr = 0x0040;
+
+    private EGLDisplay? _display;
+    private EGLContext? _context;
+    private EGLSurface? _surface;
+    private AndroidPmxSceneRenderer? _sceneRenderer;
+    private GameProject? _project;
+    private string _projectDirectory = string.Empty;
+    private int _width = 1;
+    private int _height = 1;
+    private int _openGlEsVersion;
+    private long _lastFrameTimeNanos;
+    private double _elapsedSeconds;
+    private bool _disposed;
+    private Vector4 _clearColor = new(0.025f, 0.035f, 0.055f, 1.0f);
+
+    public void SetProject(GameProject? project, string? projectDirectory)
+    {
+        _project = project;
+        _projectDirectory = projectDirectory ?? string.Empty;
+        SetClearColor(project?.Scene.Lighting.ClearColor);
+        if (_display is not null && _context is not null && _surface is not null)
+        {
+            ResetFrameClock();
+            ReloadScene();
+        }
+    }
+
+    public void SetClearColor(Vector4Dto? color)
+    {
+        if (color is null)
+        {
+            return;
+        }
+
+        Vector4 value = color.Value.ToVector4();
+        _clearColor = new(
+            Math.Clamp(value.X, 0.0f, 1.0f),
+            Math.Clamp(value.Y, 0.0f, 1.0f),
+            Math.Clamp(value.Z, 0.0f, 1.0f),
+            Math.Clamp(value.W, 0.0f, 1.0f));
+    }
+
+    public void CreateSurface(Surface surface)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        DestroySurface();
+
+        _display = EGL14.EglGetDisplay(EGL14.EglDefaultDisplay);
+        if (_display is null || _display == EGL14.EglNoDisplay)
+        {
+            throw new InvalidOperationException("Unable to obtain an EGL display.");
+        }
+
+        int[] versions = new int[2];
+        if (!EGL14.EglInitialize(_display, versions, 0, versions, 1))
+        {
+            throw CreateEglException("EGL initialization failed");
+        }
+
+        EGLConfig? config = ChooseConfig(_display, requestOpenGlEs3: true);
+        _context = config is null ? null : CreateContext(_display, config, 3);
+        if (_context is null || _context == EGL14.EglNoContext)
+        {
+            config = ChooseConfig(_display, requestOpenGlEs3: false)
+                ?? throw CreateEglException("No compatible EGL window configuration was found");
+            _context = CreateContext(_display, config, 2);
+            _openGlEsVersion = 2;
+        }
+        else
+        {
+            _openGlEsVersion = 3;
+        }
+
+        if (_context is null || _context == EGL14.EglNoContext)
+        {
+            throw CreateEglException("OpenGL ES context creation failed");
+        }
+
+        int[] surfaceAttributes = [EGL14.EglNone];
+        _surface = EGL14.EglCreateWindowSurface(_display, config, surface, surfaceAttributes, 0);
+        if (_surface is null || _surface == EGL14.EglNoSurface)
+        {
+            throw CreateEglException("EGL window surface creation failed");
+        }
+
+        MakeCurrent();
+        Log.Info(LogTag, $"Android graphics backend: OpenGL ES {_openGlEsVersion}");
+        ReloadScene();
+        _ = EGL14.EglSwapInterval(_display, 1);
+        ResetFrameClock();
+    }
+
+    public void Resize(int width, int height)
+    {
+        _width = Math.Max(width, 1);
+        _height = Math.Max(height, 1);
+    }
+
+    public void Render(long frameTimeNanos)
+    {
+        if (_display is null || _context is null || _surface is null)
+        {
+            return;
+        }
+
+        MakeCurrent();
+        if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
+        {
+            _elapsedSeconds += Math.Min((frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0, 0.1);
+        }
+
+        _lastFrameTimeNanos = frameTimeNanos;
+        double seconds = _elapsedSeconds;
+        float pulse = 0.5f + 0.5f * (float)Math.Sin(seconds * 0.8);
+
+        GLES30.GlViewport(0, 0, _width, _height);
+        GLES30.GlClearColor(
+            Math.Clamp(_clearColor.X + pulse * 0.015f, 0.0f, 1.0f),
+            _clearColor.Y,
+            Math.Clamp(_clearColor.Z + pulse * 0.02f, 0.0f, 1.0f),
+            _clearColor.W);
+        GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
+        _sceneRenderer?.Draw(_project, _width, _height, seconds);
+
+        if (!EGL14.EglSwapBuffers(_display, _surface))
+        {
+            throw CreateEglException("EGL buffer presentation failed");
+        }
+    }
+
+    public void Pause()
+    {
+        _lastFrameTimeNanos = 0;
+        if (_display is not null)
+        {
+            _ = EGL14.EglMakeCurrent(_display, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext);
+        }
+    }
+
+    public void DestroySurface()
+    {
+        if (_display is null)
+        {
+            return;
+        }
+
+        if (_surface is not null && _surface != EGL14.EglNoSurface
+            && _context is not null && _context != EGL14.EglNoContext)
+        {
+            _ = EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
+        }
+
+        _sceneRenderer?.Dispose();
+        _sceneRenderer = null;
+        _ = EGL14.EglMakeCurrent(_display, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext);
+        if (_surface is not null && _surface != EGL14.EglNoSurface)
+        {
+            _ = EGL14.EglDestroySurface(_display, _surface);
+        }
+
+        if (_context is not null && _context != EGL14.EglNoContext)
+        {
+            _ = EGL14.EglDestroyContext(_display, _context);
+        }
+
+        _ = EGL14.EglTerminate(_display);
+        _surface = null;
+        _context = null;
+        _display = null;
+        _openGlEsVersion = 0;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        DestroySurface();
+    }
+
+    private static EGLConfig? ChooseConfig(EGLDisplay display, bool requestOpenGlEs3)
+    {
+        int renderableType = requestOpenGlEs3 ? EglOpenGlEs3BitKhr : EglOpenGlEs2Bit;
+        int[] attributes =
+        [
+            EGL14.EglSurfaceType, EGL14.EglWindowBit,
+            EGL14.EglRenderableType, renderableType,
+            EGL14.EglRedSize, 8,
+            EGL14.EglGreenSize, 8,
+            EGL14.EglBlueSize, 8,
+            EGL14.EglAlphaSize, 8,
+            EGL14.EglDepthSize, 24,
+            EGL14.EglStencilSize, 8,
+            EGL14.EglNone
+        ];
+
+        EGLConfig[] configs = new EGLConfig[1];
+        int[] count = new int[1];
+        return EGL14.EglChooseConfig(display, attributes, 0, configs, 0, configs.Length, count, 0)
+            && count[0] > 0
+                ? configs[0]
+                : null;
+    }
+
+    private static EGLContext? CreateContext(EGLDisplay display, EGLConfig config, int version)
+    {
+        int[] attributes = [EglContextClientVersion, version, EGL14.EglNone];
+        return EGL14.EglCreateContext(display, config, EGL14.EglNoContext, attributes, 0);
+    }
+
+    private void MakeCurrent()
+    {
+        if (_display is null || _surface is null || _context is null
+            || !EGL14.EglMakeCurrent(_display, _surface, _surface, _context))
+        {
+            throw CreateEglException("Unable to activate the EGL context");
+        }
+    }
+
+    private void ReloadScene()
+    {
+        _sceneRenderer?.Dispose();
+        _sceneRenderer = null;
+        if (_project is null || string.IsNullOrWhiteSpace(_projectDirectory))
+        {
+            return;
+        }
+
+        if (_openGlEsVersion < 3)
+        {
+            Log.Warn(LogTag, "This device only exposed OpenGL ES 2.0; PMX rendering currently requires OpenGL ES 3.0.");
+            return;
+        }
+
+        _sceneRenderer = new AndroidPmxSceneRenderer();
+        _sceneRenderer.Load(_project, _projectDirectory);
+    }
+
+    private void ResetFrameClock()
+    {
+        _lastFrameTimeNanos = 0;
+        _elapsedSeconds = 0.0;
+    }
+
+    private static InvalidOperationException CreateEglException(string message)
+    {
+        return new InvalidOperationException($"{message} (EGL error 0x{EGL14.EglGetError():X}).");
+    }
+}

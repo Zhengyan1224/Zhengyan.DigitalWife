@@ -1,0 +1,295 @@
+using BulletSharp;
+using System.Numerics;
+using Zhengyan.DigitalWife.Mmd;
+using BtMatrix = Evergine.Mathematics.Matrix4x4;
+using BtVector3 = Evergine.Mathematics.Vector3;
+
+namespace Zhengyan.DigitalWife.GamePlayer.Android;
+
+internal sealed class AndroidPmxBulletPhysics : IDisposable
+{
+    private readonly DefaultCollisionConfiguration _collisionConfiguration;
+    private readonly CollisionDispatcher _dispatcher;
+    private readonly DbvtBroadphase _broadphase;
+    private readonly SequentialImpulseConstraintSolver _solver;
+    private readonly DiscreteDynamicsWorld _world;
+    private readonly List<BodyState> _bodies = [];
+    private readonly List<CollisionShape> _shapes = [];
+    private readonly List<TypedConstraint> _constraints = [];
+    private readonly StaticPlaneShape _groundShape;
+    private readonly DefaultMotionState _groundMotionState;
+    private readonly RigidBody _groundBody;
+    private bool _disposed;
+
+    public AndroidPmxBulletPhysics(PmxParsing pmx, Vector3 gravity)
+    {
+        _collisionConfiguration = new DefaultCollisionConfiguration();
+        _dispatcher = new CollisionDispatcher(_collisionConfiguration);
+        _broadphase = new DbvtBroadphase();
+        _solver = new SequentialImpulseConstraintSolver();
+        _world = new DiscreteDynamicsWorld(_dispatcher, _broadphase, _solver, _collisionConfiguration)
+        {
+            Gravity = ToBt(gravity)
+        };
+
+        _groundShape = new StaticPlaneShape(BtVector3.UnitY, 0.0f);
+        _groundMotionState = new DefaultMotionState(BtMatrix.Identity);
+        using (RigidBodyConstructionInfo groundInfo = new(0.0f, _groundMotionState, _groundShape, BtVector3.Zero))
+        {
+            _groundBody = new RigidBody(groundInfo);
+        }
+        _world.AddRigidBody(_groundBody);
+
+        Matrix4x4[] restGlobals = CreateRestGlobals(pmx.Bones);
+        foreach (PmxRigidBody source in pmx.RigidBodies)
+        {
+            BodyState state = CreateBody(source, restGlobals);
+            _bodies.Add(state);
+            _world.AddRigidBody(state.Body, 1 << source.Group, source.CollisionGroup);
+        }
+
+        foreach (PmxJoint joint in pmx.Joints)
+        {
+            if (joint.RigidBodyIndexA < 0 || joint.RigidBodyIndexA >= _bodies.Count
+                || joint.RigidBodyIndexB < 0 || joint.RigidBodyIndexB >= _bodies.Count
+                || joint.RigidBodyIndexA == joint.RigidBodyIndexB)
+            {
+                continue;
+            }
+            Generic6DofSpringConstraint constraint = CreateJoint(joint, _bodies[joint.RigidBodyIndexA].Body, _bodies[joint.RigidBodyIndexB].Body);
+            _constraints.Add(constraint);
+            _world.AddConstraint(constraint, true);
+        }
+    }
+
+    public IReadOnlyDictionary<int, Matrix4x4> Step(Matrix4x4[] animatedGlobals, float elapsedSeconds, bool reset)
+    {
+        Dictionary<int, Matrix4x4> overrides = [];
+        foreach (BodyState state in _bodies)
+        {
+            if (state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Length)
+            {
+                continue;
+            }
+            if (state.Operation == PmxOperation.Static)
+            {
+                state.SetKinematicTransform(animatedGlobals[state.BoneIndex]);
+            }
+            else if (reset || !state.Initialized)
+            {
+                state.ResetDynamicTransform(animatedGlobals[state.BoneIndex]);
+            }
+        }
+
+        if (reset)
+        {
+            _world.StepSimulation(1.0f / 60.0f, 1, 1.0f / 60.0f);
+        }
+        float elapsed = Math.Clamp(elapsedSeconds, 0.0f, 1.0f / 15.0f);
+        if (elapsed > 0.0f)
+        {
+            _world.StepSimulation(elapsed, 10, 1.0f / 120.0f);
+        }
+
+        foreach (BodyState state in _bodies)
+        {
+            if (state.Operation == PmxOperation.Static || state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Length)
+            {
+                continue;
+            }
+            Matrix4x4 global = state.ReadBoneGlobal();
+            if (state.Operation == PmxOperation.DynamicAndBoneMerge)
+            {
+                Matrix4x4 animated = animatedGlobals[state.BoneIndex];
+                global.M41 = animated.M41;
+                global.M42 = animated.M42;
+                global.M43 = animated.M43;
+                global.M44 = animated.M44;
+            }
+            overrides[state.BoneIndex] = global;
+        }
+        return overrides;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+        for (int i = _constraints.Count - 1; i >= 0; i--)
+        {
+            _world.RemoveConstraint(_constraints[i]);
+            _constraints[i].Dispose();
+        }
+        for (int i = _bodies.Count - 1; i >= 0; i--)
+        {
+            _world.RemoveRigidBody(_bodies[i].Body);
+            _bodies[i].Dispose();
+        }
+        _world.RemoveRigidBody(_groundBody);
+        _groundBody.Dispose();
+        _groundMotionState.Dispose();
+        _groundShape.Dispose();
+        foreach (CollisionShape shape in _shapes)
+        {
+            shape.Dispose();
+        }
+        _world.Dispose();
+        _solver.Dispose();
+        _broadphase.Dispose();
+        _dispatcher.Dispose();
+        _collisionConfiguration.Dispose();
+    }
+
+    private BodyState CreateBody(PmxRigidBody source, Matrix4x4[] restGlobals)
+    {
+        CollisionShape shape = source.Shape switch
+        {
+            PmxShape.Sphere => new SphereShape(source.ShapeSize.X),
+            PmxShape.Box => new BoxShape(source.ShapeSize.X, source.ShapeSize.Y, source.ShapeSize.Z),
+            PmxShape.Capsule => new CapsuleShape(source.ShapeSize.X, source.ShapeSize.Y),
+            _ => throw new NotSupportedException($"Unsupported PMX rigid-body shape: {source.Shape}")
+        };
+        _shapes.Add(shape);
+
+        Matrix4x4 rigidBodyMatrix = (
+            Matrix4x4.CreateRotationZ(source.Rotate.Z)
+            * Matrix4x4.CreateRotationX(source.Rotate.X)
+            * Matrix4x4.CreateRotationY(source.Rotate.Y)
+            * Matrix4x4.CreateTranslation(source.Translate));
+        rigidBodyMatrix = InvZ(rigidBodyMatrix);
+        Matrix4x4 boneGlobal = source.BoneIndex >= 0 && source.BoneIndex < restGlobals.Length
+            ? restGlobals[source.BoneIndex]
+            : Matrix4x4.Identity;
+        Matrix4x4 offset = rigidBodyMatrix * Invert(boneGlobal);
+        Matrix4x4 initialBullet = InvZ(offset * boneGlobal);
+        AndroidBulletMotionState motionState = new(ToBt(initialBullet));
+        float mass = source.Op == PmxOperation.Static ? 0.0f : MathF.Max(source.Mass, 0.0f);
+        BtVector3 inertia = BtVector3.Zero;
+        if (mass > 0.0f)
+        {
+            shape.CalculateLocalInertia(mass, out inertia);
+        }
+        RigidBody body;
+        using (RigidBodyConstructionInfo info = new(mass, motionState, shape, inertia)
+        {
+            LinearDamping = source.TranslateDimmer,
+            AngularDamping = source.RotateDimmer,
+            Restitution = source.Repulsion,
+            Friction = source.Friction,
+            AdditionalDamping = true
+        })
+        {
+            body = new RigidBody(info);
+        }
+        body.SetSleepingThresholds(0.01f, MathF.PI / 1800.0f);
+        body.ActivationState = ActivationState.DisableDeactivation;
+        if (source.Op == PmxOperation.Static)
+        {
+            body.CollisionFlags |= CollisionFlags.KinematicObject;
+        }
+        return new BodyState(source.BoneIndex, source.Op, offset, motionState, body);
+    }
+
+    private static Generic6DofSpringConstraint CreateJoint(PmxJoint source, RigidBody bodyA, RigidBody bodyB)
+    {
+        Matrix4x4 jointWorld = Matrix4x4.CreateFromYawPitchRoll(source.Rotate.Y, source.Rotate.X, source.Rotate.Z)
+            * Matrix4x4.CreateTranslation(source.Translate);
+        Matrix4x4 frameA = jointWorld * Invert(FromBt(bodyA.WorldTransform));
+        Matrix4x4 frameB = jointWorld * Invert(FromBt(bodyB.WorldTransform));
+        Generic6DofSpringConstraint constraint = new(bodyA, bodyB, ToBt(frameA), ToBt(frameB), true)
+        {
+            LinearLowerLimit = ToBt(source.TranslateLowerLimit),
+            LinearUpperLimit = ToBt(source.TranslateUpperLimit),
+            AngularLowerLimit = ToBt(source.RotateLowerLimit),
+            AngularUpperLimit = ToBt(source.RotateUpperLimit)
+        };
+        float[] springs = [source.SpringTranslate.X, source.SpringTranslate.Y, source.SpringTranslate.Z, source.SpringRotate.X, source.SpringRotate.Y, source.SpringRotate.Z];
+        for (int i = 0; i < springs.Length; i++)
+        {
+            if (springs[i] != 0.0f)
+            {
+                constraint.EnableSpring(i, true);
+                constraint.SetStiffness(i, springs[i]);
+            }
+        }
+        return constraint;
+    }
+
+    private static Matrix4x4[] CreateRestGlobals(IReadOnlyList<PmxBone> bones)
+    {
+        Matrix4x4[] result = new Matrix4x4[bones.Count];
+        for (int i = 0; i < bones.Count; i++)
+        {
+            Vector3 position = new(bones[i].Position.X, bones[i].Position.Y, -bones[i].Position.Z);
+            result[i] = Matrix4x4.CreateTranslation(position);
+        }
+        return result;
+    }
+
+    private static Matrix4x4 Invert(Matrix4x4 value)
+    {
+        return Matrix4x4.Invert(value, out Matrix4x4 result) ? result : Matrix4x4.Identity;
+    }
+
+    private static Matrix4x4 InvZ(Matrix4x4 value)
+    {
+        Matrix4x4 flip = Matrix4x4.CreateScale(1.0f, 1.0f, -1.0f);
+        return flip * value * flip;
+    }
+
+    private static BtVector3 ToBt(Vector3 value) => new(value.X, value.Y, value.Z);
+    private static BtMatrix ToBt(Matrix4x4 value) => new(value.M11, value.M12, value.M13, value.M14, value.M21, value.M22, value.M23, value.M24, value.M31, value.M32, value.M33, value.M34, value.M41, value.M42, value.M43, value.M44);
+    private static Matrix4x4 FromBt(BtMatrix value) => new(value.M11, value.M12, value.M13, value.M14, value.M21, value.M22, value.M23, value.M24, value.M31, value.M32, value.M33, value.M34, value.M41, value.M42, value.M43, value.M44);
+
+    private sealed class BodyState(int boneIndex, PmxOperation operation, Matrix4x4 offset, AndroidBulletMotionState motionState, RigidBody body) : IDisposable
+    {
+        private readonly Matrix4x4 _inverseOffset = Invert(offset);
+        public int BoneIndex { get; } = boneIndex;
+        public PmxOperation Operation { get; } = operation;
+        public AndroidBulletMotionState MotionState { get; } = motionState;
+        public RigidBody Body { get; } = body;
+        public bool Initialized { get; private set; }
+
+        public void SetKinematicTransform(Matrix4x4 boneGlobal)
+        {
+            BtMatrix transform = ToBt(InvZ(offset * boneGlobal));
+            MotionState.Transform = transform;
+            Body.WorldTransform = transform;
+            Body.CenterOfMassTransform = transform;
+        }
+
+        public void ResetDynamicTransform(Matrix4x4 boneGlobal)
+        {
+            BtMatrix transform = ToBt(InvZ(offset * boneGlobal));
+            MotionState.Transform = transform;
+            Body.WorldTransform = transform;
+            Body.CenterOfMassTransform = transform;
+            Body.LinearVelocity = BtVector3.Zero;
+            Body.AngularVelocity = BtVector3.Zero;
+            Body.ClearForces();
+            Body.Activate(true);
+            Initialized = true;
+        }
+
+        public Matrix4x4 ReadBoneGlobal()
+        {
+            return _inverseOffset * InvZ(FromBt(MotionState.Transform));
+        }
+
+        public void Dispose()
+        {
+            Body.Dispose();
+            MotionState.Dispose();
+        }
+    }
+
+    private sealed class AndroidBulletMotionState(BtMatrix transform) : MotionState
+    {
+        public BtMatrix Transform { get; set; } = transform;
+        public override void GetWorldTransform(out BtMatrix worldTrans) => worldTrans = Transform;
+        public override void SetWorldTransform(ref BtMatrix worldTrans) => Transform = worldTrans;
+    }
+}

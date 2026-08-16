@@ -2,6 +2,9 @@
 
 # Zhengyan.DigitalWife
 
+Android GamePlayer 的完整环境安装、编译、签名、真机部署和故障排查说明请参阅
+[Android GamePlayer README](src/Zhengyan.DigitalWife.GamePlayer.Android/README.md)。
+
 `Zhengyan.DigitalWife` 是一个面向跨平台数字人和轻量 3D 互动应用的 `.NET` 项目。当前核心入口已经从示例升级为：
 
 - `Zhengyan.DigitalWife.GameEditor`：可视化编辑游戏工程、场景、角色、GUI、音频、粒子、水面、脚本、碰撞体、NavMesh、发布包等内容。

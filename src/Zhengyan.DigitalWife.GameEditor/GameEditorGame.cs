@@ -782,6 +782,14 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         return result;
     }
 
+    public AndroidCompatibilityReport CheckAndroidCompatibility()
+    {
+        SaveProject();
+        AndroidCompatibilityReport report = AndroidProjectCompatibility.Analyze(ProjectDirectory, Project);
+        UpdateStatus(report.ToStatusMessage());
+        return report;
+    }
+
     public void CreateScene(string sceneName)
     {
         string normalizedName = string.IsNullOrWhiteSpace(sceneName) ? "New Scene" : sceneName.Trim();

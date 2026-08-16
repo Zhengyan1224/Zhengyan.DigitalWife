@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Zhengyan.DigitalWife.Mmd.Core/Zhengyan.DigitalWife.Mmd.Core.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.GameProjects.Core/Zhengyan.DigitalWife.GameProjects.Core.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj" />
+  </Folder>
+</Solution>

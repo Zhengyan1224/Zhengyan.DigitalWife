@@ -1,0 +1,248 @@
+# Android GamePlayer host
+
+This project is the Android-native host for the shared Zhengyan DigitalWife runtime. It currently provides:
+
+- an `Activity` with pause/resume handling;
+- a `SurfaceView` with surface recreation and `Choreographer` frame scheduling;
+- an EGL/OpenGL ES clear-and-present loop;
+- immutable per-frame multi-touch snapshots at the platform boundary;
+- loading of a local project directory or `.dwgame` package through an Intent or app-private `files/GameProject` directory;
+- Android compatibility validation before rendering starts.
+- GLES3 scene rendering for PMX geometry, base textures, entity transforms, the main camera, ambient light and directional light;
+- layered VMD playback with CPU/GPU skinning, looping and playback speed.
+
+The scene/runtime integration is intentionally kept behind this host boundary. PMX IK, append bones, morph animation, layered VMD blending, sphere/toon materials, GPU BDEF skinning and Bullet rigid-body/joint/collision physics are connected without bringing desktop sprite, Python, OpenCL, or desktop window APIs into the Android target. Remaining parity work is concentrated in the other scene passes, shadows, audio and publishing.
+
+Build with the .NET Android workload and explicit SDK paths when the machine does not define `ANDROID_HOME`/`JAVA_HOME`:
+
+```powershell
+$sdk = "$env:LOCALAPPDATA\Android\Sdk"
+$jdk = "$env:LOCALAPPDATA\Android\jdk"
+dotnet build Zhengyan.DigitalWife.Android.slnx `
+  -p:AndroidSdkDirectory=$sdk `
+  -p:JavaSdkDirectory=$jdk
+```
+
+## Android 环境安装与部署（小白指南）
+
+下面的步骤以 Windows 10/11 为例。Android GamePlayer 是独立的 Android 工程，桌面版的
+`Zhengyan.DigitalWife.sln` 不需要 Android 工具链；只在编译 Android 版本时执行本节步骤。
+
+### 1. 先准备源代码和基础工具
+
+1. 安装 Git（如果使用 ZIP 下载源码则可以跳过），并把项目放在一个没有权限限制的目录，例
+   如 `D:\Projects\CSharp\MMD\Zhengyan.DigitalWife`。
+2. 安装 **64 位 .NET 10 SDK**，不要只安装 .NET Runtime。安装完成后打开新的 PowerShell，确认：
+
+   ```powershell
+   dotnet --info
+   dotnet --list-sdks
+   ```
+
+   输出中应当能看到 `10.x.x` SDK。若命令不存在，应重新安装 SDK 或把 dotnet 安装目录加入
+   `PATH`，然后重新打开 PowerShell。
+
+### 2. 安装 .NET Android workload
+
+以普通用户打开 PowerShell，执行：
+
+```powershell
+dotnet workload install android
+dotnet workload list
+```
+
+在 `dotnet workload list` 中应能看到 `android`。如果提示权限不足，请以“管理员身份运行
+PowerShell”再次执行；如果安装中断，可使用：
+
+```powershell
+dotnet workload repair
+dotnet workload install android
+```
+
+Workload 会安装 Android 项目所需的 MSBuild 目标、Android SDK 工具和打包任务。网络较慢时
+请等待命令完成，不要在中途关闭窗口。
+
+### 3. 安装 Android SDK 和 JDK
+
+最容易的方式是安装 Android Studio（只使用它的 SDK Manager，不需要用 Android Studio 打开
+本项目）：
+
+1. 打开 Android Studio，进入 **More Actions -> SDK Manager**。
+2. 在 **SDK Platforms** 中安装一个可用的 Android API 平台（建议安装 API 35 或更新版本）。
+3. 在 **SDK Tools** 中勾选并安装：
+   - Android SDK Build-Tools；
+   - Android SDK Platform-Tools（包含 `adb`）；
+   - Android SDK Command-line Tools (latest)；
+   - Android Emulator（只有需要模拟器时才必须安装）。
+4. 记下 SDK Location。Windows 默认位置通常是
+   `%LOCALAPPDATA%\Android\Sdk`。
+5. JDK 建议使用 **JDK 17**。当前 .NET Android 环境通常会在
+   `%LOCALAPPDATA%\Android\jdk` 提供可用 JDK；也可以使用 Android Studio 自带的 JBR，
+   但构建时必须把路径写给 `JavaSdkDirectory`。
+
+在本项目中，推荐先用下面的变量验证路径（如果你的安装位置不同，请修改变量）：
+
+```powershell
+$sdk = "$env:LOCALAPPDATA\Android\Sdk"
+$jdk = "$env:LOCALAPPDATA\Android\jdk"
+Test-Path "$sdk\platform-tools\adb.exe"
+Test-Path "$jdk\bin\java.exe"
+```
+
+两个命令都应输出 `True`。若 JDK 路径不存在，请在 Android Studio 的 SDK Manager 或 .NET
+Android 安装目录中找到 JDK 17，并将 `$jdk` 改为该目录。
+
+### 4. 配置环境变量（推荐）
+
+下面的设置只对当前 PowerShell 窗口有效，适合第一次验证：
+
+```powershell
+$env:ANDROID_HOME = $sdk
+$env:ANDROID_SDK_ROOT = $sdk
+$env:JAVA_HOME = $jdk
+$env:Path = "$sdk\platform-tools;$sdk\emulator;$sdk\cmdline-tools\latest\bin;$env:Path"
+```
+
+如果希望永久配置，请在 Windows 搜索中打开“编辑系统环境变量 -> 环境变量”，新增用户变量
+`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`JAVA_HOME`，并把以下目录加入用户 `Path`：
+
+```text
+%LOCALAPPDATA%\Android\Sdk\platform-tools
+%LOCALAPPDATA%\Android\Sdk\emulator
+%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin
+```
+
+修改后必须关闭并重新打开 PowerShell、Visual Studio 或 Rider。
+
+### 5. 检查环境是否完整
+
+```powershell
+dotnet --info
+dotnet workload list
+& "$sdk\platform-tools\adb.exe" version
+```
+
+如果 `adb` 报错，说明 Platform-Tools 没有安装或 `$sdk` 指向错误。`NETSDK1147` 通常表示
+Android workload 没安装；`XA5300` 通常表示 Android SDK 路径没有找到，此时使用下面构建命令
+中的显式路径参数。
+
+### 6. 还原并编译 Android GamePlayer
+
+在仓库根目录执行。路径带空格时必须保留双引号：
+
+```powershell
+dotnet restore Zhengyan.DigitalWife.Android.slnx `
+  -p:AndroidSdkDirectory="$sdk" `
+  -p:JavaSdkDirectory="$jdk"
+
+dotnet build Zhengyan.DigitalWife.Android.slnx --no-restore `
+  -p:AndroidSdkDirectory="$sdk" `
+  -p:JavaSdkDirectory="$jdk"
+```
+
+开发调试也可以只编译 Android 主机项目：
+
+```powershell
+dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj `
+  -p:AndroidSdkDirectory="$sdk" `
+  -p:JavaSdkDirectory="$jdk"
+```
+
+生成可安装的 Release APK：
+
+```powershell
+dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj `
+  -c Release --no-restore `
+  -p:AndroidSdkDirectory="$sdk" `
+  -p:JavaSdkDirectory="$jdk"
+```
+
+APK 位于：
+
+```text
+src/Zhengyan.DigitalWife.GamePlayer.Android/bin/Release/net10.0-android/
+```
+
+文件名通常以 `com.zhengyan.digitalwife.gameplayer-Signed.apk` 结尾。这个构建产物适合开发和
+测试；发布到 Google Play 或正式分发时，还需要使用自己的 Android keystore 签名，不能把调试
+签名当作正式签名。
+
+### 7. 连接真机或启动模拟器
+
+真机部署需要 Android 7.0（API 24）或更高版本，并建议设备支持 OpenGL ES 3.0：
+
+1. 在手机“设置 -> 关于手机”中连续点击“版本号”开启开发者选项。
+2. 在“开发者选项”中打开“USB 调试”。
+3. 用 USB 连接电脑，在手机上确认“允许此电脑进行 USB 调试”。
+4. 执行：
+
+   ```powershell
+   & "$sdk\platform-tools\adb.exe" devices
+   ```
+
+   设备状态应为 `device`。显示 `unauthorized` 时，解锁手机并重新确认授权。
+
+需要模拟器时，在 Android Studio 的 **Device Manager** 创建一个 API 24+ 的设备，启动后再执
+行 `adb devices`。优先选择带硬件加速的 x86_64 模拟器；真机通常使用 arm64-v8a。
+
+### 8. 安装、启动并加载游戏项目
+
+安装 APK：
+
+```powershell
+$apk = Get-ChildItem "src/Zhengyan.DigitalWife.GamePlayer.Android/bin/Release/net10.0-android" `
+  -Filter "*-Signed.apk" | Select-Object -First 1
+& "$sdk\platform-tools\adb.exe" install -r $apk.FullName
+```
+
+启动应用（包名固定为 `com.zhengyan.digitalwife.gameplayer`）：
+
+```powershell
+& "$sdk\platform-tools\adb.exe" shell monkey `
+  -p com.zhengyan.digitalwife.gameplayer 1
+```
+
+GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推荐把发布包复制到手机的
+`Download` 目录，然后用文件管理器点击 `.dwgame` 并选择 **Zhengyan DigitalWife GamePlayer**
+打开；应用会通过 `content://` URI 自动复制并解压包。也可以通过 Android 的文件分享/打开方
+式传入 `file://` URI。
+
+开发调试时，如果宿主能访问该路径，也可以显式传入 `zhengyan.project_path`：
+
+```powershell
+& "$sdk\platform-tools\adb.exe" shell am start `
+  -n com.zhengyan.digitalwife.gameplayer/.MainActivity `
+  --es zhengyan.project_path "/sdcard/Download/DemoGame.dwgame"
+```
+
+若 Android 版本限制了直接读取共享存储，请改用文件管理器的“打开方式”流程，让系统授予
+`content://` 临时读取权限。工程目录必须包含 `game.project.json` 及其 `assets`、场景和脚本
+文件；`.dwgame` 包则由 GamePlayer 自动解压到应用缓存目录。
+
+查看启动和兼容性日志：
+
+```powershell
+& "$sdk\platform-tools\adb.exe" logcat -s ZhengyanGamePlayer
+```
+
+### 9. Android 版本的功能边界
+
+- Android 脚本只支持 C#；Python 脚本会在发布兼容性检查中被拒绝。
+- 不支持桌面精灵、透明点击穿透、窗口拖拽和系统托盘。
+- Android 当前主机使用 OpenGL ES；Vulkan 主机仍按项目进度接入，不能把桌面 Vulkan 设置
+  当作 Android 一定可用的保证。
+- OpenCL 不会在 Android 上启用。使用 Vulkan 后端时才可能使用 Vulkan Compute。
+- 未完成的粒子、阴影、后处理、音频、软键盘和手柄能力会在兼容性检查中提示，发布前应逐项
+  查看 GameEditor 的 Android 检查结果。
+
+### 10. 常见问题
+
+| 现象 | 处理方法 |
+| --- | --- |
+| `NETSDK1147` | 执行 `dotnet workload install android`，然后重新打开终端。 |
+| `XA5300` 或找不到 SDK | 检查 `$sdk`，并在 `restore/build` 命令中传入 `AndroidSdkDirectory`。 |
+| 找不到 `java.exe` | 使用 JDK 17，检查 `$jdk\bin\java.exe`，并传入 `JavaSdkDirectory`。 |
+| `adb` 显示 `unauthorized` | 解锁手机、允许 USB 调试，必要时在开发者选项中撤销 USB 调试授权后重连。 |
+| `INSTALL_FAILED_NO_MATCHING_ABIS` | 当前 APK 包含 arm64-v8a 和 x86_64；确认设备 ABI 或使用匹配的构建产物。 |
+| 应用提示没有项目 | 通过文件管理器“打开方式”选择 `.dwgame`，或确认 `zhengyan.project_path` 指向有效工程。 |
+| 黑屏或无法创建 GLES 上下文 | 使用支持 OpenGL ES 3.0 的设备，查看 `adb logcat -s ZhengyanGamePlayer`。 |
