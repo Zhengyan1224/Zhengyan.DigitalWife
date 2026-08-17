@@ -76,7 +76,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         }
 
         Input = _touchState.BeginFrame(Width, Height);
-        _renderHost.Render(frameTimeNanos);
+        _renderHost.Render(frameTimeNanos, Input);
         ScheduleFrame();
     }
 

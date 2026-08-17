@@ -67,15 +67,15 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 工程目录加载 | 支持 | 部分 | 可加载初始工程；错误只有 Toast，缺少选择器、最近项目、可恢复错误界面 |
 | `.dwgame` 普通包 | 支持缓存和独立保存目录 | 部分 | Android 每次使用临时解包，持久缓存、缓存失效和清理策略未完成 |
 | 加密/分包 `.dwgame` | 支持密码和多分包 | 缺失 | 没有密码输入 UI；`content://` 只复制单个文件，不能收集 `.001/.002/...` |
-| 多场景和场景切换 | 支持加载界面和脚本事件 | 缺失 | 只加载启动时的当前场景，没有 `LoadScene`、卸载、切换和状态重建 |
-| 加载界面 | 背景图、进度条、加载脚本 | 缺失 | 没有分阶段加载、进度、背景图和加载事件 |
-| 运行时实体系统 | `RuntimeScene`/`RuntimeEntity` | 缺失 | Android 只保留 PMX GPU 对象，没有统一实体查询、更新、销毁和脚本对象 |
-| 空实体 | 支持 | 缺失 | `empty/game_object` 不会进入 Android 运行时 |
+| 多场景和场景切换 | 支持加载界面和脚本事件 | 部分（阶段 3） | 已有同步队列、异步加载、卸载、进度和失败恢复；加载界面/脚本事件待后续阶段 |
+| 加载界面 | 背景图、进度条、加载脚本 | 部分 | 共享层有分阶段进度状态；Android 可视化加载界面和加载脚本待阶段 5/6 |
+| 运行时实体系统 | `RuntimeScene`/`RuntimeEntity` | 部分（阶段 3） | Android 已接入共享注册表、查询、添加、删除和更新；完整脚本对象待阶段 6 |
+| 空实体 | 支持 | 部分（阶段 3） | 已进入共享运行时注册表，但 Android 暂无可视化组件 |
 | PMX 静态网格 | 完整材质和 Pass | 部分（阶段 1 已完成 Android 主链） | 共享 PC/Android 黄金截图和非均匀缩放矩阵仍需阶段 3 验证 |
 | PMX 材质 | Diffuse/Ambient/Specular、Toon、Sphere、材质标志 | 部分（阶段 1 已实现） | Android GLES 已接入主要材质状态；高级阴影/后处理仍待阶段 4 |
 | PMX 纹理格式 | PNG/JPG/BMP/TGA/DDS 等路径 | 部分（阶段 1 已实现） | 已使用 Pfim/Stb 解码常用格式；发布期转换、编码边界和 GPU 压缩纹理仍待验证 |
 | PMX 描边 | 材质 Edge Pass | 部分（阶段 1 已实现） | Android 已有 Edge Pass；与 PC 的黄金图及移动端质量档仍需验证 |
-| PMX 阴影 | 平行光、点光、射灯投射和接收 | 缺失 | `EnableShadow`、`ReceiveShadow`、`ReceiveShadowMode` 和主 Pass 阴影全部被忽略 |
+| PMX 阴影 | 平行光、点光、射灯投射和接收 | 部分（阶段 4） | Android 已接入平行光 Shadow Map、2x2 PCF、Cast/Receive 和 Smooth/Toon；点光/射灯阴影待后续 |
 | VMD 骨骼动画 | 完整曲线和 IK 开关 | 部分（阶段 2 已实现共享求值器） | 真机黄金帧和 PC/Android 姿态容差仍需持续覆盖 |
 | 多层 VMD | 独立播放、暂停、时间、权重、添加/删除 | 部分（阶段 2 已实现） | 与完整脚本 RuntimeEntity 的动态增删待阶段 6 |
 | PMX Morph | 位置、UV、骨骼、材质、组、翻转、冲量 | 部分（阶段 2 已实现） | 附加 UV 与材质边界样例仍需增加黄金测试 |
@@ -85,13 +85,13 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | PMX 物理 | Bullet 刚体、关节和骨骼回写 | 部分（阶段 2 已接入桥接） | 固定步长、子步、初始化/循环重置和 PC 结果黄金对比仍需阶段 3/8 |
 | PMX 骨骼关联 | 同名骨骼同步，可绑定组件 Transform/Lighting | 部分（阶段 2 已实现） | 当前在 PMX Renderer 内建立关联；统一 RuntimeEntity 注册表待阶段 3 |
 | PMX 脚本控制 | 动作、Morph、骨骼、材质、阴影、物理 | 缺失 | 没有 Android `RuntimeEntity` 和 C# 脚本主机 |
-| 相机 | 多控制模式、透视/正交、动态 API | 部分 | 只使用静态主相机 Position/Target/FOV；跟随、第一/第三人称、自由相机和脚本控制缺失 |
-| 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 缺失 | `CameraSettings.Vmd` 没有推进；当前只读取可能已存在的 `VmdUp` 瞬时值 |
-| 多相机 Viewport | 支持叠加和局部清理 | 缺失 | Android 始终全屏绘制一个相机 |
+| 相机 | 多控制模式、透视/正交、动态 API | 部分（阶段 3） | 已接入共享控制、触摸旋转/平移/捏合和相机集合；完整脚本 API 待阶段 6 |
+| 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 部分（阶段 3） | 已推进独立 Camera VMD、Roll/Up 和投影；编辑器控制面板/脚本 Seek 待后续阶段 |
+| 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3） | 已实现 viewport 布局换算和局部 color/depth/stencil clear；Render Texture 仍缺失 |
 | Render Texture | 多相机离屏纹理和刷新模式 | 缺失 | `RenderTextures`、`rt:` 纹理引用和材质动态替换均未实现 |
-| 环境光/平行光 | 静态、脚本和 VMD | 部分 | 基础静态颜色/方向可用；阴影、动态 API 和光照 VMD 缺失 |
-| 点光源 | 多灯、动态控制、阴影 | 缺失 | `point_light` 实体不会加载 |
-| 射灯 | 多灯、锥角、动态控制、阴影 | 缺失 | `spot_light` 实体不会加载 |
+| 环境光/平行光 | 静态、脚本和 VMD | 部分（阶段 3） | 已接入共享 Lighting 与光照 VMD；阴影和 Android 脚本主机仍缺失 |
+| 点光源 | 多灯、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个点光并支持运行时增删改；局部阴影待阶段 4 |
+| 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；局部阴影待阶段 4 |
 | 天空盒 | 纹理、曝光、Tint | 缺失 | `SkyboxSettings` 被忽略 |
 | Textured Plane | Billboard、RT、镜面、阴影接收 | 缺失 | `textured_plane` 实体被忽略 |
 | 水面 | Gerstner、反射、交互和水下后处理 | 缺失 | `water_surface` 实体、波纹、反射相机和水下效果均未实现 |
@@ -99,7 +99,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 平面反射 | 水面和 Plane 镜面 | 缺失 | 没有反射 RenderTarget 和镜像相机 Pass |
 | 后处理 | 水下等场景后处理 | 缺失 | 没有离屏场景颜色/深度和全屏 Pass |
 | 自定义 Shader | GLSL/SPIR-V 双路径及 Uniform | 缺失 | Android 没有移动端 shader 契约、离线校验和动态 Uniform |
-| 抗锯齿 | 配置倍数和硬件回退 | 缺失 | EGL Config 未申请 MSAA，也没有能力查询和自动降级日志 |
+| 抗锯齿 | 配置倍数和硬件回退 | 部分（阶段 4） | EGL 已按项目设置申请 1/2/4/8/16x，并自动回退和输出实际倍数；真机能力矩阵仍待验证 |
 | OpenGL ES 后端 | PC Pass 功能 | 部分 | 目前是 Android 专用单 shader，不是现有 `IRenderer`/Pass 架构的移动实现 |
 | Vulkan 后端 | PC Vulkan | 缺失 | 没有 Android Surface、Swapchain、RenderTarget、ImGui 或 Compute 链路 |
 | GUI 控件 | Button/Label/Checkbox/Dropdown/Textbox/Progress | 缺失 | 没有 GUI Renderer、布局、样式、事件、文本输入和脚本对象 |
@@ -262,6 +262,36 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
 - 实现多相机 Viewport、局部 Clear 和布局换算。
 - 实现环境光、平行光、点光和射灯集合及 C# 动态添加/删除/修改接口。
 
+#### 阶段 3 实施状态（2026-08-17）
+
+本轮已经完成阶段 3 的运行时基础和 Android 接入：
+
+- 新增 `Zhengyan.DigitalWife.GamePlayer.Runtime.Core`，提供平台无关的
+  `RuntimeScene`、`RuntimeEntity`、`RuntimeCamera`、`RuntimeLighting` 和
+  `RuntimeSceneManager`；Android Renderer 不再直接遍历场景 JSON。
+- 场景注册表支持 PMX、空实体、点光源和射灯的统一查询、添加、删除、参数修改和实体版本号；
+  Android GPU 模型在版本变化后自动重建，新增/删除 PMX 不需要重启 GamePlayer。
+- 已接入主相机选择、透视/正交、editor/custom/free 相机输入、第一/第三人称、跟随、自动环绕、
+  相机 VMD（循环、帧推进、Roll/Up、投影）以及环境光/平行光 VMD。
+- 已接入多 Camera Viewport 的参考分辨率布局换算、OpenGL ES 局部 color/depth/stencil 清理，
+  并对每个 viewport 重新提交相机矩阵和灯光集合。
+- `RuntimeSceneManager` 支持启动加载、队列切换、卸载、同步/异步加载、进度状态和错误恢复；
+  无效场景不会破坏当前可运行场景。Android Surface 重建只释放 EGL/GPU 资源，不会错误销毁运行时场景。
+- Android 触摸快照已映射到共享相机输入：单指旋转，双指平移/捏合缩放；VMD、跟随和自动环绕模式
+  会按相机控制模式优先处理。
+- 阶段 3 自测覆盖 RuntimeEntity 灯光增删改、Viewport、场景 A/B 切换、异步加载、失败恢复和卸载。
+
+阶段 3 仍未宣称完成的部分，顺延到后续阶段：
+
+- PC GamePlayer 仍保留其功能更完整的桌面 `RuntimeScene`/`RuntimeEntity` 类型；下一步需要把 PC
+  运行时逐步适配到本 Core 的共享契约，不能把两个同名类型直接强行替换。
+- Android 当前实际绘制的是 PMX、环境/平行光、点光和射灯；粒子、水面、Textured Plane、天空盒、
+  GUI、游戏内 Sprite、Render Texture、音频和场景脚本仍由阶段 4～8 接入。
+- Android 点光/射灯目前只有光照贡献，没有局部阴影；阴影 Pass、Cast/Receive 和 Toon/Smooth
+  接收模式仍属于阶段 4。
+- 异步加载 API 已完成共享层契约，但 Android GPU 资源提交仍在 GL 渲染线程同步执行；后续加载界面
+  会把 CPU 解析、纹理解码和 GPU 上传拆成可观测的分阶段任务。
+
 验收标准：
 
 - Android 可以加载、切换和重新加载多个场景，旧资源完全释放。
@@ -283,6 +313,20 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
 - 建立 Android 自定义 Shader 契约：GLES GLSL ES 版本、固定资源布局、Uniform 校验和发布期
   离线编译检查；Vulkan SPIR-V 留到阶段 9。
 - 实现 MSAA 能力查询及 1x/2x/4x/8x 自动回退，控制台/logcat 输出实际倍数。
+
+#### 阶段 4 实施状态（2026-08-17）
+
+本轮已完成：
+
+- Android EGL 根据 `GameWindowSettings.AntiAliasingSamples` 请求 MSAA，按目标倍数向下回退到设备可用
+  配置，并输出 `requested/actual` 采样数；1x 保持无多重采样。
+- Android PMX 新增平行光 Shadow Map：1024 深度图、GPU/CPU 蒙皮共用 Depth Pass、`EnableShadow` 投射
+  开关、`ReceiveShadow` 接收开关、`ReceiveShadowMode=Smooth/Toon` 以及主 Pass 2x2 PCF。
+- 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX
+  阴影误报为完全缺失。
+
+仍在阶段 4 后续迭代中的部分：点光/射灯立方体或锥体 Shadow Map、Plane/Skybox/粒子/水面/后处理、
+Render Texture、自定义 Android Shader 契约和真机性能预算。
 
 验收标准：
 

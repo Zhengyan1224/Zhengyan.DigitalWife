@@ -28,6 +28,8 @@ public sealed class RuntimeEntity
 
     public bool IsSpotLight => NormalizeType(Type) is "spot_light" or "spotlight";
 
+    public bool IsTexturedPlane => NormalizeType(Type) is "textured_plane" or "plane";
+
     public Vector3 Position
     {
         get => Definition.Transform.Position.ToVector3();

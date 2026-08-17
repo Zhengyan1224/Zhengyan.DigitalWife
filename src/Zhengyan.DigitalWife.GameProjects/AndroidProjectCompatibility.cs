@@ -211,12 +211,12 @@ public static class AndroidProjectCompatibility
             return;
         }
 
-        if (entity.EnableShadow || entity.ReceiveShadow)
+        if (entity.PointLight.CastShadows || entity.SpotLight.CastShadows)
         {
             issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_PMX_SHADOW_DEGRADED",
+                "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                 AndroidCompatibilitySeverity.Warning,
-                "PMX directional/local-light shadows are not available yet; the model renders without cast/receive shadows.",
+                "Android supports directional PMX shadows, but point/spot-light shadow maps are not implemented yet.",
                 scenePath,
                 entity.Name));
         }

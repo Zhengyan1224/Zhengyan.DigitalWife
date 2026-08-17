@@ -4,6 +4,8 @@ namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
 public sealed record RuntimeSceneChange(RuntimeScene? Previous, RuntimeScene? Current, string ScenePath);
 public sealed record RuntimeSceneLoadFailure(string ScenePath, Exception Error);
+public enum RuntimeSceneLoadState { Idle, Loading, Ready, Failed, Cancelled }
+public sealed record RuntimeSceneLoadProgress(string ScenePath, RuntimeSceneLoadState State, float Value, string Message);
 
 public sealed class RuntimeSceneManager : IDisposable
 {
@@ -21,10 +23,12 @@ public sealed class RuntimeSceneManager : IDisposable
 
     public event Action<RuntimeSceneChange>? SceneChanged;
     public event Action<RuntimeSceneLoadFailure>? SceneLoadFailed;
+    public event Action<RuntimeSceneLoadProgress>? LoadProgressChanged;
 
     public RuntimeScene? Current { get; private set; }
     public string CurrentScenePath => Current?.ScenePath ?? string.Empty;
     public IReadOnlyList<string> ScenePaths => _project.Scenes;
+    public RuntimeSceneLoadProgress LoadProgress { get; private set; } = new(string.Empty, RuntimeSceneLoadState.Idle, 0.0f, "Idle");
 
     public bool LoadInitial()
     {
@@ -46,31 +50,70 @@ public sealed class RuntimeSceneManager : IDisposable
         string? resolved = ResolveScenePath(scenePath);
         if (resolved is null)
         {
-            SceneLoadFailed?.Invoke(new RuntimeSceneLoadFailure(scenePath,
-                new FileNotFoundException($"Scene is not registered in the project: {scenePath}")));
+            FileNotFoundException error = new($"Scene is not registered in the project: {scenePath}");
+            SetProgress(scenePath, RuntimeSceneLoadState.Failed, 0.0f, error.Message);
+            SceneLoadFailed?.Invoke(new RuntimeSceneLoadFailure(scenePath, error));
             return false;
         }
 
         try
         {
+            SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.1f, "Reading scene");
             GameProjectScene definition = GameProjectStore.LoadScene(_projectDirectory, resolved);
+            SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.65f, "Creating runtime scene");
             RuntimeScene next = new(resolved, definition, path => GameProjectPath.ToAbsolute(_projectDirectory, path));
-            RuntimeScene? previous = Current;
-            Current = next;
-            _project.Scene = definition;
-            _project.DefaultScene = resolved;
-            SceneChanged?.Invoke(new RuntimeSceneChange(previous, next, resolved));
-            previous?.Dispose();
+            CommitScene(resolved, definition, next);
+            SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
         {
+            SetProgress(resolved, RuntimeSceneLoadState.Failed, 0.0f, ex.Message);
             SceneLoadFailed?.Invoke(new RuntimeSceneLoadFailure(resolved, ex));
             return false;
         }
     }
 
-    public void Update(float deltaSeconds)
+    public async Task<bool> LoadSceneAsync(string scenePath, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        string? resolved = ResolveScenePath(scenePath);
+        if (resolved is null)
+        {
+            FileNotFoundException error = new($"Scene is not registered in the project: {scenePath}");
+            SetProgress(scenePath, RuntimeSceneLoadState.Failed, 0.0f, error.Message);
+            SceneLoadFailed?.Invoke(new RuntimeSceneLoadFailure(scenePath, error));
+            return false;
+        }
+
+        SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.1f, "Reading scene");
+        try
+        {
+            GameProjectScene definition = await Task.Run(
+                () => GameProjectStore.LoadScene(_projectDirectory, resolved), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.65f, "Creating runtime scene");
+            RuntimeScene next = new(resolved, definition, path => GameProjectPath.ToAbsolute(_projectDirectory, path));
+            CommitScene(resolved, definition, next);
+            SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            SetProgress(resolved, RuntimeSceneLoadState.Cancelled, 0.0f, "Scene load cancelled");
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            SetProgress(resolved, RuntimeSceneLoadState.Failed, 0.0f, ex.Message);
+            SceneLoadFailed?.Invoke(new RuntimeSceneLoadFailure(resolved, ex));
+            return false;
+        }
+    }
+
+    public void Update(float deltaSeconds) => Update(deltaSeconds, RuntimeCameraInput.None);
+
+    public void Update(float deltaSeconds, RuntimeCameraInput input)
     {
         ThrowIfDisposed();
         if (!string.IsNullOrWhiteSpace(_pendingScene))
@@ -79,7 +122,7 @@ public sealed class RuntimeSceneManager : IDisposable
             _pendingScene = null;
             LoadScene(pending);
         }
-        Current?.Update(deltaSeconds);
+        Current?.Update(deltaSeconds, input);
     }
 
     public void Unload()
@@ -104,6 +147,22 @@ public sealed class RuntimeSceneManager : IDisposable
         string normalized = scenePath.Replace('\\', '/').Trim();
         return _project.Scenes.FirstOrDefault(path => string.Equals(path.Replace('\\', '/'), normalized, StringComparison.OrdinalIgnoreCase))
             ?? _project.Scenes.FirstOrDefault(path => string.Equals(Path.GetFileNameWithoutExtension(path), Path.GetFileNameWithoutExtension(normalized), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void CommitScene(string resolved, GameProjectScene definition, RuntimeScene next)
+    {
+        RuntimeScene? previous = Current;
+        Current = next;
+        _project.Scene = definition;
+        _project.DefaultScene = resolved;
+        SceneChanged?.Invoke(new RuntimeSceneChange(previous, next, resolved));
+        previous?.Dispose();
+    }
+
+    private void SetProgress(string path, RuntimeSceneLoadState state, float value, string message)
+    {
+        LoadProgress = new RuntimeSceneLoadProgress(path, state, Math.Clamp(value, 0.0f, 1.0f), message);
+        LoadProgressChanged?.Invoke(LoadProgress);
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

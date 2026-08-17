@@ -33,6 +33,7 @@ public sealed class RuntimeScene : IDisposable
     public IEnumerable<RuntimeEntity> PmxModels => Entities.Where(entity => entity.IsPmxModel);
     public IEnumerable<RuntimeEntity> PointLights => Entities.Where(entity => entity.IsPointLight && entity.Enabled);
     public IEnumerable<RuntimeEntity> SpotLights => Entities.Where(entity => entity.IsSpotLight && entity.Enabled);
+    public IEnumerable<RuntimeEntity> TexturedPlanes => Entities.Where(entity => entity.IsTexturedPlane);
     public long EntityRevision { get; private set; }
 
     public RuntimeCamera MainCamera => Cameras.FirstOrDefault(camera => camera.Enabled && camera.IsMain)
@@ -136,12 +137,14 @@ public sealed class RuntimeScene : IDisposable
         });
     }
 
-    public void Update(float deltaSeconds)
+    public void Update(float deltaSeconds) => Update(deltaSeconds, RuntimeCameraInput.None);
+
+    public void Update(float deltaSeconds, RuntimeCameraInput input)
     {
         ThrowIfDisposed();
         _animations.Update(Definition, Math.Clamp(deltaSeconds, 0.0f, 0.1f));
         foreach (RuntimeCamera camera in Cameras.Where(camera => camera.Enabled))
-            camera.UpdateControl(this, deltaSeconds);
+            camera.UpdateControl(this, deltaSeconds, input);
         Definition.Camera = MainCamera.Settings;
         Definition.MainCamera = MainCamera.Name;
     }

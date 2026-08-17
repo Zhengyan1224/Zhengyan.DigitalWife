@@ -17,6 +17,8 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private const int EglContextClientVersion = 0x3098;
     private const int EglOpenGlEs2Bit = 0x0004;
     private const int EglOpenGlEs3BitKhr = 0x0040;
+    private const int EglSampleBuffers = 0x3032;
+    private const int EglSamples = 0x3031;
 
     private EGLDisplay? _display;
     private EGLContext? _context;
@@ -28,6 +30,8 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private int _width = 1;
     private int _height = 1;
     private int _openGlEsVersion;
+    private int _requestedMsaaSamples = 1;
+    private int _actualMsaaSamples = 1;
     private long _lastFrameTimeNanos;
     private double _elapsedSeconds;
     private bool _disposed;
@@ -87,11 +91,31 @@ internal sealed class AndroidEglRenderHost : IDisposable
             throw CreateEglException("EGL initialization failed");
         }
 
-        EGLConfig? config = ChooseConfig(_display, requestOpenGlEs3: true);
+        _requestedMsaaSamples = NormalizeMsaa(_project?.Window.AntiAliasingSamples ?? 1);
+        EGLConfig? config = null;
+        foreach (int samples in ResolveMsaaFallbacks(_requestedMsaaSamples))
+        {
+            config = ChooseConfig(_display, requestOpenGlEs3: true, samples);
+            if (config is not null)
+            {
+                _actualMsaaSamples = samples;
+                break;
+            }
+        }
         _context = config is null ? null : CreateContext(_display, config, 3);
         if (_context is null || _context == EGL14.EglNoContext)
         {
-            config = ChooseConfig(_display, requestOpenGlEs3: false)
+            config = null;
+            foreach (int samples in ResolveMsaaFallbacks(_requestedMsaaSamples))
+            {
+                config = ChooseConfig(_display, requestOpenGlEs3: false, samples);
+                if (config is not null)
+                {
+                    _actualMsaaSamples = samples;
+                    break;
+                }
+            }
+            config = config
                 ?? throw CreateEglException("No compatible EGL window configuration was found");
             _context = CreateContext(_display, config, 2);
             _openGlEsVersion = 2;
@@ -114,7 +138,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
         }
 
         MakeCurrent();
-        Log.Info(LogTag, $"Android graphics backend: OpenGL ES {_openGlEsVersion}");
+        Log.Info(LogTag, $"Android graphics backend: OpenGL ES {_openGlEsVersion}; MSAA requested={_requestedMsaaSamples}x, actual={_actualMsaaSamples}x");
         ReloadScene();
         _ = EGL14.EglSwapInterval(_display, 1);
         ResetFrameClock();
@@ -126,7 +150,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
         _height = Math.Max(height, 1);
     }
 
-    public void Render(long frameTimeNanos)
+    public void Render(long frameTimeNanos, AndroidInputSnapshot input)
     {
         if (_display is null || _context is null || _surface is null)
         {
@@ -143,7 +167,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
 
         _lastFrameTimeNanos = frameTimeNanos;
         double seconds = _elapsedSeconds;
-        _sceneManager?.Update((float)deltaSeconds);
+        _sceneManager?.Update((float)deltaSeconds, ToCameraInput(input));
 
         RuntimeScene? runtimeScene = _sceneManager?.Current;
         if (runtimeScene is not null)
@@ -225,10 +249,10 @@ internal sealed class AndroidEglRenderHost : IDisposable
         _sceneManager = null;
     }
 
-    private static EGLConfig? ChooseConfig(EGLDisplay display, bool requestOpenGlEs3)
+    private static EGLConfig? ChooseConfig(EGLDisplay display, bool requestOpenGlEs3, int samples)
     {
         int renderableType = requestOpenGlEs3 ? EglOpenGlEs3BitKhr : EglOpenGlEs2Bit;
-        int[] attributes =
+        List<int> attributeList =
         [
             EGL14.EglSurfaceType, EGL14.EglWindowBit,
             EGL14.EglRenderableType, renderableType,
@@ -237,9 +261,17 @@ internal sealed class AndroidEglRenderHost : IDisposable
             EGL14.EglBlueSize, 8,
             EGL14.EglAlphaSize, 8,
             EGL14.EglDepthSize, 24,
-            EGL14.EglStencilSize, 8,
-            EGL14.EglNone
+            EGL14.EglStencilSize, 8
         ];
+        if (samples > 1)
+        {
+            attributeList.Add(EglSampleBuffers);
+            attributeList.Add(1);
+            attributeList.Add(EglSamples);
+            attributeList.Add(samples);
+        }
+        attributeList.Add(EGL14.EglNone);
+        int[] attributes = attributeList.ToArray();
 
         EGLConfig[] configs = new EGLConfig[1];
         int[] count = new int[1];
@@ -247,6 +279,28 @@ internal sealed class AndroidEglRenderHost : IDisposable
             && count[0] > 0
                 ? configs[0]
                 : null;
+    }
+
+    private static IReadOnlyList<int> ResolveMsaaFallbacks(int requested)
+    {
+        int normalized = NormalizeMsaa(requested);
+        return normalized switch
+        {
+            >= 16 => [16, 8, 4, 2, 1],
+            8 => [8, 4, 2, 1],
+            4 => [4, 2, 1],
+            2 => [2, 1],
+            _ => [1]
+        };
+    }
+
+    private static int NormalizeMsaa(int samples)
+    {
+        if (samples <= 1) return 1;
+        if (samples <= 2) return 2;
+        if (samples <= 4) return 4;
+        if (samples <= 8) return 8;
+        return 16;
     }
 
     private static EGLContext? CreateContext(EGLDisplay display, EGLConfig config, int version)
@@ -284,6 +338,29 @@ internal sealed class AndroidEglRenderHost : IDisposable
         {
             _sceneRenderer.Load(runtimeScene, _projectDirectory);
         }
+    }
+
+    private static RuntimeCameraInput ToCameraInput(AndroidInputSnapshot input)
+    {
+        if (input.ActiveTouchCount == 0)
+        {
+            return RuntimeCameraInput.None;
+        }
+
+        AndroidTouchPoint[] active = input.Touches.Where(point => point.IsActive).ToArray();
+        if (active.Length == 1)
+        {
+            return new RuntimeCameraInput(active[0].Delta, Vector2.Zero, 0.0f);
+        }
+
+        Vector2 currentA = active[0].PixelPosition;
+        Vector2 currentB = active[1].PixelPosition;
+        Vector2 previousA = currentA - active[0].Delta;
+        Vector2 previousB = currentB - active[1].Delta;
+        float currentDistance = Vector2.Distance(currentA, currentB);
+        float previousDistance = Vector2.Distance(previousA, previousB);
+        Vector2 pan = (active[0].Delta + active[1].Delta) * 0.5f;
+        return new RuntimeCameraInput(Vector2.Zero, pan, (previousDistance - currentDistance) * 0.01f);
     }
 
     private void ResetFrameClock()

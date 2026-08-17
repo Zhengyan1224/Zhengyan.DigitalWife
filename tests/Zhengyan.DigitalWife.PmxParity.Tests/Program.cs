@@ -78,13 +78,20 @@ static void RunRuntimeSceneLifecycleTests()
         LayoutMode = "relative",
         X = 0.0f,
         Y = 0.0f,
-        Width = 0.5f,
-        Height = 1.0f
+        Width = 960.0f,
+        Height = 1080.0f
     };
     RuntimeScene runtime = new("memory.scene.json", scene, static path => path);
     if (runtime.RenderCameras.Count != 1 || runtime.RenderCameras[0].ResolveViewport(1920, 1080, 1920, 1080).Width != 960)
     {
         throw new InvalidOperationException("Runtime viewport normalization failed.");
+    }
+    runtime.MainCamera.SetVmd("camera.vmd", loop: false, playbackSpeed: 1.5f, play: false);
+    runtime.MainCamera.SeekVmd(12.0f);
+    runtime.MainCamera.PlayVmd();
+    if (!runtime.MainCamera.VmdIsPlaying || MathF.Abs(runtime.MainCamera.VmdFrame - 12.0f) > 1e-5f)
+    {
+        throw new InvalidOperationException("Runtime camera VMD controls failed.");
     }
 
     RuntimeEntity point = runtime.AddPointLight("Point", new Vector3(1.0f, 2.0f, 3.0f), Vector3.One, 2.0f, 10.0f);
@@ -125,6 +132,13 @@ static void RunRuntimeSceneLifecycleTests()
         manager.Update(1.0f / 60.0f);
         if (failures != 1 || manager.Current?.Name != "Scene B")
             throw new InvalidOperationException("Runtime scene load failure recovery failed.");
+        if (!manager.LoadSceneAsync("scenes/a.scene.json").GetAwaiter().GetResult()
+            || manager.Current?.Name != "Scene A"
+            || manager.LoadProgress.State != RuntimeSceneLoadState.Ready
+            || manager.LoadProgress.Value < 0.999f)
+        {
+            throw new InvalidOperationException("Asynchronous runtime scene load failed.");
+        }
         manager.Unload();
         if (manager.Current is not null)
             throw new InvalidOperationException("Runtime scene unload failed.");
