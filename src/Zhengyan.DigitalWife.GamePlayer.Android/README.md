@@ -210,7 +210,9 @@ $apk = Get-ChildItem "src/Zhengyan.DigitalWife.GamePlayer.Android/bin/Release/ne
 GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推荐把发布包复制到手机的
 `Download` 目录，然后用文件管理器点击 `.dwgame` 并选择 **Zhengyan DigitalWife GamePlayer**
 打开；应用会通过 `content://` URI 自动复制并解压包。也可以通过 Android 的文件分享/打开方
-式传入 `file://` URI。
+式传入 `file://` URI。应用同时注册了 Android 的“打开方式”和“发送/分享”入口；部分厂商的
+文件管理器会把未知扩展名标记成通用 MIME 类型，因此分享候选中可能也会对其他文件显示本应用，
+但只有有效的 `.dwgame` 游戏包能够通过运行时校验并加载。
 
 开发调试时，如果宿主能访问该路径，也可以显式传入 `zhengyan.project_path`：
 

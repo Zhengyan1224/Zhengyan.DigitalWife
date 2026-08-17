@@ -8,6 +8,7 @@ using Android.Widget;
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 [Activity(
+    Name = "com.zhengyan.digitalwife.gameplayer.MainActivity",
     Label = "@string/app_name",
     MainLauncher = true,
     Exported = true,
@@ -22,6 +23,21 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
     Categories = [Intent.CategoryDefault, Intent.CategoryBrowsable],
     DataSchemes = ["content", "file"],
     DataMimeTypes = ["application/octet-stream", "application/zip", "application/x-dwgame"])]
+[IntentFilter(
+    [Intent.ActionView],
+    Categories = [Intent.CategoryDefault, Intent.CategoryBrowsable],
+    DataSchemes = ["content", "file"],
+    DataPathPatterns = [".*\\.dwgame", ".*\\.DWGAME"])]
+[IntentFilter(
+    [Intent.ActionView],
+    Categories = [Intent.CategoryDefault, Intent.CategoryBrowsable],
+    DataSchemes = ["content", "file"],
+    DataMimeTypes = ["*/*"],
+    DataPathPatterns = [".*\\.dwgame", ".*\\.DWGAME"])]
+[IntentFilter(
+    [Intent.ActionSend, Intent.ActionSendMultiple],
+    Categories = [Intent.CategoryDefault],
+    DataMimeTypes = ["application/octet-stream", "application/zip", "application/x-dwgame", "*/*"])]
 public sealed class MainActivity : Activity
 {
     private AndroidGameSurfaceView? _gameView;

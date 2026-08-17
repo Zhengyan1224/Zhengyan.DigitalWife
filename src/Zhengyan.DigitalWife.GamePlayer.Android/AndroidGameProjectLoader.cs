@@ -86,7 +86,7 @@ internal static class AndroidGameProjectLoader
             return NormalizeLocalPath(explicitPath);
         }
 
-        AndroidUri? data = intent?.Data;
+        AndroidUri? data = ResolveIntentUri(intent);
         if (data is not null)
         {
             string? copiedPath = TryCopyContentUri(activity, data);
@@ -110,6 +110,38 @@ internal static class AndroidGameProjectLoader
         }
 
         return null;
+    }
+
+    private static AndroidUri? ResolveIntentUri(Intent? intent)
+    {
+        if (intent?.Data is { } data)
+        {
+            return data;
+        }
+
+        if (intent?.ClipData is { ItemCount: > 0 } clipData
+            && clipData.GetItemAt(0)?.Uri is { } clipUri)
+        {
+            return clipUri;
+        }
+
+        if (intent is null)
+        {
+            return null;
+        }
+
+        if (global::Android.OS.Build.VERSION.SdkInt >= global::Android.OS.BuildVersionCodes.Tiramisu)
+        {
+#pragma warning disable CA1416 // Guarded by the Android 13 runtime version check above.
+            return intent.GetParcelableExtra(
+                Intent.ExtraStream,
+                Java.Lang.Class.FromType(typeof(AndroidUri))) as AndroidUri;
+#pragma warning restore CA1416
+        }
+
+#pragma warning disable CS0618, CA1422 // Type-safe overload is unavailable below Android 13.
+        return intent.GetParcelableExtra(Intent.ExtraStream) as AndroidUri;
+#pragma warning restore CS0618, CA1422
     }
 
     private static string? TryCopyContentUri(Activity activity, AndroidUri data)
