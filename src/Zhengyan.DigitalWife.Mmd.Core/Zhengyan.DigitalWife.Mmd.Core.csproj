@@ -9,6 +9,10 @@
     <ItemGroup>
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxParsing.cs" Link="PmxParsing.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\VmdParsing.cs" Link="VmdParsing.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\VmdInterpolationCurve.cs" Link="PmxRuntime\VmdInterpolationCurve.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\PmxRuntimeDiagnostics.cs" Link="PmxRuntime\PmxRuntimeDiagnostics.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\IPmxPoseEvaluator.cs" Link="PmxRuntime\IPmxPoseEvaluator.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\PmxPoseEvaluator.cs" Link="PmxRuntime\PmxPoseEvaluator.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\Helpers\BinaryReaderExtensions.cs" Link="Helpers\BinaryReaderExtensions.cs" />
     </ItemGroup>
 

@@ -129,13 +129,12 @@ internal sealed class AndroidEglRenderHost : IDisposable
 
         _lastFrameTimeNanos = frameTimeNanos;
         double seconds = _elapsedSeconds;
-        float pulse = 0.5f + 0.5f * (float)Math.Sin(seconds * 0.8);
 
         GLES30.GlViewport(0, 0, _width, _height);
         GLES30.GlClearColor(
-            Math.Clamp(_clearColor.X + pulse * 0.015f, 0.0f, 1.0f),
+            _clearColor.X,
             _clearColor.Y,
-            Math.Clamp(_clearColor.Z + pulse * 0.02f, 0.0f, 1.0f),
+            _clearColor.Z,
             _clearColor.W);
         GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
         _sceneRenderer?.Draw(_project, _width, _height, seconds);

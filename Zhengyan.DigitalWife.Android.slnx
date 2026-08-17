@@ -4,4 +4,7 @@
     <Project Path="src/Zhengyan.DigitalWife.GameProjects.Core/Zhengyan.DigitalWife.GameProjects.Core.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zhengyan.DigitalWife.PmxParity.Tests/Zhengyan.DigitalWife.PmxParity.Tests.csproj" />
+  </Folder>
 </Solution>

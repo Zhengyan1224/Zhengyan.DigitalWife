@@ -15,6 +15,8 @@
     <ItemGroup>
         <PackageReference Include="Evergine.BulletSharpPInvoke" />
         <PackageReference Include="Evergine.LibBulletc.Natives" />
+        <PackageReference Include="Pfim" />
+        <PackageReference Include="StbImageSharp" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Core\Zhengyan.DigitalWife.Mmd.Core.csproj" />
     </ItemGroup>

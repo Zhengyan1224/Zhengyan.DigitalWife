@@ -6,6 +6,13 @@ public enum AndroidCompatibilitySeverity
     Error
 }
 
+public enum AndroidCompatibilityStatus
+{
+    Supported,
+    Degraded,
+    Rejected
+}
+
 public sealed record AndroidCompatibilityIssue(
     string Code,
     AndroidCompatibilitySeverity Severity,
@@ -19,15 +26,24 @@ public sealed class AndroidCompatibilityReport
 
     public bool CanPublish => Issues.All(issue => issue.Severity != AndroidCompatibilitySeverity.Error);
 
+    public AndroidCompatibilityStatus Status => ErrorCount > 0
+        ? AndroidCompatibilityStatus.Rejected
+        : WarningCount > 0
+            ? AndroidCompatibilityStatus.Degraded
+            : AndroidCompatibilityStatus.Supported;
+
     public int ErrorCount => Issues.Count(issue => issue.Severity == AndroidCompatibilitySeverity.Error);
 
     public int WarningCount => Issues.Count(issue => issue.Severity == AndroidCompatibilitySeverity.Warning);
 
     public string ToStatusMessage()
     {
-        string summary = CanPublish
-            ? $"Android compatibility check passed with {WarningCount} warning(s)."
-            : $"Android compatibility check failed with {ErrorCount} error(s) and {WarningCount} warning(s).";
+        string summary = Status switch
+        {
+            AndroidCompatibilityStatus.Supported => "Android compatibility check passed.",
+            AndroidCompatibilityStatus.Degraded => $"Android compatibility check passed in degraded mode with {WarningCount} warning(s).",
+            _ => $"Android compatibility check failed with {ErrorCount} error(s) and {WarningCount} warning(s)."
+        };
 
         if (Issues.Count == 0)
         {
@@ -84,13 +100,105 @@ public static class AndroidProjectCompatibility
             }
 
             AnalyzeScripts(scene.LoadingScripts, scenePath, null, issues);
+            AnalyzeSceneFeatures(scene, scenePath, issues);
             foreach (GameEntity entity in scene.Entities)
             {
                 AnalyzeScripts(entity.Scripts, scenePath, entity.Name, issues);
+                AnalyzeEntity(entity, scenePath, issues);
             }
         }
 
         return new AndroidCompatibilityReport { Issues = issues };
+    }
+
+    private static void AnalyzeSceneFeatures(
+        GameProjectScene scene,
+        string scenePath,
+        ICollection<AndroidCompatibilityIssue> issues)
+    {
+        int enabledCameraCount = scene.Cameras.Count(camera => camera.Enabled);
+        if (enabledCameraCount > 1 || scene.RenderTextures.Any(texture => texture.Enabled))
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_MULTI_CAMERA_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                "The current Android runtime supports one main camera only; additional viewports and render textures would be ignored.",
+                scenePath));
+        }
+
+        if (scene.GuiControls.Count != 0 || scene.ContextMenus.Count != 0)
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_GUI_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                "GUI controls and context menus are not implemented by the current Android runtime.",
+                scenePath));
+        }
+
+        if (scene.Sprites.Any(sprite => sprite.Visible))
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_GAME_SPRITE_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                "Game-scene foreground/background sprites are not implemented by the current Android runtime.",
+                scenePath));
+        }
+
+        if (scene.Audio.Any(audio => audio.PlayOnStart))
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_AUDIO_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                "Scene audio is not implemented by the current Android runtime.",
+                scenePath));
+        }
+
+        if (scene.LoadingScripts.Any(script => script.Enabled)
+            || !string.IsNullOrWhiteSpace(scene.LoadingScreen.BackgroundImagePath))
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_LOADING_SCREEN_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                "Loading-screen images and loading scripts are not implemented by the current Android runtime.",
+                scenePath));
+        }
+
+        if (scene.Skybox.Enabled)
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_SKYBOX_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                "Skybox rendering is not implemented by the current Android runtime.",
+                scenePath));
+        }
+    }
+
+    private static void AnalyzeEntity(
+        GameEntity entity,
+        string scenePath,
+        ICollection<AndroidCompatibilityIssue> issues)
+    {
+        string type = entity.Type?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (type is not "pmx_model")
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_ENTITY_TYPE_UNSUPPORTED",
+                AndroidCompatibilitySeverity.Error,
+                $"Entity type '{entity.Type}' is not implemented by the current Android runtime.",
+                scenePath,
+                entity.Name));
+            return;
+        }
+
+        if (entity.EnableShadow || entity.ReceiveShadow)
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_PMX_SHADOW_DEGRADED",
+                AndroidCompatibilitySeverity.Warning,
+                "PMX directional/local-light shadows are not available yet; the model renders without cast/receive shadows.",
+                scenePath,
+                entity.Name));
+        }
     }
 
     private static void AnalyzeProjectSettings(
@@ -135,6 +243,12 @@ public static class AndroidProjectCompatibility
             string language = NormalizeScriptLanguage(script);
             if (SupportedScriptLanguages.Contains(language))
             {
+                issues.Add(new AndroidCompatibilityIssue(
+                    "ANDROID_CSHARP_PRECOMPILE_REQUIRED",
+                    AndroidCompatibilitySeverity.Error,
+                    $"Enabled C# script '{script.Path}' must be precompiled by the future Android publisher; the current generic APK cannot execute source scripts.",
+                    scenePath,
+                    entityName));
                 continue;
             }
 

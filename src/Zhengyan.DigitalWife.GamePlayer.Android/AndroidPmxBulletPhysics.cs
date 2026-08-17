@@ -6,7 +6,7 @@ using BtVector3 = Evergine.Mathematics.Vector3;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal sealed class AndroidPmxBulletPhysics : IDisposable
+internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
 {
     private readonly DefaultCollisionConfiguration _collisionConfiguration;
     private readonly CollisionDispatcher _dispatcher;
@@ -62,12 +62,12 @@ internal sealed class AndroidPmxBulletPhysics : IDisposable
         }
     }
 
-    public IReadOnlyDictionary<int, Matrix4x4> Step(Matrix4x4[] animatedGlobals, float elapsedSeconds, bool reset)
+    public IReadOnlyDictionary<int, Matrix4x4> Step(IReadOnlyList<Matrix4x4> animatedGlobals, float elapsedSeconds, bool reset)
     {
         Dictionary<int, Matrix4x4> overrides = [];
         foreach (BodyState state in _bodies)
         {
-            if (state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Length)
+            if (state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Count)
             {
                 continue;
             }
@@ -93,7 +93,7 @@ internal sealed class AndroidPmxBulletPhysics : IDisposable
 
         foreach (BodyState state in _bodies)
         {
-            if (state.Operation == PmxOperation.Static || state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Length)
+            if (state.Operation == PmxOperation.Static || state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Count)
             {
                 continue;
             }
@@ -109,6 +109,32 @@ internal sealed class AndroidPmxBulletPhysics : IDisposable
             overrides[state.BoneIndex] = global;
         }
         return overrides;
+    }
+
+    public void ApplyImpulse(PmxMorph.ImpulseMorph impulse, float weight)
+    {
+        if ((uint)impulse.RigidBodyIndex >= (uint)_bodies.Count || weight <= 0.0f)
+        {
+            return;
+        }
+
+        BodyState state = _bodies[impulse.RigidBodyIndex];
+        if (state.Operation == PmxOperation.Static)
+        {
+            return;
+        }
+
+        Vector3 velocity = new(impulse.Velocity.X, impulse.Velocity.Y, -impulse.Velocity.Z);
+        Vector3 torque = new(-impulse.Torque.X, -impulse.Torque.Y, impulse.Torque.Z);
+        if (impulse.Local)
+        {
+            Matrix4x4 world = InvZ(FromBt(state.Body.WorldTransform));
+            velocity = Vector3.TransformNormal(velocity, world);
+            torque = Vector3.TransformNormal(torque, world);
+        }
+        state.Body.Activate(true);
+        state.Body.ApplyCentralImpulse(ToBt(velocity * weight));
+        state.Body.ApplyTorqueImpulse(ToBt(torque * weight));
     }
 
     public void Dispose()

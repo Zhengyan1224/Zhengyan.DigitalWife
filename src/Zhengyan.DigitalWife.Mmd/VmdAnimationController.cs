@@ -11,6 +11,8 @@ public abstract class VmdAnimationKey(int time)
 
 public class VmdBezier
 {
+    private readonly VmdInterpolationCurve _curve;
+
     public Vector2 Cp1 { get; set; }
 
     public Vector2 Cp2 { get; set; }
@@ -24,30 +26,17 @@ public class VmdBezier
 
         Cp1 = new Vector2(x0 / 127.0f, y0 / 127.0f);
         Cp2 = new Vector2(x1 / 127.0f, y1 / 127.0f);
+        _curve = new VmdInterpolationCurve(Cp1, Cp2);
     }
 
     public float EvalX(float t)
     {
-        float t2 = t * t;
-        float t3 = t2 * t;
-        float it = 1.0f - t;
-        float it2 = it * it;
-        float it3 = it2 * it;
-        float[] x = [0, Cp1.X, Cp2.X, 1];
-
-        return t3 * x[3] + 3 * t2 * it * x[2] + 3 * t * it2 * x[1] + it3 * x[0];
+        return _curve.EvaluateX(t);
     }
 
     public float EvalY(float t)
     {
-        float t2 = t * t;
-        float t3 = t2 * t;
-        float it = 1.0f - t;
-        float it2 = it * it;
-        float it3 = it2 * it;
-        float[] y = [0, Cp1.Y, Cp2.Y, 1];
-
-        return t3 * y[3] + 3 * t2 * it * y[2] + 3 * t * it2 * y[1] + it3 * y[0];
+        return _curve.EvaluateY(t);
     }
 
     public Vector2 Eval(float t)
