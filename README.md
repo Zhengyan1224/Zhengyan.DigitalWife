@@ -3,7 +3,7 @@
 # Zhengyan.DigitalWife
 
 Android GamePlayer 的完整环境安装、编译、签名、真机部署和故障排查说明请参阅
-[Android GamePlayer README](src/Zhengyan.DigitalWife.GamePlayer.Android/README.md)。
+[Android GamePlayer 说明文档](src/Zhengyan.DigitalWife.GamePlayer.Android/README.md)。
 
 `Zhengyan.DigitalWife` 是一个面向跨平台数字人和轻量 3D 互动应用的 `.NET` 项目。当前核心入口已经从示例升级为：
 
@@ -95,7 +95,7 @@ Zhengyan.DigitalWife/
 | [Zhengyan.DigitalWife.Speech.SherpaOnnx](src/Zhengyan.DigitalWife.Speech.SherpaOnnx/README.md) | SherpaOnnx ASR、TTS、唤醒词实现。 |
 | [Zhengyan.DigitalWife.Speech.WhisperNet](src/Zhengyan.DigitalWife.Speech.WhisperNet/README.md) | Whisper.net ASR 实现。 |
 
-## Samples
+## 示例项目
 
 | 示例 | 说明 |
 | --- | --- |
@@ -191,8 +191,10 @@ glxinfo -B
 
 ## 文档
 
-- [GameEditor README](src/Zhengyan.DigitalWife.GameEditor/README.md)
-- [GamePlayer README](src/Zhengyan.DigitalWife.GamePlayer/README.md)
+- [GameEditor 说明文档](src/Zhengyan.DigitalWife.GameEditor/README.md)
+- [桌面版 GamePlayer 说明文档](src/Zhengyan.DigitalWife.GamePlayer/README.md)
+- [Android GamePlayer 环境安装与部署说明](src/Zhengyan.DigitalWife.GamePlayer.Android/README.md)
+- [Android GamePlayer 架构与开发进度](docs/android-gameplayer.md)
 - [脚本 API HTML](src/Zhengyan.DigitalWife.GameEditor/script_api.html)
 - [MMD Game API](docs/Zhengyan.DigitalWife.Mmd.Game.API.md)
 - [渲染与资源说明](docs/Zhengyan.DigitalWife.Mmd.Game.Rendering-And-Assets.md)

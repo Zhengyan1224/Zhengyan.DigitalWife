@@ -1,19 +1,23 @@
-# Android GamePlayer host
+# Android GamePlayer 主机
 
-This project is the Android-native host for the shared Zhengyan DigitalWife runtime. It currently provides:
+本项目是 Zhengyan DigitalWife 共享运行时的 Android 原生主机，目前提供以下能力：
 
-- an `Activity` with pause/resume handling;
-- a `SurfaceView` with surface recreation and `Choreographer` frame scheduling;
-- an EGL/OpenGL ES clear-and-present loop;
-- immutable per-frame multi-touch snapshots at the platform boundary;
-- loading of a local project directory or `.dwgame` package through an Intent or app-private `files/GameProject` directory;
-- Android compatibility validation before rendering starts.
-- GLES3 scene rendering for PMX geometry, base textures, entity transforms, the main camera, ambient light and directional light;
-- layered VMD playback with CPU/GPU skinning, looping and playback speed.
+- 使用 Android `Activity` 管理创建、暂停、恢复和销毁生命周期；
+- 使用 `SurfaceView` 管理渲染表面重建，并通过 `Choreographer` 调度每一帧；
+- 建立 EGL/OpenGL ES 清屏、绘制和画面提交循环；
+- 在平台边界生成每帧不可变的多点触摸状态快照；
+- 通过 Android `Intent` 或应用私有的 `files/GameProject` 目录加载本地工程目录和 `.dwgame` 包；
+- 在开始渲染前执行 Android 兼容性检查；
+- 使用 GLES3 绘制 PMX 几何体、基础纹理、实体变换、主相机、环境光和平行光；
+- 支持多层 VMD 播放、CPU/GPU 蒙皮、循环和播放速度设置。
 
-The scene/runtime integration is intentionally kept behind this host boundary. PMX IK, append bones, morph animation, layered VMD blending, sphere/toon materials, GPU BDEF skinning and Bullet rigid-body/joint/collision physics are connected without bringing desktop sprite, Python, OpenCL, or desktop window APIs into the Android target. Remaining parity work is concentrated in the other scene passes, shadows, audio and publishing.
+场景和运行时能力被限制在 Android 主机边界之后，不会把桌面精灵、Python、OpenCL 或桌面窗口
+API 带入 Android 目标。当前已经接入 PMX IK、附加骨骼、Morph 动画、多层 VMD 混合、
+Sphere/Toon 材质、GPU BDEF 蒙皮，以及 Bullet 刚体、关节和碰撞物理。剩余差异主要集中在其他
+场景渲染 Pass、阴影、音频和发布流程。
 
-Build with the .NET Android workload and explicit SDK paths when the machine does not define `ANDROID_HOME`/`JAVA_HOME`:
+当电脑没有配置 `ANDROID_HOME` 或 `JAVA_HOME` 时，可安装 .NET Android workload，并在构建
+命令中显式传入 SDK 路径：
 
 ```powershell
 $sdk = "$env:LOCALAPPDATA\Android\Sdk"
@@ -42,7 +46,7 @@ dotnet build Zhengyan.DigitalWife.Android.slnx `
    输出中应当能看到 `10.x.x` SDK。若命令不存在，应重新安装 SDK 或把 dotnet 安装目录加入
    `PATH`，然后重新打开 PowerShell。
 
-### 2. 安装 .NET Android workload
+### 2. 安装 .NET Android workload（工作负载）
 
 以普通用户打开 PowerShell，执行：
 
@@ -67,14 +71,15 @@ Workload 会安装 Android 项目所需的 MSBuild 目标、Android SDK 工具�
 最容易的方式是安装 Android Studio（只使用它的 SDK Manager，不需要用 Android Studio 打开
 本项目）：
 
-1. 打开 Android Studio，进入 **More Actions -> SDK Manager**。
-2. 在 **SDK Platforms** 中安装一个可用的 Android API 平台（建议安装 API 35 或更新版本）。
-3. 在 **SDK Tools** 中勾选并安装：
+1. 打开 Android Studio，进入 **更多操作（More Actions）-> SDK 管理器（SDK Manager）**。
+2. 在 **SDK 平台（SDK Platforms）** 中安装一个可用的 Android API 平台（建议安装 API 35
+   或更新版本）。
+3. 在 **SDK 工具（SDK Tools）** 中勾选并安装：
    - Android SDK Build-Tools；
    - Android SDK Platform-Tools（包含 `adb`）；
    - Android SDK Command-line Tools (latest)；
    - Android Emulator（只有需要模拟器时才必须安装）。
-4. 记下 SDK Location。Windows 默认位置通常是
+4. 记下 SDK 位置（SDK Location）。Windows 默认位置通常是
    `%LOCALAPPDATA%\Android\Sdk`。
 5. JDK 建议使用 **JDK 17**。当前 .NET Android 环境通常会在
    `%LOCALAPPDATA%\Android\jdk` 提供可用 JDK；也可以使用 Android Studio 自带的 JBR，
@@ -182,7 +187,7 @@ src/Zhengyan.DigitalWife.GamePlayer.Android/bin/Release/net10.0-android/
 
    设备状态应为 `device`。显示 `unauthorized` 时，解锁手机并重新确认授权。
 
-需要模拟器时，在 Android Studio 的 **Device Manager** 创建一个 API 24+ 的设备，启动后再执
+需要模拟器时，在 Android Studio 的 **设备管理器（Device Manager）** 创建一个 API 24+ 的设备，启动后再执
 行 `adb devices`。优先选择带硬件加速的 x86_64 模拟器；真机通常使用 arm64-v8a。
 
 ### 8. 安装、启动并加载游戏项目
