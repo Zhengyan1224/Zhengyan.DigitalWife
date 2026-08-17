@@ -116,13 +116,12 @@ public static class AndroidProjectCompatibility
         string scenePath,
         ICollection<AndroidCompatibilityIssue> issues)
     {
-        int enabledCameraCount = scene.Cameras.Count(camera => camera.Enabled);
-        if (enabledCameraCount > 1 || scene.RenderTextures.Any(texture => texture.Enabled))
+        if (scene.RenderTextures.Any(texture => texture.Enabled))
         {
             issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_MULTI_CAMERA_UNSUPPORTED",
+                "ANDROID_RENDER_TEXTURE_UNSUPPORTED",
                 AndroidCompatibilitySeverity.Error,
-                "The current Android runtime supports one main camera only; additional viewports and render textures would be ignored.",
+                "Android supports main and viewport cameras, but render-texture camera targets are not implemented yet.",
                 scenePath));
         }
 
@@ -179,6 +178,28 @@ public static class AndroidProjectCompatibility
         ICollection<AndroidCompatibilityIssue> issues)
     {
         string type = entity.Type?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (type is "point_light" or "pointlight" or "spot_light" or "spotlight")
+        {
+            bool castsShadows = type is "point_light" or "pointlight"
+                ? entity.PointLight.CastShadows
+                : entity.SpotLight.CastShadows;
+            if (castsShadows)
+            {
+                issues.Add(new AndroidCompatibilityIssue(
+                    "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
+                    AndroidCompatibilitySeverity.Warning,
+                    "Point and spot lights render on Android, but their shadow maps are not implemented yet.",
+                    scenePath,
+                    entity.Name));
+            }
+            return;
+        }
+
+        if (type is "empty" or "game_object" or "gameobject")
+        {
+            return;
+        }
+
         if (type is not "pmx_model")
         {
             issues.Add(new AndroidCompatibilityIssue(

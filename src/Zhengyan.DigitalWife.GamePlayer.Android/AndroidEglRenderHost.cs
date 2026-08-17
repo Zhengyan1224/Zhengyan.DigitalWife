@@ -3,6 +3,7 @@ using Android.Util;
 using Android.Views;
 using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using EGLConfig = Android.Opengl.EGLConfig;
 using EGLContext = Android.Opengl.EGLContext;
 using EGLDisplay = Android.Opengl.EGLDisplay;
@@ -21,6 +22,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private EGLContext? _context;
     private EGLSurface? _surface;
     private AndroidPmxSceneRenderer? _sceneRenderer;
+    private RuntimeSceneManager? _sceneManager;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
     private int _width = 1;
@@ -33,9 +35,19 @@ internal sealed class AndroidEglRenderHost : IDisposable
 
     public void SetProject(GameProject? project, string? projectDirectory)
     {
+        _sceneManager?.Dispose();
+        _sceneManager = null;
         _project = project;
         _projectDirectory = projectDirectory ?? string.Empty;
-        SetClearColor(project?.Scene.Lighting.ClearColor);
+        if (project is not null && !string.IsNullOrWhiteSpace(_projectDirectory))
+        {
+            _sceneManager = new RuntimeSceneManager(project, _projectDirectory);
+            _sceneManager.SceneChanged += OnSceneChanged;
+            _sceneManager.SceneLoadFailed += failure =>
+                Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
+            _sceneManager.LoadInitial();
+        }
+        SetClearColor(_sceneManager?.Current?.Definition.Lighting.ClearColor ?? project?.Scene.Lighting.ClearColor);
         if (_display is not null && _context is not null && _surface is not null)
         {
             ResetFrameClock();
@@ -122,13 +134,23 @@ internal sealed class AndroidEglRenderHost : IDisposable
         }
 
         MakeCurrent();
+        double deltaSeconds = 0.0;
         if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
         {
-            _elapsedSeconds += Math.Min((frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0, 0.1);
+            deltaSeconds = Math.Min((frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0, 0.1);
+            _elapsedSeconds += deltaSeconds;
         }
 
         _lastFrameTimeNanos = frameTimeNanos;
         double seconds = _elapsedSeconds;
+        _sceneManager?.Update((float)deltaSeconds);
+
+        RuntimeScene? runtimeScene = _sceneManager?.Current;
+        if (runtimeScene is not null)
+        {
+            _project!.Scene = runtimeScene.Definition;
+            SetClearColor(runtimeScene.Definition.Lighting.ClearColor);
+        }
 
         GLES30.GlViewport(0, 0, _width, _height);
         GLES30.GlClearColor(
@@ -137,7 +159,10 @@ internal sealed class AndroidEglRenderHost : IDisposable
             _clearColor.Z,
             _clearColor.W);
         GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
-        _sceneRenderer?.Draw(_project, _width, _height, seconds);
+        if (runtimeScene is not null)
+        {
+            _sceneRenderer?.Draw(runtimeScene, _project!.Window.Width, _project.Window.Height, _width, _height, seconds);
+        }
 
         if (!EGL14.EglSwapBuffers(_display, _surface))
         {
@@ -196,6 +221,8 @@ internal sealed class AndroidEglRenderHost : IDisposable
 
         _disposed = true;
         DestroySurface();
+        _sceneManager?.Dispose();
+        _sceneManager = null;
     }
 
     private static EGLConfig? ChooseConfig(EGLDisplay display, bool requestOpenGlEs3)
@@ -253,7 +280,10 @@ internal sealed class AndroidEglRenderHost : IDisposable
         }
 
         _sceneRenderer = new AndroidPmxSceneRenderer();
-        _sceneRenderer.Load(_project, _projectDirectory);
+        if (_sceneManager?.Current is { } runtimeScene)
+        {
+            _sceneRenderer.Load(runtimeScene, _projectDirectory);
+        }
     }
 
     private void ResetFrameClock()
@@ -265,5 +295,20 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private static InvalidOperationException CreateEglException(string message)
     {
         return new InvalidOperationException($"{message} (EGL error 0x{EGL14.EglGetError():X}).");
+    }
+
+    public void RequestSceneChange(string scenePath) => _sceneManager?.RequestSceneChange(scenePath);
+
+    private void OnSceneChanged(RuntimeSceneChange change)
+    {
+        if (change.Current is not null)
+        {
+            _project!.Scene = change.Current.Definition;
+            SetClearColor(change.Current.Definition.Lighting.ClearColor);
+        }
+        if (_display is not null && _context is not null && _surface is not null)
+        {
+            ReloadScene();
+        }
     }
 }

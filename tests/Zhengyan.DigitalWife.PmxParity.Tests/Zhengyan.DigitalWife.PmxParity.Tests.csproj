@@ -9,6 +9,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd.Core\Zhengyan.DigitalWife.Mmd.Core.csproj" />
+        <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" />
+        <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" />
     </ItemGroup>
 
 </Project>

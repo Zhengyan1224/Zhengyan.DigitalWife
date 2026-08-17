@@ -3,6 +3,7 @@ using Android.Util;
 using Java.Nio;
 using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
@@ -13,6 +14,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private const int VertexFloatCount = 21;
     private const int VertexStride = VertexFloatCount * sizeof(float);
     private const int MaxGpuBones = 96;
+    private const int MaxPointLights = 8;
+    private const int MaxSpotLights = 8;
 
     private readonly List<PmxGpuModel> _models = [];
     private readonly List<PmxGpuModel> _updateOrder = [];
@@ -33,6 +36,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _lightColorLocation;
     private readonly int _ambientColorLocation;
     private readonly int _ambientStrengthLocation;
+    private readonly int _pointLightCountLocation;
+    private readonly int[] _pointLightPositionRangeLocations;
+    private readonly int[] _pointLightColorIntensityLocations;
+    private readonly int _spotLightCountLocation;
+    private readonly int[] _spotLightPositionRangeLocations;
+    private readonly int[] _spotLightDirectionOuterLocations;
+    private readonly int[] _spotLightColorIntensityLocations;
+    private readonly int[] _spotLightConeLocations;
     private readonly int _sphereLocation;
     private readonly int _toonLocation;
     private readonly int _sphereModeLocation;
@@ -54,6 +65,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _edgeColorLocation;
     private readonly int _edgeUseGpuSkinningLocation;
     private readonly int _edgeBonesLocation;
+    private RuntimeScene? _loadedScene;
+    private string? _projectDirectory;
+    private long _loadedEntityRevision = -1;
     private bool _disposed;
 
     public AndroidPmxSceneRenderer()
@@ -73,6 +87,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _lightColorLocation = GLES30.GlGetUniformLocation(_program, "uLightColor");
         _ambientColorLocation = GLES30.GlGetUniformLocation(_program, "uAmbientColor");
         _ambientStrengthLocation = GLES30.GlGetUniformLocation(_program, "uAmbientStrength");
+        _pointLightCountLocation = GLES30.GlGetUniformLocation(_program, "uPointLightCount");
+        _pointLightPositionRangeLocations = GetUniformLocations(_program, "uPointLightPositionRange", MaxPointLights);
+        _pointLightColorIntensityLocations = GetUniformLocations(_program, "uPointLightColorIntensity", MaxPointLights);
+        _spotLightCountLocation = GLES30.GlGetUniformLocation(_program, "uSpotLightCount");
+        _spotLightPositionRangeLocations = GetUniformLocations(_program, "uSpotLightPositionRange", MaxSpotLights);
+        _spotLightDirectionOuterLocations = GetUniformLocations(_program, "uSpotLightDirectionOuter", MaxSpotLights);
+        _spotLightColorIntensityLocations = GetUniformLocations(_program, "uSpotLightColorIntensity", MaxSpotLights);
+        _spotLightConeLocations = GetUniformLocations(_program, "uSpotLightCone", MaxSpotLights);
         _sphereLocation = GLES30.GlGetUniformLocation(_program, "uSphereTexture");
         _toonLocation = GLES30.GlGetUniformLocation(_program, "uToonTexture");
         _sphereModeLocation = GLES30.GlGetUniformLocation(_program, "uSphereMode");
@@ -125,16 +147,20 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return true;
     }
 
-    public void Load(GameProject? project, string? projectDirectory)
+    public void Load(RuntimeScene scene, string? projectDirectory)
     {
         ClearModels();
-        if (project is null || string.IsNullOrWhiteSpace(projectDirectory))
+        _loadedScene = scene;
+        _projectDirectory = projectDirectory;
+        if (scene is null || string.IsNullOrWhiteSpace(projectDirectory))
         {
+            _loadedEntityRevision = scene?.EntityRevision ?? -1;
             return;
         }
 
-        foreach (GameEntity entity in project.Scene.Entities.Where(IsPmxEntity))
+        foreach (RuntimeEntity runtimeEntity in scene.PmxModels)
         {
+            GameEntity entity = runtimeEntity.Definition;
             string modelPath = GameProjectPath.ToAbsolute(projectDirectory, entity.AssetPath);
             if (!File.Exists(modelPath))
             {
@@ -177,7 +203,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     entity.EnableEdge,
                     entity.Id,
                     entity.Name,
-                    entity.Relation);
+                    entity.Relation,
+                    runtimeEntity);
                 _models.Add(gpuModel);
                 Log.Info(LogTag, $"Android GLES uploaded PMX '{entity.Name}': vertices={pmx.Vertices.Length}; faces={pmx.Faces.Length}; materials={pmx.Materials.Length}; skinning={gpuModel.SkinningBackend}; layers={motions.Count}; physics={gpuModel.PhysicsBackend}");
             }
@@ -188,36 +215,21 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         ResolveRelations();
+        _loadedEntityRevision = scene.EntityRevision;
     }
 
-    public void Draw(GameProject? project, int width, int height, double timeSeconds)
+    public void Draw(RuntimeScene scene, int referenceWidth, int referenceHeight, int width, int height, double timeSeconds)
     {
-        if (project is null || _models.Count == 0)
+        if (!ReferenceEquals(_loadedScene, scene) || _loadedEntityRevision != scene.EntityRevision)
+        {
+            Load(scene, _projectDirectory);
+        }
+
+        if (_models.Count == 0)
         {
             return;
         }
 
-        CameraSettings camera = ResolveCamera(project.Scene);
-        Vector3 position = camera.Position.ToVector3();
-        Vector3 target = camera.Target.ToVector3();
-        Vector3 up = camera.VmdHasUp ? camera.VmdUp.ToVector3() : Vector3.UnitY;
-        if (Vector3.DistanceSquared(position, target) < 1e-8f)
-        {
-            target = position - Vector3.UnitZ;
-        }
-
-        Matrix4x4 view = Matrix4x4.CreateLookAt(position, target, NormalizeOrDefault(up, Vector3.UnitY));
-        Matrix4x4 projection = CreateProjection(camera, Math.Max(width, 1) / (float)Math.Max(height, 1));
-        LightingSettings lighting = project.Scene.Lighting;
-        Vector3 lightDirection = NormalizeOrDefault(lighting.LightDirection.ToVector3(), new Vector3(-0.5f, -1.0f, -0.5f));
-        Vector3 lightColor = lighting.LightColor.ToVector3();
-        Vector3 ambientColor = lighting.AmbientColor.ToVector3();
-
-        GLES30.GlEnable(GLES30.GlDepthTest);
-        GLES30.GlDepthFunc(GLES30.GlLequal);
-        GLES30.GlEnable(GLES30.GlBlend);
-        GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
-        GLES30.GlDisable(0x0B44); // GL_CULL_FACE
         foreach (PmxGpuModel model in _updateOrder)
         {
             model.UpdateAnimation(timeSeconds);
@@ -227,55 +239,73 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             model.ApplyRelation();
         }
 
-        GLES30.GlUseProgram(_program);
-        GLES30.GlUniformMatrix4fv(_viewLocation, 1, false, ToGlArray(view), 0);
-        GLES30.GlUniform3f(_cameraPositionLocation, position.X, position.Y, position.Z);
-        GLES30.GlUniform3f(_lightDirectionLocation, lightDirection.X, lightDirection.Y, lightDirection.Z);
-        GLES30.GlUniform3f(_lightColorLocation, lightColor.X, lightColor.Y, lightColor.Z);
-        GLES30.GlUniform3f(_ambientColorLocation, ambientColor.X, ambientColor.Y, ambientColor.Z);
-        GLES30.GlUniform1f(_ambientStrengthLocation, Math.Max(lighting.AmbientStrength, 0.0f));
-        GLES30.GlUniform1i(_textureLocation, 0);
-        GLES30.GlUniform1i(_sphereLocation, 1);
-        GLES30.GlUniform1i(_toonLocation, 2);
-
-        foreach (PmxGpuModel model in _models)
+        foreach (RuntimeCamera camera in scene.RenderCameras)
         {
-            model.BindSkinning(_useGpuSkinningLocation, _bonesLocation);
-            Matrix4x4 mvp = model.Transform * view * projection;
-            GLES30.GlUniformMatrix4fv(_mvpLocation, 1, false, ToGlArray(mvp), 0);
-            GLES30.GlUniformMatrix4fv(_modelLocation, 1, false, ToGlArray(model.Transform), 0);
-            model.Draw(
-                _diffuseLocation,
-                _materialAmbientLocation,
-                _specularLocation,
-                _specularPowerLocation,
-                _hasTextureLocation,
-                _sphereModeLocation,
-                _hasSphereLocation,
-                _hasToonLocation,
-                _textureMultiplyLocation,
-                _textureAddLocation,
-                _sphereMultiplyLocation,
-                _sphereAddLocation,
-                _toonMultiplyLocation,
-                _toonAddLocation);
+            RuntimeViewport viewport = camera.ResolveViewport(width, height, referenceWidth, referenceHeight);
+            GLES30.GlViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+            GLES30.GlScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+            GLES30.GlEnable(GLES30.GlScissorTest);
+            GLES30.GlClearColor(
+                scene.Definition.Lighting.ClearColor.X,
+                scene.Definition.Lighting.ClearColor.Y,
+                scene.Definition.Lighting.ClearColor.Z,
+                scene.Definition.Lighting.ClearColor.W);
+            GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
+
+            Matrix4x4 view = camera.CreateView();
+            Matrix4x4 projection = camera.CreateProjection(viewport.Width / (float)Math.Max(viewport.Height, 1));
+            Vector3 position = camera.Settings.Position.ToVector3();
+            GLES30.GlEnable(GLES30.GlDepthTest);
+            GLES30.GlDepthFunc(GLES30.GlLequal);
+            GLES30.GlEnable(GLES30.GlBlend);
+            GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
+            GLES30.GlDisable(0x0B44); // GL_CULL_FACE
+            GLES30.GlUseProgram(_program);
+            ApplyLighting(scene);
+            GLES30.GlUniformMatrix4fv(_viewLocation, 1, false, ToGlArray(view), 0);
+            GLES30.GlUniform3f(_cameraPositionLocation, position.X, position.Y, position.Z);
+            GLES30.GlUniform1i(_textureLocation, 0);
+            GLES30.GlUniform1i(_sphereLocation, 1);
+            GLES30.GlUniform1i(_toonLocation, 2);
+
+            foreach (PmxGpuModel model in _models)
+            {
+                model.SyncTransform();
+                model.BindSkinning(_useGpuSkinningLocation, _bonesLocation);
+                Matrix4x4 mvp = model.Transform * view * projection;
+                GLES30.GlUniformMatrix4fv(_mvpLocation, 1, false, ToGlArray(mvp), 0);
+                GLES30.GlUniformMatrix4fv(_modelLocation, 1, false, ToGlArray(model.Transform), 0);
+                model.Draw(
+                    _diffuseLocation,
+                    _materialAmbientLocation,
+                    _specularLocation,
+                    _specularPowerLocation,
+                    _hasTextureLocation,
+                    _sphereModeLocation,
+                    _hasSphereLocation,
+                    _hasToonLocation,
+                    _textureMultiplyLocation,
+                    _textureAddLocation,
+                    _sphereMultiplyLocation,
+                    _sphereAddLocation,
+                    _toonMultiplyLocation,
+                    _toonAddLocation);
+            }
+
+            GLES30.GlUseProgram(_edgeProgram);
+            GLES30.GlUniform2f(_edgeScreenSizeLocation, viewport.Width, viewport.Height);
+            foreach (PmxGpuModel model in _models)
+            {
+                Matrix4x4 mvp = model.Transform * view * projection;
+                Matrix4x4 modelView = model.Transform * view;
+                GLES30.GlUniformMatrix4fv(_edgeMvpLocation, 1, false, ToGlArray(mvp), 0);
+                GLES30.GlUniformMatrix4fv(_edgeModelViewLocation, 1, false, ToGlArray(modelView), 0);
+                model.DrawEdges(_edgeUseGpuSkinningLocation, _edgeBonesLocation, _edgeSizeLocation, _edgeColorLocation);
+            }
         }
 
-        GLES30.GlUseProgram(_edgeProgram);
-        GLES30.GlUniform2f(_edgeScreenSizeLocation, Math.Max(width, 1), Math.Max(height, 1));
-        foreach (PmxGpuModel model in _models)
-        {
-            Matrix4x4 mvp = model.Transform * view * projection;
-            Matrix4x4 modelView = model.Transform * view;
-            GLES30.GlUniformMatrix4fv(_edgeMvpLocation, 1, false, ToGlArray(mvp), 0);
-            GLES30.GlUniformMatrix4fv(_edgeModelViewLocation, 1, false, ToGlArray(modelView), 0);
-            model.DrawEdges(
-                _edgeUseGpuSkinningLocation,
-                _edgeBonesLocation,
-                _edgeSizeLocation,
-                _edgeColorLocation);
-        }
-
+        GLES30.GlDisable(GLES30.GlScissorTest);
+        GLES30.GlViewport(0, 0, Math.Max(width, 1), Math.Max(height, 1));
         GLES30.GlBindVertexArray(0);
         GLES30.GlUseProgram(0);
     }
@@ -289,8 +319,55 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         _disposed = true;
         ClearModels();
+        _loadedScene = null;
+        _projectDirectory = null;
+        _loadedEntityRevision = -1;
         GLES30.GlDeleteProgram(_program);
         GLES30.GlDeleteProgram(_edgeProgram);
+    }
+
+    private void ApplyLighting(RuntimeScene scene)
+    {
+        LightingSettings lighting = scene.Definition.Lighting;
+        Vector3 direction = NormalizeOrDefault(lighting.LightDirection.ToVector3(), new Vector3(-0.5f, -1.0f, -0.5f));
+        Vector3 color = Vector3.Max(lighting.LightColor.ToVector3(), Vector3.Zero);
+        Vector3 ambient = Vector3.Max(lighting.AmbientColor.ToVector3(), Vector3.Zero);
+        GLES30.GlUniform3f(_lightDirectionLocation, direction.X, direction.Y, direction.Z);
+        GLES30.GlUniform3f(_lightColorLocation, color.X, color.Y, color.Z);
+        GLES30.GlUniform3f(_ambientColorLocation, ambient.X, ambient.Y, ambient.Z);
+        GLES30.GlUniform1f(_ambientStrengthLocation, Math.Max(lighting.AmbientStrength, 0.0f));
+
+        RuntimeEntity[] pointLights = scene.PointLights.Take(MaxPointLights).ToArray();
+        GLES30.GlUniform1i(_pointLightCountLocation, pointLights.Length);
+        for (int i = 0; i < pointLights.Length; i++)
+        {
+            RuntimeEntity light = pointLights[i];
+            Vector3 lightColor = light.LightColor;
+            GLES30.GlUniform4f(_pointLightPositionRangeLocations[i], light.Position.X, light.Position.Y, light.Position.Z, light.LightRange);
+            GLES30.GlUniform4f(_pointLightColorIntensityLocations[i], lightColor.X, lightColor.Y, lightColor.Z, light.LightIntensity);
+        }
+
+        RuntimeEntity[] spotLights = scene.SpotLights.Take(MaxSpotLights).ToArray();
+        GLES30.GlUniform1i(_spotLightCountLocation, spotLights.Length);
+        for (int i = 0; i < spotLights.Length; i++)
+        {
+            RuntimeEntity light = spotLights[i];
+            Vector3 lightColor = light.LightColor;
+            Vector3 lightDirection = light.SpotDirection;
+            float outerCosine = MathF.Cos(light.SpotOuterConeAngleDegrees * MathF.PI / 180.0f);
+            float innerCosine = MathF.Cos(light.SpotInnerConeAngleDegrees * MathF.PI / 180.0f);
+            GLES30.GlUniform4f(_spotLightPositionRangeLocations[i], light.Position.X, light.Position.Y, light.Position.Z, light.LightRange);
+            GLES30.GlUniform4f(_spotLightDirectionOuterLocations[i], lightDirection.X, lightDirection.Y, lightDirection.Z, outerCosine);
+            GLES30.GlUniform4f(_spotLightColorIntensityLocations[i], lightColor.X, lightColor.Y, lightColor.Z, light.LightIntensity);
+            GLES30.GlUniform4f(_spotLightConeLocations[i], innerCosine, 0.0f, 0.0f, 0.0f);
+        }
+    }
+
+    private static int[] GetUniformLocations(int program, string name, int count)
+    {
+        return Enumerable.Range(0, count)
+            .Select(index => GLES30.GlGetUniformLocation(program, $"{name}[{index}]"))
+            .ToArray();
     }
 
     private void ClearModels()
@@ -640,6 +717,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         private readonly bool _gpuSkinning;
         private readonly bool _enableEdge;
         private readonly bool _relationBindComponentTransform;
+        private readonly RuntimeEntity _runtimeEntity;
         private readonly float[] _boneMatrices = new float[MaxGpuBones * 16];
         private bool _disposed;
 
@@ -659,7 +737,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             bool enableEdge,
             string entityId,
             string entityName,
-            PmxRelationSettings relation)
+            PmxRelationSettings relation,
+            RuntimeEntity runtimeEntity)
         {
             _vao = vao;
             _vertexBuffer = vertexBuffer;
@@ -674,6 +753,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             _gpuSkinning = gpuSkinning;
             _enableEdge = enableEdge;
             _relationBindComponentTransform = relation.BindComponentTransform;
+            _runtimeEntity = runtimeEntity;
             Transform = transform;
             EntityId = entityId;
             EntityName = entityName;
@@ -691,6 +771,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public PmxGpuModel? RelationTarget { get; set; }
         public string SkinningBackend => _gpuSkinning ? "GPU BDEF" : "CPU fallback";
         public string PhysicsBackend => _animator?.PhysicsBackend ?? "disabled";
+
+        public void SyncTransform()
+        {
+            if (RelationTarget is null || !_relationBindComponentTransform)
+                Transform = _runtimeEntity.TransformMatrix;
+        }
 
         public bool TrySetMotionLayerState(
             int layerIndex,
@@ -739,7 +825,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             bool enableEdge,
             string entityId,
             string entityName,
-            PmxRelationSettings relation)
+            PmxRelationSettings relation,
+            RuntimeEntity runtimeEntity)
         {
             bool gpuSkinningCandidate = pmx.Bones.Length <= MaxGpuBones
                 && motions.All(layer => layer.Animation.Morphs.Length == 0)
@@ -832,14 +919,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlVertexAttribPointer(6, 4, GLES30.GlFloat, false, VertexStride, 17 * sizeof(float));
             GLES30.GlBindVertexArray(0);
 
-            Vector3 position = transformSettings.Position.ToVector3();
-            Vector3 rotation = transformSettings.RotationDegrees.ToVector3() * (MathF.PI / 180.0f);
-            Vector3 scale = transformSettings.Scale.ToVector3();
-            Matrix4x4 transform = Matrix4x4.CreateScale(scale)
-                * Matrix4x4.CreateRotationX(rotation.X)
-                * Matrix4x4.CreateRotationY(rotation.Y)
-                * Matrix4x4.CreateRotationZ(rotation.Z)
-                * Matrix4x4.CreateTranslation(position);
+            _ = transformSettings;
+            Matrix4x4 transform = runtimeEntity.TransformMatrix;
             IPmxPhysicsBridge? physicsBridge = null;
             if (physicsEnabled && pmx.RigidBodies.Length != 0)
             {
@@ -870,7 +951,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 enableEdge,
                 entityId,
                 entityName,
-                relation);
+                relation,
+                runtimeEntity);
         }
 
         public void UpdateAnimation(double timeSeconds)
@@ -1266,6 +1348,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform vec3 uLightColor;
         uniform vec3 uAmbientColor;
         uniform float uAmbientStrength;
+        uniform int uPointLightCount;
+        uniform vec4 uPointLightPositionRange[8];
+        uniform vec4 uPointLightColorIntensity[8];
+        uniform int uSpotLightCount;
+        uniform vec4 uSpotLightPositionRange[8];
+        uniform vec4 uSpotLightDirectionOuter[8];
+        uniform vec4 uSpotLightColorIntensity[8];
+        uniform vec4 uSpotLightCone[8];
         out vec4 outColor;
 
         vec3 applyMultiply(vec3 color, vec4 factor)
@@ -1280,7 +1370,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         void main()
         {
-            float diffuseLight = max(dot(normalize(vNormal), normalize(-uLightDirection)), 0.0);
+            vec3 normal = normalize(vNormal);
+            float diffuseLight = max(dot(normal, normalize(-uLightDirection)), 0.0);
             vec4 textureColor = uHasTexture != 0 ? texture(uTexture, vTexCoord) : vec4(1.0);
             textureColor.rgb = applyAdd(applyMultiply(textureColor.rgb, uTextureMultiply), uTextureAdd);
             float alpha = uDiffuse.a * textureColor.a;
@@ -1313,7 +1404,31 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 : 0.0;
             vec3 ambient = base * uMaterialAmbient * uAmbientColor * uAmbientStrength;
             vec3 specular = uSpecular * uLightColor * specularAmount;
-            outColor = vec4(clamp(ambient + directional + specular, 0.0, 1.0), alpha);
+            vec3 local = vec3(0.0);
+            for (int i = 0; i < 8; i++)
+            {
+                if (i >= uPointLightCount) break;
+                vec3 toLight = uPointLightPositionRange[i].xyz - vWorldPosition;
+                float distanceToLight = length(toLight);
+                float range = max(uPointLightPositionRange[i].w, 0.001);
+                float attenuation = pow(clamp(1.0 - distanceToLight / range, 0.0, 1.0), 2.0);
+                float ndotl = max(dot(normal, normalize(toLight)), 0.0);
+                local += base * uPointLightColorIntensity[i].rgb * uPointLightColorIntensity[i].a * ndotl * attenuation;
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                if (i >= uSpotLightCount) break;
+                vec3 toLight = uSpotLightPositionRange[i].xyz - vWorldPosition;
+                float distanceToLight = length(toLight);
+                float range = max(uSpotLightPositionRange[i].w, 0.001);
+                float attenuation = pow(clamp(1.0 - distanceToLight / range, 0.0, 1.0), 2.0);
+                vec3 lightToFragment = normalize(-toLight);
+                float cone = smoothstep(uSpotLightDirectionOuter[i].w, uSpotLightCone[i].x,
+                    dot(lightToFragment, normalize(uSpotLightDirectionOuter[i].xyz)));
+                float ndotl = max(dot(normal, normalize(toLight)), 0.0);
+                local += base * uSpotLightColorIntensity[i].rgb * uSpotLightColorIntensity[i].a * ndotl * attenuation * cone;
+            }
+            outColor = vec4(clamp(ambient + directional + local + specular, 0.0, 1.0), alpha);
         }
         """;
 

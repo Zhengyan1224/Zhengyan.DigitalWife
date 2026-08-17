@@ -55,6 +55,11 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         _renderHost.SetProject(project, projectDirectory);
     }
 
+    public void RequestSceneChange(string scenePath)
+    {
+        _renderHost.RequestSceneChange(scenePath);
+    }
+
     public void PauseRendering()
     {
         _isResumed = false;

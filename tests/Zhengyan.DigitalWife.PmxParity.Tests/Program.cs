@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Numerics;
 using Zhengyan.DigitalWife.Mmd;
+using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.GamePlayer.Runtime;
 
 return args.Length switch
 {
@@ -60,8 +62,78 @@ static int RunSelfTests()
         throw new InvalidOperationException("PMX pose snapshots are not deterministic.");
     }
 
+    RunRuntimeSceneLifecycleTests();
+
     Console.WriteLine("PMX/VMD parity self-tests passed.");
     return 0;
+}
+
+static void RunRuntimeSceneLifecycleTests()
+{
+    GameProjectScene scene = new() { Name = "Runtime A" };
+    scene.Cameras[0].Camera.ControlMode = "editor";
+    scene.Cameras[0].Viewport = new CameraViewportSettings
+    {
+        Enabled = true,
+        LayoutMode = "relative",
+        X = 0.0f,
+        Y = 0.0f,
+        Width = 0.5f,
+        Height = 1.0f
+    };
+    RuntimeScene runtime = new("memory.scene.json", scene, static path => path);
+    if (runtime.RenderCameras.Count != 1 || runtime.RenderCameras[0].ResolveViewport(1920, 1080, 1920, 1080).Width != 960)
+    {
+        throw new InvalidOperationException("Runtime viewport normalization failed.");
+    }
+
+    RuntimeEntity point = runtime.AddPointLight("Point", new Vector3(1.0f, 2.0f, 3.0f), Vector3.One, 2.0f, 10.0f);
+    RuntimeEntity spot = runtime.AddSpotLight("Spot", Vector3.Zero, Vector3.Zero, Vector3.One);
+    if (!point.IsPointLight || !spot.IsSpotLight || runtime.PointLights.Count() != 1 || runtime.SpotLights.Count() != 1)
+    {
+        throw new InvalidOperationException("Runtime light registry failed.");
+    }
+    point.LightIntensity = 3.0f;
+    if (MathF.Abs(scene.Entities[0].PointLight.Intensity - 3.0f) > 1e-5f || !runtime.RemoveEntity("Spot"))
+    {
+        throw new InvalidOperationException("Runtime entity mutation failed.");
+    }
+    runtime.Dispose();
+
+    string directory = Path.Combine(Path.GetTempPath(), "zhengyan-runtime-scene-tests-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        GameProject project = new()
+        {
+            DefaultScene = "scenes/a.scene.json",
+            EditorScene = "scenes/a.scene.json",
+            Scenes = ["scenes/a.scene.json", "scenes/b.scene.json"]
+        };
+        GameProjectStore.SaveScene(directory, project.Scenes[0], new GameProjectScene { Name = "Scene A" });
+        GameProjectStore.SaveScene(directory, project.Scenes[1], new GameProjectScene { Name = "Scene B" });
+        RuntimeSceneManager manager = new(project, directory);
+        int failures = 0;
+        manager.SceneLoadFailed += _ => failures++;
+        if (!manager.LoadInitial() || manager.Current?.Name != "Scene A")
+            throw new InvalidOperationException("Initial runtime scene load failed.");
+        manager.RequestSceneChange("scenes/b.scene.json");
+        manager.Update(1.0f / 60.0f);
+        if (manager.Current?.Name != "Scene B")
+            throw new InvalidOperationException("Runtime scene switch failed.");
+        manager.RequestSceneChange("scenes/missing.scene.json");
+        manager.Update(1.0f / 60.0f);
+        if (failures != 1 || manager.Current?.Name != "Scene B")
+            throw new InvalidOperationException("Runtime scene load failure recovery failed.");
+        manager.Unload();
+        if (manager.Current is not null)
+            throw new InvalidOperationException("Runtime scene unload failed.");
+        manager.Dispose();
+    }
+    finally
+    {
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+    }
 }
 
 static int CompareSnapshots(string expectedPath, string actualPath, float tolerance)
