@@ -34,6 +34,8 @@ public sealed class RuntimeScene : IDisposable
     public IEnumerable<RuntimeEntity> PointLights => Entities.Where(entity => entity.IsPointLight && entity.Enabled);
     public IEnumerable<RuntimeEntity> SpotLights => Entities.Where(entity => entity.IsSpotLight && entity.Enabled);
     public IEnumerable<RuntimeEntity> TexturedPlanes => Entities.Where(entity => entity.IsTexturedPlane);
+    public IEnumerable<RuntimeEntity> ParticleSystems => Entities.Where(entity => entity.IsParticleSystem);
+    public IEnumerable<RuntimeEntity> WaterSurfaces => Entities.Where(entity => entity.IsWaterSurface);
     public long EntityRevision { get; private set; }
 
     public RuntimeCamera MainCamera => Cameras.FirstOrDefault(camera => camera.Enabled && camera.IsMain)

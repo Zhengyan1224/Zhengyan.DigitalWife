@@ -30,6 +30,10 @@ public sealed class RuntimeEntity
 
     public bool IsTexturedPlane => NormalizeType(Type) is "textured_plane" or "plane";
 
+    public bool IsParticleSystem => NormalizeType(Type) is "particle_system" or "particles" or "particle";
+
+    public bool IsWaterSurface => NormalizeType(Type) is "water_surface" or "water";
+
     public Vector3 Position
     {
         get => Definition.Transform.Position.ToVector3();

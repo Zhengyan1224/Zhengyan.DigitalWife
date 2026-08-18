@@ -214,6 +214,44 @@ public static class AndroidProjectCompatibility
             return;
         }
 
+        if (type is "particle_system" or "particles" or "particle")
+        {
+            if (entity.Particle.CastShadows)
+            {
+                issues.Add(new AndroidCompatibilityIssue(
+                    "ANDROID_PARTICLE_SHADOW_DEGRADED",
+                    AndroidCompatibilitySeverity.Warning,
+                    "Android renders particles, but particle shadow casting is not implemented yet.",
+                    scenePath,
+                    entity.Name));
+            }
+            if (entity.Particle.EnableWaterInteraction)
+            {
+                issues.Add(new AndroidCompatibilityIssue(
+                    "ANDROID_PARTICLE_WATER_DEGRADED",
+                    AndroidCompatibilitySeverity.Warning,
+                    "Android renders particles, but water collision and ripple interaction are not implemented yet.",
+                    scenePath,
+                    entity.Name));
+            }
+            return;
+        }
+
+        if (type is "water_surface" or "water")
+        {
+            WaterSurfaceSettings water = entity.Water;
+            if (water.MirrorReflectionEnabled || water.EnableInteraction || water.UnderwaterEffectEnabled)
+            {
+                issues.Add(new AndroidCompatibilityIssue(
+                    "ANDROID_WATER_FEATURE_DEGRADED",
+                    AndroidCompatibilitySeverity.Warning,
+                    "Android renders the animated water surface, but planar reflection, ripple interaction and underwater post-processing are not implemented yet.",
+                    scenePath,
+                    entity.Name));
+            }
+            return;
+        }
+
         if (type is not "pmx_model")
         {
             issues.Add(new AndroidCompatibilityIssue(

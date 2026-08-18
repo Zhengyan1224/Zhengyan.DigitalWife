@@ -94,8 +94,8 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；局部阴影待阶段 4 |
 | 天空盒 | 纹理、曝光、Tint | 部分（阶段 4） | 已支持 equirectangular 背景、相机旋转、曝光和 Tint；反射/后处理仍缺失 |
 | Textured Plane | Billboard、RT、镜面、阴影接收 | 部分（阶段 4） | 已支持主 Pass、纹理、尺寸、Billboard、Opacity/Tint 和平行光阴影接收；RT/镜面仍缺失 |
-| 水面 | Gerstner、反射、交互和水下后处理 | 缺失 | `water_surface` 实体、波纹、反射相机和水下效果均未实现 |
-| 粒子 | 预设、纹理、混合、碰撞、阴影、触水 | 缺失 | `particle_system` 实体被忽略 |
+| 水面 | Gerstner、反射、交互和水下后处理 | 部分（阶段 4） | 已支持动态网格、Gerstner 波形、法线、颜色/透明度和基础平行光；反射、波纹交互和水下后处理仍缺失 |
+| 粒子 | 预设、纹理、混合、碰撞、阴影、触水 | 部分（阶段 4） | 已支持 CPU 生命周期模拟、Billboard、纹理、颜色渐变和 Alpha/Additive；阴影、碰撞/触水仍缺失 |
 | 平面反射 | 水面和 Plane 镜面 | 缺失 | 没有反射 RenderTarget 和镜像相机 Pass |
 | 后处理 | 水下等场景后处理 | 缺失 | 没有离屏场景颜色/深度和全屏 Pass |
 | 自定义 Shader | GLSL/SPIR-V 双路径及 Uniform | 缺失 | Android 没有移动端 shader 契约、离线校验和动态 Uniform |
@@ -326,10 +326,15 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   和平行光阴影接收；镜面反射暂时给出兼容性降级警告，不会静默丢失配置。
 - Android 已接入基础 Skybox Pass：使用项目天空盒纹理、Tint、Exposure 和相机旋转绘制 equirectangular
   背景；天空盒不参与深度/阴影，纹理缺失时记录日志并保留清屏回退。
+- Android 已接入基础 Particle Pass：共享 `ParticleEntitySettings`，进行确定性 CPU 生命周期/速度/加速度模拟，
+  使用动态 Billboard VBO，支持自定义纹理、SoftCircle/Streak/Flame fallback、颜色渐变、Alpha/Additive 混合；
+  粒子阴影和水面交互暂时通过兼容性警告降级。
+- Android 已接入基础 Water Pass：按 `WaterSurfaceSettings` 生成移动端受限分辨率网格，支持 Gerstner 位移、动态法线、
+  Deep/Reflection Tint、透明度和环境/平行光着色；平面反射、涟漪交互与水下后处理仍通过兼容性警告降级。
 - 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX
   阴影误报为完全缺失。
 
-仍在阶段 4 后续迭代中的部分：点光/射灯立方体或锥体 Shadow Map、粒子/水面/后处理、
+仍在阶段 4 后续迭代中的部分：点光/射灯立方体或锥体 Shadow Map、水面反射/交互、后处理、
 Render Texture、自定义 Android Shader 契约和真机性能预算。
 
 验收标准：

@@ -20,6 +20,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private readonly List<PmxGpuModel> _models = [];
     private readonly List<PlaneGpu> _planes = [];
+    private readonly List<ParticleGpu> _particles = [];
+    private readonly List<WaterGpu> _waters = [];
     private readonly List<PmxGpuModel> _updateOrder = [];
     private readonly Dictionary<string, int> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _softAlphaTextures = [];
@@ -88,6 +90,21 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _skyboxVertexArrayObject;
     private readonly int _skyboxVertexBuffer;
     private int _skyboxTexture;
+    private readonly int _particleProgram;
+    private readonly int _particleViewProjectionLocation;
+    private readonly int _particleCameraRightLocation;
+    private readonly int _particleCameraUpLocation;
+    private readonly int _particleTextureLocation;
+    private readonly int _particleOpacityLocation;
+    private readonly int _particleUseTextureColorLocation;
+    private readonly int _waterProgram;
+    private readonly int _waterViewProjectionLocation;
+    private readonly int _waterLightDirectionLocation;
+    private readonly int _waterLightColorLocation;
+    private readonly int _waterAmbientLocation;
+    private readonly int _waterDeepColorLocation;
+    private readonly int _waterReflectionTintLocation;
+    private readonly int _waterAlphaLocation;
     private bool _shadowAvailable;
     private Matrix4x4 _lightViewProjection = Matrix4x4.Identity;
     private RuntimeScene? _loadedScene;
@@ -161,6 +178,23 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _skyboxTintLocation = GLES30.GlGetUniformLocation(_skyboxProgram, "uTint");
         _skyboxExposureLocation = GLES30.GlGetUniformLocation(_skyboxProgram, "uExposure");
         (_skyboxVertexArrayObject, _skyboxVertexBuffer) = CreateSkyboxMesh();
+
+        _particleProgram = CreateProgram(ParticleVertexShaderSource, ParticleFragmentShaderSource);
+        _particleViewProjectionLocation = GLES30.GlGetUniformLocation(_particleProgram, "uViewProjection");
+        _particleCameraRightLocation = GLES30.GlGetUniformLocation(_particleProgram, "uCameraRight");
+        _particleCameraUpLocation = GLES30.GlGetUniformLocation(_particleProgram, "uCameraUp");
+        _particleTextureLocation = GLES30.GlGetUniformLocation(_particleProgram, "uTexture");
+        _particleOpacityLocation = GLES30.GlGetUniformLocation(_particleProgram, "uOpacity");
+        _particleUseTextureColorLocation = GLES30.GlGetUniformLocation(_particleProgram, "uUseTextureColor");
+
+        _waterProgram = CreateProgram(WaterVertexShaderSource, WaterFragmentShaderSource);
+        _waterViewProjectionLocation = GLES30.GlGetUniformLocation(_waterProgram, "uViewProjection");
+        _waterLightDirectionLocation = GLES30.GlGetUniformLocation(_waterProgram, "uLightDirection");
+        _waterLightColorLocation = GLES30.GlGetUniformLocation(_waterProgram, "uLightColor");
+        _waterAmbientLocation = GLES30.GlGetUniformLocation(_waterProgram, "uAmbientColor");
+        _waterDeepColorLocation = GLES30.GlGetUniformLocation(_waterProgram, "uDeepColor");
+        _waterReflectionTintLocation = GLES30.GlGetUniformLocation(_waterProgram, "uReflectionTint");
+        _waterAlphaLocation = GLES30.GlGetUniformLocation(_waterProgram, "uAlpha");
     }
 
     public int ModelCount => _models.Count;
@@ -290,6 +324,40 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
         }
 
+        foreach (RuntimeEntity runtimeEntity in scene.ParticleSystems)
+        {
+            try
+            {
+                string? texturePath = runtimeEntity.Definition.Particle.TexturePath;
+                int texture = !string.IsNullOrWhiteSpace(texturePath)
+                    ? LoadTexture(GameProjectPath.ToAbsolute(projectDirectory, texturePath))
+                    : 0;
+                if (texture == 0)
+                {
+                    texture = LoadParticlePresetTexture(runtimeEntity.Definition.Particle.TexturePreset);
+                }
+                _particles.Add(ParticleGpu.Create(runtimeEntity, texture));
+                Log.Info(LogTag, $"Android GLES uploaded particle system '{runtimeEntity.Name}': count={runtimeEntity.Definition.Particle.ParticleCount}.");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(LogTag, $"Android particle-system upload failed for '{runtimeEntity.Name}': {ex}");
+            }
+        }
+
+        foreach (RuntimeEntity runtimeEntity in scene.WaterSurfaces)
+        {
+            try
+            {
+                _waters.Add(WaterGpu.Create(runtimeEntity));
+                Log.Info(LogTag, $"Android GLES uploaded water surface '{runtimeEntity.Name}'.");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(LogTag, $"Android water-surface upload failed for '{runtimeEntity.Name}': {ex}");
+            }
+        }
+
         ResolveRelations();
         _loadedEntityRevision = scene.EntityRevision;
     }
@@ -301,7 +369,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Load(scene, _projectDirectory);
         }
 
-        if (_models.Count == 0 && _planes.Count == 0 && _skyboxTexture == 0)
+        if (_models.Count == 0 && _planes.Count == 0 && _particles.Count == 0 && _waters.Count == 0 && _skyboxTexture == 0)
         {
             return;
         }
@@ -388,6 +456,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     _toonAddLocation);
             }
 
+            DrawParticles(scene, camera, view, projection, timeSeconds);
+
+            DrawWater(scene, camera, view, projection, timeSeconds);
+
             GLES30.GlUseProgram(_edgeProgram);
             GLES30.GlUniform2f(_edgeScreenSizeLocation, viewport.Width, viewport.Height);
             foreach (PmxGpuModel model in _models)
@@ -422,6 +494,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDeleteProgram(_edgeProgram);
         GLES30.GlDeleteProgram(_shadowProgram);
         GLES30.GlDeleteProgram(_skyboxProgram);
+        GLES30.GlDeleteProgram(_particleProgram);
+        GLES30.GlDeleteProgram(_waterProgram);
         GLES30.GlDeleteVertexArrays(1, [_skyboxVertexArrayObject], 0);
         GLES30.GlDeleteBuffers(1, [_skyboxVertexBuffer], 0);
         GLES30.GlDeleteFramebuffers(1, [_shadowFramebuffer], 0);
@@ -524,6 +598,79 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlVertexAttribPointer(0, 3, GLES30.GlFloat, false, 3 * sizeof(float), 0);
         GLES30.GlBindVertexArray(0);
         return (arrays[0], buffers[0]);
+    }
+
+    private void DrawParticles(RuntimeScene scene, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection, double timeSeconds)
+    {
+        if (_particles.Count == 0)
+        {
+            return;
+        }
+
+        Vector3 forward = NormalizeOrDefault(camera.Settings.Target.ToVector3() - camera.Settings.Position.ToVector3(), -Vector3.UnitZ);
+        Vector3 right = NormalizeOrDefault(Vector3.Cross(forward, Vector3.UnitY), Vector3.UnitX);
+        Vector3 up = NormalizeOrDefault(Vector3.Cross(right, forward), Vector3.UnitY);
+        GLES30.GlUseProgram(_particleProgram);
+        GLES30.GlUniformMatrix4fv(_particleViewProjectionLocation, 1, false, ToGlArray(view * projection), 0);
+        GLES30.GlUniform3f(_particleCameraRightLocation, right.X, right.Y, right.Z);
+        GLES30.GlUniform3f(_particleCameraUpLocation, up.X, up.Y, up.Z);
+        GLES30.GlUniform1i(_particleTextureLocation, 0);
+        GLES30.GlEnable(GLES30.GlBlend);
+        GLES30.GlDisable(0x0B44); // GL_CULL_FACE
+        GLES30.GlEnable(GLES30.GlDepthTest);
+        GLES30.GlDepthMask(false);
+
+        foreach (ParticleGpu particle in _particles)
+        {
+            GLES30.GlBlendFunc(
+                particle.Additive ? GLES30.GlSrcAlpha : GLES30.GlSrcAlpha,
+                particle.Additive ? GLES30.GlOne : GLES30.GlOneMinusSrcAlpha);
+            GLES30.GlUniform1f(_particleOpacityLocation, Math.Clamp(particle.Opacity, 0.0f, 1.0f));
+            GLES30.GlUniform1i(_particleUseTextureColorLocation, particle.UseTextureColor ? 1 : 0);
+            GLES30.GlActiveTexture(GLES30.GlTexture0);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, particle.TextureId);
+            particle.Draw(timeSeconds, right, up);
+        }
+
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
+        GLES30.GlBindVertexArray(0);
+        GLES30.GlDepthMask(true);
+        GLES30.GlDisable(GLES30.GlBlend);
+    }
+
+    private void DrawWater(RuntimeScene scene, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection, double timeSeconds)
+    {
+        if (_waters.Count == 0)
+        {
+            return;
+        }
+
+        LightingSettings lighting = scene.Definition.Lighting;
+        Vector3 lightDirection = NormalizeOrDefault(lighting.LightDirection.ToVector3(), new Vector3(-0.5f, -1.0f, -0.5f));
+        Vector3 lightColor = Vector3.Max(lighting.LightColor.ToVector3(), Vector3.Zero);
+        Vector3 ambient = Vector3.Max(lighting.AmbientColor.ToVector3(), Vector3.Zero) * Math.Max(lighting.AmbientStrength, 0.0f);
+        GLES30.GlUseProgram(_waterProgram);
+        GLES30.GlUniformMatrix4fv(_waterViewProjectionLocation, 1, false, ToGlArray(view * projection), 0);
+        GLES30.GlUniform3f(_waterLightDirectionLocation, lightDirection.X, lightDirection.Y, lightDirection.Z);
+        GLES30.GlUniform3f(_waterLightColorLocation, lightColor.X, lightColor.Y, lightColor.Z);
+        GLES30.GlUniform3f(_waterAmbientLocation, ambient.X, ambient.Y, ambient.Z);
+        GLES30.GlEnable(GLES30.GlBlend);
+        GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
+        GLES30.GlEnable(GLES30.GlDepthTest);
+        GLES30.GlDepthMask(false);
+        GLES30.GlDisable(0x0B44); // GL_CULL_FACE
+        foreach (WaterGpu water in _waters)
+        {
+            Vector3 deep = Vector3.Max(water.DeepColor, Vector3.Zero);
+            Vector3 reflection = Vector3.Max(water.ReflectionTint, Vector3.Zero);
+            GLES30.GlUniform3f(_waterDeepColorLocation, deep.X, deep.Y, deep.Z);
+            GLES30.GlUniform3f(_waterReflectionTintLocation, reflection.X, reflection.Y, reflection.Z);
+            GLES30.GlUniform1f(_waterAlphaLocation, Math.Clamp(water.Alpha, 0.0f, 1.0f));
+            water.Draw(timeSeconds);
+        }
+        GLES30.GlBindVertexArray(0);
+        GLES30.GlDepthMask(true);
+        GLES30.GlDisable(GLES30.GlBlend);
     }
 
     private void DrawPlane(PlaneGpu plane, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection)
@@ -657,6 +804,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             plane.Dispose();
         }
         _planes.Clear();
+        foreach (ParticleGpu particle in _particles)
+        {
+            particle.Dispose();
+        }
+        _particles.Clear();
+        foreach (WaterGpu water in _waters)
+        {
+            water.Dispose();
+        }
+        _waters.Clear();
         _skyboxTexture = 0;
         _updateOrder.Clear();
         if (_textures.Count > 0)
@@ -787,6 +944,53 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
         _textures[fullPath] = texture;
         return texture;
+    }
+
+    private int LoadParticlePresetTexture(string? preset)
+    {
+        string normalized = (preset ?? "softCircle").Trim().ToLowerInvariant();
+        string key = $"__android_particle_{normalized}";
+        if (_textures.TryGetValue(key, out int existing))
+        {
+            return existing;
+        }
+
+        const int size = 32;
+        byte[] pixels = new byte[size * size * 4];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float nx = (x + 0.5f) / size * 2.0f - 1.0f;
+                float ny = (y + 0.5f) / size * 2.0f - 1.0f;
+                float radius = MathF.Sqrt(nx * nx + ny * ny);
+                float alpha = normalized is "streak"
+                    ? Math.Clamp(1.0f - MathF.Abs(nx) * 1.35f, 0.0f, 1.0f) * Math.Clamp(1.0f - radius * 0.65f, 0.0f, 1.0f)
+                    : normalized is "flame"
+                        ? Math.Clamp(1.0f - radius, 0.0f, 1.0f) * Math.Clamp(1.0f - ny * 0.35f, 0.0f, 1.0f)
+                        : Math.Clamp(1.0f - radius, 0.0f, 1.0f);
+                int offset = (y * size + x) * 4;
+                pixels[offset] = 255;
+                pixels[offset + 1] = 255;
+                pixels[offset + 2] = 255;
+                pixels[offset + 3] = (byte)Math.Clamp(alpha * 255.0f, 0.0f, 255.0f);
+            }
+        }
+
+        int[] ids = new int[1];
+        GLES30.GlGenTextures(1, ids, 0);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, ids[0]);
+        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlClampToEdge);
+        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlClampToEdge);
+        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMinFilter, GLES30.GlLinear);
+        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlLinear);
+        using ByteBuffer bytes = ByteBuffer.AllocateDirect(pixels.Length)!;
+        bytes.Put(pixels);
+        bytes.Position(0);
+        GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, GLES30.GlRgba, size, size, 0, GLES30.GlRgba, GLES30.GlUnsignedByte, bytes);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
+        _textures[key] = ids[0];
+        return ids[0];
     }
 
     private int LoadCommonToonTexture(int toonIndex)
@@ -980,6 +1184,302 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         return shader;
+    }
+
+    private sealed class WaterGpu : IDisposable
+    {
+        private const int VertexFloatCount = 8;
+        private const int VertexStride = VertexFloatCount * sizeof(float);
+        private readonly RuntimeEntity _runtimeEntity;
+        private readonly WaterSurfaceSettings _settings;
+        private readonly int _vao;
+        private readonly int _vbo;
+        private readonly int _resolution;
+        private readonly float[] _vertices;
+        private readonly ByteBuffer _vertexBytes;
+        private readonly FloatBuffer _vertexData;
+        private bool _disposed;
+
+        private WaterGpu(RuntimeEntity runtimeEntity, int vao, int vbo, int resolution, ByteBuffer bytes, FloatBuffer data)
+        {
+            _runtimeEntity = runtimeEntity;
+            _settings = runtimeEntity.Definition.Water;
+            _vao = vao;
+            _vbo = vbo;
+            _resolution = resolution;
+            _vertices = new float[(resolution - 1) * (resolution - 1) * 6 * VertexFloatCount];
+            _vertexBytes = bytes;
+            _vertexData = data;
+        }
+
+        public float Alpha => _settings.Alpha;
+        public Vector3 DeepColor => _settings.DeepColor.ToVector3();
+        public Vector3 ReflectionTint => _settings.ReflectionTint.ToVector3();
+
+        public static WaterGpu Create(RuntimeEntity runtimeEntity)
+        {
+            int resolution = Math.Clamp(runtimeEntity.Definition.Water.GerstnerMeshResolution, 8, 48);
+            int vertexCount = (resolution - 1) * (resolution - 1) * 6;
+            int[] arrays = new int[1];
+            int[] buffers = new int[1];
+            GLES30.GlGenVertexArrays(1, arrays, 0);
+            GLES30.GlGenBuffers(1, buffers, 0);
+            GLES30.GlBindVertexArray(arrays[0]);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, buffers[0]);
+            ByteBuffer bytes = ByteBuffer.AllocateDirect(vertexCount * VertexStride)!;
+            bytes.Order(ByteOrder.NativeOrder()!);
+            FloatBuffer data = bytes.AsFloatBuffer();
+            GLES30.GlBufferData(GLES30.GlArrayBuffer, vertexCount * VertexStride, data, GLES30.GlDynamicDraw);
+            GLES30.GlEnableVertexAttribArray(0);
+            GLES30.GlVertexAttribPointer(0, 3, GLES30.GlFloat, false, VertexStride, 0);
+            GLES30.GlEnableVertexAttribArray(1);
+            GLES30.GlVertexAttribPointer(1, 3, GLES30.GlFloat, false, VertexStride, 3 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(2);
+            GLES30.GlVertexAttribPointer(2, 2, GLES30.GlFloat, false, VertexStride, 6 * sizeof(float));
+            GLES30.GlBindVertexArray(0);
+            return new WaterGpu(runtimeEntity, arrays[0], buffers[0], resolution, bytes, data);
+        }
+
+        public void Draw(double timeSeconds)
+        {
+            float size = Math.Max(MathF.Abs(_settings.Size), 0.001f);
+            float time = (float)Math.Max(timeSeconds, 0.0) * Math.Max(_settings.AnimationSpeed, 0.0f);
+            Matrix4x4 transform = _runtimeEntity.TransformMatrix;
+            int offset = 0;
+            for (int z = 0; z < _resolution - 1; z++)
+            {
+                for (int x = 0; x < _resolution - 1; x++)
+                {
+                    float x0 = (x / (float)(_resolution - 1) - 0.5f) * size;
+                    float x1 = ((x + 1) / (float)(_resolution - 1) - 0.5f) * size;
+                    float z0 = (z / (float)(_resolution - 1) - 0.5f) * size;
+                    float z1 = ((z + 1) / (float)(_resolution - 1) - 0.5f) * size;
+                    WriteGerstnerVertex(ref offset, x0, z0, x / (float)(_resolution - 1), z / (float)(_resolution - 1), time, transform);
+                    WriteGerstnerVertex(ref offset, x1, z0, (x + 1) / (float)(_resolution - 1), z / (float)(_resolution - 1), time, transform);
+                    WriteGerstnerVertex(ref offset, x1, z1, (x + 1) / (float)(_resolution - 1), (z + 1) / (float)(_resolution - 1), time, transform);
+                    WriteGerstnerVertex(ref offset, x0, z0, x / (float)(_resolution - 1), z / (float)(_resolution - 1), time, transform);
+                    WriteGerstnerVertex(ref offset, x1, z1, (x + 1) / (float)(_resolution - 1), (z + 1) / (float)(_resolution - 1), time, transform);
+                    WriteGerstnerVertex(ref offset, x0, z1, x / (float)(_resolution - 1), (z + 1) / (float)(_resolution - 1), time, transform);
+                }
+            }
+
+            _vertexData.Position(0);
+            _vertexData.Put(_vertices);
+            _vertexData.Position(0);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, _vbo);
+            GLES30.GlBufferSubData(GLES30.GlArrayBuffer, 0, _vertices.Length * sizeof(float), _vertexData);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, 0);
+            GLES30.GlBindVertexArray(_vao);
+            GLES30.GlDrawArrays(GLES30.GlTriangles, 0, _vertices.Length / VertexFloatCount);
+        }
+
+        private void WriteGerstnerVertex(ref int offset, float x, float z, float u, float v, float time, Matrix4x4 transform)
+        {
+            EvaluateGerstner(x, z, time, out Vector3 position, out Vector3 normal);
+            position = Vector3.Transform(position, transform);
+            normal = Vector3.Normalize(Vector3.TransformNormal(normal, transform));
+            _vertices[offset++] = position.X;
+            _vertices[offset++] = position.Y;
+            _vertices[offset++] = position.Z;
+            _vertices[offset++] = normal.X;
+            _vertices[offset++] = normal.Y;
+            _vertices[offset++] = normal.Z;
+            _vertices[offset++] = u * Math.Max(_settings.NormalTiling, 0.001f);
+            _vertices[offset++] = v * Math.Max(_settings.NormalTiling, 0.001f);
+        }
+
+        private void EvaluateGerstner(float x, float z, float time, out Vector3 displacement, out Vector3 normal)
+        {
+            float baseAngle = _settings.GerstnerDirectionDegrees * MathF.PI / 180.0f;
+            Vector2 baseDirection = new(MathF.Cos(baseAngle), MathF.Sin(baseAngle));
+            displacement = Vector3.Zero;
+            Vector2 gradient = Vector2.Zero;
+            int waveCount = Math.Clamp(_settings.GerstnerWaveCount, 1, 4);
+            for (int i = 0; i < waveCount; i++)
+            {
+                float angle = (i - 1.5f) * 0.75f;
+                Vector2 direction = Vector2.Normalize(new Vector2(
+                    baseDirection.X * MathF.Cos(angle) - baseDirection.Y * MathF.Sin(angle),
+                    baseDirection.X * MathF.Sin(angle) + baseDirection.Y * MathF.Cos(angle)));
+                float amplitude = Math.Max(_settings.GerstnerAmplitude, 0.0f) * MathF.Pow(0.55f, i);
+                float wavelength = Math.Max(_settings.GerstnerWavelength, 0.1f) / (1.0f + i * 0.55f);
+                float speed = _settings.GerstnerSpeed * (1.0f + i * 0.18f);
+                float waveNumber = 2.0f * MathF.PI / wavelength;
+                float phase = waveNumber * (direction.X * x + direction.Y * z - speed * time);
+                float sine = MathF.Sin(phase);
+                float cosine = MathF.Cos(phase);
+                float steepness = Math.Clamp(_settings.GerstnerSteepness, 0.0f, 1.0f);
+                displacement += new Vector3(direction.X * steepness * amplitude * cosine, amplitude * sine, direction.Y * steepness * amplitude * cosine);
+                gradient += direction * amplitude * waveNumber * cosine;
+            }
+            normal = Vector3.Normalize(new Vector3(-gradient.X, 1.0f, -gradient.Y));
+            if (!_settings.GerstnerWavesEnabled)
+            {
+                displacement = Vector3.Zero;
+                normal = Vector3.UnitY;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            GLES30.GlDeleteVertexArrays(1, [_vao], 0);
+            GLES30.GlDeleteBuffers(1, [_vbo], 0);
+            _vertexData.Dispose();
+            _vertexBytes.Dispose();
+        }
+    }
+
+    private sealed class ParticleGpu : IDisposable
+    {
+        private const int VertexFloatCount = 9;
+        private const int VertexStride = VertexFloatCount * sizeof(float);
+        private readonly RuntimeEntity _runtimeEntity;
+        private readonly ParticleEntitySettings _settings;
+        private readonly int _vao;
+        private readonly int _vbo;
+        private readonly float[] _vertices;
+        private readonly ByteBuffer _vertexBytes;
+        private readonly FloatBuffer _vertexData;
+        private bool _disposed;
+
+        private ParticleGpu(RuntimeEntity runtimeEntity, int textureId, int vao, int vbo, int count, ByteBuffer bytes, FloatBuffer data)
+        {
+            _runtimeEntity = runtimeEntity;
+            _settings = runtimeEntity.Definition.Particle;
+            TextureId = textureId;
+            _vao = vao;
+            _vbo = vbo;
+            Count = count;
+            _vertices = new float[count * 6 * VertexFloatCount];
+            _vertexBytes = bytes;
+            _vertexData = data;
+        }
+
+        public int TextureId { get; }
+        public int Count { get; }
+        public bool Additive => string.Equals(_settings.BlendMode, "additive", StringComparison.OrdinalIgnoreCase);
+        public bool UseTextureColor => _settings.UseTextureColor;
+        public float Opacity => _settings.Opacity;
+
+        public static ParticleGpu Create(RuntimeEntity runtimeEntity, int textureId)
+        {
+            int count = Math.Clamp(runtimeEntity.Definition.Particle.ParticleCount, 1, 2000);
+            int[] arrays = new int[1];
+            int[] buffers = new int[1];
+            GLES30.GlGenVertexArrays(1, arrays, 0);
+            GLES30.GlGenBuffers(1, buffers, 0);
+            GLES30.GlBindVertexArray(arrays[0]);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, buffers[0]);
+            int byteCount = count * 6 * VertexStride;
+            ByteBuffer bytes = ByteBuffer.AllocateDirect(byteCount)!;
+            bytes.Order(ByteOrder.NativeOrder()!);
+            FloatBuffer data = bytes.AsFloatBuffer();
+            GLES30.GlBufferData(GLES30.GlArrayBuffer, byteCount, data, GLES30.GlDynamicDraw);
+            GLES30.GlEnableVertexAttribArray(0);
+            GLES30.GlVertexAttribPointer(0, 3, GLES30.GlFloat, false, VertexStride, 0);
+            GLES30.GlEnableVertexAttribArray(1);
+            GLES30.GlVertexAttribPointer(1, 2, GLES30.GlFloat, false, VertexStride, 3 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(2);
+            GLES30.GlVertexAttribPointer(2, 4, GLES30.GlFloat, false, VertexStride, 5 * sizeof(float));
+            GLES30.GlBindVertexArray(0);
+            return new ParticleGpu(runtimeEntity, textureId, arrays[0], buffers[0], count, bytes, data);
+        }
+
+        public void Draw(double timeSeconds, Vector3 right, Vector3 up)
+        {
+            float speed = Math.Max(_settings.SimulationSpeed, 0.0f);
+            Matrix4x4 transform = _runtimeEntity.TransformMatrix;
+            Vector3 spawnExtents = Vector3.Max(_settings.SpawnBoxHalfExtents.ToVector3(), Vector3.Zero);
+            Vector3 baseVelocity = _settings.BaseVelocity.ToVector3();
+            Vector3 velocityJitter = _settings.VelocityJitter.ToVector3();
+            Vector3 acceleration = _settings.Acceleration.ToVector3();
+            Vector4 startColor = _settings.StartColor.ToVector4();
+            Vector4 endColor = _settings.EndColor.ToVector4();
+            int offset = 0;
+            float time = (float)Math.Max(timeSeconds, 0.0) * speed;
+            for (int i = 0; i < Count; i++)
+            {
+                float r0 = Random01(i, 11);
+                float r1 = Random01(i, 23);
+                float r2 = Random01(i, 37);
+                float r3 = Random01(i, 53);
+                float lifetime = Lerp(Math.Max(_settings.MinLifetime, 0.05f), Math.Max(_settings.MaxLifetime, 0.05f), r0);
+                float age = (time + (r1 * lifetime)) % lifetime;
+                float normalizedAge = Math.Clamp(age / lifetime, 0.0f, 1.0f);
+                Vector3 spawn = new(
+                    (r1 * 2.0f - 1.0f) * spawnExtents.X,
+                    (r2 * 2.0f - 1.0f) * spawnExtents.Y,
+                    (r3 * 2.0f - 1.0f) * spawnExtents.Z);
+                Vector3 velocity = baseVelocity + new Vector3(
+                    (Random01(i, 67) * 2.0f - 1.0f) * velocityJitter.X,
+                    (Random01(i, 71) * 2.0f - 1.0f) * velocityJitter.Y,
+                    (Random01(i, 79) * 2.0f - 1.0f) * velocityJitter.Z);
+                Vector3 localPosition = spawn + velocity * age + acceleration * (0.5f * age * age);
+                Vector3 worldPosition = Vector3.Transform(localPosition, transform);
+                float size = Lerp(Math.Max(_settings.MinSize, 0.001f) * _settings.StartSizeScale,
+                    Math.Max(_settings.MaxSize, 0.001f) * _settings.EndSizeScale, normalizedAge);
+                float width = size * Math.Max(_settings.WidthScale, 0.001f);
+                float height = size * Math.Max(_settings.HeightScale, 0.001f);
+                Vector4 color = Vector4.Lerp(startColor, endColor, normalizedAge);
+                float rotation = (r2 * 2.0f - 1.0f) * MathF.PI + age * Lerp(_settings.MinRotationSpeedRadians, _settings.MaxRotationSpeedRadians, r3);
+                float cos = MathF.Cos(rotation);
+                float sin = MathF.Sin(rotation);
+                WriteVertex(ref offset, worldPosition + right * (-width * cos - -height * sin) + up * (-width * sin + -height * cos), 0.0f, 1.0f, color);
+                WriteVertex(ref offset, worldPosition + right * ( width * cos - -height * sin) + up * ( width * sin + -height * cos), 1.0f, 1.0f, color);
+                WriteVertex(ref offset, worldPosition + right * ( width * cos -  height * sin) + up * ( width * sin +  height * cos), 1.0f, 0.0f, color);
+                WriteVertex(ref offset, worldPosition + right * (-width * cos - -height * sin) + up * (-width * sin + -height * cos), 0.0f, 1.0f, color);
+                WriteVertex(ref offset, worldPosition + right * ( width * cos -  height * sin) + up * ( width * sin +  height * cos), 1.0f, 0.0f, color);
+                WriteVertex(ref offset, worldPosition + right * (-width * cos -  height * sin) + up * (-width * sin +  height * cos), 0.0f, 0.0f, color);
+            }
+
+            _vertexData.Position(0);
+            _vertexData.Put(_vertices);
+            _vertexData.Position(0);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, _vbo);
+            GLES30.GlBufferSubData(GLES30.GlArrayBuffer, 0, _vertices.Length * sizeof(float), _vertexData);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, 0);
+            GLES30.GlBindVertexArray(_vao);
+            GLES30.GlDrawArrays(GLES30.GlTriangles, 0, Count * 6);
+        }
+
+        private void WriteVertex(ref int offset, Vector3 position, float u, float v, Vector4 color)
+        {
+            _vertices[offset++] = position.X;
+            _vertices[offset++] = position.Y;
+            _vertices[offset++] = position.Z;
+            _vertices[offset++] = u;
+            _vertices[offset++] = v;
+            _vertices[offset++] = color.X;
+            _vertices[offset++] = color.Y;
+            _vertices[offset++] = color.Z;
+            _vertices[offset++] = color.W;
+        }
+
+        private static float Random01(int index, int salt)
+        {
+            uint value = unchecked((uint)(index * 1103515245 + salt * 12345 + 0x13579BDF));
+            value ^= value >> 16;
+            value *= 2246822519u;
+            value ^= value >> 13;
+            return (value & 0x00FFFFFF) / 16777215.0f;
+        }
+
+        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            GLES30.GlDeleteVertexArrays(1, [_vao], 0);
+            GLES30.GlDeleteBuffers(1, [_vbo], 0);
+            _vertexData.Dispose();
+            _vertexBytes.Dispose();
+        }
     }
 
     private sealed class PlaneGpu : IDisposable
@@ -1949,6 +2449,76 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                            asin(clamp(direction.y, -1.0, 1.0)) / Pi + 0.5);
             vec3 color = texture(uTexture, uv).rgb * uTint * uExposure;
             outColor = vec4(max(color, vec3(0.0)), 1.0);
+        }
+        """;
+
+    private const string ParticleVertexShaderSource = """
+        #version 300 es
+        layout(location = 0) in vec3 aPosition;
+        layout(location = 1) in vec2 aTexCoord;
+        layout(location = 2) in vec4 aColor;
+        uniform mat4 uViewProjection;
+        out vec2 vTexCoord;
+        out vec4 vColor;
+        void main()
+        {
+            gl_Position = uViewProjection * vec4(aPosition, 1.0);
+            vTexCoord = aTexCoord;
+            vColor = aColor;
+        }
+        """;
+
+    private const string ParticleFragmentShaderSource = """
+        #version 300 es
+        precision mediump float;
+        uniform sampler2D uTexture;
+        uniform float uOpacity;
+        uniform int uUseTextureColor;
+        in vec2 vTexCoord;
+        in vec4 vColor;
+        out vec4 outColor;
+        void main()
+        {
+            vec4 textureColor = texture(uTexture, vTexCoord);
+            vec3 rgb = uUseTextureColor != 0 ? vColor.rgb * textureColor.rgb : vColor.rgb;
+            float alpha = vColor.a * textureColor.a * uOpacity;
+            if (alpha <= 0.001) discard;
+            outColor = vec4(rgb, alpha);
+        }
+        """;
+
+    private const string WaterVertexShaderSource = """
+        #version 300 es
+        layout(location = 0) in vec3 aPosition;
+        layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in vec2 aTexCoord;
+        uniform mat4 uViewProjection;
+        out vec3 vNormal;
+        out vec2 vTexCoord;
+        void main() { gl_Position = uViewProjection * vec4(aPosition, 1.0); vNormal = aNormal; vTexCoord = aTexCoord; }
+        """;
+
+    private const string WaterFragmentShaderSource = """
+        #version 300 es
+        precision mediump float;
+        uniform vec3 uLightDirection;
+        uniform vec3 uLightColor;
+        uniform vec3 uAmbientColor;
+        uniform vec3 uDeepColor;
+        uniform vec3 uReflectionTint;
+        uniform float uAlpha;
+        in vec3 vNormal;
+        in vec2 vTexCoord;
+        out vec4 outColor;
+        void main()
+        {
+            vec3 normal = normalize(vNormal);
+            float diffuse = max(dot(normal, normalize(-uLightDirection)), 0.0);
+            float horizon = clamp(1.0 - abs(normal.y), 0.0, 1.0);
+            vec3 base = mix(uDeepColor, uReflectionTint, 0.25 + horizon * 0.45);
+            vec3 color = base * (uAmbientColor + uLightColor * (0.25 + diffuse * 0.75));
+            float ripple = 0.96 + 0.04 * sin(vTexCoord.x * 6.2831 + vTexCoord.y * 4.7123);
+            outColor = vec4(max(color * ripple, vec3(0.0)), clamp(uAlpha, 0.0, 1.0));
         }
         """;
 
