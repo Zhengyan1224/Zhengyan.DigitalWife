@@ -180,15 +180,14 @@ public static class AndroidProjectCompatibility
         string type = entity.Type?.Trim().ToLowerInvariant() ?? string.Empty;
         if (type is "point_light" or "pointlight" or "spot_light" or "spotlight")
         {
-            bool castsShadows = type is "point_light" or "pointlight"
-                ? entity.PointLight.CastShadows
-                : entity.SpotLight.CastShadows;
-            if (castsShadows)
+            bool castsPointShadows = type is "point_light" or "pointlight"
+                && entity.PointLight.CastShadows;
+            if (castsPointShadows)
             {
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Point and spot lights render on Android, but their shadow maps are not implemented yet.",
+                    "Point lights render on Android, but point-light shadow maps are not implemented yet; spot-light shadows use the first shadow-casting spot light.",
                     scenePath,
                     entity.Name));
             }
@@ -263,12 +262,12 @@ public static class AndroidProjectCompatibility
             return;
         }
 
-        if (entity.PointLight.CastShadows || entity.SpotLight.CastShadows)
+        if (entity.PointLight.CastShadows)
         {
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android supports directional PMX shadows, but point/spot-light shadow maps are not implemented yet.",
+                "Android supports directional and first spot-light PMX shadows, but point-light shadow maps are not implemented yet.",
                 scenePath,
                 entity.Name));
         }
