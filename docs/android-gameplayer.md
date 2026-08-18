@@ -88,13 +88,13 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 相机 | 多控制模式、透视/正交、动态 API | 部分（阶段 3） | 已接入共享控制、触摸旋转/平移/捏合和相机集合；完整脚本 API 待阶段 6 |
 | 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 部分（阶段 3） | 已推进独立 Camera VMD、Roll/Up 和投影；编辑器控制面板/脚本 Seek 待后续阶段 |
 | 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3） | 已实现 viewport 布局换算和局部 color/depth/stencil clear；Render Texture 仍缺失 |
-| Render Texture | 多相机离屏纹理和刷新模式 | 缺失 | `RenderTextures`、`rt:` 纹理引用和材质动态替换均未实现 |
+| Render Texture | 多相机离屏纹理和刷新模式 | 部分（阶段 4） | 已支持 FBO、颜色/深度附件、Camera 绑定、每帧/间隔/首帧手动刷新和 `rt:` Plane 采样；显式脚本刷新和复杂后处理链仍缺失 |
 | 环境光/平行光 | 静态、脚本和 VMD | 部分（阶段 3/4） | 已接入共享 Lighting、光照 VMD 和 PMX 平行光 Shadow Map；Android 脚本主机仍待阶段 6 |
 | 点光源 | 多灯、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个点光并支持运行时增删改；局部阴影待阶段 4 |
 | 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；局部阴影待阶段 4 |
 | 天空盒 | 纹理、曝光、Tint | 部分（阶段 4） | 已支持 equirectangular 背景、相机旋转、曝光和 Tint；反射/后处理仍缺失 |
 | Textured Plane | Billboard、RT、镜面、阴影接收 | 部分（阶段 4） | 已支持主 Pass、纹理、尺寸、Billboard、Opacity/Tint 和平行光阴影接收；RT/镜面仍缺失 |
-| 水面 | Gerstner、反射、交互和水下后处理 | 部分（阶段 4） | 已支持动态网格、Gerstner 波形、法线、颜色/透明度和基础平行光；反射、波纹交互和水下后处理仍缺失 |
+| 水面 | Gerstner、反射、交互和水下后处理 | 部分（阶段 4） | 已支持动态网格、Gerstner 波形、法线、颜色/透明度、基础平行光和天空盒环境反射；平面反射、波纹交互和完整水下后处理仍缺失 |
 | 粒子 | 预设、纹理、混合、碰撞、阴影、触水 | 部分（阶段 4） | 已支持 CPU 生命周期模拟、Billboard、纹理、颜色渐变和 Alpha/Additive；阴影、碰撞/触水仍缺失 |
 | 平面反射 | 水面和 Plane 镜面 | 缺失 | 没有反射 RenderTarget 和镜像相机 Pass |
 | 后处理 | 水下等场景后处理 | 部分（阶段 4） | 已支持基于相机水下深度的雾化全屏覆盖；离屏场景颜色/深度、失真和焦散仍缺失 |
@@ -330,7 +330,9 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   使用动态 Billboard VBO，支持自定义纹理、SoftCircle/Streak/Flame fallback、颜色渐变、Alpha/Additive 混合；
   粒子阴影和水面交互暂时通过兼容性警告降级。
 - Android 已接入基础 Water Pass：按 `WaterSurfaceSettings` 生成移动端受限分辨率网格，支持 Gerstner 位移、动态法线、
-  Deep/Reflection Tint、透明度和环境/平行光着色；平面反射、涟漪交互与水下后处理仍通过兼容性警告降级。
+  Deep/Reflection Tint、透明度、环境/平行光着色和基于天空盒的 equirectangular 环境反射；平面反射、涟漪交互与水下后处理仍通过兼容性警告降级。
+- Android 已接入基础 RenderTexture：为启用的目标创建 GLES 颜色/深度 FBO，绑定指定 Camera，并允许 Plane 通过 `rt:` 路径采样；
+  支持每帧、按间隔和首帧手动刷新判定，但显式脚本刷新入口与多级后处理链仍待实现。
 - Android 已接入水下基础后处理：当相机低于启用水面时，根据水下雾密度、可见距离和雾颜色绘制全屏覆盖；
   该 Pass 不读取离屏场景颜色，因此失真、焦散和真正 RenderTexture 后处理仍待后续实现。
 - 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX

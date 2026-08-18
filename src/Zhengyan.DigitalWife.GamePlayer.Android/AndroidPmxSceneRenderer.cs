@@ -22,6 +22,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly List<PlaneGpu> _planes = [];
     private readonly List<ParticleGpu> _particles = [];
     private readonly List<WaterGpu> _waters = [];
+    private readonly Dictionary<string, RenderTargetGpu> _renderTargets = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<PmxGpuModel> _updateOrder = [];
     private readonly Dictionary<string, int> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _softAlphaTextures = [];
@@ -105,6 +106,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _waterDeepColorLocation;
     private readonly int _waterReflectionTintLocation;
     private readonly int _waterAlphaLocation;
+    private readonly int _waterSkyTextureLocation;
+    private readonly int _waterHasSkyTextureLocation;
     private readonly int _postProgram;
     private readonly int _postTintLocation;
     private readonly int _postAlphaLocation;
@@ -199,6 +202,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _waterDeepColorLocation = GLES30.GlGetUniformLocation(_waterProgram, "uDeepColor");
         _waterReflectionTintLocation = GLES30.GlGetUniformLocation(_waterProgram, "uReflectionTint");
         _waterAlphaLocation = GLES30.GlGetUniformLocation(_waterProgram, "uAlpha");
+        _waterSkyTextureLocation = GLES30.GlGetUniformLocation(_waterProgram, "uSkyTexture");
+        _waterHasSkyTextureLocation = GLES30.GlGetUniformLocation(_waterProgram, "uHasSkyTexture");
 
         _postProgram = CreateProgram(PostVertexShaderSource, PostFragmentShaderSource);
         _postTintLocation = GLES30.GlGetUniformLocation(_postProgram, "uTint");
@@ -303,12 +308,26 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
         }
 
+        foreach (RenderTextureSettings settings in scene.Definition.RenderTextures.Where(candidate => candidate.Enabled))
+        {
+            try
+            {
+                RenderTargetGpu target = RenderTargetGpu.Create(settings);
+                _renderTargets[settings.Id] = target;
+                if (!string.IsNullOrWhiteSpace(settings.Name)) _renderTargets.TryAdd(settings.Name, target);
+                Log.Info(LogTag, $"Android GLES created RenderTexture '{settings.Name}': {target.Width}x{target.Height}.");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, $"Android RenderTexture '{settings.Name}' is unavailable: {ex.Message}");
+            }
+        }
+
         foreach (RuntimeEntity runtimeEntity in scene.TexturedPlanes)
         {
             try
             {
-                string texturePath = GameProjectPath.ToAbsolute(projectDirectory, runtimeEntity.Definition.Plane.TexturePath);
-                _planes.Add(PlaneGpu.Create(runtimeEntity, LoadTexture(texturePath)));
+                _planes.Add(PlaneGpu.Create(runtimeEntity, ResolveSceneTexture(runtimeEntity.Definition.Plane.TexturePath, projectDirectory)));
                 Log.Info(LogTag, $"Android GLES uploaded textured plane '{runtimeEntity.Name}'.");
             }
             catch (Exception ex)
@@ -341,7 +360,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             {
                 string? texturePath = runtimeEntity.Definition.Particle.TexturePath;
                 int texture = !string.IsNullOrWhiteSpace(texturePath)
-                    ? LoadTexture(GameProjectPath.ToAbsolute(projectDirectory, texturePath))
+                    ? ResolveSceneTexture(texturePath, projectDirectory)
                     : 0;
                 if (texture == 0)
                 {
@@ -401,15 +420,23 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         foreach (RuntimeCamera camera in scene.RenderCameras)
         {
-            RuntimeViewport viewport = camera.ResolveViewport(width, height, referenceWidth, referenceHeight);
+            RenderTargetGpu? renderTarget = FindRenderTarget(scene, camera);
+            if (renderTarget is not null && !renderTarget.ShouldRefresh(timeSeconds))
+            {
+                continue;
+            }
+            RuntimeViewport viewport = renderTarget is null
+                ? camera.ResolveViewport(width, height, referenceWidth, referenceHeight)
+                : new RuntimeViewport(0, 0, renderTarget.Width, renderTarget.Height);
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, renderTarget?.Framebuffer ?? 0);
             GLES30.GlViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
             GLES30.GlScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height);
             GLES30.GlEnable(GLES30.GlScissorTest);
             GLES30.GlClearColor(
-                scene.Definition.Lighting.ClearColor.X,
-                scene.Definition.Lighting.ClearColor.Y,
-                scene.Definition.Lighting.ClearColor.Z,
-                scene.Definition.Lighting.ClearColor.W);
+                renderTarget?.ClearColor.X ?? scene.Definition.Lighting.ClearColor.X,
+                renderTarget?.ClearColor.Y ?? scene.Definition.Lighting.ClearColor.Y,
+                renderTarget?.ClearColor.Z ?? scene.Definition.Lighting.ClearColor.Z,
+                renderTarget?.ClearColor.W ?? scene.Definition.Lighting.ClearColor.W);
             GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
 
             Matrix4x4 view = camera.CreateView();
@@ -483,6 +510,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
 
             DrawUnderwaterOverlay(scene, camera);
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+            renderTarget?.MarkRendered(timeSeconds);
         }
 
         GLES30.GlDisable(GLES30.GlScissorTest);
@@ -669,6 +698,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform3f(_waterLightDirectionLocation, lightDirection.X, lightDirection.Y, lightDirection.Z);
         GLES30.GlUniform3f(_waterLightColorLocation, lightColor.X, lightColor.Y, lightColor.Z);
         GLES30.GlUniform3f(_waterAmbientLocation, ambient.X, ambient.Y, ambient.Z);
+        GLES30.GlUniform1i(_waterSkyTextureLocation, 4);
+        GLES30.GlUniform1i(_waterHasSkyTextureLocation, _skyboxTexture == 0 ? 0 : 1);
+        GLES30.GlActiveTexture(GLES30.GlTexture4);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, _skyboxTexture);
         GLES30.GlEnable(GLES30.GlBlend);
         GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
         GLES30.GlEnable(GLES30.GlDepthTest);
@@ -684,6 +717,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             water.Draw(timeSeconds);
         }
         GLES30.GlBindVertexArray(0);
+        GLES30.GlActiveTexture(GLES30.GlTexture4);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
         GLES30.GlDepthMask(true);
         GLES30.GlDisable(GLES30.GlBlend);
     }
@@ -714,6 +749,20 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 3);
         GLES30.GlDepthMask(true);
         GLES30.GlDisable(GLES30.GlBlend);
+    }
+
+    private RenderTargetGpu? FindRenderTarget(RuntimeScene scene, RuntimeCamera camera)
+    {
+        SceneCameraSettings definition = camera.Definition;
+        RenderTextureSettings? settings = scene.Definition.RenderTextures.FirstOrDefault(candidate =>
+            candidate.Enabled
+            && (string.Equals(candidate.Camera, definition.Id, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate.Camera, definition.Name, StringComparison.OrdinalIgnoreCase)));
+        if (settings is null || !_renderTargets.TryGetValue(settings.Id, out RenderTargetGpu? target))
+        {
+            return null;
+        }
+        return target;
     }
 
     private void DrawPlane(PlaneGpu plane, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection)
@@ -857,6 +906,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             water.Dispose();
         }
         _waters.Clear();
+        foreach (RenderTargetGpu target in _renderTargets.Values.Distinct())
+        {
+            target.Dispose();
+        }
+        _renderTargets.Clear();
         _skyboxTexture = 0;
         _updateOrder.Clear();
         if (_textures.Count > 0)
@@ -987,6 +1041,18 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
         _textures[fullPath] = texture;
         return texture;
+    }
+
+    private int ResolveSceneTexture(string path, string projectDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return 0;
+        string normalized = GameProjectPath.NormalizePathText(path);
+        if (normalized.StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
+        {
+            string key = normalized[3..].Trim();
+            return _renderTargets.TryGetValue(key, out RenderTargetGpu? target) ? target.ColorTexture : 0;
+        }
+        return LoadTexture(GameProjectPath.ToAbsolute(projectDirectory, normalized));
     }
 
     private int LoadParticlePresetTexture(string? preset)
@@ -1227,6 +1293,103 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         return shader;
+    }
+
+    private sealed class RenderTargetGpu : IDisposable
+    {
+        private bool _disposed;
+
+        private RenderTargetGpu(int framebuffer, int colorTexture, int depthBuffer, int width, int height, Vector4 clearColor, string refreshMode, float refreshInterval)
+        {
+            Framebuffer = framebuffer;
+            ColorTexture = colorTexture;
+            DepthBuffer = depthBuffer;
+            Width = width;
+            Height = height;
+            ClearColor = clearColor;
+            RefreshMode = refreshMode;
+            RefreshInterval = refreshInterval;
+            LastRenderedSeconds = double.NegativeInfinity;
+        }
+
+        public int Framebuffer { get; }
+        public int ColorTexture { get; }
+        public int DepthBuffer { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public Vector4 ClearColor { get; }
+        public string RefreshMode { get; }
+        public float RefreshInterval { get; }
+        private double LastRenderedSeconds { get; set; }
+
+        public bool ShouldRefresh(double timeSeconds)
+        {
+            if (string.Equals(RefreshMode, "manual", StringComparison.OrdinalIgnoreCase))
+            {
+                return double.IsNegativeInfinity(LastRenderedSeconds);
+            }
+            if (string.Equals(RefreshMode, "interval", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(RefreshMode, "timed", StringComparison.OrdinalIgnoreCase))
+            {
+                return double.IsNegativeInfinity(LastRenderedSeconds)
+                    || timeSeconds - LastRenderedSeconds >= Math.Max(RefreshInterval, 0.001f);
+            }
+            return true;
+        }
+
+        public void MarkRendered(double timeSeconds) => LastRenderedSeconds = timeSeconds;
+
+        public static RenderTargetGpu Create(RenderTextureSettings settings)
+        {
+            int width = Math.Clamp(settings.Width, 16, 2048);
+            int height = Math.Clamp(settings.Height, 16, 2048);
+            int[] framebuffers = new int[1];
+            int[] textures = new int[1];
+            int[] renderbuffers = new int[1];
+            GLES30.GlGenFramebuffers(1, framebuffers, 0);
+            GLES30.GlGenTextures(1, textures, 0);
+            GLES30.GlGenRenderbuffers(1, renderbuffers, 0);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, textures[0]);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMinFilter, GLES30.GlLinear);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlLinear);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlClampToEdge);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlClampToEdge);
+            GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, GLES30.GlRgba, width, height, 0, GLES30.GlRgba, GLES30.GlUnsignedByte, null);
+            GLES30.GlBindRenderbuffer(GLES30.GlRenderbuffer, renderbuffers[0]);
+            GLES30.GlRenderbufferStorage(GLES30.GlRenderbuffer, 0x81A5, width, height); // GL_DEPTH_COMPONENT24
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, framebuffers[0]);
+            GLES30.GlFramebufferTexture2D(GLES30.GlFramebuffer, 0x8CE0, GLES30.GlTexture2d, textures[0], 0);
+            GLES30.GlFramebufferRenderbuffer(GLES30.GlFramebuffer, 0x8D00, GLES30.GlRenderbuffer, renderbuffers[0]);
+            bool complete = GLES30.GlCheckFramebufferStatus(GLES30.GlFramebuffer) == GLES30.GlFramebufferComplete;
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
+            GLES30.GlBindRenderbuffer(GLES30.GlRenderbuffer, 0);
+            if (!complete)
+            {
+                GLES30.GlDeleteFramebuffers(1, framebuffers, 0);
+                GLES30.GlDeleteTextures(1, textures, 0);
+                GLES30.GlDeleteRenderbuffers(1, renderbuffers, 0);
+                throw new InvalidOperationException("GLES RenderTexture framebuffer is incomplete.");
+            }
+            return new RenderTargetGpu(
+                framebuffers[0],
+                textures[0],
+                renderbuffers[0],
+                width,
+                height,
+                settings.ClearColor.ToVector4(),
+                settings.RefreshMode,
+                settings.RefreshIntervalSeconds);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            GLES30.GlDeleteFramebuffers(1, [Framebuffer], 0);
+            GLES30.GlDeleteTextures(1, [ColorTexture], 0);
+            GLES30.GlDeleteRenderbuffers(1, [DepthBuffer], 0);
+        }
     }
 
     private sealed class WaterGpu : IDisposable
@@ -2555,6 +2718,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform vec3 uDeepColor;
         uniform vec3 uReflectionTint;
         uniform float uAlpha;
+        uniform sampler2D uSkyTexture;
+        uniform int uHasSkyTexture;
         in vec3 vNormal;
         in vec2 vTexCoord;
         out vec4 outColor;
@@ -2564,6 +2729,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             float diffuse = max(dot(normal, normalize(-uLightDirection)), 0.0);
             float horizon = clamp(1.0 - abs(normal.y), 0.0, 1.0);
             vec3 base = mix(uDeepColor, uReflectionTint, 0.25 + horizon * 0.45);
+            if (uHasSkyTexture != 0)
+            {
+                vec3 reflectionDirection = normalize(vec3(normal.x, abs(normal.y), normal.z));
+                vec2 skyUv = vec2(atan(reflectionDirection.z, reflectionDirection.x) / 6.2831853 + 0.5,
+                                  asin(clamp(reflectionDirection.y, -1.0, 1.0)) / 3.1415926 + 0.5);
+                base = mix(base, texture(uSkyTexture, skyUv).rgb, 0.28 + horizon * 0.42);
+            }
             vec3 color = base * (uAmbientColor + uLightColor * (0.25 + diffuse * 0.75));
             float ripple = 0.96 + 0.04 * sin(vTexCoord.x * 6.2831 + vTexCoord.y * 4.7123);
             outColor = vec4(max(color * ripple, vec3(0.0)), clamp(uAlpha, 0.0, 1.0));

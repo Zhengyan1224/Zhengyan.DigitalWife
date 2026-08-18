@@ -119,9 +119,9 @@ public static class AndroidProjectCompatibility
         if (scene.RenderTextures.Any(texture => texture.Enabled))
         {
             issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_RENDER_TEXTURE_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Error,
-                "Android supports main and viewport cameras, but render-texture camera targets are not implemented yet.",
+                "ANDROID_RENDER_TEXTURE_LIMITED",
+                AndroidCompatibilitySeverity.Warning,
+                "Android supports basic per-camera RenderTexture targets, interval/manual refresh gating and rt: plane sampling; explicit script refresh and post-processing chains are not implemented yet.",
                 scenePath));
         }
 
