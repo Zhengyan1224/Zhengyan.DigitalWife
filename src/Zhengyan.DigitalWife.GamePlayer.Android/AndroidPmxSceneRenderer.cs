@@ -215,6 +215,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     public int ModelCount => _models.Count;
 
+    public bool RequestRenderTextureRefresh(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName) || !_renderTargets.TryGetValue(idOrName, out RenderTargetGpu? target))
+        {
+            return false;
+        }
+        target.RequestRefresh();
+        return true;
+    }
+
     public bool TrySetMotionLayerState(
         string entityIdOrName,
         int layerIndex,
@@ -1338,6 +1348,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         public void MarkRendered(double timeSeconds) => LastRenderedSeconds = timeSeconds;
+
+        public void RequestRefresh() => LastRenderedSeconds = double.NegativeInfinity;
 
         public static RenderTargetGpu Create(RenderTextureSettings settings)
         {

@@ -376,6 +376,11 @@ internal sealed class AndroidEglRenderHost : IDisposable
 
     public void RequestSceneChange(string scenePath) => _sceneManager?.RequestSceneChange(scenePath);
 
+    public bool RequestRenderTextureRefresh(string idOrName)
+    {
+        return _sceneRenderer?.RequestRenderTextureRefresh(idOrName) == true;
+    }
+
     private void OnSceneChanged(RuntimeSceneChange change)
     {
         if (change.Current is not null)

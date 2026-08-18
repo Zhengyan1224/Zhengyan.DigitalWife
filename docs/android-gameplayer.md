@@ -88,7 +88,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 相机 | 多控制模式、透视/正交、动态 API | 部分（阶段 3） | 已接入共享控制、触摸旋转/平移/捏合和相机集合；完整脚本 API 待阶段 6 |
 | 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 部分（阶段 3） | 已推进独立 Camera VMD、Roll/Up 和投影；编辑器控制面板/脚本 Seek 待后续阶段 |
 | 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3） | 已实现 viewport 布局换算和局部 color/depth/stencil clear；Render Texture 仍缺失 |
-| Render Texture | 多相机离屏纹理和刷新模式 | 部分（阶段 4） | 已支持 FBO、颜色/深度附件、Camera 绑定、每帧/间隔/首帧手动刷新和 `rt:` Plane 采样；显式脚本刷新和复杂后处理链仍缺失 |
+| Render Texture | 多相机离屏纹理和刷新模式 | 部分（阶段 4） | 已支持 FBO、颜色/深度附件、Camera 绑定、每帧/间隔/手动刷新、原生刷新入口和 `rt:` Plane 采样；C# 脚本绑定和复杂后处理链仍缺失 |
 | 环境光/平行光 | 静态、脚本和 VMD | 部分（阶段 3/4） | 已接入共享 Lighting、光照 VMD 和 PMX 平行光 Shadow Map；Android 脚本主机仍待阶段 6 |
 | 点光源 | 多灯、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个点光并支持运行时增删改；局部阴影待阶段 4 |
 | 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；局部阴影待阶段 4 |
@@ -332,7 +332,7 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
 - Android 已接入基础 Water Pass：按 `WaterSurfaceSettings` 生成移动端受限分辨率网格，支持 Gerstner 位移、动态法线、
   Deep/Reflection Tint、透明度、环境/平行光着色和基于天空盒的 equirectangular 环境反射；平面反射、涟漪交互与水下后处理仍通过兼容性警告降级。
 - Android 已接入基础 RenderTexture：为启用的目标创建 GLES 颜色/深度 FBO，绑定指定 Camera，并允许 Plane 通过 `rt:` 路径采样；
-  支持每帧、按间隔和首帧手动刷新判定，但显式脚本刷新入口与多级后处理链仍待实现。
+  支持每帧、按间隔和手动刷新判定，并提供 `RequestRenderTextureRefresh` 原生入口；C# 脚本绑定与多级后处理链仍待阶段 6。
 - Android 已接入水下基础后处理：当相机低于启用水面时，根据水下雾密度、可见距离和雾颜色绘制全屏覆盖；
   该 Pass 不读取离屏场景颜色，因此失真、焦散和真正 RenderTexture 后处理仍待后续实现。
 - 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX

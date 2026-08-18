@@ -60,6 +60,11 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         _renderHost.RequestSceneChange(scenePath);
     }
 
+    public bool RequestRenderTextureRefresh(string idOrName)
+    {
+        return _renderHost.RequestRenderTextureRefresh(idOrName);
+    }
+
     public void PauseRendering()
     {
         _isResumed = false;
