@@ -80,6 +80,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _shadowFramebuffer;
     private readonly int _shadowDepthTexture;
     private readonly int _shadowColorTexture;
+    private readonly int _skyboxProgram;
+    private readonly int _skyboxMvpLocation;
+    private readonly int _skyboxTextureLocation;
+    private readonly int _skyboxTintLocation;
+    private readonly int _skyboxExposureLocation;
+    private readonly int _skyboxVertexArrayObject;
+    private readonly int _skyboxVertexBuffer;
+    private int _skyboxTexture;
     private bool _shadowAvailable;
     private Matrix4x4 _lightViewProjection = Matrix4x4.Identity;
     private RuntimeScene? _loadedScene;
@@ -146,6 +154,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _shadowUseGpuSkinningLocation = GLES30.GlGetUniformLocation(_shadowProgram, "uUseGpuSkinning");
         _shadowBonesLocation = GLES30.GlGetUniformLocation(_shadowProgram, "uBones[0]");
         (_shadowFramebuffer, _shadowDepthTexture, _shadowColorTexture, _shadowAvailable) = CreateShadowMapResources();
+
+        _skyboxProgram = CreateProgram(SkyboxVertexShaderSource, SkyboxFragmentShaderSource);
+        _skyboxMvpLocation = GLES30.GlGetUniformLocation(_skyboxProgram, "uMvp");
+        _skyboxTextureLocation = GLES30.GlGetUniformLocation(_skyboxProgram, "uTexture");
+        _skyboxTintLocation = GLES30.GlGetUniformLocation(_skyboxProgram, "uTint");
+        _skyboxExposureLocation = GLES30.GlGetUniformLocation(_skyboxProgram, "uExposure");
+        (_skyboxVertexArrayObject, _skyboxVertexBuffer) = CreateSkyboxMesh();
     }
 
     public int ModelCount => _models.Count;
@@ -257,6 +272,24 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
         }
 
+        if (scene.Definition.Skybox.Enabled && !string.IsNullOrWhiteSpace(scene.Definition.Skybox.TexturePath))
+        {
+            try
+            {
+                string skyboxPath = GameProjectPath.ToAbsolute(projectDirectory, scene.Definition.Skybox.TexturePath);
+                _skyboxTexture = LoadTexture(skyboxPath);
+                if (_skyboxTexture == 0)
+                {
+                    Log.Warn(LogTag, $"Android skybox texture was not loaded: {skyboxPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _skyboxTexture = 0;
+                Log.Warn(LogTag, $"Android skybox upload failed: {ex.Message}");
+            }
+        }
+
         ResolveRelations();
         _loadedEntityRevision = scene.EntityRevision;
     }
@@ -268,7 +301,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Load(scene, _projectDirectory);
         }
 
-        if (_models.Count == 0 && _planes.Count == 0)
+        if (_models.Count == 0 && _planes.Count == 0 && _skyboxTexture == 0)
         {
             return;
         }
@@ -308,6 +341,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlEnable(GLES30.GlBlend);
             GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
             GLES30.GlDisable(0x0B44); // GL_CULL_FACE
+            DrawSkybox(scene, camera, view, projection);
             GLES30.GlUseProgram(_program);
             ApplyLighting(scene);
             GLES30.GlUniformMatrix4fv(_lightViewProjectionLocation, 1, false, ToGlArray(_lightViewProjection), 0);
@@ -387,6 +421,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDeleteProgram(_program);
         GLES30.GlDeleteProgram(_edgeProgram);
         GLES30.GlDeleteProgram(_shadowProgram);
+        GLES30.GlDeleteProgram(_skyboxProgram);
+        GLES30.GlDeleteVertexArrays(1, [_skyboxVertexArrayObject], 0);
+        GLES30.GlDeleteBuffers(1, [_skyboxVertexBuffer], 0);
         GLES30.GlDeleteFramebuffers(1, [_shadowFramebuffer], 0);
         GLES30.GlDeleteTextures(2, [_shadowDepthTexture, _shadowColorTexture], 0);
     }
@@ -426,6 +463,67 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlUniform4f(_spotLightColorIntensityLocations[i], lightColor.X, lightColor.Y, lightColor.Z, light.LightIntensity);
             GLES30.GlUniform4f(_spotLightConeLocations[i], innerCosine, 0.0f, 0.0f, 0.0f);
         }
+    }
+
+    private void DrawSkybox(RuntimeScene scene, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection)
+    {
+        if (_skyboxTexture == 0 || !scene.Definition.Skybox.Enabled)
+        {
+            return;
+        }
+
+        Matrix4x4 viewRotation = view;
+        viewRotation.Translation = Vector3.Zero;
+        Matrix4x4 world = Matrix4x4.CreateScale(80.0f)
+            * Matrix4x4.CreateTranslation(camera.Settings.Position.ToVector3());
+        GLES30.GlUseProgram(_skyboxProgram);
+        GLES30.GlUniformMatrix4fv(_skyboxMvpLocation, 1, false, ToGlArray(world * viewRotation * projection), 0);
+        Vector3 tint = scene.Definition.Skybox.Tint.ToVector3();
+        GLES30.GlUniform3f(
+            _skyboxTintLocation,
+            Math.Max(tint.X, 0.0f),
+            Math.Max(tint.Y, 0.0f),
+            Math.Max(tint.Z, 0.0f));
+        GLES30.GlUniform1f(_skyboxExposureLocation, Math.Max(scene.Definition.Skybox.Exposure, 0.0f));
+        GLES30.GlUniform1i(_skyboxTextureLocation, 0);
+        GLES30.GlActiveTexture(GLES30.GlTexture0);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, _skyboxTexture);
+        GLES30.GlDisable(GLES30.GlDepthTest);
+        GLES30.GlDepthMask(false);
+        GLES30.GlBindVertexArray(_skyboxVertexArrayObject);
+        GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 36);
+        GLES30.GlBindVertexArray(0);
+        GLES30.GlDepthMask(true);
+        GLES30.GlEnable(GLES30.GlDepthTest);
+    }
+
+    private static (int VertexArrayObject, int VertexBuffer) CreateSkyboxMesh()
+    {
+        float[] vertices =
+        [
+            -1, -1, -1,  1, -1, -1,  1,  1, -1,  1,  1, -1, -1,  1, -1, -1, -1, -1,
+            -1, -1,  1, -1,  1,  1,  1,  1,  1,  1,  1,  1,  1, -1,  1, -1, -1,  1,
+            -1,  1,  1, -1,  1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  1, -1,  1,  1,
+             1,  1,  1,  1,  1, -1,  1, -1, -1,  1, -1, -1,  1, -1,  1,  1,  1,  1,
+            -1, -1, -1,  1, -1, -1,  1, -1,  1,  1, -1,  1, -1, -1,  1, -1, -1, -1,
+            -1,  1, -1, -1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1, -1, -1,  1, -1,
+        ];
+        int[] arrays = new int[1];
+        int[] buffers = new int[1];
+        GLES30.GlGenVertexArrays(1, arrays, 0);
+        GLES30.GlGenBuffers(1, buffers, 0);
+        GLES30.GlBindVertexArray(arrays[0]);
+        GLES30.GlBindBuffer(GLES30.GlArrayBuffer, buffers[0]);
+        using ByteBuffer bytes = ByteBuffer.AllocateDirect(vertices.Length * sizeof(float))!;
+        bytes.Order(ByteOrder.NativeOrder()!);
+        using FloatBuffer data = bytes.AsFloatBuffer();
+        data.Put(vertices);
+        data.Position(0);
+        GLES30.GlBufferData(GLES30.GlArrayBuffer, vertices.Length * sizeof(float), data, GLES30.GlStaticDraw);
+        GLES30.GlEnableVertexAttribArray(0);
+        GLES30.GlVertexAttribPointer(0, 3, GLES30.GlFloat, false, 3 * sizeof(float), 0);
+        GLES30.GlBindVertexArray(0);
+        return (arrays[0], buffers[0]);
     }
 
     private void DrawPlane(PlaneGpu plane, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection)
@@ -559,6 +657,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             plane.Dispose();
         }
         _planes.Clear();
+        _skyboxTexture = 0;
         _updateOrder.Clear();
         if (_textures.Count > 0)
         {
@@ -881,6 +980,131 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         return shader;
+    }
+
+    private sealed class PlaneGpu : IDisposable
+    {
+        private readonly ByteBuffer _vertexBytes;
+        private readonly FloatBuffer _vertexData;
+        private bool _disposed;
+
+        private PlaneGpu(
+            int vertexArrayObject,
+            int vertexBuffer,
+            int textureId,
+            RuntimeEntity runtimeEntity,
+            float width,
+            float height,
+            Vector4 tint,
+            ByteBuffer vertexBytes,
+            FloatBuffer vertexData)
+        {
+            VertexArrayObject = vertexArrayObject;
+            VertexBuffer = vertexBuffer;
+            TextureId = textureId;
+            RuntimeEntity = runtimeEntity;
+            Width = width;
+            Height = height;
+            Tint = tint;
+            ReceivesShadows = runtimeEntity.Definition.Plane.ReceiveShadow;
+            Billboard = runtimeEntity.Definition.Plane.Billboard;
+            _vertexBytes = vertexBytes;
+            _vertexData = vertexData;
+        }
+
+        public int VertexArrayObject { get; }
+        public int VertexBuffer { get; }
+        public int TextureId { get; }
+        public RuntimeEntity RuntimeEntity { get; }
+        public float Width { get; }
+        public float Height { get; }
+        public Vector4 Tint { get; }
+        public bool ReceivesShadows { get; }
+        public bool Billboard { get; }
+
+        public static PlaneGpu Create(RuntimeEntity runtimeEntity, int textureId)
+        {
+            TexturedPlaneSettings settings = runtimeEntity.Definition.Plane;
+            float width = Math.Max(MathF.Abs(settings.Width), 0.001f);
+            float height = Math.Max(MathF.Abs(settings.Height), 0.001f);
+            Vector4 sourceTint = settings.Tint.ToVector4();
+            Vector4 tint = new(
+                Math.Clamp(sourceTint.X, 0.0f, 1.0f),
+                Math.Clamp(sourceTint.Y, 0.0f, 1.0f),
+                Math.Clamp(sourceTint.Z, 0.0f, 1.0f),
+                Math.Clamp(sourceTint.W * settings.Opacity, 0.0f, 1.0f));
+            float[] vertices =
+            [
+                -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+                 0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+                 0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+                -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+                 0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+                -0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+            ];
+
+            int[] arrays = new int[1];
+            int[] buffers = new int[1];
+            GLES30.GlGenVertexArrays(1, arrays, 0);
+            GLES30.GlGenBuffers(1, buffers, 0);
+            GLES30.GlBindVertexArray(arrays[0]);
+            GLES30.GlBindBuffer(GLES30.GlArrayBuffer, buffers[0]);
+            ByteBuffer bytes = ByteBuffer.AllocateDirect(vertices.Length * sizeof(float))!;
+            bytes.Order(ByteOrder.NativeOrder()!);
+            FloatBuffer data = bytes.AsFloatBuffer();
+            data.Put(vertices);
+            data.Position(0);
+            GLES30.GlBufferData(GLES30.GlArrayBuffer, vertices.Length * sizeof(float), data, GLES30.GlStaticDraw);
+            GLES30.GlEnableVertexAttribArray(0);
+            GLES30.GlVertexAttribPointer(0, 3, GLES30.GlFloat, false, VertexStride, 0);
+            GLES30.GlEnableVertexAttribArray(1);
+            GLES30.GlVertexAttribPointer(1, 3, GLES30.GlFloat, false, VertexStride, 3 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(2);
+            GLES30.GlVertexAttribPointer(2, 2, GLES30.GlFloat, false, VertexStride, 6 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(3);
+            GLES30.GlVertexAttribPointer(3, 4, GLES30.GlFloat, false, VertexStride, 8 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(4);
+            GLES30.GlVertexAttribPointer(4, 4, GLES30.GlFloat, false, VertexStride, 12 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(5);
+            GLES30.GlVertexAttribPointer(5, 1, GLES30.GlFloat, false, VertexStride, 16 * sizeof(float));
+            GLES30.GlEnableVertexAttribArray(6);
+            GLES30.GlVertexAttribPointer(6, 4, GLES30.GlFloat, false, VertexStride, 17 * sizeof(float));
+            GLES30.GlBindVertexArray(0);
+            return new PlaneGpu(arrays[0], buffers[0], textureId, runtimeEntity, width, height, tint, bytes, data);
+        }
+
+        public Matrix4x4 CreateWorld(RuntimeCamera camera)
+        {
+            if (!Billboard)
+            {
+                return Matrix4x4.CreateScale(Width, Height, 1.0f) * RuntimeEntity.TransformMatrix;
+            }
+
+            Vector3 position = RuntimeEntity.Position;
+            Matrix4x4 billboard = Matrix4x4.CreateBillboard(
+                position,
+                camera.Settings.Position.ToVector3(),
+                Vector3.UnitY,
+                -Vector3.UnitZ);
+            billboard.Translation = Vector3.Zero;
+            Vector3 scale = RuntimeEntity.Scale;
+            return Matrix4x4.CreateScale(Width * scale.X, Height * scale.Y, scale.Z)
+                * billboard
+                * Matrix4x4.CreateTranslation(position);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            GLES30.GlDeleteVertexArrays(1, [VertexArrayObject], 0);
+            GLES30.GlDeleteBuffers(1, [VertexBuffer], 0);
+            _vertexData.Dispose();
+            _vertexBytes.Dispose();
+        }
     }
 
     private sealed class PmxGpuModel : IDisposable
@@ -1695,6 +1919,37 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         precision highp float;
         out vec4 outColor;
         void main() { outColor = vec4(1.0); }
+        """;
+
+    private const string SkyboxVertexShaderSource = """
+        #version 300 es
+        layout(location = 0) in vec3 aPosition;
+        uniform mat4 uMvp;
+        out vec3 vDirection;
+        void main()
+        {
+            vDirection = aPosition;
+            gl_Position = uMvp * vec4(aPosition, 1.0);
+        }
+        """;
+
+    private const string SkyboxFragmentShaderSource = """
+        #version 300 es
+        precision highp float;
+        uniform sampler2D uTexture;
+        uniform vec3 uTint;
+        uniform float uExposure;
+        in vec3 vDirection;
+        out vec4 outColor;
+        const float Pi = 3.14159265359;
+        void main()
+        {
+            vec3 direction = normalize(vDirection);
+            vec2 uv = vec2(atan(direction.z, direction.x) / (2.0 * Pi) + 0.5,
+                           asin(clamp(direction.y, -1.0, 1.0)) / Pi + 0.5);
+            vec3 color = texture(uTexture, uv).rgb * uTint * uExposure;
+            outColor = vec4(max(color, vec3(0.0)), 1.0);
+        }
         """;
 
     private const string EdgeVertexShaderSource = """

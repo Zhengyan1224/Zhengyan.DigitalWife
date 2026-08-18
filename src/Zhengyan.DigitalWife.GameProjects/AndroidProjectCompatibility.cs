@@ -165,9 +165,9 @@ public static class AndroidProjectCompatibility
         if (scene.Skybox.Enabled)
         {
             issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_SKYBOX_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Error,
-                "Skybox rendering is not implemented by the current Android runtime.",
+                "ANDROID_SKYBOX_LIMITED",
+                AndroidCompatibilitySeverity.Warning,
+                "Android renders the equirectangular skybox background, but advanced skybox reflection and post-processing are not implemented.",
                 scenePath));
         }
     }
@@ -197,6 +197,20 @@ public static class AndroidProjectCompatibility
 
         if (type is "empty" or "game_object" or "gameobject")
         {
+            return;
+        }
+
+        if (type is "textured_plane" or "plane")
+        {
+            if (entity.Plane.MirrorReflectionEnabled)
+            {
+                issues.Add(new AndroidCompatibilityIssue(
+                    "ANDROID_PLANE_REFLECTION_DEGRADED",
+                    AndroidCompatibilitySeverity.Warning,
+                    "Textured planes render on Android, but mirror reflection requires the PC reflection pass and is ignored.",
+                    scenePath,
+                    entity.Name));
+            }
             return;
         }
 

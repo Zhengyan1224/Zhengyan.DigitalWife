@@ -89,11 +89,11 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 部分（阶段 3） | 已推进独立 Camera VMD、Roll/Up 和投影；编辑器控制面板/脚本 Seek 待后续阶段 |
 | 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3） | 已实现 viewport 布局换算和局部 color/depth/stencil clear；Render Texture 仍缺失 |
 | Render Texture | 多相机离屏纹理和刷新模式 | 缺失 | `RenderTextures`、`rt:` 纹理引用和材质动态替换均未实现 |
-| 环境光/平行光 | 静态、脚本和 VMD | 部分（阶段 3） | 已接入共享 Lighting 与光照 VMD；阴影和 Android 脚本主机仍缺失 |
+| 环境光/平行光 | 静态、脚本和 VMD | 部分（阶段 3/4） | 已接入共享 Lighting、光照 VMD 和 PMX 平行光 Shadow Map；Android 脚本主机仍待阶段 6 |
 | 点光源 | 多灯、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个点光并支持运行时增删改；局部阴影待阶段 4 |
 | 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；局部阴影待阶段 4 |
-| 天空盒 | 纹理、曝光、Tint | 缺失 | `SkyboxSettings` 被忽略 |
-| Textured Plane | Billboard、RT、镜面、阴影接收 | 缺失 | `textured_plane` 实体被忽略 |
+| 天空盒 | 纹理、曝光、Tint | 部分（阶段 4） | 已支持 equirectangular 背景、相机旋转、曝光和 Tint；反射/后处理仍缺失 |
+| Textured Plane | Billboard、RT、镜面、阴影接收 | 部分（阶段 4） | 已支持主 Pass、纹理、尺寸、Billboard、Opacity/Tint 和平行光阴影接收；RT/镜面仍缺失 |
 | 水面 | Gerstner、反射、交互和水下后处理 | 缺失 | `water_surface` 实体、波纹、反射相机和水下效果均未实现 |
 | 粒子 | 预设、纹理、混合、碰撞、阴影、触水 | 缺失 | `particle_system` 实体被忽略 |
 | 平面反射 | 水面和 Plane 镜面 | 缺失 | 没有反射 RenderTarget 和镜像相机 Pass |
@@ -314,7 +314,7 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   离线编译检查；Vulkan SPIR-V 留到阶段 9。
 - 实现 MSAA 能力查询及 1x/2x/4x/8x 自动回退，控制台/logcat 输出实际倍数。
 
-#### 阶段 4 实施状态（2026-08-17）
+#### 阶段 4 实施状态（2026-08-18）
 
 本轮已完成：
 
@@ -322,10 +322,14 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   配置，并输出 `requested/actual` 采样数；1x 保持无多重采样。
 - Android PMX 新增平行光 Shadow Map：1024 深度图、GPU/CPU 蒙皮共用 Depth Pass、`EnableShadow` 投射
   开关、`ReceiveShadow` 接收开关、`ReceiveShadowMode=Smooth/Toon` 以及主 Pass 2x2 PCF。
+- Android 已接入基础 `textured_plane`/`plane` 主 Pass：支持项目变换、尺寸、Tint/Opacity、Billboard、纹理
+  和平行光阴影接收；镜面反射暂时给出兼容性降级警告，不会静默丢失配置。
+- Android 已接入基础 Skybox Pass：使用项目天空盒纹理、Tint、Exposure 和相机旋转绘制 equirectangular
+  背景；天空盒不参与深度/阴影，纹理缺失时记录日志并保留清屏回退。
 - 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX
   阴影误报为完全缺失。
 
-仍在阶段 4 后续迭代中的部分：点光/射灯立方体或锥体 Shadow Map、Plane/Skybox/粒子/水面/后处理、
+仍在阶段 4 后续迭代中的部分：点光/射灯立方体或锥体 Shadow Map、粒子/水面/后处理、
 Render Texture、自定义 Android Shader 契约和真机性能预算。
 
 验收标准：
