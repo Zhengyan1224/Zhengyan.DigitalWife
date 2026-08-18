@@ -105,6 +105,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _waterDeepColorLocation;
     private readonly int _waterReflectionTintLocation;
     private readonly int _waterAlphaLocation;
+    private readonly int _postProgram;
+    private readonly int _postTintLocation;
+    private readonly int _postAlphaLocation;
+    private readonly int _postVertexArrayObject;
     private bool _shadowAvailable;
     private Matrix4x4 _lightViewProjection = Matrix4x4.Identity;
     private RuntimeScene? _loadedScene;
@@ -195,6 +199,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _waterDeepColorLocation = GLES30.GlGetUniformLocation(_waterProgram, "uDeepColor");
         _waterReflectionTintLocation = GLES30.GlGetUniformLocation(_waterProgram, "uReflectionTint");
         _waterAlphaLocation = GLES30.GlGetUniformLocation(_waterProgram, "uAlpha");
+
+        _postProgram = CreateProgram(PostVertexShaderSource, PostFragmentShaderSource);
+        _postTintLocation = GLES30.GlGetUniformLocation(_postProgram, "uTint");
+        _postAlphaLocation = GLES30.GlGetUniformLocation(_postProgram, "uAlpha");
+        int[] postArrays = new int[1];
+        GLES30.GlGenVertexArrays(1, postArrays, 0);
+        _postVertexArrayObject = postArrays[0];
     }
 
     public int ModelCount => _models.Count;
@@ -470,6 +481,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 GLES30.GlUniformMatrix4fv(_edgeModelViewLocation, 1, false, ToGlArray(modelView), 0);
                 model.DrawEdges(_edgeUseGpuSkinningLocation, _edgeBonesLocation, _edgeSizeLocation, _edgeColorLocation);
             }
+
+            DrawUnderwaterOverlay(scene, camera);
         }
 
         GLES30.GlDisable(GLES30.GlScissorTest);
@@ -496,6 +509,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDeleteProgram(_skyboxProgram);
         GLES30.GlDeleteProgram(_particleProgram);
         GLES30.GlDeleteProgram(_waterProgram);
+        GLES30.GlDeleteProgram(_postProgram);
+        GLES30.GlDeleteVertexArrays(1, [_postVertexArrayObject], 0);
         GLES30.GlDeleteVertexArrays(1, [_skyboxVertexArrayObject], 0);
         GLES30.GlDeleteBuffers(1, [_skyboxVertexBuffer], 0);
         GLES30.GlDeleteFramebuffers(1, [_shadowFramebuffer], 0);
@@ -669,6 +684,34 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             water.Draw(timeSeconds);
         }
         GLES30.GlBindVertexArray(0);
+        GLES30.GlDepthMask(true);
+        GLES30.GlDisable(GLES30.GlBlend);
+    }
+
+    private void DrawUnderwaterOverlay(RuntimeScene scene, RuntimeCamera camera)
+    {
+        WaterGpu? water = _waters
+            .Where(candidate => candidate.UnderwaterEffectEnabled && camera.Settings.Position.ToVector3().Y < candidate.SurfaceY)
+            .OrderByDescending(candidate => candidate.SurfaceY)
+            .FirstOrDefault();
+        if (water is null)
+        {
+            return;
+        }
+
+        float depth = Math.Max(water.SurfaceY - camera.Settings.Position.ToVector3().Y, 0.0f);
+        float visibility = Math.Max(water.UnderwaterVisibilityDistance, 0.001f);
+        float alpha = Math.Clamp(1.0f - MathF.Exp(-Math.Max(water.UnderwaterFogDensity, 0.0f) * depth / visibility), 0.0f, 0.82f);
+        Vector3 tint = Vector3.Max(water.UnderwaterFogColor, Vector3.Zero);
+        GLES30.GlUseProgram(_postProgram);
+        GLES30.GlBindVertexArray(_postVertexArrayObject);
+        GLES30.GlUniform3f(_postTintLocation, tint.X, tint.Y, tint.Z);
+        GLES30.GlUniform1f(_postAlphaLocation, alpha);
+        GLES30.GlDisable(GLES30.GlDepthTest);
+        GLES30.GlDepthMask(false);
+        GLES30.GlEnable(GLES30.GlBlend);
+        GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
+        GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 3);
         GLES30.GlDepthMask(true);
         GLES30.GlDisable(GLES30.GlBlend);
     }
@@ -1215,6 +1258,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public float Alpha => _settings.Alpha;
         public Vector3 DeepColor => _settings.DeepColor.ToVector3();
         public Vector3 ReflectionTint => _settings.ReflectionTint.ToVector3();
+        public float SurfaceY => _runtimeEntity.Position.Y;
+        public bool UnderwaterEffectEnabled => _settings.UnderwaterEffectEnabled;
+        public float UnderwaterFogDensity => _settings.UnderwaterFogDensity;
+        public float UnderwaterVisibilityDistance => _settings.UnderwaterVisibilityDistance;
+        public Vector3 UnderwaterFogColor => _settings.UnderwaterFogColor.ToVector3();
 
         public static WaterGpu Create(RuntimeEntity runtimeEntity)
         {
@@ -2519,6 +2567,27 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             vec3 color = base * (uAmbientColor + uLightColor * (0.25 + diffuse * 0.75));
             float ripple = 0.96 + 0.04 * sin(vTexCoord.x * 6.2831 + vTexCoord.y * 4.7123);
             outColor = vec4(max(color * ripple, vec3(0.0)), clamp(uAlpha, 0.0, 1.0));
+        }
+        """;
+
+    private const string PostVertexShaderSource = """
+        #version 300 es
+        void main()
+        {
+            vec2 position = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+            gl_Position = vec4(position * 2.0 - 1.0, 0.0, 1.0);
+        }
+        """;
+
+    private const string PostFragmentShaderSource = """
+        #version 300 es
+        precision mediump float;
+        uniform vec3 uTint;
+        uniform float uAlpha;
+        out vec4 outColor;
+        void main()
+        {
+            outColor = vec4(max(uTint, vec3(0.0)), clamp(uAlpha, 0.0, 1.0));
         }
         """;
 

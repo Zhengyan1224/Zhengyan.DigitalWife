@@ -97,7 +97,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 水面 | Gerstner、反射、交互和水下后处理 | 部分（阶段 4） | 已支持动态网格、Gerstner 波形、法线、颜色/透明度和基础平行光；反射、波纹交互和水下后处理仍缺失 |
 | 粒子 | 预设、纹理、混合、碰撞、阴影、触水 | 部分（阶段 4） | 已支持 CPU 生命周期模拟、Billboard、纹理、颜色渐变和 Alpha/Additive；阴影、碰撞/触水仍缺失 |
 | 平面反射 | 水面和 Plane 镜面 | 缺失 | 没有反射 RenderTarget 和镜像相机 Pass |
-| 后处理 | 水下等场景后处理 | 缺失 | 没有离屏场景颜色/深度和全屏 Pass |
+| 后处理 | 水下等场景后处理 | 部分（阶段 4） | 已支持基于相机水下深度的雾化全屏覆盖；离屏场景颜色/深度、失真和焦散仍缺失 |
 | 自定义 Shader | GLSL/SPIR-V 双路径及 Uniform | 缺失 | Android 没有移动端 shader 契约、离线校验和动态 Uniform |
 | 抗锯齿 | 配置倍数和硬件回退 | 部分（阶段 4） | EGL 已按项目设置申请 1/2/4/8/16x，并自动回退和输出实际倍数；真机能力矩阵仍待验证 |
 | OpenGL ES 后端 | PC Pass 功能 | 部分 | 目前是 Android 专用单 shader，不是现有 `IRenderer`/Pass 架构的移动实现 |
@@ -331,6 +331,8 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   粒子阴影和水面交互暂时通过兼容性警告降级。
 - Android 已接入基础 Water Pass：按 `WaterSurfaceSettings` 生成移动端受限分辨率网格，支持 Gerstner 位移、动态法线、
   Deep/Reflection Tint、透明度和环境/平行光着色；平面反射、涟漪交互与水下后处理仍通过兼容性警告降级。
+- Android 已接入水下基础后处理：当相机低于启用水面时，根据水下雾密度、可见距离和雾颜色绘制全屏覆盖；
+  该 Pass 不读取离屏场景颜色，因此失真、焦散和真正 RenderTexture 后处理仍待后续实现。
 - 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX
   阴影误报为完全缺失。
 
