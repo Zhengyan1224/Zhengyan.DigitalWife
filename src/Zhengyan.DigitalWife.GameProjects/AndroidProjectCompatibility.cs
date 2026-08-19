@@ -129,8 +129,8 @@ public static class AndroidProjectCompatibility
         {
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_GUI_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Error,
-                "GUI controls and context menus are not implemented by the current Android runtime.",
+                AndroidCompatibilitySeverity.Warning,
+                "Android renders basic GUI control backgrounds, checked/selected state and progress fills; text, editing, context menus and touch event dispatch are not implemented yet.",
                 scenePath));
         }
 
@@ -138,8 +138,8 @@ public static class AndroidProjectCompatibility
         {
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_GAME_SPRITE_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Error,
-                "Game-scene foreground/background sprites are not implemented by the current Android runtime.",
+                AndroidCompatibilitySeverity.Warning,
+                "Android renders visible game sprites with texture, layout, rotation and opacity; sprite event dispatch and entity-attached projection are not implemented yet.",
                 scenePath));
         }
 
@@ -180,14 +180,18 @@ public static class AndroidProjectCompatibility
         string type = entity.Type?.Trim().ToLowerInvariant() ?? string.Empty;
         if (type is "point_light" or "pointlight" or "spot_light" or "spotlight")
         {
-            bool castsPointShadows = type is "point_light" or "pointlight"
-                && entity.PointLight.CastShadows;
-            if (castsPointShadows)
+            bool isPointLight = type is "point_light" or "pointlight";
+            bool castsLocalShadows = isPointLight
+                ? entity.PointLight.CastShadows
+                : entity.SpotLight.CastShadows;
+            if (castsLocalShadows)
             {
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Point lights render on Android, but point-light shadow maps are not implemented yet; spot-light shadows use the first shadow-casting spot light.",
+                    isPointLight
+                        ? "Android renders point-light shadows for the first shadow-casting point light; additional point-light shadow maps are limited."
+                        : "Android renders spot-light shadows for the first shadow-casting spot light; additional spot-light shadow maps are limited.",
                     scenePath,
                     entity.Name));
             }
@@ -206,7 +210,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_PLANE_REFLECTION_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Textured planes render on Android, but mirror reflection requires the PC reflection pass and is ignored.",
+                    "Textured plane mirror reflection is supported on Android through a 512x512 planar pass; when multiple reflective surfaces are enabled, the first reflective surface is rendered.",
                     scenePath,
                     entity.Name));
             }
@@ -215,15 +219,6 @@ public static class AndroidProjectCompatibility
 
         if (type is "particle_system" or "particles" or "particle")
         {
-            if (entity.Particle.CastShadows)
-            {
-                issues.Add(new AndroidCompatibilityIssue(
-                    "ANDROID_PARTICLE_SHADOW_DEGRADED",
-                    AndroidCompatibilitySeverity.Warning,
-                    "Android renders particles, but particle shadow casting is not implemented yet.",
-                    scenePath,
-                    entity.Name));
-            }
             if (entity.Particle.EnableWaterInteraction)
             {
                 issues.Add(new AndroidCompatibilityIssue(
@@ -239,12 +234,12 @@ public static class AndroidProjectCompatibility
         if (type is "water_surface" or "water")
         {
             WaterSurfaceSettings water = entity.Water;
-            if (water.MirrorReflectionEnabled || water.EnableInteraction || water.UnderwaterEffectEnabled)
+            if (water.EnableInteraction || water.UnderwaterEffectEnabled)
             {
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_WATER_FEATURE_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Android renders the animated water surface, but planar reflection, ripple interaction and underwater post-processing are not implemented yet.",
+                    "Android renders animated water and planar reflection; ripple interaction and full underwater post-processing are not implemented yet.",
                     scenePath,
                     entity.Name));
             }
@@ -267,7 +262,7 @@ public static class AndroidProjectCompatibility
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android supports directional and first spot-light PMX shadows, but point-light shadow maps are not implemented yet.",
+                "Android supports directional, first point-light and first spot-light PMX shadows; additional local-light shadow maps are limited.",
                 scenePath,
                 entity.Name));
         }
@@ -317,8 +312,8 @@ public static class AndroidProjectCompatibility
             {
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_CSHARP_PRECOMPILE_REQUIRED",
-                    AndroidCompatibilitySeverity.Error,
-                    $"Enabled C# script '{script.Path}' must be precompiled by the future Android publisher; the current generic APK cannot execute source scripts.",
+                    AndroidCompatibilitySeverity.Warning,
+                    $"Enabled C# script '{script.Path}' is executed by the Android source runner; only the basic Scene/Entity/DeltaSeconds globals are available and compile/runtime failures are logged.",
                     scenePath,
                     entityName));
                 continue;

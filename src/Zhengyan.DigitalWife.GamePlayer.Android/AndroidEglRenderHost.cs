@@ -25,6 +25,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private EGLSurface? _surface;
     private AndroidPmxSceneRenderer? _sceneRenderer;
     private RuntimeSceneManager? _sceneManager;
+    private AndroidCSharpScriptHost? _scriptHost;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
     private int _width = 1;
@@ -41,11 +42,14 @@ internal sealed class AndroidEglRenderHost : IDisposable
     {
         _sceneManager?.Dispose();
         _sceneManager = null;
+        _scriptHost?.Dispose();
+        _scriptHost = null;
         _project = project;
         _projectDirectory = projectDirectory ?? string.Empty;
         if (project is not null && !string.IsNullOrWhiteSpace(_projectDirectory))
         {
             _sceneManager = new RuntimeSceneManager(project, _projectDirectory);
+            _scriptHost = new AndroidCSharpScriptHost(_projectDirectory);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -172,6 +176,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
         RuntimeScene? runtimeScene = _sceneManager?.Current;
         if (runtimeScene is not null)
         {
+            _scriptHost?.Update(runtimeScene, (float)deltaSeconds);
             _project!.Scene = runtimeScene.Definition;
             SetClearColor(runtimeScene.Definition.Lighting.ClearColor);
         }
@@ -247,6 +252,8 @@ internal sealed class AndroidEglRenderHost : IDisposable
         DestroySurface();
         _sceneManager?.Dispose();
         _sceneManager = null;
+        _scriptHost?.Dispose();
+        _scriptHost = null;
     }
 
     private static EGLConfig? ChooseConfig(EGLDisplay display, bool requestOpenGlEs3, int samples)
@@ -337,6 +344,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
         if (_sceneManager?.Current is { } runtimeScene)
         {
             _sceneRenderer.Load(runtimeScene, _projectDirectory);
+            _scriptHost?.Start(runtimeScene);
         }
     }
 

@@ -13,6 +13,8 @@
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectPath.cs" Link="GameProjectPath.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectStore.cs" Link="GameProjectStore.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\AndroidProjectCompatibility.cs" Link="AndroidProjectCompatibility.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\LayoutResolver.cs" Link="LayoutResolver.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\SpriteLayoutResolver.cs" Link="SpriteLayoutResolver.cs" />
     </ItemGroup>
 
 </Project>
