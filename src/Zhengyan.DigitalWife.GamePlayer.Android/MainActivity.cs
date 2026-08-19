@@ -3,7 +3,10 @@ using Android.Content;
 using Android.Content.PM;
 using Android.OS;
 using Android.Views;
+using Android.Views.InputMethods;
 using Android.Widget;
+using Android.Graphics;
+using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -41,6 +44,9 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 public sealed class MainActivity : Activity
 {
     private AndroidGameSurfaceView? _gameView;
+    private AndroidGuiOverlayView? _guiOverlay;
+    private FrameLayout? _root;
+    private EditText? _textEditor;
     private AndroidGameProjectLoadResult? _projectLoadResult;
 
     protected override void OnCreate(Bundle? savedInstanceState)
@@ -52,7 +58,14 @@ public sealed class MainActivity : Activity
 
         LoadProject(Intent);
         _gameView = new AndroidGameSurfaceView(this, _projectLoadResult?.Project, _projectLoadResult?.ProjectDirectory);
-        SetContentView(_gameView);
+        _guiOverlay = new AndroidGuiOverlayView(this, _gameView);
+        _gameView.OverlayInvalidated += OnOverlayInvalidated;
+        _gameView.TextInputRequested += ShowTextEditor;
+        _gameView.ContextMenuRequested += ShowContextMenu;
+        _root = new FrameLayout(this);
+        _root.AddView(_gameView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        _root.AddView(_guiOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        SetContentView(_root);
     }
 
     protected override void OnResume()
@@ -70,11 +83,79 @@ public sealed class MainActivity : Activity
 
     protected override void OnDestroy()
     {
+        if (_gameView is not null)
+        {
+            _gameView.OverlayInvalidated -= OnOverlayInvalidated;
+            _gameView.TextInputRequested -= ShowTextEditor;
+            _gameView.ContextMenuRequested -= ShowContextMenu;
+        }
+        CloseTextEditor();
+        _root = null;
+        _guiOverlay = null;
         _gameView?.Dispose();
         _gameView = null;
         _projectLoadResult?.Dispose();
         _projectLoadResult = null;
         base.OnDestroy();
+    }
+
+    private void OnOverlayInvalidated() => _guiOverlay?.Refresh();
+
+    private void ShowTextEditor(GuiControlSettings control, LayoutRect rect)
+    {
+        RunOnUiThread(() =>
+        {
+            CloseTextEditor();
+            if (_root is null) return;
+            EditText editor = new(this)
+            {
+                Text = control.Text,
+                TextSize = control.Style.FontSize
+            };
+            editor.SetSingleLine(!control.Multiline);
+            editor.SetTextColor(Color.White);
+            editor.SetBackgroundColor(Color.Argb(230, 25, 55, 90));
+            FrameLayout.LayoutParams layout = new((int)Math.Max(rect.Width, 1), (int)Math.Max(rect.Height, 1))
+            {
+                LeftMargin = (int)rect.X,
+                TopMargin = (int)rect.Y
+            };
+            editor.TextChanged += (_, _) => control.Text = editor.Text ?? string.Empty;
+            editor.FocusChange += (_, args) => { if (!args.HasFocus) CloseTextEditor(); };
+            _root.AddView(editor, layout);
+            _textEditor = editor;
+            editor.RequestFocus();
+            ((InputMethodManager?)GetSystemService(InputMethodService))?.ShowSoftInput(editor, ShowFlags.Implicit);
+        });
+    }
+
+    private void CloseTextEditor()
+    {
+        EditText? editor = _textEditor;
+        _textEditor = null;
+        if (editor is null) return;
+        ((InputMethodManager?)GetSystemService(InputMethodService))?.HideSoftInputFromWindow(editor.WindowToken, HideSoftInputFlags.None);
+        _root?.RemoveView(editor);
+        editor.Dispose();
+    }
+
+    private void ShowContextMenu(ContextMenuSettings menu, float x, float y)
+    {
+        RunOnUiThread(() =>
+        {
+            if (_gameView is null) return;
+            PopupMenu popup = new(this, _gameView);
+            foreach (ContextMenuItemSettings item in menu.Items.Where(item => item.Enabled))
+            {
+                popup.Menu?.Add(item.Text)?.SetIntent(new Intent().PutExtra("item_id", item.Id));
+            }
+            popup.MenuItemClick += (_, args) =>
+            {
+                ContextMenuItemSettings? selected = menu.Items.FirstOrDefault(item => item.Id == args.Item?.Intent?.GetStringExtra("item_id"));
+                if (selected is not null) _gameView.DispatchContextMenuItem(menu, selected, x, y);
+            };
+            popup.Show();
+        });
     }
 
     protected override void OnNewIntent(Intent? intent)

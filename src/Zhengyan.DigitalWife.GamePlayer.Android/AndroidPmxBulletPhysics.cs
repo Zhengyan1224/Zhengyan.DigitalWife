@@ -137,6 +137,18 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
         state.Body.ApplyTorqueImpulse(ToBt(torque * weight));
     }
 
+    public IReadOnlyList<Vector3> GetColliderPoints()
+    {
+        return _bodies
+            .Select(state =>
+            {
+                BtMatrix transform = state.Body.WorldTransform;
+                Vector3 point = new(transform.M41, transform.M42, -transform.M43);
+                return point;
+            })
+            .ToArray();
+    }
+
     public void Dispose()
     {
         if (_disposed)

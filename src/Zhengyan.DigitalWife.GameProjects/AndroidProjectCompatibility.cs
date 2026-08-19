@@ -130,7 +130,7 @@ public static class AndroidProjectCompatibility
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_GUI_UNSUPPORTED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android renders basic GUI control backgrounds, checked/selected state and progress fills; text, editing, context menus and touch event dispatch are not implemented yet.",
+                "Android renders GUI backgrounds/progress and native Canvas text; touch events are dispatched to C# scripts. Full IME text editing and persistent context-menu state remain limited.",
                 scenePath));
         }
 
@@ -139,7 +139,7 @@ public static class AndroidProjectCompatibility
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_GAME_SPRITE_UNSUPPORTED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android renders visible game sprites with texture, layout, rotation and opacity; sprite event dispatch and entity-attached projection are not implemented yet.",
+                "Android renders visible game sprites with texture, layout, rotation and opacity; pointer events are dispatched to C# scripts.",
                 scenePath));
         }
 
@@ -147,8 +147,8 @@ public static class AndroidProjectCompatibility
         {
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_AUDIO_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Error,
-                "Scene audio is not implemented by the current Android runtime.",
+                AndroidCompatibilitySeverity.Warning,
+                "Android supports PlayOnStart audio and C# play/stop calls through MediaPlayer; advanced spatial mixing is not available.",
                 scenePath));
         }
 
@@ -189,9 +189,9 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    isPointLight
-                        ? "Android renders point-light shadows for the first shadow-casting point light; additional point-light shadow maps are limited."
-                        : "Android renders spot-light shadows for the first shadow-casting spot light; additional spot-light shadow maps are limited.",
+                        isPointLight
+                        ? "Android renders independent point-light shadow cubemaps for up to two shadow-casting point lights; additional lights remain unshadowed."
+                        : "Android renders independent spot-light shadow maps for up to two shadow-casting spot lights; additional lights remain unshadowed.",
                     scenePath,
                     entity.Name));
             }
@@ -224,7 +224,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_PARTICLE_WATER_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Android renders particles, but water collision and ripple interaction are not implemented yet.",
+                    "Android probes enabled entity colliders against water surfaces and emits water_enter/water_ripple events; full continuous Bullet-world contacts remain limited to runtime PMX bodies.",
                     scenePath,
                     entity.Name));
             }
@@ -239,7 +239,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_WATER_FEATURE_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Android renders animated water and planar reflection; ripple interaction and full underwater post-processing are not implemented yet.",
+                    "Android renders animated water, collider-driven ripple events and screen-space underwater color distortion/caustics.",
                     scenePath,
                     entity.Name));
             }
@@ -262,7 +262,7 @@ public static class AndroidProjectCompatibility
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android supports directional, first point-light and first spot-light PMX shadows; additional local-light shadow maps are limited.",
+                "Android supports directional shadows plus independent shadow maps for up to two point lights and two spot lights; additional local-light maps are budget-limited.",
                 scenePath,
                 entity.Name));
         }

@@ -31,4 +31,6 @@ public interface IPmxPhysicsBridge : IDisposable
         bool reset);
 
     void ApplyImpulse(PmxMorph.ImpulseMorph morph, float weight);
+
+    IReadOnlyList<Vector3> GetColliderPoints() => [];
 }

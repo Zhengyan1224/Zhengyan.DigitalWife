@@ -75,7 +75,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | PMX 材质 | Diffuse/Ambient/Specular、Toon、Sphere、材质标志 | 部分（阶段 1 已实现） | Android GLES 已接入主要材质状态；高级阴影/后处理仍待阶段 4 |
 | PMX 纹理格式 | PNG/JPG/BMP/TGA/DDS 等路径 | 部分（阶段 1 已实现） | 已使用 Pfim/Stb 解码常用格式；发布期转换、编码边界和 GPU 压缩纹理仍待验证 |
 | PMX 描边 | 材质 Edge Pass | 部分（阶段 1 已实现） | Android 已有 Edge Pass；与 PC 的黄金图及移动端质量档仍需验证 |
-| PMX 阴影 | 平行光、点光、射灯投射和接收 | 部分（阶段 4） | Android 已接入平行光、首个点光和首个射灯局部 Shadow Map、PCF、Cast/Receive 和 Smooth/Toon；多局部光源阴影待后续 |
+| PMX 阴影 | 平行光、点光、射灯投射和接收 | 部分（阶段 4） | Android 已接入平行光、最多两个点光和两个射灯的独立 Shadow Map、PCF、Cast/Receive 和 Smooth/Toon；超出预算的局部灯保留照明但不生成阴影 |
 | VMD 骨骼动画 | 完整曲线和 IK 开关 | 部分（阶段 2 已实现共享求值器） | 真机黄金帧和 PC/Android 姿态容差仍需持续覆盖 |
 | 多层 VMD | 独立播放、暂停、时间、权重、添加/删除 | 部分（阶段 2 已实现） | 与完整脚本 RuntimeEntity 的动态增删待阶段 6 |
 | PMX Morph | 位置、UV、骨骼、材质、组、翻转、冲量 | 部分（阶段 2 已实现） | 附加 UV 与材质边界样例仍需增加黄金测试 |
@@ -90,23 +90,23 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3/4） | 已实现 viewport 布局换算、局部 color/depth/stencil clear，以及相机绑定的 Render Texture FBO；复杂后处理链仍缺失 |
 | Render Texture | 多相机离屏纹理和刷新模式 | 部分（阶段 4） | 已支持 FBO、颜色/深度附件、Camera 绑定、每帧/间隔/手动刷新、原生刷新入口和 `rt:` Plane 采样；C# 脚本绑定和复杂后处理链仍缺失 |
 | 环境光/平行光 | 静态、脚本和 VMD | 部分（阶段 3/4） | 已接入共享 Lighting、光照 VMD 和 PMX 平行光 Shadow Map；Android 脚本主机仍待阶段 6 |
-| 点光源 | 多灯、动态控制、阴影 | 部分（阶段 3/4） | 已加载最多 8 个点光并支持运行时增删改；第一个 CastShadows 点光使用六面体局部阴影，多点阴影待后续 |
-| 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3/4） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；首个 CastShadows 射灯使用独立锥体 Shadow Map，多个射灯阴影待后续 |
+| 点光源 | 多灯、动态控制、阴影 | 部分（阶段 3/4） | 已加载最多 8 个点光并支持运行时增删改；前两个 CastShadows 点光各自使用六面体局部阴影 |
+| 射灯 | 多灯、锥角、动态控制、阴影 | 部分（阶段 3/4） | 已加载最多 8 个射灯、方向/锥角和运行时增删改；前两个 CastShadows 射灯各自使用独立锥体 Shadow Map |
 | 天空盒 | 纹理、曝光、Tint | 部分（阶段 4） | 已支持 equirectangular 背景、相机旋转、曝光和 Tint；反射/后处理仍缺失 |
 | Textured Plane | Billboard、RT、镜面、阴影接收 | 部分（阶段 4） | 已支持主 Pass、纹理、尺寸、Billboard、Opacity/Tint、平行光阴影接收和 512×512 镜像反射；复杂多反射面和反射递归仍缺失 |
-| 水面 | Gerstner、反射、交互和水下后处理 | 部分（阶段 4） | 已支持动态网格、Gerstner 波形、法线、粒子源附近基础交互波纹、颜色/透明度、天空盒环境反射和 512×512 镜像相机平面反射；完整水下场景颜色失真仍缺失 |
+| 水面 | Gerstner、反射、交互和水下后处理 | 部分（阶段 4） | 已支持动态网格、Gerstner 波形、法线、实体 Collider 接触/进入/离开事件、颜色/透明度、天空盒环境反射、镜像反射和 framebuffer 屏幕空间水下失真 |
 | 粒子 | 预设、纹理、混合、碰撞、阴影、触水 | 部分（阶段 4） | 已支持 CPU 生命周期模拟、Billboard、纹理、颜色渐变、Alpha/Additive 和 Alpha-tested 阴影投射；碰撞/触水仍缺失 |
 | 平面反射 | 水面和 Plane 镜面 | 部分（阶段 4） | 水面和 Textured Plane 共用 512×512 镜像相机 RenderTarget；当前每帧选择第一个反射面，多反射面管理和递归反射仍待后续 |
-| 后处理 | 水下等场景后处理 | 部分（阶段 4） | 已支持基于相机水下深度的雾化覆盖、程序化扰动和焦散强度；离屏场景颜色采样和真正屏幕空间失真仍缺失 |
+| 后处理 | 水下等场景后处理 | 部分（阶段 4） | 已支持当前 framebuffer 复制采样、相机水下深度雾化、扰动偏移和焦散调制 |
 | 自定义 Shader | GLSL/SPIR-V 双路径及 Uniform | 缺失 | Android 没有移动端 shader 契约、离线校验和动态 Uniform |
 | 抗锯齿 | 配置倍数和硬件回退 | 部分（阶段 4） | EGL 已按项目设置申请 1/2/4/8/16x，并自动回退和输出实际倍数；真机能力矩阵仍待验证 |
 | OpenGL ES 后端 | PC Pass 功能 | 部分 | 目前是 Android 专用单 shader，不是现有 `IRenderer`/Pass 架构的移动实现 |
 | Vulkan 后端 | PC Vulkan | 缺失 | 没有 Android Surface、Swapchain、RenderTarget、ImGui 或 Compute 链路 |
-| GUI 控件 | Button/Label/Checkbox/Dropdown/Textbox/Progress | 部分（阶段 4/5） | Android 已支持布局、背景、勾选/选中状态和进度填充；字体、文本输入、下拉交互和事件派发仍缺失 |
+| GUI 控件 | Button/Label/Checkbox/Dropdown/Textbox/Progress | 部分（阶段 4/5） | Android 已支持 GLES 背景/进度、Canvas 字体和 GUI 触摸事件；完整 Android IME 编辑会话和持久化上下文菜单仍有限制 |
 | 上下文菜单 | 窗口/实体/碰撞体/GUI/Sprite | 缺失 | 触摸端还需定义长按语义，外接鼠标保留右键语义 |
 | 对话气泡 | 文本、目标实体和生命周期 | 缺失 | 没有投影到屏幕、布局和脚本管理器 |
-| 游戏内 2D Sprite | 背景/前景、布局、旋转、透明度 | 部分（阶段 4/5） | Android 已支持纹理、绝对/相对布局、旋转、透明度和 DrawOrder；实体投影与事件派发仍缺失 |
-| C# 脚本 | Start/Update/各类事件和完整运行时 API | 部分（阶段 4/6） | Android 已加入 `.csx` source runner，支持 Scene/Entity/DeltaSeconds/IsStart 基础全局；完整事件、音频、GUI 和发布预编译仍缺失 |
+| 游戏内 2D Sprite | 背景/前景、布局、旋转、透明度 | 部分（阶段 4/5） | Android 已支持纹理、绝对/相对布局、旋转、透明度、DrawOrder 和 Sprite 触摸事件派发 |
+| C# 脚本 | Start/Update/各类事件和完整运行时 API | 部分（阶段 4/6） | Android 已加入 `.csx` source runner、GUI/Sprite/水面事件 globals、场景/灯光增删改、场景切换和音频播放/停止服务；发布预编译仍缺失 |
 | Python 脚本 | PC 支持 | 排除 | Android 明确不实现 |
 | 键鼠输入 | PC 支持 | 缺失/平台化 | 需支持软键盘、外接键鼠和 Pointer；不照搬桌面窗口输入 |
 | 触摸输入 | PC/移动抽象 | 部分 | 已生成快照，但没有接入 RuntimeInput、GUI、相机、射线和手势 |
@@ -287,7 +287,7 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   运行时逐步适配到本 Core 的共享契约，不能把两个同名类型直接强行替换。
 - Android 当前实际绘制的是 PMX、环境/平行光、点光、射灯、水面、粒子、Textured Plane、天空盒和 Render Texture；
   GUI、游戏内 Sprite、音频和场景脚本仍由阶段 5～8 接入。
-- Android 点光已接入首个 CastShadows 点光的六面体 Shadow Map，射灯已接入首个 CastShadows 射灯的锥体 Shadow Map；
+- Android 点光和射灯已分别接入前两个 CastShadows 光源的独立 Shadow Map（点光为六面体、射灯为锥体）；
   主材质按 PMX/Plane 的 Cast/Receive 和 Toon/Smooth 语义采样，多个局部光源阴影仍待后续。
 - 异步加载 API 已完成共享层契约，但 Android GPU 资源提交仍在 GL 渲染线程同步执行；后续加载界面
   会把 CPU 解析、纹理解码和 GPU 上传拆成可观测的分阶段任务。
@@ -322,31 +322,29 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
   配置，并输出 `requested/actual` 采样数；1x 保持无多重采样。
 - Android PMX 新增平行光 Shadow Map：1024 深度图、GPU/CPU 蒙皮共用 Depth Pass、`EnableShadow` 投射
   开关、`ReceiveShadow` 接收开关、`ReceiveShadowMode=Smooth/Toon` 以及主 Pass 2x2 PCF。
-- Android 已接入第一个 `CastShadows` 点光源的六面体 Shadow Map（六面 90 度视锥、线性距离深度和四点 PCF），
-  以及第一个 `CastShadows` 射灯的锥体 Shadow Map；局部阴影仍遵循 PMX/Plane 的 `ReceiveShadow` 与 Toon/Smooth。
+- Android 已接入前两个 `CastShadows` 点光源的独立六面体 Shadow Map（六面 90 度视锥、线性距离深度和四点 PCF），
+  以及前两个 `CastShadows` 射灯的独立锥体 Shadow Map；局部阴影仍遵循 PMX/Plane 的 `ReceiveShadow` 与 Toon/Smooth。
 - Android 已接入基础 `textured_plane`/`plane` 主 Pass：支持项目变换、尺寸、Tint/Opacity、Billboard、纹理、
   平行光阴影接收和 512×512 镜像相机反射；多个反射面会确定性地选择第一个反射面，并通过兼容性报告提示。
 - Android 已接入基础 Skybox Pass：使用项目天空盒纹理、Tint、Exposure 和相机旋转绘制 equirectangular
   背景；天空盒不参与深度/阴影，纹理缺失时记录日志并保留清屏回退。
 - Android 已接入基础 Particle Pass：共享 `ParticleEntitySettings`，进行确定性 CPU 生命周期/速度/加速度模拟，
   使用动态 Billboard VBO，支持自定义纹理、SoftCircle/Streak/Flame fallback、颜色渐变、Alpha/Additive 混合；
-  `CastShadows` 使用独立 Alpha-tested Shadow Pass 投射到平行光、首个点光和首个射灯阴影图；粒子源靠近水面时会驱动基础交互波纹。
+  `CastShadows` 使用独立 Alpha-tested Shadow Pass 投射到平行光、移动端预算内的点光/射灯阴影图；启用 Collider 的实体接触水面时会驱动交互波纹。
 - Android 已接入基础 Water Pass：按 `WaterSurfaceSettings` 生成移动端受限分辨率网格，支持 Gerstner 位移、动态法线、
-  Deep/Reflection Tint、透明度、环境/平行光着色、天空盒环境反射和 512×512 镜像相机平面反射；涟漪交互与完整水下后处理仍通过兼容性警告降级。
+  Deep/Reflection Tint、透明度、环境/平行光着色、天空盒环境反射和 512×512 镜像相机平面反射；实体 Collider 接触会生成涟漪和 water_enter/ripple/exit 事件。
 - Android 已接入基础 RenderTexture：为启用的目标创建 GLES 颜色/深度 FBO，绑定指定 Camera，并允许 Plane 通过 `rt:` 路径采样；
   支持每帧、按间隔和手动刷新判定，并提供 `RequestRenderTextureRefresh` 原生入口；C# 脚本绑定与多级后处理链仍待阶段 6。
-- Android 已接入水下基础后处理：当相机低于启用水面时，根据水下雾密度、可见距离和雾颜色绘制全屏覆盖，
-  并按 `UnderwaterDistortionStrength`/`UnderwaterCausticsStrength` 添加程序化动态扰动与焦散；该 Pass 不读取离屏场景颜色，
-  因此真正屏幕空间失真和 RenderTexture 后处理仍待后续实现。
-- Android 已接入轻量 Overlay Pass：Sprite 支持纹理、布局、旋转、透明度和绘制顺序；GUI 支持布局、背景、勾选/选中状态和进度填充，
-  暂不渲染字体文本。
+- Android 已接入水下屏幕空间后处理：复制当前 framebuffer 颜色，按 `UnderwaterDistortionStrength`/`UnderwaterCausticsStrength`
+  对场景颜色执行扰动、雾化和焦散采样。
+- Android 已接入轻量 Overlay Pass：Sprite 支持纹理、布局、旋转、透明度、绘制顺序和触摸事件；GUI 支持布局、背景、Canvas 字体、
+  勾选/选中状态、进度填充和触摸事件。
 - Android 已接入 C# `.csx` runner：绑定脚本在场景加载时执行 `IsStart=true`，随后每帧执行并提供 `Scene`、`Entity`、
-  `DeltaSeconds`；Python 仍不支持，脚本异常仅记录 logcat 并跳过当前调用。
+  `DeltaSeconds`、`Event` 和 `Services`（场景/灯光/音频）；Python 仍不支持，脚本异常仅记录 logcat 并跳过当前调用。
 - 阴影 FBO 创建失败时明确记录降级日志并关闭阴影，不影响主场景绘制；兼容性报告不再把平行光 PMX
   阴影误报为完全缺失。
 
-仍在阶段 4 后续迭代中的部分：多点光/多射灯独立 Shadow Map、完整水面碰撞事件、屏幕空间水下失真、GUI 字体/事件、
-Render Texture 脚本绑定、自定义 Android Shader 契约和真机性能预算。当前平面反射采用单个 512×512
+仍在阶段 4 后续迭代中的部分：Render Texture 脚本绑定、自定义 Android Shader 契约、完整 Android IME 文本编辑和真机性能预算。当前平面反射采用单个 512×512
 RenderTarget，未实现多个反射面独立缓存和递归反射。
 
 验收标准：

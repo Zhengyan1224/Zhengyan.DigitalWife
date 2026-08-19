@@ -26,6 +26,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private AndroidPmxSceneRenderer? _sceneRenderer;
     private RuntimeSceneManager? _sceneManager;
     private AndroidCSharpScriptHost? _scriptHost;
+    private AndroidAudioHost? _audioHost;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
     private int _width = 1;
@@ -38,18 +39,27 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private bool _disposed;
     private Vector4 _clearColor = new(0.025f, 0.035f, 0.055f, 1.0f);
 
+    public GameProject? Project => _project;
+
     public void SetProject(GameProject? project, string? projectDirectory)
     {
         _sceneManager?.Dispose();
         _sceneManager = null;
         _scriptHost?.Dispose();
         _scriptHost = null;
+        _audioHost?.Dispose();
+        _audioHost = null;
         _project = project;
         _projectDirectory = projectDirectory ?? string.Empty;
         if (project is not null && !string.IsNullOrWhiteSpace(_projectDirectory))
         {
             _sceneManager = new RuntimeSceneManager(project, _projectDirectory);
-            _scriptHost = new AndroidCSharpScriptHost(_projectDirectory);
+            _audioHost = new AndroidAudioHost(_projectDirectory);
+            _scriptHost = new AndroidCSharpScriptHost(
+                _projectDirectory,
+                RequestSceneChange,
+                (scene, name) => _audioHost?.Play(scene, name) == true,
+                name => _audioHost?.Stop(name) == true);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -171,6 +181,11 @@ internal sealed class AndroidEglRenderHost : IDisposable
 
         _lastFrameTimeNanos = frameTimeNanos;
         double seconds = _elapsedSeconds;
+        RuntimeScene? inputScene = _sceneManager?.Current;
+        if (inputScene is not null)
+        {
+            DispatchTouchEvents(inputScene, input);
+        }
         _sceneManager?.Update((float)deltaSeconds, ToCameraInput(input));
 
         RuntimeScene? runtimeScene = _sceneManager?.Current;
@@ -191,6 +206,13 @@ internal sealed class AndroidEglRenderHost : IDisposable
         if (runtimeScene is not null)
         {
             _sceneRenderer?.Draw(runtimeScene, _project!.Window.Width, _project.Window.Height, _width, _height, seconds);
+            if (_sceneRenderer is not null)
+            {
+                foreach (AndroidRuntimeEvent runtimeEvent in _sceneRenderer.DrainRuntimeEvents())
+                {
+                    _scriptHost?.DispatchEvent(runtimeScene, runtimeEvent);
+                }
+            }
         }
 
         if (!EGL14.EglSwapBuffers(_display, _surface))
@@ -254,6 +276,8 @@ internal sealed class AndroidEglRenderHost : IDisposable
         _sceneManager = null;
         _scriptHost?.Dispose();
         _scriptHost = null;
+        _audioHost?.Dispose();
+        _audioHost = null;
     }
 
     private static EGLConfig? ChooseConfig(EGLDisplay display, bool requestOpenGlEs3, int samples)
@@ -344,6 +368,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
         if (_sceneManager?.Current is { } runtimeScene)
         {
             _sceneRenderer.Load(runtimeScene, _projectDirectory);
+            _audioHost?.StartScene(runtimeScene);
             _scriptHost?.Start(runtimeScene);
         }
     }
@@ -387,6 +412,72 @@ internal sealed class AndroidEglRenderHost : IDisposable
     public bool RequestRenderTextureRefresh(string idOrName)
     {
         return _sceneRenderer?.RequestRenderTextureRefresh(idOrName) == true;
+    }
+
+    public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)
+    {
+        RuntimeScene? scene = _sceneManager?.Current;
+        if (scene is null) return;
+        _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
+            "context_menu", item.Id, item.EventName, new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), item.Text));
+    }
+
+    private void DispatchTouchEvents(RuntimeScene scene, AndroidInputSnapshot input)
+    {
+        if (_scriptHost is null || input.Touches.Count == 0)
+        {
+            return;
+        }
+
+        foreach (AndroidTouchPoint touch in input.Touches.Where(point => point.Phase is AndroidTouchPhase.Began or AndroidTouchPhase.Ended))
+        {
+            float x = touch.PixelPosition.X;
+            float y = touch.PixelPosition.Y;
+            string? eventType = touch.Phase == AndroidTouchPhase.Began ? "pointer_down" : "pointer_up";
+            bool handled = false;
+            foreach (GuiControlSettings control in scene.Definition.GuiControls
+                .Where(control => control.Visible)
+                .Reverse())
+            {
+                LayoutRect rect = LayoutResolver.Resolve(control.LayoutMode, control.X, control.Y, control.Width, control.Height,
+                    _width, _height, _project?.Window.Width ?? _width, _project?.Window.Height ?? _height);
+                if (x >= rect.X && x <= rect.X + rect.Width && y >= rect.Y && y <= rect.Y + rect.Height)
+                {
+                    _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
+                        "gui", control.Id, touch.Phase == AndroidTouchPhase.Ended ? control.EventName : eventType!,
+                        touch.Position, control.Text, control.TargetEntity));
+                    handled = true;
+                    break;
+                }
+            }
+
+            if (!handled)
+            {
+                foreach (SpriteSettings sprite in scene.Definition.Sprites.Where(sprite => sprite.Visible).Reverse())
+                {
+                    if (!SpriteLayoutResolver.ContainsPoint(sprite, x, y, _width, _height,
+                        _project?.Window.Width ?? _width, _project?.Window.Height ?? _height))
+                    {
+                        continue;
+                    }
+
+                    _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
+                        "sprite", sprite.Id, touch.Phase == AndroidTouchPhase.Ended ? "clicked" : eventType!,
+                        touch.Position, sprite.Name, sprite.TargetEntity));
+                    handled = true;
+                    break;
+                }
+            }
+
+            if (!handled && touch.Phase == AndroidTouchPhase.Ended)
+            {
+                foreach (ContextMenuSettings menu in scene.Definition.ContextMenus.Where(menu => menu.Enabled))
+                {
+                    _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
+                        "context_menu", menu.Id, "opened", touch.Position));
+                }
+            }
+        }
     }
 
     private void OnSceneChanged(RuntimeSceneChange change)

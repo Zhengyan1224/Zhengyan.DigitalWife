@@ -141,6 +141,8 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     public ReadOnlySpan<Matrix4x4> GlobalTransforms => _globals;
 
+    public IReadOnlyList<Vector3> PhysicsColliderPoints => _physicsBridge?.GetColliderPoints() ?? [];
+
     public IReadOnlyList<Matrix4x4> GlobalPose => _globals;
 
     public IReadOnlyList<Matrix4x4> SkinPose => _skinTransforms;
