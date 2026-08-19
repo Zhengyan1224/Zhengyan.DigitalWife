@@ -3,7 +3,21 @@ using StbImageSharp;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal readonly record struct AndroidDecodedTexture(byte[] Rgba, int Width, int Height, bool HasSoftAlpha);
+internal enum AndroidTextureAlphaMode
+{
+    Opaque = 1,
+    Blend = 2,
+    BlendMaskColor = 4
+}
+
+internal readonly record struct AndroidDecodedTexture(
+    byte[] Rgba,
+    int Width,
+    int Height,
+    AndroidTextureAlphaMode AlphaMode)
+{
+    public bool HasSoftAlpha => AlphaMode != AndroidTextureAlphaMode.Opaque;
+}
 
 internal static class AndroidTextureDecoder
 {
@@ -13,7 +27,7 @@ internal static class AndroidTextureDecoder
         {
             using IImage image = Pfimage.FromFile(path);
             byte[] rgba = ConvertPfimToRgba(image);
-            return new AndroidDecodedTexture(rgba, image.Width, image.Height, HasSoftAlpha(rgba));
+            return new AndroidDecodedTexture(rgba, image.Width, image.Height, DetermineAlphaMode(rgba));
         }
 
         ImageResult imageResult = ImageResult.FromMemory(File.ReadAllBytes(path), ColorComponents.RedGreenBlueAlpha);
@@ -21,7 +35,7 @@ internal static class AndroidTextureDecoder
             imageResult.Data,
             imageResult.Width,
             imageResult.Height,
-            HasSoftAlpha(imageResult.Data));
+            DetermineAlphaMode(imageResult.Data));
     }
 
     private static bool LooksLikeDds(string path)
@@ -35,16 +49,24 @@ internal static class AndroidTextureDecoder
             && header[3] == (byte)' ';
     }
 
-    private static bool HasSoftAlpha(ReadOnlySpan<byte> rgba)
+    private static AndroidTextureAlphaMode DetermineAlphaMode(ReadOnlySpan<byte> rgba)
     {
+        int nonZeroAlphaPixels = 0;
+        int softAlphaPixels = 0;
         for (int i = 3; i < rgba.Length; i += 4)
         {
-            if (rgba[i] is > 0 and < byte.MaxValue)
+            byte alpha = rgba[i];
+            if (alpha == 0)
             {
-                return true;
+                continue;
             }
+            nonZeroAlphaPixels++;
+            if (alpha < byte.MaxValue) softAlphaPixels++;
         }
-        return false;
+        if (softAlphaPixels == 0) return AndroidTextureAlphaMode.Opaque;
+        return softAlphaPixels / (float)Math.Max(nonZeroAlphaPixels, 1) >= 0.25f
+            ? AndroidTextureAlphaMode.BlendMaskColor
+            : AndroidTextureAlphaMode.Blend;
     }
 
     private static byte[] ConvertPfimToRgba(IImage image)

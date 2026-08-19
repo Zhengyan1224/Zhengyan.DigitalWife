@@ -32,6 +32,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly List<PmxGpuModel> _updateOrder = [];
     private readonly Dictionary<string, int> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _softAlphaTextures = [];
+    private readonly Dictionary<int, int> _textureAlphaModes = [];
     private readonly Queue<AndroidRuntimeEvent> _waterEvents = new();
     private readonly HashSet<string> _activeWaterContacts = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _program;
@@ -45,6 +46,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _specularPowerLocation;
     private readonly int _textureLocation;
     private readonly int _hasTextureLocation;
+    private readonly int _textureAlphaModeLocation;
     private readonly int _lightDirectionLocation;
     private readonly int _lightColorLocation;
     private readonly int _ambientColorLocation;
@@ -78,6 +80,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _planarReflectionTextureLocation;
     private readonly int _hasPlanarReflectionLocation;
     private readonly int _planarReflectionStrengthLocation;
+    private readonly int _unlitSurfaceLocation;
+    private readonly int _reflectionClipPlaneLocation;
     private readonly int _useGpuSkinningLocation;
     private readonly int _bonesLocation;
     private readonly int _edgeProgram;
@@ -219,6 +223,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _specularPowerLocation = GLES30.GlGetUniformLocation(_program, "uSpecularPower");
         _textureLocation = GLES30.GlGetUniformLocation(_program, "uTexture");
         _hasTextureLocation = GLES30.GlGetUniformLocation(_program, "uHasTexture");
+        _textureAlphaModeLocation = GLES30.GlGetUniformLocation(_program, "uTextureAlphaMode");
         _lightDirectionLocation = GLES30.GlGetUniformLocation(_program, "uLightDirection");
         _lightColorLocation = GLES30.GlGetUniformLocation(_program, "uLightColor");
         _ambientColorLocation = GLES30.GlGetUniformLocation(_program, "uAmbientColor");
@@ -252,6 +257,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _planarReflectionTextureLocation = GLES30.GlGetUniformLocation(_program, "uPlanarReflectionTexture");
         _hasPlanarReflectionLocation = GLES30.GlGetUniformLocation(_program, "uHasPlanarReflection");
         _planarReflectionStrengthLocation = GLES30.GlGetUniformLocation(_program, "uPlanarReflectionStrength");
+        _unlitSurfaceLocation = GLES30.GlGetUniformLocation(_program, "uUnlitSurface");
+        _reflectionClipPlaneLocation = GLES30.GlGetUniformLocation(_program, "uReflectionClipPlane");
         _useGpuSkinningLocation = GLES30.GlGetUniformLocation(_program, "uUseGpuSkinning");
         _bonesLocation = GLES30.GlGetUniformLocation(_program, "uBones[0]");
 
@@ -512,6 +519,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     LoadTexture,
                     LoadCommonToonTexture,
                     textureId => _softAlphaTextures.Contains(textureId),
+                    GetTextureAlphaMode,
                     motions,
                     entity.IsPlaying ? entity.PlaybackSpeed : 0.0f,
                     entity.LoopMotion,
@@ -703,7 +711,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
 
             Matrix4x4 view = camera.CreateView();
-            Matrix4x4 projection = camera.CreateProjection(viewport.Width / (float)Math.Max(viewport.Height, 1));
+            Matrix4x4 projection = CreateProjection(camera.Settings, viewport.Width / (float)Math.Max(viewport.Height, 1));
             Vector3 position = camera.Settings.Position.ToVector3();
             GLES30.GlEnable(GLES30.GlDepthTest);
             GLES30.GlDepthFunc(GLES30.GlLequal);
@@ -750,6 +758,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
             GLES30.GlUniform1i(_planarReflectionTextureLocation, 7);
             GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
+            GLES30.GlUniform1i(_unlitSurfaceLocation, 0);
+            GLES30.GlUniform4f(_reflectionClipPlaneLocation, 0.0f, 0.0f, 0.0f, 0.0f);
             GLES30.GlUniformMatrix4fv(_viewLocation, 1, false, ToGlArray(view), 0);
             GLES30.GlUniform3f(_cameraPositionLocation, position.X, position.Y, position.Z);
             GLES30.GlUniform1i(_textureLocation, 0);
@@ -767,6 +777,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 // Plane reflection is a per-draw state. Do not leak it into PMX materials.
                 GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
                 GLES30.GlUniform1f(_planarReflectionStrengthLocation, 0.0f);
+                GLES30.GlUniform1i(_unlitSurfaceLocation, 0);
                 GLES30.GlUniform1i(_receiveShadowLocation, model.ReceivesShadows ? 1 : 0);
                 GLES30.GlUniform1i(_shadowModeLocation, model.UsesToonReceivedShadow ? 1 : 0);
                 model.BindSkinning(_useGpuSkinningLocation, _bonesLocation);
@@ -779,6 +790,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     _specularLocation,
                     _specularPowerLocation,
                     _hasTextureLocation,
+                    _textureAlphaModeLocation,
                     _sphereModeLocation,
                     _hasSphereLocation,
                     _hasToonLocation,
@@ -1405,25 +1417,61 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             {
                 continue;
             }
-            RenderSingleReflection(scene, camera, timeSeconds, surfaceId, target, water?.SurfaceY ?? plane!.RuntimeEntity.Position.Y);
+            Vector3 planePoint;
+            Vector3 planeNormal;
+            if (water is not null)
+            {
+                planePoint = new Vector3(0.0f, water.SurfaceY, 0.0f);
+                planeNormal = Vector3.UnitY;
+            }
+            else
+            {
+                Matrix4x4 planeWorld = plane!.CreateWorld(camera);
+                planePoint = Vector3.Transform(Vector3.Zero, planeWorld);
+                planeNormal = NormalizeOrDefault(Vector3.TransformNormal(Vector3.UnitZ, planeWorld), Vector3.UnitZ);
+            }
+            RenderSingleReflection(scene, camera, timeSeconds, surfaceId, target, planePoint, planeNormal);
         }
         _reflectionSurfaceId = null;
     }
 
-    private void RenderSingleReflection(RuntimeScene scene, RuntimeCamera camera, double timeSeconds, string surfaceId, RenderTargetGpu target, float planeY)
+    private void RenderSingleReflection(
+        RuntimeScene scene,
+        RuntimeCamera camera,
+        double timeSeconds,
+        string surfaceId,
+        RenderTargetGpu target,
+        Vector3 planePoint,
+        Vector3 planeNormal)
     {
         Vector3 sourcePosition = camera.Settings.Position.ToVector3();
         Vector3 sourceTarget = camera.Settings.Target.ToVector3();
         _reflectionSurfaceId = surfaceId;
-        Vector3 reflectedPosition = new(sourcePosition.X, planeY * 2.0f - sourcePosition.Y, sourcePosition.Z);
-        Vector3 reflectedTarget = new(sourceTarget.X, planeY * 2.0f - sourceTarget.Y, sourceTarget.Z);
+        planeNormal = NormalizeOrDefault(planeNormal, Vector3.UnitY);
+        if (Vector3.Dot(sourcePosition - planePoint, planeNormal) < 0.0f)
+        {
+            planeNormal = -planeNormal;
+        }
+        Vector3 reflectedPosition = ReflectPoint(sourcePosition, planePoint, planeNormal);
+        Vector3 reflectedTarget = ReflectPoint(sourceTarget, planePoint, planeNormal);
         if (Vector3.DistanceSquared(reflectedPosition, reflectedTarget) < 1e-8f)
         {
             reflectedTarget = reflectedPosition - Vector3.UnitZ;
         }
 
-        Matrix4x4 view = Matrix4x4.CreateLookAt(reflectedPosition, reflectedTarget, Vector3.UnitY);
-        Matrix4x4 projection = camera.CreateProjection(target.Width / (float)Math.Max(target.Height, 1));
+        Vector3 sourceUp = camera.Settings.VmdHasUp
+            ? NormalizeOrDefault(camera.Settings.VmdUp.ToVector3(), Vector3.UnitY)
+            : Vector3.UnitY;
+        Vector3 reflectedUp = NormalizeOrDefault(Vector3.Reflect(sourceUp, planeNormal), Vector3.UnitY);
+        Vector3 reflectedForward = NormalizeOrDefault(reflectedTarget - reflectedPosition, -Vector3.UnitZ);
+        if (MathF.Abs(Vector3.Dot(reflectedForward, reflectedUp)) > 0.999f)
+        {
+            reflectedUp = MathF.Abs(Vector3.Dot(reflectedForward, Vector3.UnitY)) > 0.95f
+                ? Vector3.UnitZ
+                : Vector3.UnitY;
+        }
+        Matrix4x4 view = Matrix4x4.CreateLookAt(reflectedPosition, reflectedTarget, reflectedUp);
+        Matrix4x4 projection = CreateProjection(camera.Settings, target.Width / (float)Math.Max(target.Height, 1));
         _reflectionMatrices[surfaceId] = view * projection;
 
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, target.Framebuffer);
@@ -1477,6 +1525,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBindTexture(GLES30.GlTexture2d, target.ColorTexture);
         GLES30.GlUniform1i(_planarReflectionTextureLocation, 7);
         GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
+        GLES30.GlUniform1i(_unlitSurfaceLocation, 0);
+        // The reflected camera sees the opposite half-space from the source
+        // camera. Keep that half-space in the reflection pass so geometry is
+        // not drawn through the mirror plane.
+        Vector3 clipNormal = -planeNormal;
+        float planeOffset = -Vector3.Dot(clipNormal, planePoint) + 0.0025f;
+        GLES30.GlUniform4f(_reflectionClipPlaneLocation, clipNormal.X, clipNormal.Y, clipNormal.Z, planeOffset);
         GLES30.GlUniformMatrix4fv(_viewLocation, 1, false, ToGlArray(view), 0);
         GLES30.GlUniform3f(_cameraPositionLocation, reflectedPosition.X, reflectedPosition.Y, reflectedPosition.Z);
         GLES30.GlUniform1i(_textureLocation, 0);
@@ -1494,6 +1549,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
             GLES30.GlUniform1f(_planarReflectionStrengthLocation, 0.0f);
+            GLES30.GlUniform1i(_unlitSurfaceLocation, 0);
             GLES30.GlUniform1i(_receiveShadowLocation, model.ReceivesShadows ? 1 : 0);
             GLES30.GlUniform1i(_shadowModeLocation, model.UsesToonReceivedShadow ? 1 : 0);
             model.BindSkinning(_useGpuSkinningLocation, _bonesLocation);
@@ -1505,6 +1561,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 _specularLocation,
                 _specularPowerLocation,
                 _hasTextureLocation,
+                _textureAlphaModeLocation,
                 _sphereModeLocation,
                 _hasSphereLocation,
                 _hasToonLocation,
@@ -1563,6 +1620,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform3f(_specularLocation, 0.0f, 0.0f, 0.0f);
         GLES30.GlUniform1f(_specularPowerLocation, 0.0f);
         GLES30.GlUniform1i(_hasTextureLocation, plane.TextureId == 0 ? 0 : 1);
+        GLES30.GlUniform1i(_textureAlphaModeLocation, GetTextureAlphaMode(plane.TextureId));
         GLES30.GlUniform1i(_hasSphereLocation, 0);
         GLES30.GlUniform1i(_hasToonLocation, 0);
         GLES30.GlUniform1i(_sphereModeLocation, 0);
@@ -1574,6 +1632,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform4f(_toonAddLocation, 0.0f, 0.0f, 0.0f, 0.0f);
         GLES30.GlUniform1i(_receiveShadowLocation, plane.ReceivesShadows ? 1 : 0);
         GLES30.GlUniform1i(_shadowModeLocation, 0);
+        GLES30.GlUniform1i(_unlitSurfaceLocation, 1);
         RenderTargetGpu? reflectionTarget = null;
         Matrix4x4 reflectionMatrix = Matrix4x4.Identity;
         bool hasReflection = plane.MirrorReflectionEnabled
@@ -1586,8 +1645,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlActiveTexture(GLES30.GlTexture0);
         GLES30.GlBindTexture(GLES30.GlTexture2d, plane.TextureId);
         GLES30.GlBindVertexArray(plane.VertexArrayObject);
-        GLES30.GlEnable(0x0B44); // GL_CULL_FACE
-        GLES30.GlCullFace(GLES30.GlBack);
+        // Textured planes and mirrors are intentionally visible from both sides,
+        // matching the desktop TexturedPlaneComponent contract.
+        GLES30.GlDisable(0x0B44); // GL_CULL_FACE
         GLES30.GlDepthMask(plane.Tint.W >= 0.999f);
         GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 6);
         GLES30.GlDepthMask(true);
@@ -1606,7 +1666,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         RuntimeCamera camera = scene.MainCamera;
         Vector3 center = camera.Settings.Target.ToVector3();
         Vector3 direction = NormalizeOrDefault(scene.Definition.Lighting.LightDirection.ToVector3(), new Vector3(-0.5f, -1.0f, -0.5f));
-        Vector3 lightPosition = center + direction * 48.0f;
+        Vector3 lightPosition = center - direction * 48.0f;
         Vector3 up = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
         Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightPosition, center, up);
         Matrix4x4 lightProjection = CreateOrthographicProjection(52.0f, 52.0f, 0.1f, 120.0f);
@@ -1664,7 +1724,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             light.SpotOuterConeAngleDegrees * 2.0f * MathF.PI / 180.0f,
             MathF.PI / 180.0f,
             MathF.PI - MathF.PI / 180.0f);
-        Matrix4x4 lightProjection = Matrix4x4.CreatePerspectiveFieldOfView(fieldOfView, 1.0f, 0.05f, range);
+        Matrix4x4 lightProjection = CreatePerspectiveProjection(fieldOfView, 1.0f, 0.05f, range);
         _spotShadowMatrix = lightView * lightProjection;
 
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _spotShadowFramebuffer);
@@ -1699,7 +1759,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Vector3 up2 = MathF.Abs(Vector3.Dot(direction2, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
             Matrix4x4 view2 = Matrix4x4.CreateLookAt(position2, target2, up2);
             float fov2 = Math.Clamp(light2.SpotOuterConeAngleDegrees * 2.0f * MathF.PI / 180.0f, MathF.PI / 180.0f, MathF.PI - MathF.PI / 180.0f);
-            _spotShadow2Matrix = view2 * Matrix4x4.CreatePerspectiveFieldOfView(fov2, 1.0f, 0.05f, range2);
+            _spotShadow2Matrix = view2 * CreatePerspectiveProjection(fov2, 1.0f, 0.05f, range2);
             GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _spotShadow2Framebuffer);
             GLES30.GlViewport(0, 0, LocalShadowMapSize, LocalShadowMapSize);
             GLES30.GlClear(GLES30.GlDepthBufferBit);
@@ -1739,7 +1799,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         Vector3 position = light.Position;
         float range = Math.Max(light.LightRange, 0.1f);
         _pointShadowLightPositionRange = new Vector4(position, range);
-        Matrix4x4 projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 2.0f, 1.0f, 0.05f, range);
+        Matrix4x4 projection = CreatePerspectiveProjection(MathF.PI / 2.0f, 1.0f, 0.05f, range);
         ReadOnlySpan<Vector3> directions =
         [
             Vector3.UnitX,
@@ -1804,7 +1864,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Vector3 position2 = light2.Position;
             float range2 = Math.Max(light2.LightRange, 0.1f);
             _pointShadow2LightPositionRange = new Vector4(position2, range2);
-            Matrix4x4 projection2 = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 2.0f, 1.0f, 0.05f, range2);
+            Matrix4x4 projection2 = CreatePerspectiveProjection(MathF.PI / 2.0f, 1.0f, 0.05f, range2);
             GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _pointShadow2Framebuffer);
             GLES30.GlViewport(0, 0, LocalShadowMapSize, LocalShadowMapSize);
             GLES30.GlUniform3f(_shadowLightPositionLocation, position2.X, position2.Y, position2.Z);
@@ -1837,6 +1897,22 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             0.0f, 2.0f / height, 0.0f, 0.0f,
             0.0f, 0.0f, 2.0f / (near - far), 0.0f,
             0.0f, 0.0f, (far + near) / (near - far), 1.0f);
+    }
+
+    private static Matrix4x4 CreatePerspectiveProjection(float fieldOfView, float aspect, float near, float far)
+    {
+        float y = 1.0f / MathF.Tan(fieldOfView * 0.5f);
+        float x = y / Math.Max(aspect, 0.001f);
+        return new Matrix4x4(
+            x, 0.0f, 0.0f, 0.0f,
+            0.0f, y, 0.0f, 0.0f,
+            0.0f, 0.0f, (far + near) / (near - far), -1.0f,
+            0.0f, 0.0f, (2.0f * far * near) / (near - far), 0.0f);
+    }
+
+    private static Vector3 ReflectPoint(Vector3 point, Vector3 planePoint, Vector3 planeNormal)
+    {
+        return point - 2.0f * Vector3.Dot(point - planePoint, planeNormal) * planeNormal;
     }
 
     private static (int Framebuffer, int DepthTexture, int ColorTexture, bool Available) CreateShadowMapResources(int size = ShadowMapSize)
@@ -1958,6 +2034,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlDeleteTextures(_textures.Count, [.. _textures.Values], 0);
             _textures.Clear();
             _softAlphaTextures.Clear();
+            _textureAlphaModes.Clear();
         }
     }
 
@@ -2091,7 +2168,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBindTexture(GLES30.GlTexture2d, texture);
         GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlRepeat);
         GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlRepeat);
-        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMinFilter, GLES30.GlLinearMipmapLinear);
+        GLES30.GlTexParameteri(
+            GLES30.GlTexture2d,
+            GLES30.GlTextureMinFilter,
+            decoded.AlphaMode == AndroidTextureAlphaMode.Opaque ? GLES30.GlLinearMipmapLinear : GLES30.GlLinear);
         GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlLinear);
         using ByteBuffer bytes = ByteBuffer.AllocateDirect(decoded.Rgba.Length)!;
         bytes.Put(decoded.Rgba);
@@ -2106,14 +2186,25 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlRgba,
             GLES30.GlUnsignedByte,
             bytes);
-        GLES30.GlGenerateMipmap(GLES30.GlTexture2d);
+        if (decoded.AlphaMode == AndroidTextureAlphaMode.Opaque)
+        {
+            GLES30.GlGenerateMipmap(GLES30.GlTexture2d);
+        }
         GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
         if (decoded.HasSoftAlpha)
         {
             _softAlphaTextures.Add(texture);
         }
+        _textureAlphaModes[texture] = (int)decoded.AlphaMode;
         _textures[fullPath] = texture;
         return texture;
+    }
+
+    private int GetTextureAlphaMode(int textureId)
+    {
+        return textureId != 0 && _textureAlphaModes.TryGetValue(textureId, out int mode)
+            ? mode
+            : (int)AndroidTextureAlphaMode.Opaque;
     }
 
     private int ResolveSceneTexture(string path, string projectDirectory)
@@ -2299,7 +2390,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             float height = Math.Max(camera.OrthographicSize * 2.0f, 0.001f);
             float width = height * Math.Max(aspect, 0.001f);
-            return Matrix4x4.CreateOrthographic(width, height, near, far);
+            return CreateOrthographicProjection(width, height, near, far);
         }
 
         float fov = Math.Clamp(camera.Fov, 1.0f, 179.0f) * (MathF.PI / 180.0f);
@@ -3136,6 +3227,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Func<string, int> loadTexture,
             Func<int, int> loadCommonToonTexture,
             Func<int, bool> textureHasSoftAlpha,
+            Func<int, int> getTextureAlphaMode,
             IReadOnlyList<(VmdParsing Animation, float Weight)> motions,
             float playbackSpeed,
             bool loopMotion,
@@ -3200,7 +3292,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 Path.GetDirectoryName(modelPath) ?? string.Empty,
                 loadTexture,
                 loadCommonToonTexture,
-                textureHasSoftAlpha);
+                textureHasSoftAlpha,
+                getTextureAlphaMode);
             int[] vertexArrays = new int[1];
             int[] buffers = new int[2];
             GLES30.GlGenVertexArrays(1, vertexArrays, 0);
@@ -3332,6 +3425,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             int specularLocation,
             int specularPowerLocation,
             int hasTextureLocation,
+            int textureAlphaModeLocation,
             int sphereModeLocation,
             int hasSphereLocation,
             int hasToonLocation,
@@ -3370,6 +3464,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 GLES30.GlActiveTexture(GLES30.GlTexture0);
                 GLES30.GlBindTexture(GLES30.GlTexture2d, material.TextureId);
                 GLES30.GlUniform1i(hasTextureLocation, material.TextureId == 0 ? 0 : 1);
+                GLES30.GlUniform1i(textureAlphaModeLocation, material.TextureAlphaMode);
                 GLES30.GlActiveTexture(GLES30.GlTexture1);
                 GLES30.GlBindTexture(GLES30.GlTexture2d, material.SphereTextureId);
                 GLES30.GlUniform1i(hasSphereLocation, material.SphereTextureId == 0 ? 0 : 1);
@@ -3482,7 +3577,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             string modelDirectory,
             Func<string, int> loadTexture,
             Func<int, int> loadCommonToonTexture,
-            Func<int, bool> textureHasSoftAlpha)
+            Func<int, bool> textureHasSoftAlpha,
+            Func<int, int> getTextureAlphaMode)
         {
             List<MaterialRange> ranges = [];
             int firstIndex = 0;
@@ -3537,6 +3633,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                         material.DrawMode,
                         primitiveMode,
                         textureHasSoftAlpha(textureId),
+                        getTextureAlphaMode(textureId),
                         textureId,
                         sphereTextureId,
                         toonTextureId,
@@ -3565,6 +3662,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     0,
                     GLES30.GlTriangles,
                     false,
+                    (int)AndroidTextureAlphaMode.Opaque,
                     0,
                     0,
                     0,
@@ -3588,6 +3686,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         PmxDrawModeFlags DrawMode,
         int PrimitiveMode,
         bool TextureHasSoftAlpha,
+        int TextureAlphaMode,
         int TextureId,
         int SphereTextureId,
         int ToonTextureId,
@@ -3685,6 +3784,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform sampler2D uSphereTexture;
         uniform sampler2D uToonTexture;
         uniform int uHasTexture;
+        uniform int uTextureAlphaMode;
         uniform int uHasSphereTexture;
         uniform int uHasToonTexture;
         uniform int uSphereMode;
@@ -3725,6 +3825,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform sampler2D uPlanarReflectionTexture;
         uniform int uHasPlanarReflection;
         uniform float uPlanarReflectionStrength;
+        uniform int uUnlitSurface;
+        uniform vec4 uReflectionClipPlane;
         out vec4 outColor;
 
         vec3 applyMultiply(vec3 color, vec4 factor)
@@ -3739,11 +3841,25 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         void main()
         {
+            if (dot(uReflectionClipPlane.xyz, uReflectionClipPlane.xyz) > 0.0
+                && dot(vec4(vWorldPosition, 1.0), uReflectionClipPlane) < 0.0)
+            {
+                discard;
+            }
             vec3 normal = normalize(vNormal);
             float diffuseLight = max(dot(normal, normalize(-uLightDirection)), 0.0);
             vec4 textureColor = uHasTexture != 0 ? texture(uTexture, vTexCoord) : vec4(1.0);
             textureColor.rgb = applyAdd(applyMultiply(textureColor.rgb, uTextureMultiply), uTextureAdd);
-            float alpha = uDiffuse.a * textureColor.a;
+            float textureAlpha = 1.0;
+            if (uHasTexture != 0 && uTextureAlphaMode == 2)
+            {
+                textureAlpha = textureColor.a;
+            }
+            else if (uHasTexture != 0 && uTextureAlphaMode == 4)
+            {
+                textureAlpha = 1.0 - pow(1.0 - textureColor.a, 1.5);
+            }
+            float alpha = uDiffuse.a * textureAlpha;
             if (alpha <= 0.001)
             {
                 discard;
@@ -3761,12 +3877,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (uHasPlanarReflection != 0 && vPlanarReflectionPosition.w > 0.0)
             {
                 vec2 reflectionUv = vPlanarReflectionPosition.xy / vPlanarReflectionPosition.w * 0.5 + 0.5;
-                reflectionUv.y = 1.0 - reflectionUv.y;
                 if (all(greaterThanEqual(reflectionUv, vec2(0.0)))
                     && all(lessThanEqual(reflectionUv, vec2(1.0))))
                 {
                     vec3 reflectionColor = texture(uPlanarReflectionTexture, reflectionUv).rgb;
-                    float reflectionAmount = clamp(uPlanarReflectionStrength * 0.45, 0.0, 0.75);
+                    float reflectionAmount = clamp(uPlanarReflectionStrength, 0.0, 1.0);
                     base = mix(base, reflectionColor, reflectionAmount);
                 }
             }
@@ -3805,6 +3920,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 }
             }
             vec3 shadowTint = mix(vec3(1.0), uShadowColor.rgb, (1.0 - shadowVisibility) * uShadowColor.a);
+            if (uUnlitSurface != 0)
+            {
+                outColor = vec4(clamp(base * shadowTint, 0.0, 1.0), alpha);
+                return;
+            }
             directional *= shadowTint;
             vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
             vec3 halfDirection = normalize(viewDirection + normalize(-uLightDirection));
