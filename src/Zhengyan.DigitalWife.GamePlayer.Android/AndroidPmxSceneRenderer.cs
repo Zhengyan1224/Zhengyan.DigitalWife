@@ -1,6 +1,7 @@
 using Android.Opengl;
 using Android.Util;
 using Java.Nio;
+using System.Diagnostics;
 using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
@@ -25,6 +26,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly List<ParticleGpu> _particles = [];
     private readonly List<WaterGpu> _waters = [];
     private readonly Dictionary<string, RenderTargetGpu> _renderTargets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RenderTextureSettings> _renderTextureSettings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RenderTargetGpu> _reflectionTargets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Matrix4x4> _reflectionMatrices = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<PmxGpuModel> _updateOrder = [];
     private readonly Dictionary<string, int> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _softAlphaTextures = [];
@@ -190,9 +194,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _overlayVao;
     private readonly int _overlayVbo;
     private bool _shadowAvailable;
-    private RenderTargetGpu? _waterReflectionTarget;
-    private Matrix4x4 _waterReflectionViewProjection = Matrix4x4.Identity;
     private string? _reflectionSurfaceId;
+    private AndroidQualitySettings _quality = new();
+    private int _adaptiveParticleLimit = 2000;
+    private bool _adaptiveReflections = true;
+    private double _lastFrameGpuEstimateMs;
+    private long _estimatedGpuBytes;
     private Matrix4x4 _lightViewProjection = Matrix4x4.Identity;
     private RuntimeScene? _loadedScene;
     private string? _projectDirectory;
@@ -373,6 +380,63 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return true;
     }
 
+    public bool ConfigureRenderTexture(string idOrName, string refreshMode, float intervalSeconds)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName) || !_renderTargets.TryGetValue(idOrName, out RenderTargetGpu? target))
+        {
+            return false;
+        }
+        string normalized = (refreshMode ?? "every_frame").Trim().ToLowerInvariant();
+        if (normalized is not ("every_frame" or "interval" or "timed" or "manual"))
+        {
+            return false;
+        }
+        target.ConfigureRefresh(normalized, Math.Max(intervalSeconds, 0.001f));
+        foreach (RenderTextureSettings settings in _renderTextureSettings.Values.Where(settings =>
+                     string.Equals(settings.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(settings.Name, idOrName, StringComparison.OrdinalIgnoreCase)))
+        {
+            settings.RefreshMode = normalized;
+            settings.RefreshIntervalSeconds = Math.Max(intervalSeconds, 0.001f);
+        }
+        return true;
+    }
+
+    public IReadOnlyList<AndroidRenderTextureInfo> GetRenderTextures()
+    {
+        return _renderTargets
+            .Where(pair => _renderTextureSettings.TryGetValue(pair.Key, out _))
+            .Select(pair => pair.Value.ToInfo(_renderTextureSettings[pair.Key]))
+            .DistinctBy(info => info.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public AndroidRenderTextureInfo? GetRenderTexture(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName) || !_renderTargets.TryGetValue(idOrName, out RenderTargetGpu? target))
+        {
+            return null;
+        }
+        RenderTextureSettings? settings = _renderTextureSettings.Values.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(candidate.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+        return settings is null ? null : target.ToInfo(settings);
+    }
+
+    public AndroidQualityBudgetInfo GetQualityBudgetInfo()
+    {
+        return new AndroidQualityBudgetInfo(
+            _quality.Profile,
+            _quality.TargetFrameRate,
+            _quality.TextureMemoryBudgetMb,
+            _quality.RenderTargetMemoryBudgetMb,
+            _quality.DrawCallBudget,
+            _estimatedGpuBytes,
+            _lastFrameGpuEstimateMs,
+            _adaptiveParticleLimit,
+            _adaptiveReflections);
+    }
+
     public bool TrySetMotionLayerState(
         string entityIdOrName,
         int layerIndex,
@@ -399,11 +463,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return true;
     }
 
-    public void Load(RuntimeScene scene, string? projectDirectory)
+    public void Load(RuntimeScene scene, string? projectDirectory, AndroidQualitySettings? quality = null)
     {
         ClearModels();
         _loadedScene = scene;
         _projectDirectory = projectDirectory;
+        _quality = quality ?? new AndroidQualitySettings();
+        ApplyQualityProfile(_quality);
         if (scene is null || string.IsNullOrWhiteSpace(projectDirectory))
         {
             _loadedEntityRevision = scene?.EntityRevision ?? -1;
@@ -471,8 +537,18 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             try
             {
                 RenderTargetGpu target = RenderTargetGpu.Create(settings);
+                if (_quality.RenderTargetMemoryBudgetMb > 0
+                    && _estimatedGpuBytes + target.EstimatedBytes > _quality.RenderTargetMemoryBudgetMb * 1024L * 1024L)
+                {
+                    target.Dispose();
+                    Log.Warn(LogTag, $"Android RenderTexture '{settings.Name}' skipped: render-target memory budget exceeded.");
+                    continue;
+                }
                 _renderTargets[settings.Id] = target;
+                _renderTextureSettings[settings.Id] = settings;
                 if (!string.IsNullOrWhiteSpace(settings.Name)) _renderTargets.TryAdd(settings.Name, target);
+                if (!string.IsNullOrWhiteSpace(settings.Name)) _renderTextureSettings.TryAdd(settings.Name, settings);
+                _estimatedGpuBytes += target.EstimatedBytes;
                 Log.Info(LogTag, $"Android GLES created RenderTexture '{settings.Name}': {target.Width}x{target.Height}.");
             }
             catch (Exception ex)
@@ -524,7 +600,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 {
                     texture = LoadParticlePresetTexture(runtimeEntity.Definition.Particle.TexturePreset);
                 }
-                _particles.Add(ParticleGpu.Create(runtimeEntity, texture));
+                _particles.Add(ParticleGpu.Create(runtimeEntity, texture, _quality.MaxParticleCount));
                 Log.Info(LogTag, $"Android GLES uploaded particle system '{runtimeEntity.Name}': count={runtimeEntity.Definition.Particle.ParticleCount}.");
             }
             catch (Exception ex)
@@ -550,11 +626,36 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _loadedEntityRevision = scene.EntityRevision;
     }
 
+    private void ApplyQualityProfile(AndroidQualitySettings quality)
+    {
+        string profile = (quality.Profile ?? "auto").Trim().ToLowerInvariant();
+        if (profile == "low")
+        {
+            quality.MaxShadowMapSize = Math.Min(quality.MaxShadowMapSize, 512);
+            quality.MaxLocalShadowMapSize = Math.Min(quality.MaxLocalShadowMapSize, 256);
+            quality.MaxPointShadowMaps = Math.Min(quality.MaxPointShadowMaps, 1);
+            quality.MaxSpotShadowMaps = Math.Min(quality.MaxSpotShadowMaps, 1);
+            quality.MaxReflectionSurfaces = Math.Min(quality.MaxReflectionSurfaces, 1);
+            quality.MaxParticleCount = Math.Min(quality.MaxParticleCount, 600);
+        }
+        else if (profile == "medium")
+        {
+            quality.MaxShadowMapSize = Math.Min(quality.MaxShadowMapSize, 1024);
+            quality.MaxLocalShadowMapSize = Math.Min(quality.MaxLocalShadowMapSize, 512);
+            quality.MaxReflectionSurfaces = Math.Min(quality.MaxReflectionSurfaces, 2);
+            quality.MaxParticleCount = Math.Min(quality.MaxParticleCount, 1200);
+        }
+        _adaptiveParticleLimit = Math.Max(32, quality.MaxParticleCount);
+        _adaptiveReflections = quality.MaxReflectionSurfaces > 0;
+        _estimatedGpuBytes = 0;
+    }
+
     public void Draw(RuntimeScene scene, int referenceWidth, int referenceHeight, int width, int height, double timeSeconds)
     {
+        Stopwatch frameTimer = Stopwatch.StartNew();
         if (!ReferenceEquals(_loadedScene, scene) || _loadedEntityRevision != scene.EntityRevision)
         {
-            Load(scene, _projectDirectory);
+            Load(scene, _projectDirectory, _quality);
         }
 
         if (_models.Count == 0 && _planes.Count == 0 && _particles.Count == 0 && _waters.Count == 0 && _skyboxTexture == 0)
@@ -574,7 +675,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             model.SyncTransform();
         }
-        PrepareParticleGeometry(scene.MainCamera, timeSeconds);
+        PrepareParticleGeometry(scene, timeSeconds);
         RenderDirectionalShadow(scene);
         RenderPointShadow(scene);
         RenderSpotShadow(scene);
@@ -644,9 +745,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlUniform1i(_pointShadow2MapLocation, 10);
             GLES30.GlUniform1i(_hasPointShadow2Location, _pointShadow2Available && _pointShadow2Rendered ? 1 : 0);
             GLES30.GlUniform4f(_pointShadow2LightLocation, _pointShadow2LightPositionRange.X, _pointShadow2LightPositionRange.Y, _pointShadow2LightPositionRange.Z, _pointShadow2LightPositionRange.W);
-            GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(_waterReflectionViewProjection), 0);
+            GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(Matrix4x4.Identity), 0);
             GLES30.GlActiveTexture(GLES30.GlTexture7);
-            GLES30.GlBindTexture(GLES30.GlTexture2d, _waterReflectionTarget?.ColorTexture ?? 0);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
             GLES30.GlUniform1i(_planarReflectionTextureLocation, 7);
             GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
             GLES30.GlUniformMatrix4fv(_viewLocation, 1, false, ToGlArray(view), 0);
@@ -715,6 +816,22 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlViewport(0, 0, Math.Max(width, 1), Math.Max(height, 1));
         GLES30.GlBindVertexArray(0);
         GLES30.GlUseProgram(0);
+        frameTimer.Stop();
+        _lastFrameGpuEstimateMs = frameTimer.Elapsed.TotalMilliseconds;
+        if (_quality.DynamicDegradation)
+        {
+            double budget = Math.Max(_quality.DynamicFrameBudgetMs, 4.0f);
+            if (_lastFrameGpuEstimateMs > budget * 1.15)
+            {
+                _adaptiveParticleLimit = Math.Max(32, (int)(_adaptiveParticleLimit * 0.85f));
+                if (_adaptiveParticleLimit <= 96) _adaptiveReflections = false;
+            }
+            else if (_lastFrameGpuEstimateMs < budget * 0.70 && _adaptiveParticleLimit < _quality.MaxParticleCount)
+            {
+                _adaptiveParticleLimit = Math.Min(_quality.MaxParticleCount, _adaptiveParticleLimit + 32);
+                if (_quality.MaxReflectionSurfaces > 0) _adaptiveReflections = true;
+            }
+        }
     }
 
     public IReadOnlyList<AndroidRuntimeEvent> DrainRuntimeEvents()
@@ -984,7 +1101,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlUniform1i(_particleUseTextureColorLocation, particle.UseTextureColor ? 1 : 0);
             GLES30.GlActiveTexture(GLES30.GlTexture0);
             GLES30.GlBindTexture(GLES30.GlTexture2d, particle.TextureId);
-            particle.UpdateGeometry(timeSeconds, right, up);
             particle.DrawCurrent();
         }
 
@@ -994,19 +1110,34 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDisable(GLES30.GlBlend);
     }
 
-    private void PrepareParticleGeometry(RuntimeCamera camera, double timeSeconds)
+    private IReadOnlyList<ColliderGeometry> BuildParticleColliders(RuntimeScene scene)
+    {
+        List<ColliderGeometry> colliders = [];
+        foreach (RuntimeEntity entity in scene.Entities)
+        {
+            foreach (ColliderSettings settings in entity.Definition.Colliders.Where(candidate => candidate.Enabled))
+            {
+                colliders.Add(CollisionGeometry.CreateCollider(settings, entity.TransformMatrix));
+            }
+        }
+        return colliders;
+    }
+
+    private void PrepareParticleGeometry(RuntimeScene cameraScene, double timeSeconds)
     {
         if (_particles.Count == 0)
         {
             return;
         }
 
+        RuntimeCamera camera = cameraScene.MainCamera;
         Vector3 forward = NormalizeOrDefault(camera.Settings.Target.ToVector3() - camera.Settings.Position.ToVector3(), -Vector3.UnitZ);
         Vector3 right = NormalizeOrDefault(Vector3.Cross(forward, Vector3.UnitY), Vector3.UnitX);
         Vector3 up = NormalizeOrDefault(Vector3.Cross(right, forward), Vector3.UnitY);
+        IReadOnlyList<ColliderGeometry> colliders = BuildParticleColliders(cameraScene);
         foreach (ParticleGpu particle in _particles)
         {
-            particle.UpdateGeometry(timeSeconds, right, up);
+            particle.UpdateGeometry(timeSeconds, right, up, colliders, _adaptiveParticleLimit);
         }
     }
 
@@ -1052,11 +1183,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform1i(_waterSkyTextureLocation, 4);
         GLES30.GlUniform1i(_waterHasSkyTextureLocation, _skyboxTexture == 0 ? 0 : 1);
         GLES30.GlUniform1i(_waterReflectionTextureLocation, 7);
-        GLES30.GlUniformMatrix4fv(_waterReflectionMatrixLocation, 1, false, ToGlArray(_waterReflectionViewProjection), 0);
+        GLES30.GlUniformMatrix4fv(_waterReflectionMatrixLocation, 1, false, ToGlArray(Matrix4x4.Identity), 0);
         GLES30.GlActiveTexture(GLES30.GlTexture4);
         GLES30.GlBindTexture(GLES30.GlTexture2d, _skyboxTexture);
         GLES30.GlActiveTexture(GLES30.GlTexture7);
-        GLES30.GlBindTexture(GLES30.GlTexture2d, _waterReflectionTarget?.ColorTexture ?? 0);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
         GLES30.GlEnable(GLES30.GlBlend);
         GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
         GLES30.GlEnable(GLES30.GlDepthTest);
@@ -1064,23 +1195,28 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
         foreach (WaterGpu water in _waters)
         {
+            if (string.Equals(water.RuntimeEntity.Id, _reflectionSurfaceId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             Vector3 deep = Vector3.Max(water.DeepColor, Vector3.Zero);
             Vector3 reflection = Vector3.Max(water.ReflectionTint, Vector3.Zero);
             GLES30.GlUniform3f(_waterDeepColorLocation, deep.X, deep.Y, deep.Z);
             GLES30.GlUniform3f(_waterReflectionTintLocation, reflection.X, reflection.Y, reflection.Z);
             GLES30.GlUniform1f(_waterAlphaLocation, Math.Clamp(water.Alpha, 0.0f, 1.0f));
-            GLES30.GlUniform1i(
-                _waterHasReflectionLocation,
-                _waterReflectionTarget is not null
-                    && water.MirrorReflectionEnabled
-                    && string.Equals(water.RuntimeEntity.Id, _reflectionSurfaceId, StringComparison.OrdinalIgnoreCase)
-                    ? 1
-                    : 0);
+            RenderTargetGpu? waterReflection = null;
+            Matrix4x4 waterReflectionMatrix = Matrix4x4.Identity;
+            bool hasWaterReflection = water.MirrorReflectionEnabled
+                && TryGetReflection(water.RuntimeEntity.Id, out waterReflection, out waterReflectionMatrix);
+            GLES30.GlUniform1i(_waterHasReflectionLocation, hasWaterReflection ? 1 : 0);
+            GLES30.GlUniformMatrix4fv(_waterReflectionMatrixLocation, 1, false, ToGlArray(waterReflectionMatrix), 0);
+            GLES30.GlActiveTexture(GLES30.GlTexture7);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, waterReflection?.ColorTexture ?? 0);
             GLES30.GlUniform1i(_waterMirrorReflectionLocation, water.MirrorReflectionEnabled ? 1 : 0);
-        GLES30.GlUniform1f(_waterReflectionStrengthLocation, water.ReflectionStrength);
+            GLES30.GlUniform1f(_waterReflectionStrengthLocation, water.ReflectionStrength);
             Vector3 rippleCenter = Vector3.Zero;
             float rippleStrength = 0.0f;
-            if (water.EnableInteraction)
+            if (_reflectionSurfaceId is null && water.EnableInteraction)
             {
                 (RuntimeEntity Entity, Vector3 Point, float Radius)? contact = FindWaterColliderContact(scene, water);
                 if (contact is not null)
@@ -1256,22 +1392,29 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private void RenderWaterReflection(RuntimeScene scene, double timeSeconds)
     {
-        _reflectionSurfaceId = null;
-        RenderTargetGpu? target = _waterReflectionTarget;
-        WaterGpu? water = _waters.FirstOrDefault(candidate => candidate.MirrorReflectionEnabled);
-        PlaneGpu? reflectionPlane = water is null
-            ? _planes.FirstOrDefault(candidate => candidate.MirrorReflectionEnabled)
-            : null;
-        if (target is null || (water is null && reflectionPlane is null))
+        if (!_adaptiveReflections || _reflectionTargets.Count == 0)
         {
             return;
         }
-
         RuntimeCamera camera = scene.MainCamera;
+        foreach ((string surfaceId, RenderTargetGpu target) in _reflectionTargets)
+        {
+            WaterGpu? water = _waters.FirstOrDefault(candidate => string.Equals(candidate.RuntimeEntity.Id, surfaceId, StringComparison.OrdinalIgnoreCase));
+            PlaneGpu? plane = water is null ? _planes.FirstOrDefault(candidate => string.Equals(candidate.RuntimeEntity.Id, surfaceId, StringComparison.OrdinalIgnoreCase)) : null;
+            if (water is null && plane is null)
+            {
+                continue;
+            }
+            RenderSingleReflection(scene, camera, timeSeconds, surfaceId, target, water?.SurfaceY ?? plane!.RuntimeEntity.Position.Y);
+        }
+        _reflectionSurfaceId = null;
+    }
+
+    private void RenderSingleReflection(RuntimeScene scene, RuntimeCamera camera, double timeSeconds, string surfaceId, RenderTargetGpu target, float planeY)
+    {
         Vector3 sourcePosition = camera.Settings.Position.ToVector3();
         Vector3 sourceTarget = camera.Settings.Target.ToVector3();
-        float planeY = water?.SurfaceY ?? reflectionPlane!.RuntimeEntity.Position.Y;
-        _reflectionSurfaceId = water?.RuntimeEntity.Id ?? reflectionPlane!.RuntimeEntity.Id;
+        _reflectionSurfaceId = surfaceId;
         Vector3 reflectedPosition = new(sourcePosition.X, planeY * 2.0f - sourcePosition.Y, sourcePosition.Z);
         Vector3 reflectedTarget = new(sourceTarget.X, planeY * 2.0f - sourceTarget.Y, sourceTarget.Z);
         if (Vector3.DistanceSquared(reflectedPosition, reflectedTarget) < 1e-8f)
@@ -1281,7 +1424,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         Matrix4x4 view = Matrix4x4.CreateLookAt(reflectedPosition, reflectedTarget, Vector3.UnitY);
         Matrix4x4 projection = camera.CreateProjection(target.Width / (float)Math.Max(target.Height, 1));
-        _waterReflectionViewProjection = view * projection;
+        _reflectionMatrices[surfaceId] = view * projection;
 
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, target.Framebuffer);
         GLES30.GlViewport(0, 0, target.Width, target.Height);
@@ -1329,7 +1472,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform1i(_pointShadow2MapLocation, 10);
         GLES30.GlUniform1i(_hasPointShadow2Location, _pointShadow2Available && _pointShadow2Rendered ? 1 : 0);
         GLES30.GlUniform4f(_pointShadow2LightLocation, _pointShadow2LightPositionRange.X, _pointShadow2LightPositionRange.Y, _pointShadow2LightPositionRange.Z, _pointShadow2LightPositionRange.W);
-        GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(_waterReflectionViewProjection), 0);
+        GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(Matrix4x4.Identity), 0);
         GLES30.GlActiveTexture(GLES30.GlTexture7);
         GLES30.GlBindTexture(GLES30.GlTexture2d, target.ColorTexture);
         GLES30.GlUniform1i(_planarReflectionTextureLocation, 7);
@@ -1373,8 +1516,25 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 _toonAddLocation);
         }
 
+        // Use already rendered reflection targets for other surfaces. This is a
+        // bounded one-level recursion and avoids an unbounded render loop.
+        DrawWater(scene, camera, view, projection, timeSeconds);
+
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
         target.MarkRendered(timeSeconds);
+    }
+
+    private bool TryGetReflection(string surfaceId, out RenderTargetGpu? target, out Matrix4x4 matrix)
+    {
+        if (_reflectionTargets.TryGetValue(surfaceId, out RenderTargetGpu? found))
+        {
+            target = found;
+            matrix = _reflectionMatrices.TryGetValue(surfaceId, out Matrix4x4 value) ? value : Matrix4x4.Identity;
+            return true;
+        }
+        target = null;
+        matrix = Matrix4x4.Identity;
+        return false;
     }
 
     private RenderTargetGpu? FindRenderTarget(RuntimeScene scene, RuntimeCamera camera)
@@ -1414,14 +1574,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform4f(_toonAddLocation, 0.0f, 0.0f, 0.0f, 0.0f);
         GLES30.GlUniform1i(_receiveShadowLocation, plane.ReceivesShadows ? 1 : 0);
         GLES30.GlUniform1i(_shadowModeLocation, 0);
-        GLES30.GlUniform1i(
-            _hasPlanarReflectionLocation,
-            plane.MirrorReflectionEnabled
-                && _waterReflectionTarget is not null
-                && string.Equals(plane.RuntimeEntity.Id, _reflectionSurfaceId, StringComparison.OrdinalIgnoreCase)
-                ? 1
-                : 0);
+        RenderTargetGpu? reflectionTarget = null;
+        Matrix4x4 reflectionMatrix = Matrix4x4.Identity;
+        bool hasReflection = plane.MirrorReflectionEnabled
+            && TryGetReflection(plane.RuntimeEntity.Id, out reflectionTarget, out reflectionMatrix);
+        GLES30.GlUniform1i(_hasPlanarReflectionLocation, hasReflection ? 1 : 0);
+        GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(reflectionMatrix), 0);
         GLES30.GlUniform1f(_planarReflectionStrengthLocation, plane.ReflectionStrength);
+        GLES30.GlActiveTexture(GLES30.GlTexture7);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, reflectionTarget?.ColorTexture ?? 0);
         GLES30.GlActiveTexture(GLES30.GlTexture0);
         GLES30.GlBindTexture(GLES30.GlTexture2d, plane.TextureId);
         GLES30.GlBindVertexArray(plane.VertexArrayObject);
@@ -1436,7 +1597,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private void RenderDirectionalShadow(RuntimeScene scene)
     {
-        if (!_shadowAvailable)
+        if (!_shadowAvailable || _quality.MaxShadowMapSize <= 0)
         {
             _lightViewProjection = Matrix4x4.Identity;
             return;
@@ -1480,7 +1641,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _spotShadowRendered = false;
         _spotShadow2Rendered = false;
         _spotShadow2Matrix = Matrix4x4.Identity;
-        if (!_spotShadowAvailable)
+        if (!_spotShadowAvailable || _quality.MaxSpotShadowMaps <= 0)
         {
             _spotShadowMatrix = Matrix4x4.Identity;
             return;
@@ -1564,7 +1725,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _pointShadow2Rendered = false;
         _pointShadowLightPositionRange = Vector4.Zero;
         _pointShadow2LightPositionRange = Vector4.Zero;
-        if (!_pointShadowAvailable)
+        if (!_pointShadowAvailable || _quality.MaxPointShadowMaps <= 0)
         {
             return;
         }
@@ -1782,8 +1943,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             target.Dispose();
         }
         _renderTargets.Clear();
-        _waterReflectionTarget?.Dispose();
-        _waterReflectionTarget = null;
+        foreach (RenderTargetGpu target in _reflectionTargets.Values.Distinct())
+        {
+            target.Dispose();
+        }
+        _reflectionTargets.Clear();
+        _reflectionMatrices.Clear();
+        _renderTextureSettings.Clear();
         _reflectionSurfaceId = null;
         _skyboxTexture = 0;
         _updateOrder.Clear();
@@ -1822,26 +1988,36 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
         }
 
-        if (_waters.Any(water => water.MirrorReflectionEnabled)
-            || _planes.Any(plane => plane.MirrorReflectionEnabled))
+        IEnumerable<string> reflectionIds = _waters.Where(water => water.MirrorReflectionEnabled).Select(water => water.RuntimeEntity.Id)
+            .Concat(_planes.Where(plane => plane.MirrorReflectionEnabled).Select(plane => plane.RuntimeEntity.Id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(_quality.MaxReflectionSurfaces, 0));
+        foreach (string reflectionId in reflectionIds)
         {
             try
             {
-                _waterReflectionTarget = RenderTargetGpu.Create(new RenderTextureSettings
+                RenderTargetGpu target = RenderTargetGpu.Create(new RenderTextureSettings
                 {
-                    Id = "__android_water_reflection",
-                    Name = "__android_water_reflection",
-                    Width = 512,
-                    Height = 512,
+                    Id = "__android_reflection_" + reflectionId,
+                    Name = "__android_reflection_" + reflectionId,
+                    Width = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 256 : 512,
+                    Height = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 256 : 512,
                     RefreshMode = "every_frame",
                     ClearColor = new Vector4Dto(0.0f, 0.0f, 0.0f, 1.0f)
                 });
-                Log.Info(LogTag, "Android GLES created 512x512 water planar reflection target.");
+                if (_quality.RenderTargetMemoryBudgetMb > 0
+                    && _estimatedGpuBytes + target.EstimatedBytes > _quality.RenderTargetMemoryBudgetMb * 1024L * 1024L)
+                {
+                    target.Dispose();
+                    Log.Warn(LogTag, $"Android reflection target '{reflectionId}' skipped: render-target memory budget exceeded.");
+                    continue;
+                }
+                _reflectionTargets[reflectionId] = target;
+                _estimatedGpuBytes += target.EstimatedBytes;
             }
             catch (Exception ex)
             {
-                _waterReflectionTarget = null;
-                Log.Warn(LogTag, $"Android water planar reflection is unavailable: {ex.Message}");
+                Log.Warn(LogTag, $"Android reflection target '{reflectionId}' is unavailable: {ex.Message}");
             }
         }
 
@@ -2154,6 +2330,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private static int CreateProgram(string vertexSource, string fragmentSource)
     {
+        AndroidGlesShaderValidationResult contract = AndroidGlesShaderContract.Validate(vertexSource, fragmentSource);
+        if (!contract.IsValid)
+        {
+            throw new InvalidOperationException("Android GLES shader contract failed: " + string.Join("; ", contract.Errors));
+        }
         int vertexShader = CompileShader(GLES30.GlVertexShader, vertexSource);
         int fragmentShader = CompileShader(GLES30.GlFragmentShader, fragmentSource);
         int program = GLES30.GlCreateProgram();
@@ -2215,9 +2396,23 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public int Width { get; }
         public int Height { get; }
         public Vector4 ClearColor { get; }
-        public string RefreshMode { get; }
-        public float RefreshInterval { get; }
-        private double LastRenderedSeconds { get; set; }
+        public string RefreshMode { get; private set; }
+        public float RefreshInterval { get; private set; }
+        public double LastRenderedSeconds { get; private set; }
+        public long EstimatedBytes => (long)Width * Height * 4L + (long)Width * Height * 4L;
+
+        public AndroidRenderTextureInfo ToInfo(RenderTextureSettings settings)
+        {
+            return new AndroidRenderTextureInfo(
+                settings.Id,
+                settings.Name,
+                Width,
+                Height,
+                RefreshMode,
+                RefreshInterval,
+                !double.IsNegativeInfinity(LastRenderedSeconds),
+                LastRenderedSeconds);
+        }
 
         public bool ShouldRefresh(double timeSeconds)
         {
@@ -2237,6 +2432,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public void MarkRendered(double timeSeconds) => LastRenderedSeconds = timeSeconds;
 
         public void RequestRefresh() => LastRenderedSeconds = double.NegativeInfinity;
+
+        public void ConfigureRefresh(string refreshMode, float intervalSeconds)
+        {
+            RefreshMode = refreshMode;
+            RefreshInterval = Math.Max(intervalSeconds, 0.001f);
+            RequestRefresh();
+        }
 
         public static RenderTargetGpu Create(RenderTextureSettings settings)
         {
@@ -2494,10 +2696,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public bool Additive => string.Equals(_settings.BlendMode, "additive", StringComparison.OrdinalIgnoreCase);
         public bool UseTextureColor => _settings.UseTextureColor;
         public float Opacity => _settings.Opacity;
+        public int RenderLimit { get; private set; }
 
-        public static ParticleGpu Create(RuntimeEntity runtimeEntity, int textureId)
+        public static ParticleGpu Create(RuntimeEntity runtimeEntity, int textureId, int maxParticleCount = 2000)
         {
-            int count = Math.Clamp(runtimeEntity.Definition.Particle.ParticleCount, 1, 2000);
+            int count = Math.Clamp(runtimeEntity.Definition.Particle.ParticleCount, 1, Math.Clamp(maxParticleCount, 1, 2000));
             int[] arrays = new int[1];
             int[] buffers = new int[1];
             GLES30.GlGenVertexArrays(1, arrays, 0);
@@ -2519,7 +2722,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return new ParticleGpu(runtimeEntity, textureId, arrays[0], buffers[0], count, bytes, data);
         }
 
-        public void UpdateGeometry(double timeSeconds, Vector3 right, Vector3 up)
+        public void UpdateGeometry(double timeSeconds, Vector3 right, Vector3 up, IReadOnlyList<ColliderGeometry> colliders, int renderLimit)
         {
             float speed = Math.Max(_settings.SimulationSpeed, 0.0f);
             Matrix4x4 transform = _runtimeEntity.TransformMatrix;
@@ -2530,6 +2733,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Vector4 startColor = _settings.StartColor.ToVector4();
             Vector4 endColor = _settings.EndColor.ToVector4();
             int offset = 0;
+            RenderLimit = Math.Clamp(renderLimit, 1, Count);
             float time = (float)Math.Max(timeSeconds, 0.0) * speed;
             for (int i = 0; i < Count; i++)
             {
@@ -2555,6 +2759,25 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 float width = size * Math.Max(_settings.WidthScale, 0.001f);
                 float height = size * Math.Max(_settings.HeightScale, 0.001f);
                 Vector4 color = Vector4.Lerp(startColor, endColor, normalizedAge);
+                if (i >= RenderLimit)
+                {
+                    color.W = 0.0f;
+                }
+                else if (_settings.EnableColliderCollision
+                    && TryResolveCollision(worldPosition, Math.Max(size * 0.5f, 0.01f), colliders, out Vector3 corrected, out Vector3 collisionNormal))
+                {
+                    worldPosition = corrected;
+                    if (_settings.KillOnColliderContact)
+                    {
+                        color.W = 0.0f;
+                    }
+                    else
+                    {
+                        Vector3 reflected = Vector3.Reflect(velocity, collisionNormal);
+                        velocity = reflected * Math.Clamp(_settings.CollisionBounce, 0.0f, 1.0f)
+                            * Math.Clamp(_settings.CollisionDamping, 0.0f, 1.0f);
+                    }
+                }
                 float rotation = (r2 * 2.0f - 1.0f) * MathF.PI + age * Lerp(_settings.MinRotationSpeedRadians, _settings.MaxRotationSpeedRadians, r3);
                 float cos = MathF.Cos(rotation);
                 float sin = MathF.Sin(rotation);
@@ -2577,7 +2800,57 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public void DrawCurrent()
         {
             GLES30.GlBindVertexArray(_vao);
-            GLES30.GlDrawArrays(GLES30.GlTriangles, 0, Count * 6);
+            GLES30.GlDrawArrays(GLES30.GlTriangles, 0, RenderLimit * 6);
+        }
+
+        private static bool TryResolveCollision(
+            Vector3 position,
+            float radius,
+            IReadOnlyList<ColliderGeometry> colliders,
+            out Vector3 corrected,
+            out Vector3 normal)
+        {
+            corrected = position;
+            normal = Vector3.UnitY;
+            foreach (ColliderGeometry collider in colliders)
+            {
+                Vector3 center = collider.Shape == "box" ? collider.Box.Center : collider.Capsule.Center;
+                float extent = collider.Shape == "box"
+                    ? collider.Box.HalfExtents.Length()
+                    : collider.Capsule.Radius + Vector3.Distance(collider.Capsule.Start, collider.Capsule.End) * 0.5f;
+                Vector3 delta = position - center;
+                float distance = delta.Length();
+                if (distance > extent + radius)
+                {
+                    continue;
+                }
+
+                if (collider.Shape == "box")
+                {
+                    Vector3 local = new(
+                        Vector3.Dot(delta, collider.Box.AxisX),
+                        Vector3.Dot(delta, collider.Box.AxisY),
+                        Vector3.Dot(delta, collider.Box.AxisZ));
+                    Vector3 penetration = collider.Box.HalfExtents + new Vector3(radius) - Vector3.Abs(local);
+                    if (penetration.X <= 0.0f || penetration.Y <= 0.0f || penetration.Z <= 0.0f)
+                    {
+                        continue;
+                    }
+                    int axis = penetration.X < penetration.Y
+                        ? (penetration.X < penetration.Z ? 0 : 2)
+                        : (penetration.Y < penetration.Z ? 1 : 2);
+                    normal = axis == 0 ? collider.Box.AxisX : axis == 1 ? collider.Box.AxisY : collider.Box.AxisZ;
+                    if (Vector3.Dot(normal, delta) < 0.0f) normal = -normal;
+                    float push = axis == 0 ? penetration.X : axis == 1 ? penetration.Y : penetration.Z;
+                    corrected = position + normal * push;
+                    return true;
+                }
+
+                normal = distance > 0.00001f ? Vector3.Normalize(delta) : Vector3.UnitY;
+                corrected = center + normal * (extent + radius);
+                return true;
+            }
+            return false;
         }
 
         private void WriteVertex(ref int offset, Vector3 position, float u, float v, Vector4 color)

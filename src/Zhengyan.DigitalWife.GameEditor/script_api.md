@@ -31,7 +31,8 @@
 | Physics / Grounding API | 物理 | ``RuntimeScenePhysics``, ``RuntimeRaycastHit``, ``scene.physics`` | [api_docs/21-physics-grounding.md](./api_docs/21-physics-grounding.md) |
 | Collision / Collider API | 物理 | ``RuntimeCollider``, ``RuntimeRaycastHit``, ``MeshCollider`` | [api_docs/20-collision.md](./api_docs/20-collision.md) |
 | NavMesh API | 物理 | ``RuntimeSceneNavigation``, ``RuntimeNavigationPath`` | [api_docs/29-navmesh.md](./api_docs/29-navmesh.md) |
-| 多相机与 Render Texture | 渲染 | ``RuntimeCamera``, ``RuntimeSpriteControl`` | [api_docs/21-render-texture.md](./api_docs/21-render-texture.md) |
+| 多相机与 Render Texture | 渲染 | ``RuntimeCamera``, ``RuntimeSpriteControl``, Android ``Services.GetRenderTexture`` | [api_docs/21-render-texture.md](./api_docs/21-render-texture.md) |
+| Android RenderTexture / GLES Shader | 渲染 | ``Services.RefreshRenderTexture``, ``Services.ConfigureRenderTexture``, ``AndroidGlesShaderContract`` | [api_docs/30-android-render-texture.md](./api_docs/30-android-render-texture.md) |
 | Save 存档 API | 存档 | ``RuntimeSaveStore``, ``scene.save`` | [api_docs/22-save.md](./api_docs/22-save.md) |
 | Network 网络通信 API | 网络 | ``RuntimeNetwork``, ``RuntimeHttpResponse``, ``RuntimeTcpMessage``, ``RuntimeUdpMessage`` | [api_docs/23-network.md](./api_docs/23-network.md) |
 | ASR API | 语音 | ``RuntimeAsr``, ``RuntimeAsrScriptEvent``, ``scene.asr`` | [api_docs/24-asr.md](./api_docs/24-asr.md) |

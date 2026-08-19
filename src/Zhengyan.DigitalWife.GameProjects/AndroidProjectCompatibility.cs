@@ -121,7 +121,7 @@ public static class AndroidProjectCompatibility
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_RENDER_TEXTURE_LIMITED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android supports basic per-camera RenderTexture targets, interval/manual refresh gating and rt: plane sampling; explicit script refresh and post-processing chains are not implemented yet.",
+                "Android supports per-camera RenderTexture targets, interval/manual refresh gating, rt: plane sampling and C# RefreshRenderTexture/GetRenderTexture APIs. Recursive post-processing remains budget-limited.",
                 scenePath));
         }
 
@@ -210,7 +210,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_PLANE_REFLECTION_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Textured plane mirror reflection is supported on Android through a 512x512 planar pass; when multiple reflective surfaces are enabled, the first reflective surface is rendered.",
+                    "Textured plane mirror reflection uses an independent GLES RenderTarget per reflective surface, with bounded one-level recursive sampling and quality-budget limits.",
                     scenePath,
                     entity.Name));
             }
@@ -224,7 +224,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_PARTICLE_WATER_DEGRADED",
                     AndroidCompatibilitySeverity.Warning,
-                    "Android probes enabled entity colliders against water surfaces and emits water_enter/water_ripple events; full continuous Bullet-world contacts remain limited to runtime PMX bodies.",
+                    "Android supports water events plus optional particle Box/Capsule collider collision with bounce, damping and kill-on-contact settings; high-frequency Bullet contact solving remains budget-limited.",
                     scenePath,
                     entity.Name));
             }
@@ -296,6 +296,22 @@ public static class AndroidProjectCompatibility
                 "ANDROID_OPENCL_IGNORED",
                 AndroidCompatibilitySeverity.Warning,
                 "OpenCL is not used by the Android GamePlayer. OpenGL ES uses CPU skinning until a mobile GPU path is available; Vulkan may use Vulkan Compute."));
+        }
+
+        AndroidQualitySettings quality = project.AndroidQuality;
+        if (quality.MaxParticleCount < 1 || quality.TextureMemoryBudgetMb < 16 || quality.RenderTargetMemoryBudgetMb < 8)
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_QUALITY_BUDGET_INVALID",
+                AndroidCompatibilitySeverity.Error,
+                "Android quality budgets are invalid. MaxParticleCount must be positive, TextureMemoryBudgetMb must be at least 16 and RenderTargetMemoryBudgetMb at least 8."));
+        }
+        if (quality.Profile is not ("auto" or "low" or "medium" or "high"))
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_QUALITY_PROFILE_UNKNOWN",
+                AndroidCompatibilitySeverity.Warning,
+                $"Unknown Android quality profile '{quality.Profile}'. The runtime will use automatic limits."));
         }
     }
 

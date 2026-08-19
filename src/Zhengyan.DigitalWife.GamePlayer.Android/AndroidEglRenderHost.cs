@@ -59,7 +59,11 @@ internal sealed class AndroidEglRenderHost : IDisposable
                 _projectDirectory,
                 RequestSceneChange,
                 (scene, name) => _audioHost?.Play(scene, name) == true,
-                name => _audioHost?.Stop(name) == true);
+                name => _audioHost?.Stop(name) == true,
+                name => _sceneRenderer?.RequestRenderTextureRefresh(name) == true,
+                (name, mode, interval) => _sceneRenderer?.ConfigureRenderTexture(name, mode, interval) == true,
+                name => _sceneRenderer?.GetRenderTexture(name),
+                () => _sceneRenderer?.GetRenderTextures() ?? []);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -367,7 +371,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
         _sceneRenderer = new AndroidPmxSceneRenderer();
         if (_sceneManager?.Current is { } runtimeScene)
         {
-            _sceneRenderer.Load(runtimeScene, _projectDirectory);
+            _sceneRenderer.Load(runtimeScene, _projectDirectory, _project?.AndroidQuality);
             _audioHost?.StartScene(runtimeScene);
             _scriptHost?.Start(runtimeScene);
         }

@@ -32,6 +32,9 @@ public sealed class GameProject
 
     public GameRuntimeSettings Runtime { get; set; } = new();
 
+    /// <summary>Android 运行时质量、资源预算和自适应降级策略。</summary>
+    public AndroidQualitySettings AndroidQuality { get; set; } = new();
+
     [JsonIgnore]
     public GameProjectScene Scene { get; set; } = new();
 }
@@ -330,6 +333,36 @@ public sealed class GameWindowSettings
     public string TimingMode { get; set; } = "time_synchronized";
 
     public int AntiAliasingSamples { get; set; } = 4;
+}
+
+public sealed class AndroidQualitySettings
+{
+    /// <summary>auto、low、medium 或 high。</summary>
+    public string Profile { get; set; } = "auto";
+
+    public int TargetFrameRate { get; set; } = 60;
+
+    public int MaxShadowMapSize { get; set; } = 1024;
+
+    public int MaxLocalShadowMapSize { get; set; } = 512;
+
+    public int MaxPointShadowMaps { get; set; } = 2;
+
+    public int MaxSpotShadowMaps { get; set; } = 2;
+
+    public int MaxReflectionSurfaces { get; set; } = 4;
+
+    public int MaxParticleCount { get; set; } = 2000;
+
+    public int TextureMemoryBudgetMb { get; set; } = 256;
+
+    public int RenderTargetMemoryBudgetMb { get; set; } = 96;
+
+    public int DrawCallBudget { get; set; } = 3500;
+
+    public bool DynamicDegradation { get; set; } = true;
+
+    public float DynamicFrameBudgetMs { get; set; } = 16.67f;
 }
 
 public sealed class DesktopSpriteTrayMenuItemSettings
@@ -1168,6 +1201,18 @@ public sealed class ParticleEntitySettings
     public bool EnableWaterInteraction { get; set; }
 
     public bool KillOnWaterContact { get; set; }
+
+    /// <summary>粒子与场景 Collider 的碰撞开关。默认关闭以保持旧工程行为。</summary>
+    public bool EnableColliderCollision { get; set; }
+
+    /// <summary>碰撞后沿法线反射的速度比例。</summary>
+    public float CollisionBounce { get; set; } = 0.25f;
+
+    /// <summary>碰撞后切向速度保留比例。</summary>
+    public float CollisionDamping { get; set; } = 0.85f;
+
+    /// <summary>粒子碰撞后是否立即销毁。</summary>
+    public bool KillOnColliderContact { get; set; }
 
     public int ParticleCount { get; set; } = 420;
 
