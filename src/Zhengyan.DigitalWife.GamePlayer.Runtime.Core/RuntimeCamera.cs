@@ -182,7 +182,8 @@ public sealed class RuntimeCamera
     private void ApplyOrbitInput(RuntimeCameraInput input)
     {
         Vector3 target = Settings.Target.ToVector3();
-        Vector3 offset = Settings.Position.ToVector3() - target;
+        Vector3 position = Settings.Position.ToVector3();
+        Vector3 offset = position - target;
         float radius = Math.Max(offset.Length(), 0.01f);
         float yaw = MathF.Atan2(offset.X, offset.Z);
         float pitch = MathF.Asin(Math.Clamp(offset.Y / radius, -1.0f, 1.0f));
@@ -194,7 +195,21 @@ public sealed class RuntimeCamera
             MathF.Sin(yaw) * MathF.Cos(pitch) * radius,
             MathF.Sin(pitch) * radius,
             MathF.Cos(yaw) * MathF.Cos(pitch) * radius);
-        Vector3 pan = new Vector3(input.PanDelta.X, -input.PanDelta.Y, 0.0f) * (radius * 0.0025f);
+        // Match the desktop OrbitCamera.Pan contract: gesture deltas are measured
+        // in the camera's local right/up plane, never in world X/Y.
+        Vector3 front = -Vector3.Normalize(offset);
+        Vector3 right = Vector3.Normalize(Vector3.Cross(front, Vector3.UnitY));
+        if (!IsFinite(right) || right.LengthSquared() < 1e-8f)
+        {
+            right = Vector3.UnitX;
+        }
+        Vector3 up = Vector3.Normalize(Vector3.Cross(right, front));
+        if (!IsFinite(up) || up.LengthSquared() < 1e-8f)
+        {
+            up = Vector3.UnitY;
+        }
+        float panScale = radius * 0.0025f;
+        Vector3 pan = (-right * input.PanDelta.X + up * -input.PanDelta.Y) * panScale;
         target += pan;
         Settings.Target = Vector3Dto.FromVector3(target);
         Settings.Position = Vector3Dto.FromVector3(target + nextOffset);

@@ -7,6 +7,7 @@ using Android.Views.InputMethods;
 using Android.Widget;
 using Android.Graphics;
 using Zhengyan.DigitalWife.GameProjects;
+using System.Threading.Tasks;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -48,6 +49,7 @@ public sealed class MainActivity : Activity
     private FrameLayout? _root;
     private EditText? _textEditor;
     private AndroidGameProjectLoadResult? _projectLoadResult;
+    private AndroidLoadingOverlayView? _loadingOverlay;
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
@@ -56,16 +58,11 @@ public sealed class MainActivity : Activity
         Window?.SetFlags(WindowManagerFlags.KeepScreenOn, WindowManagerFlags.KeepScreenOn);
         EnterImmersiveMode();
 
-        LoadProject(Intent);
-        _gameView = new AndroidGameSurfaceView(this, _projectLoadResult?.Project, _projectLoadResult?.ProjectDirectory);
-        _guiOverlay = new AndroidGuiOverlayView(this, _gameView);
-        _gameView.OverlayInvalidated += OnOverlayInvalidated;
-        _gameView.TextInputRequested += ShowTextEditor;
-        _gameView.ContextMenuRequested += ShowContextMenu;
         _root = new FrameLayout(this);
-        _root.AddView(_gameView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
-        _root.AddView(_guiOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        _loadingOverlay = new AndroidLoadingOverlayView(this);
+        _root.AddView(_loadingOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
         SetContentView(_root);
+        _ = LoadProjectAsync(Intent);
     }
 
     protected override void OnResume()
@@ -92,6 +89,7 @@ public sealed class MainActivity : Activity
         CloseTextEditor();
         _root = null;
         _guiOverlay = null;
+        _loadingOverlay = null;
         _gameView?.Dispose();
         _gameView = null;
         _projectLoadResult?.Dispose();
@@ -162,8 +160,7 @@ public sealed class MainActivity : Activity
     {
         base.OnNewIntent(intent);
         Intent = intent;
-        LoadProject(intent);
-        _gameView?.SetProject(_projectLoadResult?.Project, _projectLoadResult?.ProjectDirectory);
+        _ = LoadProjectAsync(intent);
     }
 
     public override void OnWindowFocusChanged(bool hasFocus)
@@ -204,20 +201,48 @@ public sealed class MainActivity : Activity
 #pragma warning restore CA1422
     }
 
-    private void LoadProject(Intent? intent)
+    private async Task LoadProjectAsync(Intent? intent)
     {
-        _projectLoadResult?.Dispose();
-        _projectLoadResult = AndroidGameProjectLoader.Load(this, intent);
-        if (!_projectLoadResult.Succeeded)
+        AndroidGameProjectLoadResult result = await Task.Run(() => AndroidGameProjectLoader.Load(this, intent));
+        if (IsFinishing || IsDestroyed)
         {
-            Toast.MakeText(this, _projectLoadResult.Error, ToastLength.Long)?.Show();
+            result.Dispose();
             return;
         }
 
-        Title = _projectLoadResult.Project?.Name ?? GetString(Resource.String.app_name);
-        if (_projectLoadResult.Compatibility is { CanPublish: false } report)
+        RunOnUiThread(() =>
         {
-            Toast.MakeText(this, report.ToStatusMessage(), ToastLength.Long)?.Show();
-        }
+            if (!result.Succeeded)
+            {
+                _loadingOverlay?.SetError(result.Error ?? "场景加载失败");
+                Toast.MakeText(this, result.Error, ToastLength.Long)?.Show();
+                result.Dispose();
+                return;
+            }
+
+            _projectLoadResult?.Dispose();
+            _projectLoadResult = result;
+            Title = result.Project?.Name ?? GetString(Resource.String.app_name);
+            if (_gameView is null)
+            {
+                _gameView = new AndroidGameSurfaceView(this, result.Project, result.ProjectDirectory);
+                _guiOverlay = new AndroidGuiOverlayView(this, _gameView);
+                _gameView.OverlayInvalidated += OnOverlayInvalidated;
+                _gameView.TextInputRequested += ShowTextEditor;
+                _gameView.ContextMenuRequested += ShowContextMenu;
+                _root?.AddView(_gameView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+                _root?.AddView(_guiOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+                _gameView.ResumeRendering();
+            }
+            else
+            {
+                _gameView.SetProject(result.Project, result.ProjectDirectory);
+            }
+            if (result.Compatibility is { CanPublish: false } report)
+            {
+                Toast.MakeText(this, report.ToStatusMessage(), ToastLength.Long)?.Show();
+            }
+            _loadingOverlay?.SetVisibility(ViewStates.Gone);
+        });
     }
 }

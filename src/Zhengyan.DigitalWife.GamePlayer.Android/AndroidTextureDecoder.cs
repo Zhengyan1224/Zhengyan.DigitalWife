@@ -7,6 +7,7 @@ internal enum AndroidTextureAlphaMode
 {
     Opaque = 1,
     Blend = 2,
+    ColorMask = 3,
     BlendMaskColor = 4
 }
 
@@ -16,7 +17,9 @@ internal readonly record struct AndroidDecodedTexture(
     int Height,
     AndroidTextureAlphaMode AlphaMode)
 {
-    public bool HasSoftAlpha => AlphaMode != AndroidTextureAlphaMode.Opaque;
+    // Only blended materials need late sorting and disabled depth writes.
+    // Color-mask textures are alpha-tested and must stay in the opaque pass.
+    public bool HasSoftAlpha => AlphaMode is AndroidTextureAlphaMode.Blend or AndroidTextureAlphaMode.BlendMaskColor;
 }
 
 internal static class AndroidTextureDecoder
@@ -51,6 +54,7 @@ internal static class AndroidTextureDecoder
 
     private static AndroidTextureAlphaMode DetermineAlphaMode(ReadOnlySpan<byte> rgba)
     {
+        bool hasTransparentPixels = false;
         int nonZeroAlphaPixels = 0;
         int softAlphaPixels = 0;
         for (int i = 3; i < rgba.Length; i += 4)
@@ -58,12 +62,16 @@ internal static class AndroidTextureDecoder
             byte alpha = rgba[i];
             if (alpha == 0)
             {
+                hasTransparentPixels = true;
                 continue;
             }
             nonZeroAlphaPixels++;
             if (alpha < byte.MaxValue) softAlphaPixels++;
         }
-        if (softAlphaPixels == 0) return AndroidTextureAlphaMode.Opaque;
+        if (softAlphaPixels == 0)
+        {
+            return hasTransparentPixels ? AndroidTextureAlphaMode.ColorMask : AndroidTextureAlphaMode.Opaque;
+        }
         return softAlphaPixels / (float)Math.Max(nonZeroAlphaPixels, 1) >= 0.25f
             ? AndroidTextureAlphaMode.BlendMaskColor
             : AndroidTextureAlphaMode.Blend;

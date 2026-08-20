@@ -1526,11 +1526,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform1i(_planarReflectionTextureLocation, 7);
         GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
         GLES30.GlUniform1i(_unlitSurfaceLocation, 0);
-        // The reflected camera sees the opposite half-space from the source
-        // camera. Keep that half-space in the reflection pass so geometry is
-        // not drawn through the mirror plane.
-        Vector3 clipNormal = -planeNormal;
-        float planeOffset = -Vector3.Dot(clipNormal, planePoint) + 0.0025f;
+        // The reflected camera is below the surface, but the reflected image is
+        // made from geometry on the source (above-surface) side. Keep that side
+        // and discard geometry behind the reflection plane.
+        Vector3 clipNormal = planeNormal;
+        float planeOffset = -Vector3.Dot(clipNormal, planePoint);
         GLES30.GlUniform4f(_reflectionClipPlaneLocation, clipNormal.X, clipNormal.Y, clipNormal.Z, planeOffset);
         GLES30.GlUniformMatrix4fv(_viewLocation, 1, false, ToGlArray(view), 0);
         GLES30.GlUniform3f(_cameraPositionLocation, reflectedPosition.X, reflectedPosition.Y, reflectedPosition.Z);
@@ -3855,6 +3855,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             {
                 textureAlpha = textureColor.a;
             }
+            else if (uHasTexture != 0 && uTextureAlphaMode == 3)
+            {
+                // PMX color-mask materials (eyes, mouth, hair cards) are
+                // alpha-tested and must keep depth writes enabled.
+                if (textureColor.a < 0.5)
+                {
+                    discard;
+                }
+                textureAlpha = 1.0;
+            }
             else if (uHasTexture != 0 && uTextureAlphaMode == 4)
             {
                 textureAlpha = 1.0 - pow(1.0 - textureColor.a, 1.5);
@@ -3877,6 +3887,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (uHasPlanarReflection != 0 && vPlanarReflectionPosition.w > 0.0)
             {
                 vec2 reflectionUv = vPlanarReflectionPosition.xy / vPlanarReflectionPosition.w * 0.5 + 0.5;
+                reflectionUv.y = 1.0 - reflectionUv.y;
                 if (all(greaterThanEqual(reflectionUv, vec2(0.0)))
                     && all(lessThanEqual(reflectionUv, vec2(1.0))))
                 {
