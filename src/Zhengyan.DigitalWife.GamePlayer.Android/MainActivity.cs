@@ -83,6 +83,7 @@ public sealed class MainActivity : Activity
         if (_gameView is not null)
         {
             _gameView.OverlayInvalidated -= OnOverlayInvalidated;
+            _gameView.FirstFramePresented -= OnFirstFramePresented;
             _gameView.TextInputRequested -= ShowTextEditor;
             _gameView.ContextMenuRequested -= ShowContextMenu;
         }
@@ -203,6 +204,7 @@ public sealed class MainActivity : Activity
 
     private async Task LoadProjectAsync(Intent? intent)
     {
+        _loadingOverlay?.ShowLoading();
         AndroidGameProjectLoadResult result = await Task.Run(() => AndroidGameProjectLoader.Load(this, intent));
         if (IsFinishing || IsDestroyed)
         {
@@ -228,10 +230,12 @@ public sealed class MainActivity : Activity
                 _gameView = new AndroidGameSurfaceView(this, result.Project, result.ProjectDirectory);
                 _guiOverlay = new AndroidGuiOverlayView(this, _gameView);
                 _gameView.OverlayInvalidated += OnOverlayInvalidated;
+                _gameView.FirstFramePresented += OnFirstFramePresented;
                 _gameView.TextInputRequested += ShowTextEditor;
                 _gameView.ContextMenuRequested += ShowContextMenu;
                 _root?.AddView(_gameView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
                 _root?.AddView(_guiOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+                _loadingOverlay?.BringToFront();
                 _gameView.ResumeRendering();
             }
             else
@@ -242,7 +246,17 @@ public sealed class MainActivity : Activity
             {
                 Toast.MakeText(this, report.ToStatusMessage(), ToastLength.Long)?.Show();
             }
-            _loadingOverlay?.SetVisibility(ViewStates.Gone);
+        });
+    }
+
+    private void OnFirstFramePresented()
+    {
+        RunOnUiThread(() =>
+        {
+            if (_loadingOverlay is not null)
+            {
+                _loadingOverlay.Visibility = ViewStates.Gone;
+            }
         });
     }
 }

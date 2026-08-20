@@ -12,6 +12,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     private bool _hasSurface;
     private bool _isResumed;
     private bool _frameScheduled;
+    private bool _firstFramePresented;
     private readonly GestureDetector _gestureDetector;
 
     public AndroidGameSurfaceView(Context context, GameProject? project, string? projectDirectory)
@@ -57,6 +58,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
     public void SetProject(GameProject? project, string? projectDirectory)
     {
+        _firstFramePresented = false;
         _renderHost.SetProject(project, projectDirectory);
     }
 
@@ -90,11 +92,17 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
         Input = _touchState.BeginFrame(Width, Height);
         _renderHost.Render(frameTimeNanos, Input);
+        if (!_firstFramePresented)
+        {
+            _firstFramePresented = true;
+            FirstFramePresented?.Invoke();
+        }
         OverlayInvalidated?.Invoke();
         ScheduleFrame();
     }
 
     public event Action? OverlayInvalidated;
+    public event Action? FirstFramePresented;
     public event Action<GuiControlSettings, LayoutRect>? TextInputRequested;
     public event Action<ContextMenuSettings, float, float>? ContextMenuRequested;
 

@@ -3887,7 +3887,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (uHasPlanarReflection != 0 && vPlanarReflectionPosition.w > 0.0)
             {
                 vec2 reflectionUv = vPlanarReflectionPosition.xy / vPlanarReflectionPosition.w * 0.5 + 0.5;
-                reflectionUv.y = 1.0 - reflectionUv.y;
                 if (all(greaterThanEqual(reflectionUv, vec2(0.0)))
                     && all(lessThanEqual(reflectionUv, vec2(1.0))))
                 {
@@ -4258,7 +4257,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (uHasReflectionTexture != 0 && uMirrorReflectionEnabled != 0 && vReflectionPosition.w > 0.0)
             {
                 vec2 reflectionUv = vReflectionPosition.xy / vReflectionPosition.w * 0.5 + 0.5;
-                reflectionUv.y = 1.0 - reflectionUv.y;
                 if (all(greaterThanEqual(reflectionUv, vec2(0.0))) && all(lessThanEqual(reflectionUv, vec2(1.0))))
                 {
                     vec3 planar = texture(uReflectionTexture, reflectionUv).rgb;

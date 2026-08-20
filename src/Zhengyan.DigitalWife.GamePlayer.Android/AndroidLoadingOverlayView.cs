@@ -22,6 +22,14 @@ internal sealed class AndroidLoadingOverlayView : View
         Invalidate();
     }
 
+    public void ShowLoading()
+    {
+        _message = "正在加载场景...";
+        Visibility = ViewStates.Visible;
+        BringToFront();
+        Invalidate();
+    }
+
     protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);

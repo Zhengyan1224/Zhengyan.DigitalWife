@@ -60,13 +60,17 @@ internal static class AndroidTextureDecoder
         for (int i = 3; i < rgba.Length; i += 4)
         {
             byte alpha = rgba[i];
-            if (alpha == 0)
+            // Texture conversion and block compression commonly turn 0/255 into
+            // values a few steps inside the range. Treat those endpoint values
+            // as fully transparent/opaque so ordinary PMX materials keep depth
+            // writes enabled instead of being misclassified as blended.
+            if (alpha <= 4)
             {
                 hasTransparentPixels = true;
                 continue;
             }
             nonZeroAlphaPixels++;
-            if (alpha < byte.MaxValue) softAlphaPixels++;
+            if (alpha < 251) softAlphaPixels++;
         }
         if (softAlphaPixels == 0)
         {
