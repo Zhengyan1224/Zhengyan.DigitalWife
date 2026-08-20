@@ -687,6 +687,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         RenderDirectionalShadow(scene);
         RenderPointShadow(scene);
         RenderSpotShadow(scene);
+        EnsureReflectionTargetAspect(width, height);
         RenderWaterReflection(scene, timeSeconds);
 
         foreach (RuntimeCamera camera in scene.RenderCameras)
@@ -1435,6 +1436,58 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _reflectionSurfaceId = null;
     }
 
+    private void EnsureReflectionTargetAspect(int viewportWidth, int viewportHeight)
+    {
+        if (_reflectionTargets.Count == 0)
+        {
+            return;
+        }
+
+        float aspect = Math.Max(viewportWidth, 1) / (float)Math.Max(viewportHeight, 1);
+        int longestSide = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 256 : 512;
+        int targetWidth;
+        int targetHeight;
+        if (aspect >= 1.0f)
+        {
+            targetWidth = longestSide;
+            targetHeight = Math.Max(16, (int)MathF.Round(longestSide / aspect));
+        }
+        else
+        {
+            targetWidth = Math.Max(16, (int)MathF.Round(longestSide * aspect));
+            targetHeight = longestSide;
+        }
+
+        foreach (string surfaceId in _reflectionTargets.Keys.ToArray())
+        {
+            RenderTargetGpu current = _reflectionTargets[surfaceId];
+            if (current.Width == targetWidth && current.Height == targetHeight)
+            {
+                continue;
+            }
+
+            try
+            {
+                RenderTargetGpu replacement = RenderTargetGpu.Create(new RenderTextureSettings
+                {
+                    Id = "__android_reflection_" + surfaceId,
+                    Name = "__android_reflection_" + surfaceId,
+                    Width = targetWidth,
+                    Height = targetHeight,
+                    RefreshMode = "every_frame",
+                    ClearColor = Vector4Dto.FromVector4(current.ClearColor)
+                });
+                _reflectionTargets[surfaceId] = replacement;
+                _estimatedGpuBytes += replacement.EstimatedBytes - current.EstimatedBytes;
+                current.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, $"Android reflection target '{surfaceId}' could not be resized: {ex.Message}");
+            }
+        }
+    }
+
     private void RenderSingleReflection(
         RuntimeScene scene,
         RuntimeCamera camera,
@@ -1648,7 +1701,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         // Textured planes and mirrors are intentionally visible from both sides,
         // matching the desktop TexturedPlaneComponent contract.
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-        GLES30.GlDepthMask(plane.Tint.W >= 0.999f);
+        // Match TexturedPlaneComponent on desktop: the mirror must occlude
+        // geometry behind it even when its tint is partially transparent.
+        GLES30.GlDepthMask(true);
         GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 6);
         GLES30.GlDepthMask(true);
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
@@ -3437,11 +3492,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             int toonAddLocation)
         {
             GLES30.GlBindVertexArray(_vao);
-            foreach (MaterialRange material in _materials.OrderBy(material =>
-                material.RequiresBlending(GetMaterialState(material)) ? 1 : 0))
+            foreach (MaterialRange material in _materials)
             {
                 PmxPoseEvaluator.MaterialState state = GetMaterialState(material);
-                GLES30.GlDepthMask(!material.RequiresBlending(state));
+                // Match the desktop PMX main pass. MMD models depend on material
+                // depth writes for face/eye/mouth ordering and for occlusion
+                // between independently drawn PMX entities.
+                GLES30.GlDepthMask(true);
                 GLES30.GlUniform4f(diffuseLocation, state.Diffuse.X, state.Diffuse.Y, state.Diffuse.Z, state.Diffuse.W);
                 GLES30.GlUniform3f(ambientLocation, state.Ambient.X, state.Ambient.Y, state.Ambient.Z);
                 GLES30.GlUniform3f(specularLocation, state.Specular.X, state.Specular.Y, state.Specular.Z);
