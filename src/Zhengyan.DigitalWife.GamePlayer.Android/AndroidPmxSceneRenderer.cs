@@ -837,12 +837,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (_lastFrameGpuEstimateMs > budget * 1.15)
             {
                 _adaptiveParticleLimit = Math.Max(32, (int)(_adaptiveParticleLimit * 0.85f));
-                if (_adaptiveParticleLimit <= 96) _adaptiveReflections = false;
             }
             else if (_lastFrameGpuEstimateMs < budget * 0.70 && _adaptiveParticleLimit < _quality.MaxParticleCount)
             {
                 _adaptiveParticleLimit = Math.Min(_quality.MaxParticleCount, _adaptiveParticleLimit + 32);
-                if (_quality.MaxReflectionSurfaces > 0) _adaptiveReflections = true;
             }
         }
     }
@@ -1444,7 +1442,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         float aspect = Math.Max(viewportWidth, 1) / (float)Math.Max(viewportHeight, 1);
-        int longestSide = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 256 : 512;
+        // Reflections are sampled as a normal screen-space texture. A 512px
+        // target is visibly jagged on phone displays, especially on the mirror
+        // plane close to the camera; use a 1024px target for the normal profile.
+        int longestSide = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 512 : 1024;
         int targetWidth;
         int targetHeight;
         if (aspect >= 1.0f)
@@ -1683,13 +1684,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform4f(_sphereAddLocation, 0.0f, 0.0f, 0.0f, 0.0f);
         GLES30.GlUniform4f(_toonMultiplyLocation, 1.0f, 1.0f, 1.0f, 1.0f);
         GLES30.GlUniform4f(_toonAddLocation, 0.0f, 0.0f, 0.0f, 0.0f);
-        GLES30.GlUniform1i(_receiveShadowLocation, plane.ReceivesShadows ? 1 : 0);
-        GLES30.GlUniform1i(_shadowModeLocation, 0);
-        GLES30.GlUniform1i(_unlitSurfaceLocation, 1);
         RenderTargetGpu? reflectionTarget = null;
         Matrix4x4 reflectionMatrix = Matrix4x4.Identity;
         bool hasReflection = plane.MirrorReflectionEnabled
             && TryGetReflection(plane.RuntimeEntity.Id, out reflectionTarget, out reflectionMatrix);
+        // A mirror surface already contains the reflected lighting result. Applying
+        // the scene shadow map to it a second time makes the reflection much darker
+        // than the desktop renderer.
+        GLES30.GlUniform1i(_receiveShadowLocation, plane.ReceivesShadows && !hasReflection ? 1 : 0);
+        GLES30.GlUniform1i(_shadowModeLocation, 0);
+        GLES30.GlUniform1i(_unlitSurfaceLocation, 1);
         GLES30.GlUniform1i(_hasPlanarReflectionLocation, hasReflection ? 1 : 0);
         GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(reflectionMatrix), 0);
         GLES30.GlUniform1f(_planarReflectionStrengthLocation, plane.ReflectionStrength);
@@ -1718,13 +1722,22 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return;
         }
 
-        RuntimeCamera camera = scene.MainCamera;
-        Vector3 center = camera.Settings.Target.ToVector3();
         Vector3 direction = NormalizeOrDefault(scene.Definition.Lighting.LightDirection.ToVector3(), new Vector3(-0.5f, -1.0f, -0.5f));
-        Vector3 lightPosition = center - direction * 48.0f;
+        Vector3 boundsMin = new(float.PositiveInfinity);
+        Vector3 boundsMax = new(float.NegativeInfinity);
+        bool hasBounds = false;
+        foreach (PmxGpuModel model in _models)
+        {
+            model.EncapsulateWorldBounds(ref boundsMin, ref boundsMax, ref hasBounds);
+        }
+        Vector3 center = hasBounds ? (boundsMin + boundsMax) * 0.5f : scene.MainCamera.Settings.Target.ToVector3();
+        float radius = hasBounds ? MathF.Max(Vector3.Distance(boundsMin, boundsMax) * 0.5f, 8.0f) : 24.0f;
+        const float depthPadding = 12.0f;
+        Vector3 lightPosition = center - direction * (radius + depthPadding);
         Vector3 up = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
         Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightPosition, center, up);
-        Matrix4x4 lightProjection = CreateOrthographicProjection(52.0f, 52.0f, 0.1f, 120.0f);
+        float extent = radius + 2.0f;
+        Matrix4x4 lightProjection = CreateOrthographicProjection(extent * 2.0f, extent * 2.0f, 0.1f, radius * 2.0f + depthPadding * 2.0f);
         _lightViewProjection = lightView * lightProjection;
 
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _shadowFramebuffer);
@@ -1866,12 +1879,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         ];
         ReadOnlySpan<Vector3> ups =
         [
-            Vector3.UnitY,
-            Vector3.UnitY,
-            -Vector3.UnitZ,
+            -Vector3.UnitY,
+            -Vector3.UnitY,
             Vector3.UnitZ,
-            Vector3.UnitY,
-            Vector3.UnitY
+            -Vector3.UnitZ,
+            -Vector3.UnitY,
+            -Vector3.UnitY
         ];
         int[] faces =
         [
@@ -3181,6 +3194,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         private readonly bool _relationBindComponentTransform;
         private readonly RuntimeEntity _runtimeEntity;
         private readonly float[] _boneMatrices = new float[MaxGpuBones * 16];
+        private readonly Vector3 _localBoundsMin;
+        private readonly Vector3 _localBoundsMax;
         private bool _disposed;
 
         private PmxGpuModel(
@@ -3216,6 +3231,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             _enableEdge = enableEdge;
             _relationBindComponentTransform = relation.BindComponentTransform;
             _runtimeEntity = runtimeEntity;
+            _localBoundsMin = new Vector3(float.PositiveInfinity);
+            _localBoundsMax = new Vector3(float.NegativeInfinity);
+            for (int i = 0; i < vertices.Length; i += VertexFloatCount)
+            {
+                Vector3 position = new(vertices[i], vertices[i + 1], vertices[i + 2]);
+                _localBoundsMin = Vector3.Min(_localBoundsMin, position);
+                _localBoundsMax = Vector3.Max(_localBoundsMax, position);
+            }
             Transform = transform;
             EntityId = entityId;
             EntityName = entityName;
@@ -3237,6 +3260,23 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public bool CastsShadows => _runtimeEntity.Definition.EnableShadow;
         public bool ReceivesShadows => _runtimeEntity.Definition.ReceiveShadow;
         public bool UsesToonReceivedShadow => string.Equals(_runtimeEntity.Definition.ReceiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase);
+
+        public void EncapsulateWorldBounds(ref Vector3 minimum, ref Vector3 maximum, ref bool hasBounds)
+        {
+            for (int x = 0; x <= 1; x++)
+            for (int y = 0; y <= 1; y++)
+            for (int z = 0; z <= 1; z++)
+            {
+                Vector3 corner = new(
+                    x == 0 ? _localBoundsMin.X : _localBoundsMax.X,
+                    y == 0 ? _localBoundsMin.Y : _localBoundsMax.Y,
+                    z == 0 ? _localBoundsMin.Z : _localBoundsMax.Z);
+                Vector3 world = Vector3.Transform(corner, Transform);
+                minimum = Vector3.Min(minimum, world);
+                maximum = Vector3.Max(maximum, world);
+                hasBounds = true;
+            }
+        }
 
         public void SyncTransform()
         {
@@ -3509,15 +3549,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 GLES30.GlUniform4f(sphereAddLocation, state.SphereTextureAdd.X, state.SphereTextureAdd.Y, state.SphereTextureAdd.Z, state.SphereTextureAdd.W);
                 GLES30.GlUniform4f(toonMultiplyLocation, state.ToonTextureMultiply.X, state.ToonTextureMultiply.Y, state.ToonTextureMultiply.Z, state.ToonTextureMultiply.W);
                 GLES30.GlUniform4f(toonAddLocation, state.ToonTextureAdd.X, state.ToonTextureAdd.Y, state.ToonTextureAdd.Z, state.ToonTextureAdd.W);
-                if (material.DrawMode.HasFlag(PmxDrawModeFlags.BothFace))
-                {
-                    GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-                }
-                else
-                {
-                    GLES30.GlEnable(0x0B44); // GL_CULL_FACE
-                    GLES30.GlCullFace(GLES30.GlBack);
-                }
+                // PMX positions are mirrored on Z for the Android coordinate
+                // contract. Keep both sides visible here because a number of
+                // classroom meshes contain thin/back-facing parts whose winding
+                // is not consistent after that conversion (notably the piano).
+                GLES30.GlDisable(0x0B44); // GL_CULL_FACE
                 GLES30.GlActiveTexture(GLES30.GlTexture0);
                 GLES30.GlBindTexture(GLES30.GlTexture2d, material.TextureId);
                 GLES30.GlUniform1i(hasTextureLocation, material.TextureId == 0 ? 0 : 1);
@@ -3874,6 +3910,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform int uReceiveShadow;
         uniform int uShadowMode;
         uniform vec4 uShadowColor;
+        uniform mat4 uLightViewProjection;
         uniform mat4 uSpotShadowMatrix;
         uniform sampler2D uSpotShadowMap;
         uniform int uHasSpotShadow;
@@ -3963,7 +4000,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             float shadowVisibility = 1.0;
             if (uHasShadowMap != 0 && uReceiveShadow != 0 && vShadowPosition.w > 0.0)
             {
-                vec3 shadowCoord = vShadowPosition.xyz / vShadowPosition.w;
+                float directionalNdotL = max(dot(normal, normalize(-uLightDirection)), 0.0);
+                vec3 directionalShadowPosition = vWorldPosition + normal * 0.012 * (2.0 - directionalNdotL);
+                vec4 directionalShadowClip = uLightViewProjection * vec4(directionalShadowPosition, 1.0);
+                vec3 shadowCoord = directionalShadowClip.xyz / max(abs(directionalShadowClip.w), 0.0001);
                 shadowCoord = shadowCoord * 0.5 + 0.5;
                 if (all(greaterThanEqual(shadowCoord.xy, vec2(0.0)))
                     && all(lessThanEqual(shadowCoord.xy, vec2(1.0)))
@@ -3976,7 +4016,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                         for (int x = -1; x <= 0; x++)
                         {
                             float stored = texture(uShadowMap, shadowCoord.xy + vec2(x, y) * texel).r;
-                            lit += shadowCoord.z - 0.0015 <= stored ? 1.0 : 0.0;
+                            lit += shadowCoord.z - 0.0018 * (1.0 + (1.0 - directionalNdotL) * 2.0) <= stored ? 1.0 : 0.0;
                         }
                     }
                     shadowVisibility = lit * 0.25;
@@ -4012,15 +4052,17 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 float pointShadowVisibility = 1.0;
                 if (i == 0 && uHasPointShadow != 0 && uReceiveShadow != 0)
                 {
-                    vec3 shadowDirection = normalize(-toLight);
-                    float currentDepth = distanceToLight / max(uPointShadowLightPositionRange.w, 0.001);
+                    vec3 shadowWorldPosition = vWorldPosition + normal * 0.0075 * (2.0 - ndotl);
+                    vec3 shadowVector = shadowWorldPosition - uPointShadowLightPositionRange.xyz;
+                    vec3 shadowDirection = normalize(shadowVector);
+                    float currentDepth = length(shadowVector) / max(uPointShadowLightPositionRange.w, 0.001);
                     vec3 texelDirection = vec3(0.012, 0.0, 0.0);
                     float lit = 0.0;
-                    lit += currentDepth - 0.002 <= texture(uPointShadowMap, shadowDirection + texelDirection).r ? 1.0 : 0.0;
-                    lit += currentDepth - 0.002 <= texture(uPointShadowMap, shadowDirection - texelDirection).r ? 1.0 : 0.0;
+                    lit += currentDepth - 0.000075 <= texture(uPointShadowMap, shadowDirection + texelDirection).r ? 1.0 : 0.0;
+                    lit += currentDepth - 0.000075 <= texture(uPointShadowMap, shadowDirection - texelDirection).r ? 1.0 : 0.0;
                     texelDirection = vec3(0.0, 0.012, 0.0);
-                    lit += currentDepth - 0.002 <= texture(uPointShadowMap, shadowDirection + texelDirection).r ? 1.0 : 0.0;
-                    lit += currentDepth - 0.002 <= texture(uPointShadowMap, shadowDirection - texelDirection).r ? 1.0 : 0.0;
+                    lit += currentDepth - 0.000075 <= texture(uPointShadowMap, shadowDirection + texelDirection).r ? 1.0 : 0.0;
+                    lit += currentDepth - 0.000075 <= texture(uPointShadowMap, shadowDirection - texelDirection).r ? 1.0 : 0.0;
                     pointShadowVisibility = lit * 0.25;
                     if (uShadowMode != 0)
                     {
@@ -4068,7 +4110,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                             for (int x = -1; x <= 0; x++)
                             {
                                 float stored = texture(uSpotShadowMap, shadowCoord.xy + vec2(x, y) * texel).r;
-                                lit += shadowCoord.z - 0.0015 <= stored ? 1.0 : 0.0;
+                                lit += shadowCoord.z - 0.005 <= stored ? 1.0 : 0.0;
                             }
                         }
                         spotShadowVisibility = lit * 0.25;
@@ -4087,7 +4129,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                         vec2 texel = vec2(1.0 / 512.0);
                         float lit = 0.0;
                         for (int y = -1; y <= 0; y++) for (int x = -1; x <= 0; x++)
-                            lit += shadowCoord.z - 0.0015 <= texture(uSpotShadowMap2, shadowCoord.xy + vec2(x, y) * texel).r ? 1.0 : 0.0;
+                            lit += shadowCoord.z - 0.005 <= texture(uSpotShadowMap2, shadowCoord.xy + vec2(x, y) * texel).r ? 1.0 : 0.0;
                         spotShadowVisibility = lit * 0.25;
                         if (uShadowMode != 0) spotShadowVisibility = spotShadowVisibility >= 0.5 ? 1.0 : 0.0;
                     }
