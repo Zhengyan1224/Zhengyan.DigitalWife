@@ -1,5 +1,6 @@
 using Pfim;
 using StbImageSharp;
+using System.Buffers.Binary;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -31,6 +32,16 @@ internal static class AndroidTextureDecoder
             using IImage image = Pfimage.FromFile(path);
             byte[] rgba = ConvertPfimToRgba(image);
             return new AndroidDecodedTexture(rgba, image.Width, image.Height, DetermineAlphaMode(rgba));
+        }
+
+        if (Path.GetExtension(path).Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+            && TryLoadBitfieldBmp(path, out byte[]? bitfieldRgba, out int bitfieldWidth, out int bitfieldHeight))
+        {
+            return new AndroidDecodedTexture(
+                bitfieldRgba,
+                bitfieldWidth,
+                bitfieldHeight,
+                DetermineAlphaMode(bitfieldRgba));
         }
 
         ImageResult imageResult = ImageResult.FromMemory(File.ReadAllBytes(path), ColorComponents.RedGreenBlueAlpha);
@@ -135,6 +146,99 @@ internal static class AndroidTextureDecoder
             }
         }
         return rgba;
+    }
+
+    private static bool TryLoadBitfieldBmp(
+        string path,
+        out byte[] rgba,
+        out int width,
+        out int height)
+    {
+        rgba = [];
+        width = 0;
+        height = 0;
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(path);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (bytes.Length < 70 || bytes[0] != (byte)'B' || bytes[1] != (byte)'M')
+        {
+            return false;
+        }
+
+        int pixelOffset = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(10, 4));
+        int headerSize = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(14, 4));
+        int bmpWidth = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(18, 4));
+        int bmpHeight = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(22, 4));
+        ushort bitsPerPixel = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(28, 2));
+        uint compression = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(30, 4));
+        if (bmpWidth <= 0 || bmpHeight == 0 || bitsPerPixel != 32 || compression != 3
+            || headerSize < 56 || pixelOffset < 0 || bytes.Length < pixelOffset)
+        {
+            return false;
+        }
+
+        uint redMask = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(54, 4));
+        uint greenMask = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(58, 4));
+        uint blueMask = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(62, 4));
+        uint alphaMask = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(66, 4));
+        if (redMask == 0 || greenMask == 0 || blueMask == 0 || alphaMask == 0)
+        {
+            return false;
+        }
+
+        int absHeight = Math.Abs(bmpHeight);
+        int rowStride = checked(bmpWidth * 4);
+        if (pixelOffset > bytes.Length - checked(rowStride * absHeight))
+        {
+            return false;
+        }
+
+        width = bmpWidth;
+        height = absHeight;
+        rgba = new byte[checked(width * height * 4)];
+        bool topDown = bmpHeight < 0;
+        for (int y = 0; y < height; y++)
+        {
+            int sourceY = topDown ? y : height - 1 - y;
+            int sourceRow = pixelOffset + sourceY * rowStride;
+            int destinationRow = y * width * 4;
+            for (int x = 0; x < width; x++)
+            {
+                uint packed = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(sourceRow + x * 4, 4));
+                int destination = destinationRow + x * 4;
+                rgba[destination] = ExtractBitfieldByte(packed, redMask);
+                rgba[destination + 1] = ExtractBitfieldByte(packed, greenMask);
+                rgba[destination + 2] = ExtractBitfieldByte(packed, blueMask);
+                rgba[destination + 3] = ExtractBitfieldByte(packed, alphaMask);
+            }
+        }
+        return true;
+    }
+
+    private static byte ExtractBitfieldByte(uint packed, uint mask)
+    {
+        if (mask == 0)
+        {
+            return byte.MaxValue;
+        }
+
+        int shift = 0;
+        uint normalizedMask = mask;
+        while ((normalizedMask & 1) == 0)
+        {
+            normalizedMask >>= 1;
+            shift++;
+        }
+
+        uint value = (packed & mask) >> shift;
+        return (byte)((value * 255u + normalizedMask / 2u) / normalizedMask);
     }
 
     private static void ConvertPacked16(
