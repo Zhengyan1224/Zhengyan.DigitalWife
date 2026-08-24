@@ -2315,7 +2315,56 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             string key = normalized[3..].Trim();
             return _renderTargets.TryGetValue(key, out RenderTargetGpu? target) ? target.ColorTexture : 0;
         }
-        return LoadTexture(GameProjectPath.ToAbsolute(projectDirectory, normalized));
+        string projectPath = GameProjectPath.ToAbsolute(projectDirectory, normalized);
+        if (File.Exists(ResolveCaseInsensitivePath(projectPath)))
+        {
+            return LoadTexture(projectPath);
+        }
+
+        // Desktop particle/material loading also searches the engine's bundled
+        // Resources tree for short names such as "Sakura.png".  Android scene
+        // packages use the same project data, so keep that fallback here.
+        string? bundledPath = TryResolveBundledResource(normalized);
+        return bundledPath is null ? 0 : LoadTexture(bundledPath);
+    }
+
+    private static string? TryResolveBundledResource(string path)
+    {
+        string normalized = path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+        string fileName = Path.GetFileName(normalized);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return null;
+        }
+
+        foreach (string baseDirectory in EnumerateBundledBaseDirectories())
+        {
+            string[] candidates =
+            [
+                Path.Combine(baseDirectory, "Resources", "Particles", fileName),
+                Path.Combine(baseDirectory, "Resources", normalized),
+                Path.Combine(baseDirectory, fileName)
+            ];
+            foreach (string candidate in candidates)
+            {
+                string resolved = ResolveCaseInsensitivePath(candidate);
+                if (File.Exists(resolved))
+                {
+                    return resolved;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateBundledBaseDirectories()
+    {
+        string? current = AppContext.BaseDirectory;
+        for (int depth = 0; depth < 5 && !string.IsNullOrWhiteSpace(current); depth++)
+        {
+            yield return current;
+            current = Directory.GetParent(current)?.FullName;
+        }
     }
 
     private int LoadParticlePresetTexture(string? preset)
@@ -4241,7 +4290,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (uPointShadowMode != 0)
             {
                 depth = clamp(length(vShadowWorldPosition - uShadowLightPosition) / max(uShadowFar, 0.001), 0.0, 1.0);
-                gl_FragDepth = depth;
             }
             outColor = packDepth(depth);
         }
@@ -4356,7 +4404,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             if (uPointShadowMode != 0)
             {
                 float depth = clamp(length(vWorldPosition - uShadowLightPosition) / max(uShadowFar, 0.001), 0.0, 1.0);
-                gl_FragDepth = depth;
                 outColor = packDepth(depth);
                 return;
             }
