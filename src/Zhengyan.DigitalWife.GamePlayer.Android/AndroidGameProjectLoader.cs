@@ -38,6 +38,8 @@ internal static class AndroidGameProjectLoader
 
         try
         {
+            AndroidBundledResourceStore.EnsureExtracted(activity);
+
             string? inputPath = ResolveInputPath(activity, intent);
             if (string.IsNullOrWhiteSpace(inputPath))
             {

@@ -3,6 +3,8 @@ using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
 using Android.Util;
 using System.Numerics;
+using System.Reflection;
+using System.Reflection.Metadata;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 
@@ -111,7 +113,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             {
                 ScriptOptions options = ScriptOptions.Default
                     .WithFilePath(path)
-                    .WithReferences(typeof(RuntimeScene).Assembly, typeof(GameProject).Assembly)
+                    .WithReferences(
+                        CreateMetadataReference(typeof(RuntimeScene).Assembly),
+                        CreateMetadataReference(typeof(GameProject).Assembly))
                     .WithImports("System", "System.Numerics", "Zhengyan.DigitalWife.GameProjects", "Zhengyan.DigitalWife.GamePlayer.Runtime");
                 runner = CSharpScript.Create<object?>(File.ReadAllText(path), options, typeof(AndroidScriptGlobals)).CreateDelegate();
                 _runners[path] = runner;
@@ -123,6 +127,24 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {ex.GetBaseException().Message}");
         }
+    }
+
+    private static MetadataReference CreateMetadataReference(Assembly assembly)
+    {
+        // Android assemblies are loaded from the APK and Assembly.Location is
+        // commonly a synthetic path such as '/Zhengyan...'. Roslyn's Assembly
+        // overload then tries to open that path. Use the in-memory metadata
+        // image instead.
+        unsafe
+        {
+            if (assembly.TryGetRawMetadata(out byte* blob, out int length)
+                && blob is not null && length > 0)
+            {
+                return MetadataReference.CreateFromImage(new ReadOnlySpan<byte>(blob, length).ToArray());
+            }
+        }
+
+        throw new InvalidOperationException($"Assembly metadata is unavailable: {assembly.FullName}");
     }
 
     private static bool IsSupported(ScriptBinding binding)

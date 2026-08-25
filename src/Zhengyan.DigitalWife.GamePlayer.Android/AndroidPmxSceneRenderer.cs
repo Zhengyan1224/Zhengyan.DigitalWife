@@ -582,11 +582,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             try
             {
-                string skyboxPath = GameProjectPath.ToAbsolute(projectDirectory, scene.Definition.Skybox.TexturePath);
-                _skyboxTexture = LoadTexture(skyboxPath);
+                _skyboxTexture = ResolveSceneTexture(scene.Definition.Skybox.TexturePath, projectDirectory);
                 if (_skyboxTexture == 0)
                 {
-                    Log.Warn(LogTag, $"Android skybox texture was not loaded: {skyboxPath}");
+                    Log.Warn(LogTag, $"Android skybox texture was not loaded: {scene.Definition.Skybox.TexturePath}");
                 }
             }
             catch (Exception ex)
@@ -719,7 +718,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlEnable(GLES30.GlBlend);
             GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
             GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-            DrawSkybox(scene, camera, view, projection);
+            DrawSkybox(scene, view, projection);
             GLES30.GlUseProgram(_program);
             ApplyLighting(scene);
             GLES30.GlUniformMatrix4fv(_lightViewProjectionLocation, 1, false, ToGlArray(_lightViewProjection), 0);
@@ -945,7 +944,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
     }
 
-    private void DrawSkybox(RuntimeScene scene, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection, Vector3? overridePosition = null)
+    private void DrawSkybox(RuntimeScene scene, Matrix4x4 view, Matrix4x4 projection)
     {
         if (_skyboxTexture == 0 || !scene.Definition.Skybox.Enabled)
         {
@@ -954,8 +953,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         Matrix4x4 viewRotation = view;
         viewRotation.Translation = Vector3.Zero;
-        Matrix4x4 world = Matrix4x4.CreateScale(80.0f)
-            * Matrix4x4.CreateTranslation(overridePosition ?? camera.Settings.Position.ToVector3());
+        Matrix4x4 world = Matrix4x4.CreateScale(80.0f);
         GLES30.GlUseProgram(_skyboxProgram);
         GLES30.GlUniformMatrix4fv(_skyboxMvpLocation, 1, false, ToGlArray(world * viewRotation * projection), 0);
         Vector3 tint = scene.Definition.Skybox.Tint.ToVector3();
@@ -1543,7 +1541,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlEnable(GLES30.GlBlend);
         GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-        DrawSkybox(scene, camera, view, projection, reflectedPosition);
+        DrawSkybox(scene, view, projection);
 
         GLES30.GlUseProgram(_program);
         ApplyLighting(scene);
@@ -2310,6 +2308,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     {
         if (string.IsNullOrWhiteSpace(path)) return 0;
         string normalized = GameProjectPath.NormalizePathText(path);
+        if (normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            string appRelative = normalized["app:".Length..].TrimStart('/', '\\');
+            string? bundledAppPath = TryResolveBundledResource(appRelative);
+            return bundledAppPath is null ? 0 : LoadTexture(bundledAppPath);
+        }
         if (normalized.StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
         {
             string key = normalized[3..].Trim();
@@ -2341,6 +2345,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             string[] candidates =
             [
+                Path.Combine(baseDirectory, normalized),
                 Path.Combine(baseDirectory, "Resources", "Particles", fileName),
                 Path.Combine(baseDirectory, "Resources", normalized),
                 Path.Combine(baseDirectory, fileName)
@@ -2359,6 +2364,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private static IEnumerable<string> EnumerateBundledBaseDirectories()
     {
+        if (!string.IsNullOrWhiteSpace(AndroidBundledResourceStore.RootDirectory))
+        {
+            yield return AndroidBundledResourceStore.RootDirectory;
+        }
+
         string? current = AppContext.BaseDirectory;
         for (int depth = 0; depth < 5 && !string.IsNullOrWhiteSpace(current); depth++)
         {
@@ -4284,9 +4294,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             depth = min(clamp(depth, 0.0, 1.0), 0.99999994);
             vec4 bitShift = vec4(1.0, 255.0, 65025.0, 16581375.0);
+            // Standard RGBA depth packing: subtract each channel's carry from
+            // the next finer channel before it is quantized to 8 bits.
             vec4 bitMask = vec4(0.0, 1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0);
             vec4 packed = fract(depth * bitShift);
-            return packed - packed.yzww * bitMask;
+            return packed - packed.xxyz * bitMask;
         }
         void main()
         {
@@ -4397,7 +4409,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             vec4 bitShift = vec4(1.0, 255.0, 65025.0, 16581375.0);
             vec4 bitMask = vec4(0.0, 1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0);
             vec4 packed = fract(depth * bitShift);
-            return packed - packed.yzww * bitMask;
+            return packed - packed.xxyz * bitMask;
         }
         void main()
         {
