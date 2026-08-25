@@ -13,6 +13,13 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <AndroidAsset Include="$(DigitalWifeMmdEngineAssetsDir)Particles\**\*">
+            <Link>Resources\Particles\%(RecursiveDir)%(Filename)%(Extension)</Link>
+        </AndroidAsset>
+        <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
+            <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
         <PackageReference Include="Evergine.BulletSharpPInvoke" />
         <PackageReference Include="Evergine.LibBulletc.Natives" />

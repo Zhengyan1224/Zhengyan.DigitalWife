@@ -3939,7 +3939,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             gl_Position = uMvp * vec4(position, 1.0);
             mat3 worldNormalMatrix = transpose(inverse(mat3(uModel)));
             vNormal = normalize(worldNormalMatrix * normal);
-            vTexCoord = vec2(aTexCoord.x, -aTexCoord.y);
+            // PmxPoseEvaluator keeps PMX UVs in source convention.  The
+            // desktop path flips V once while uploading its UV buffer and
+            // flips it back in the shader; Android uploads the source UVs
+            // directly, so applying another flip here mirrors the texture.
+            vTexCoord = aTexCoord;
             vViewNormal = normalize(transpose(inverse(mat3(uView * uModel))) * normal);
             vWorldPosition = (uModel * vec4(position, 1.0)).xyz;
             vSphereSubTextureCoord = aAdditionalUv1.xy;
