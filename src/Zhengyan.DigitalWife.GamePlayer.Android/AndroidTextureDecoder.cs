@@ -1,6 +1,8 @@
 using Pfim;
 using StbImageSharp;
 using System.Buffers.Binary;
+using AndroidBitmap = Android.Graphics.Bitmap;
+using AndroidBitmapFactory = Android.Graphics.BitmapFactory;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -25,7 +27,7 @@ internal readonly record struct AndroidDecodedTexture(
 
 internal static class AndroidTextureDecoder
 {
-    public static AndroidDecodedTexture Decode(string path)
+    public static AndroidDecodedTexture Decode(string path, int maxDimension = 0)
     {
         if (LooksLikeDds(path))
         {
@@ -44,12 +46,68 @@ internal static class AndroidTextureDecoder
                 DetermineAlphaMode(bitfieldRgba));
         }
 
+        if (maxDimension > 0
+            && Path.GetExtension(path).Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            && TryDecodeBitmap(path, maxDimension, out AndroidDecodedTexture bitmapTexture))
+        {
+            return bitmapTexture;
+        }
+
         ImageResult imageResult = ImageResult.FromMemory(File.ReadAllBytes(path), ColorComponents.RedGreenBlueAlpha);
         return new AndroidDecodedTexture(
             imageResult.Data,
             imageResult.Width,
             imageResult.Height,
             DetermineAlphaMode(imageResult.Data));
+    }
+
+    private static bool TryDecodeBitmap(string path, int maxDimension, out AndroidDecodedTexture texture)
+    {
+        texture = default;
+        AndroidBitmapFactory.Options bounds = new() { InJustDecodeBounds = true };
+        using (AndroidBitmap? ignored = AndroidBitmapFactory.DecodeFile(path, bounds))
+        {
+        }
+
+        if (bounds.OutWidth <= 0 || bounds.OutHeight <= 0)
+        {
+            return false;
+        }
+
+        int sample = 1;
+        while (Math.Max(bounds.OutWidth / (sample * 2), bounds.OutHeight / (sample * 2)) >= maxDimension)
+        {
+            sample *= 2;
+        }
+
+        AndroidBitmapFactory.Options options = new()
+        {
+            InSampleSize = sample,
+            InPreferredConfig = AndroidBitmap.Config.Argb8888
+        };
+        using AndroidBitmap? bitmap = AndroidBitmapFactory.DecodeFile(path, options);
+        if (bitmap is null)
+        {
+            return false;
+        }
+
+        int width = bitmap.Width;
+        int height = bitmap.Height;
+        int[] argb = new int[checked(width * height)];
+        bitmap.GetPixels(argb, 0, width, 0, 0, width, height);
+        byte[] rgba = new byte[checked(width * height * 4)];
+        for (int i = 0; i < argb.Length; i++)
+        {
+            int color = argb[i];
+            int offset = i * 4;
+            rgba[offset] = (byte)(color >> 16);
+            rgba[offset + 1] = (byte)(color >> 8);
+            rgba[offset + 2] = (byte)color;
+            rgba[offset + 3] = (byte)(color >> 24);
+        }
+
+        texture = new AndroidDecodedTexture(rgba, width, height, AndroidTextureAlphaMode.Opaque);
+        return true;
     }
 
     private static bool LooksLikeDds(string path)

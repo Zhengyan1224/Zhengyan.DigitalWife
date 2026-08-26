@@ -15,7 +15,6 @@
     <ItemGroup>
         <AndroidAsset Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
             <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
-            <LogicalName>Resources/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
         </AndroidAsset>
         <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
             <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>

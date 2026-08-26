@@ -33,7 +33,13 @@ internal static class AndroidBundledResourceStore
                     return;
                 }
 
-                CopyAssetTree(assets, AssetRoot, Path.Combine(rootDirectory, AssetRoot));
+                string extractedRoot = Path.Combine(rootDirectory, AssetRoot);
+                CopyAssetTree(assets, AssetRoot, extractedRoot);
+                // Android's asset linker has used both slash conventions across
+                // toolchain versions. Make the two runtime-critical files
+                // explicit so a flattened asset listing cannot hide them.
+                CopyKnownAsset(assets, "Resources/Particles/Sakura.png", Path.Combine(extractedRoot, "Particles", "Sakura.png"));
+                CopyKnownAsset(assets, "Resources/Skybox/autumn_field_puresky.jpg", Path.Combine(extractedRoot, "Skybox", "autumn_field_puresky.jpg"));
                 RootDirectory = rootDirectory;
                 Log.Info(LogTag, $"Android engine resources are available at '{rootDirectory}'.");
             }
@@ -57,7 +63,8 @@ internal static class AndroidBundledResourceStore
         Directory.CreateDirectory(destinationPath);
         foreach (string child in children)
         {
-            CopyAssetTree(assets, assetPath + "/" + child, Path.Combine(destinationPath, child));
+            string normalizedChild = child.Replace('\\', '/');
+            CopyAssetTree(assets, assetPath + "/" + normalizedChild, Path.Combine(destinationPath, normalizedChild.Replace('/', Path.DirectorySeparatorChar)));
         }
     }
 
@@ -68,5 +75,30 @@ internal static class AndroidBundledResourceStore
             ?? throw new FileNotFoundException($"Android asset '{assetPath}' could not be opened.");
         using FileStream destination = File.Create(destinationPath);
         source.CopyTo(destination);
+    }
+
+    private static void CopyKnownAsset(AssetManager assets, string assetPath, string destinationPath)
+    {
+        if (File.Exists(destinationPath))
+        {
+            return;
+        }
+
+        string alternatePath = assetPath.Replace('/', '\\');
+        try
+        {
+            CopyAssetFile(assets, assetPath, destinationPath);
+        }
+        catch (FileNotFoundException)
+        {
+            try
+            {
+                CopyAssetFile(assets, alternatePath, destinationPath);
+            }
+            catch (FileNotFoundException)
+            {
+                Log.Warn(LogTag, $"Android asset was not found: '{assetPath}'.");
+            }
+        }
     }
 }

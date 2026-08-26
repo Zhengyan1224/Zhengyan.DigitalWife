@@ -112,10 +112,17 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             if (!_runners.TryGetValue(path, out ScriptRunner<object?>? runner))
             {
                 ScriptOptions options = ScriptOptions.Default
-                    .WithFilePath(path)
                     .WithReferences(
+                    [
+                        CreateMetadataReference(typeof(object).Assembly),
+                        CreateMetadataReference(typeof(Console).Assembly),
+                        CreateMetadataReference(typeof(Vector2).Assembly),
+                        CreateMetadataReference(typeof(Enumerable).Assembly),
+                        CreateMetadataReference(typeof(AndroidScriptGlobals).Assembly),
                         CreateMetadataReference(typeof(RuntimeScene).Assembly),
-                        CreateMetadataReference(typeof(GameProject).Assembly))
+                        CreateMetadataReference(typeof(GameProject).Assembly)
+                    ])
+                    .WithMetadataResolver(AndroidMetadataReferenceResolver.Instance)
                     .WithImports("System", "System.Numerics", "Zhengyan.DigitalWife.GameProjects", "Zhengyan.DigitalWife.GamePlayer.Runtime");
                 runner = CSharpScript.Create<object?>(File.ReadAllText(path), options, typeof(AndroidScriptGlobals)).CreateDelegate();
                 _runners[path] = runner;
@@ -140,11 +147,60 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             if (assembly.TryGetRawMetadata(out byte* blob, out int length)
                 && blob is not null && length > 0)
             {
-                return MetadataReference.CreateFromImage(new ReadOnlySpan<byte>(blob, length).ToArray());
+                // TryGetRawMetadata returns the metadata directory inside the
+                // loaded PE image, not a complete PE image. CreateFromImage
+                // therefore makes Roslyn reject the reference and fall back
+                // to Assembly.Location (which is a synthetic Android path).
+                // Build a reference directly from the in-memory metadata.
+                ModuleMetadata module = ModuleMetadata.CreateFromMetadata((IntPtr)blob, length);
+                AssemblyMetadata assemblyMetadata = AssemblyMetadata.Create(module);
+                // Do not assign a file path. Android assemblies commonly have
+                // synthetic locations, and Roslyn otherwise attempts to probe
+                // that path while binding System.Private.CoreLib.
+                return assemblyMetadata.GetReference();
             }
         }
 
         throw new InvalidOperationException($"Assembly metadata is unavailable: {assembly.FullName}");
+    }
+
+    private sealed class AndroidMetadataReferenceResolver : MetadataReferenceResolver
+    {
+        public static AndroidMetadataReferenceResolver Instance { get; } = new();
+
+        // All references are supplied from loaded assemblies below. Do not let
+        // Roslyn fall back to probing Android's synthetic assembly paths.
+        public override bool ResolveMissingAssemblies => false;
+
+        public override System.Collections.Immutable.ImmutableArray<PortableExecutableReference> ResolveReference(
+            string reference,
+            string? baseFilePath,
+            MetadataReferenceProperties properties)
+        {
+            string name = Path.GetFileNameWithoutExtension(reference);
+            Assembly? assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(candidate => string.Equals(candidate.GetName().Name, name, StringComparison.OrdinalIgnoreCase));
+            return assembly is null
+                ? System.Collections.Immutable.ImmutableArray<PortableExecutableReference>.Empty
+                : System.Collections.Immutable.ImmutableArray.Create(
+                    (PortableExecutableReference)CreateMetadataReference(assembly));
+        }
+
+        public override PortableExecutableReference? ResolveMissingAssembly(
+            MetadataReference definition,
+            AssemblyIdentity referenceIdentity)
+        {
+            Assembly? assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(candidate => string.Equals(
+                    candidate.GetName().Name,
+                    referenceIdentity.Name,
+                    StringComparison.OrdinalIgnoreCase));
+            return assembly is null ? null : (PortableExecutableReference)CreateMetadataReference(assembly);
+        }
+
+        public override bool Equals(object? obj) => ReferenceEquals(this, obj);
+
+        public override int GetHashCode() => typeof(AndroidMetadataReferenceResolver).GetHashCode();
     }
 
     private static bool IsSupported(ScriptBinding binding)

@@ -587,6 +587,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 {
                     Log.Warn(LogTag, $"Android skybox texture was not loaded: {scene.Definition.Skybox.TexturePath}");
                 }
+                else
+                {
+                    Log.Info(LogTag, $"Android skybox texture loaded: id={_skyboxTexture}, path='{scene.Definition.Skybox.TexturePath}'.");
+                }
             }
             catch (Exception ex)
             {
@@ -608,7 +612,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     texture = LoadParticlePresetTexture(runtimeEntity.Definition.Particle.TexturePreset);
                 }
                 _particles.Add(ParticleGpu.Create(runtimeEntity, texture, _quality.MaxParticleCount));
-                Log.Info(LogTag, $"Android GLES uploaded particle system '{runtimeEntity.Name}': count={runtimeEntity.Definition.Particle.ParticleCount}.");
+                Log.Info(LogTag, $"Android GLES uploaded particle system '{runtimeEntity.Name}': count={runtimeEntity.Definition.Particle.ParticleCount}, texture={texture}, path='{texturePath ?? "<preset>"}'.");
             }
             catch (Exception ex)
             {
@@ -718,7 +722,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlEnable(GLES30.GlBlend);
             GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
             GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-            DrawSkybox(scene, view, projection);
+            DrawSkybox(scene, camera, view, projection);
             GLES30.GlUseProgram(_program);
             ApplyLighting(scene);
             GLES30.GlUniformMatrix4fv(_lightViewProjectionLocation, 1, false, ToGlArray(_lightViewProjection), 0);
@@ -807,9 +811,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     _toonAddLocation);
             }
 
-            DrawParticles(scene, camera, view, projection, timeSeconds);
-
             DrawWater(scene, camera, view, projection, timeSeconds);
+
+            // Draw translucent particles after water, matching the desktop pass
+            // order so the water surface cannot cover falling Sakura sprites.
+            DrawParticles(scene, camera, view, projection, timeSeconds);
 
             GLES30.GlUseProgram(_edgeProgram);
             GLES30.GlUniform2f(_edgeScreenSizeLocation, viewport.Width, viewport.Height);
@@ -944,7 +950,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
     }
 
-    private void DrawSkybox(RuntimeScene scene, Matrix4x4 view, Matrix4x4 projection)
+    private void DrawSkybox(RuntimeScene scene, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection, Vector3? overridePosition = null)
     {
         if (_skyboxTexture == 0 || !scene.Definition.Skybox.Enabled)
         {
@@ -953,6 +959,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         Matrix4x4 viewRotation = view;
         viewRotation.Translation = Vector3.Zero;
+        // A skybox follows camera rotation only. Translating the cube to the
+        // camera position is incorrect with the row-vector matrices used by
+        // this renderer and can move it behind the camera. Keep the cube at
+        // the origin so the view translation is intentionally absent.
         Matrix4x4 world = Matrix4x4.CreateScale(80.0f);
         GLES30.GlUseProgram(_skyboxProgram);
         GLES30.GlUniformMatrix4fv(_skyboxMvpLocation, 1, false, ToGlArray(world * viewRotation * projection), 0);
@@ -968,6 +978,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBindTexture(GLES30.GlTexture2d, _skyboxTexture);
         GLES30.GlDisable(GLES30.GlDepthTest);
         GLES30.GlDepthMask(false);
+        // The camera is inside the cube, so its outward-facing triangles are
+        // back faces from the camera's point of view. Never let the previous
+        // model pass's culling state discard the skybox.
+        GLES30.GlDisable(0x0B44); // GL_CULL_FACE
         GLES30.GlBindVertexArray(_skyboxVertexArrayObject);
         GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 36);
         GLES30.GlBindVertexArray(0);
@@ -1091,6 +1105,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         if (_particles.Count == 0)
         {
             return;
+        }
+
+        if (timeSeconds < 0.25)
+        {
+            Log.Info(LogTag, $"Android GLES drawing {_particles.Count} particle system(s).");
         }
 
         Vector3 forward = NormalizeOrDefault(camera.Settings.Target.ToVector3() - camera.Settings.Position.ToVector3(), -Vector3.UnitZ);
@@ -1541,7 +1560,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlEnable(GLES30.GlBlend);
         GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-        DrawSkybox(scene, view, projection);
+        DrawSkybox(scene, camera, view, projection, reflectedPosition);
 
         GLES30.GlUseProgram(_program);
         ApplyLighting(scene);
@@ -1872,7 +1891,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return;
         }
 
-        RuntimeEntity? light = scene.PointLights.FirstOrDefault(entity => entity.CastsShadows);
+        // ApplyLighting packs point lights with shadow casters first. The
+        // shadow passes must use that same order or a non-shadow light can be
+        // paired with another light's cube map in the material shader.
+        RuntimeEntity[] shadowLights = scene.PointLights
+            .OrderByDescending(entity => entity.CastsShadows)
+            .Take(MaxPointLights)
+            .Where(entity => entity.CastsShadows)
+            .Take(Math.Max(_quality.MaxPointShadowMaps, 0))
+            .ToArray();
+        RuntimeEntity? light = shadowLights.FirstOrDefault();
         if (light is null)
         {
             return;
@@ -1945,7 +1973,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _pointShadowRendered = true;
         _pointShadow2Rendered = false;
         _pointShadow2LightPositionRange = Vector4.Zero;
-        RuntimeEntity? light2 = scene.PointLights.Where(entity => entity.CastsShadows).Skip(1).FirstOrDefault();
+        RuntimeEntity? light2 = shadowLights.Skip(1).FirstOrDefault();
         if (_pointShadow2Available && light2 is not null)
         {
             Vector3 position2 = light2.Position;
@@ -2250,7 +2278,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         AndroidDecodedTexture decoded;
         try
         {
-            decoded = AndroidTextureDecoder.Decode(fullPath);
+            int maxDimension = IsSkyboxTexturePath(fullPath) ? 1024 : 0;
+            decoded = AndroidTextureDecoder.Decode(fullPath, maxDimension);
         }
         catch (Exception ex)
         {
@@ -2312,6 +2341,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             string appRelative = normalized["app:".Length..].TrimStart('/', '\\');
             string? bundledAppPath = TryResolveBundledResource(appRelative);
+            if (bundledAppPath is null)
+            {
+                Log.Warn(LogTag, $"Android bundled resource was not found: '{appRelative}' (root='{AndroidBundledResourceStore.RootDirectory ?? "<none>"}').");
+            }
             return bundledAppPath is null ? 0 : LoadTexture(bundledAppPath);
         }
         if (normalized.StartsWith("rt:", StringComparison.OrdinalIgnoreCase))
@@ -2329,6 +2362,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         // Resources tree for short names such as "Sakura.png".  Android scene
         // packages use the same project data, so keep that fallback here.
         string? bundledPath = TryResolveBundledResource(normalized);
+        if (bundledPath is null)
+        {
+            Log.Warn(LogTag, $"Android engine resource was not found: '{normalized}' (root='{AndroidBundledResourceStore.RootDirectory ?? "<none>"}').");
+        }
         return bundledPath is null ? 0 : LoadTexture(bundledPath);
     }
 
@@ -2514,8 +2551,19 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 return fullPath;
             }
 
-            string? match = Directory.EnumerateFileSystemEntries(current)
-                .FirstOrDefault(candidate => string.Equals(Path.GetFileName(candidate), segment, StringComparison.OrdinalIgnoreCase));
+            string? match;
+            try
+            {
+                match = Directory.EnumerateFileSystemEntries(current)
+                    .FirstOrDefault(candidate => string.Equals(Path.GetFileName(candidate), segment, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Android may deny enumeration of protected roots such as '/'.
+                // Preserve the original path and let the caller's File.Exists
+                // check decide whether it is usable.
+                return fullPath;
+            }
             if (match is null)
             {
                 return fullPath;
@@ -2525,6 +2573,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
 
         return current;
+    }
+
+    private static bool IsSkyboxTexturePath(string path)
+    {
+        return string.Equals(Path.GetFileName(path), "autumn_field_puresky.jpg", StringComparison.OrdinalIgnoreCase)
+            || path.Contains(Path.DirectorySeparatorChar + "Skybox" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Skybox/", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("\\Skybox\\", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsPmxEntity(GameEntity entity)
@@ -4163,34 +4219,50 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 float attenuation = pow(clamp(1.0 - distanceToLight / range, 0.0, 1.0), 2.0);
                 float ndotl = max(dot(normal, normalize(toLight)), 0.0);
                 float pointShadowVisibility = 1.0;
-                if (i == 0 && uHasPointShadow != 0 && uReceiveShadow != 0)
+                if (i == 0 && uHasPointShadow != 0 && uReceiveShadow != 0 && distanceToLight < range)
                 {
                     vec3 shadowWorldPosition = vWorldPosition + normal * 0.0075 * (2.0 - ndotl);
                     vec3 shadowVector = shadowWorldPosition - uPointShadowLightPositionRange.xyz;
                     vec3 shadowDirection = normalize(shadowVector);
                     float currentDepth = length(shadowVector) / max(uPointShadowLightPositionRange.w, 0.001);
-                    vec3 texelDirection = vec3(0.012, 0.0, 0.0);
+                    vec3 tangent = normalize(abs(shadowDirection.y) < 0.9
+                        ? cross(shadowDirection, vec3(0.0, 1.0, 0.0))
+                        : cross(shadowDirection, vec3(1.0, 0.0, 0.0)));
+                    vec3 bitangent = normalize(cross(shadowDirection, tangent));
+                    float texelSize = 2.0 / 512.0;
+                    vec3 tangentOffset = tangent * texelSize;
+                    vec3 bitangentOffset = bitangent * texelSize;
+                    float shadowBias = 0.0015;
                     float lit = 0.0;
-                    lit += currentDepth - 0.000075 <= unpackDepth(texture(uPointShadowMap, shadowDirection + texelDirection)) ? 1.0 : 0.0;
-                    lit += currentDepth - 0.000075 <= unpackDepth(texture(uPointShadowMap, shadowDirection - texelDirection)) ? 1.0 : 0.0;
-                    texelDirection = vec3(0.0, 0.012, 0.0);
-                    lit += currentDepth - 0.000075 <= unpackDepth(texture(uPointShadowMap, shadowDirection + texelDirection)) ? 1.0 : 0.0;
-                    lit += currentDepth - 0.000075 <= unpackDepth(texture(uPointShadowMap, shadowDirection - texelDirection)) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap, normalize(shadowDirection + tangentOffset))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap, normalize(shadowDirection - tangentOffset))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap, normalize(shadowDirection + bitangentOffset))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap, normalize(shadowDirection - bitangentOffset))) ? 1.0 : 0.0;
                     pointShadowVisibility = lit * 0.25;
                     if (uShadowMode != 0)
                     {
                         pointShadowVisibility = pointShadowVisibility >= 0.5 ? 1.0 : 0.0;
                     }
                 }
-                if (i == 1 && uHasPointShadow2 != 0 && uReceiveShadow != 0)
+                if (i == 1 && uHasPointShadow2 != 0 && uReceiveShadow != 0 && distanceToLight < range)
                 {
-                    vec3 shadowDirection = normalize(-toLight);
-                    float currentDepth = distanceToLight / max(uPointShadowLightPositionRange2.w, 0.001);
+                    vec3 shadowWorldPosition = vWorldPosition + normal * 0.0075 * (2.0 - ndotl);
+                    vec3 shadowVector = shadowWorldPosition - uPointShadowLightPositionRange2.xyz;
+                    vec3 shadowDirection = normalize(shadowVector);
+                    float currentDepth = length(shadowVector) / max(uPointShadowLightPositionRange2.w, 0.001);
+                    vec3 tangent = normalize(abs(shadowDirection.y) < 0.9
+                        ? cross(shadowDirection, vec3(0.0, 1.0, 0.0))
+                        : cross(shadowDirection, vec3(1.0, 0.0, 0.0)));
+                    vec3 bitangent = normalize(cross(shadowDirection, tangent));
+                    float texelSize = 2.0 / 512.0;
+                    vec3 tangentOffset = tangent * texelSize;
+                    vec3 bitangentOffset = bitangent * texelSize;
+                    float shadowBias = 0.0015;
                     float lit = 0.0;
-                    lit += currentDepth - 0.002 <= unpackDepth(texture(uPointShadowMap2, shadowDirection + vec3(0.012, 0.0, 0.0))) ? 1.0 : 0.0;
-                    lit += currentDepth - 0.002 <= unpackDepth(texture(uPointShadowMap2, shadowDirection - vec3(0.012, 0.0, 0.0))) ? 1.0 : 0.0;
-                    lit += currentDepth - 0.002 <= unpackDepth(texture(uPointShadowMap2, shadowDirection + vec3(0.0, 0.012, 0.0))) ? 1.0 : 0.0;
-                    lit += currentDepth - 0.002 <= unpackDepth(texture(uPointShadowMap2, shadowDirection - vec3(0.0, 0.012, 0.0))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap2, normalize(shadowDirection + tangentOffset))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap2, normalize(shadowDirection - tangentOffset))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap2, normalize(shadowDirection + bitangentOffset))) ? 1.0 : 0.0;
+                    lit += currentDepth - shadowBias <= unpackDepth(texture(uPointShadowMap2, normalize(shadowDirection - bitangentOffset))) ? 1.0 : 0.0;
                     pointShadowVisibility = lit * 0.25;
                     if (uShadowMode != 0) pointShadowVisibility = pointShadowVisibility >= 0.5 ? 1.0 : 0.0;
                 }
@@ -4296,9 +4368,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             vec4 bitShift = vec4(1.0, 255.0, 65025.0, 16581375.0);
             // Standard RGBA depth packing: subtract each channel's carry from
             // the next finer channel before it is quantized to 8 bits.
-            vec4 bitMask = vec4(0.0, 1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0);
+            vec4 bitMask = vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
             vec4 packed = fract(depth * bitShift);
-            return packed - packed.xxyz * bitMask;
+            return packed - packed.yzww * bitMask;
         }
         void main()
         {
@@ -4407,9 +4479,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         {
             depth = min(clamp(depth, 0.0, 1.0), 0.99999994);
             vec4 bitShift = vec4(1.0, 255.0, 65025.0, 16581375.0);
-            vec4 bitMask = vec4(0.0, 1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0);
+            vec4 bitMask = vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
             vec4 packed = fract(depth * bitShift);
-            return packed - packed.xxyz * bitMask;
+            return packed - packed.yzww * bitMask;
         }
         void main()
         {
