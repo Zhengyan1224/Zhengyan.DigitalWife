@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
+using Microsoft.CodeAnalysis.Scripting.Hosting;
 using Android.Util;
 using System.Numerics;
 using System.Reflection;
@@ -20,6 +21,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, string, float, bool> _configureRenderTexture;
     private readonly Func<string, AndroidRenderTextureInfo?> _getRenderTexture;
     private readonly Func<IReadOnlyList<AndroidRenderTextureInfo>> _listRenderTextures;
+    private readonly InteractiveAssemblyLoader _assemblyLoader;
     private readonly Dictionary<string, ScriptRunner<object?>> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
@@ -42,6 +44,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _configureRenderTexture = configureRenderTexture ?? ((_, _, _) => false);
         _getRenderTexture = getRenderTexture ?? (_ => null);
         _listRenderTextures = listRenderTextures ?? (() => []);
+        _assemblyLoader = CreateAssemblyLoader();
     }
 
     public void Start(RuntimeScene scene)
@@ -124,7 +127,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                     ])
                     .WithMetadataResolver(AndroidMetadataReferenceResolver.Instance)
                     .WithImports("System", "System.Numerics", "Zhengyan.DigitalWife.GameProjects", "Zhengyan.DigitalWife.GamePlayer.Runtime");
-                runner = CSharpScript.Create<object?>(File.ReadAllText(path), options, typeof(AndroidScriptGlobals)).CreateDelegate();
+                runner = CSharpScript.Create<object?>(
+                    File.ReadAllText(path),
+                    options,
+                    typeof(AndroidScriptGlobals),
+                    _assemblyLoader).CreateDelegate();
                 _runners[path] = runner;
             }
 
@@ -132,8 +139,35 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
         catch (Exception ex)
         {
-            global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {ex.GetBaseException().Message}");
+            global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {ex}");
         }
+    }
+
+    private static InteractiveAssemblyLoader CreateAssemblyLoader()
+    {
+        InteractiveAssemblyLoader loader = new();
+        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (assembly.IsDynamic)
+            {
+                continue;
+            }
+
+            try
+            {
+                // Android assemblies live inside the APK and do not have usable
+                // filesystem locations. Registering them makes script execution
+                // bind directly to the already loaded assemblies.
+                loader.RegisterDependency(assembly);
+            }
+            catch (ArgumentException)
+            {
+                // Some framework facades have duplicate identities. Their
+                // concrete implementation is already registered.
+            }
+        }
+
+        return loader;
     }
 
     private static MetadataReference CreateMetadataReference(Assembly assembly)
