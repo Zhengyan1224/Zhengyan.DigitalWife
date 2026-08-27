@@ -675,19 +675,24 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             if (bone.AppendIndex >= 0 && bone.AppendIndex < poses.Length)
             {
                 BoneState sourceBone = _bones[bone.AppendIndex];
-                BonePose source = bone.AppendLocal || sourceBone.AppendIndex < 0
-                    ? poses[bone.AppendIndex]
-                    : appendPoses[bone.AppendIndex];
+                BonePose sourcePose = poses[bone.AppendIndex];
+                Quaternion sourceRotation = bone.AppendLocal || sourceBone.AppendIndex < 0
+                    ? sourcePose.Rotation
+                    : appendPoses[bone.AppendIndex].Rotation;
+                sourceRotation = Quaternion.Normalize(_ikRotations[bone.AppendIndex] * sourceRotation);
+                Vector3 sourceTranslation = bone.AppendLocal || sourceBone.AppendIndex < 0
+                    ? sourcePose.Translation
+                    : appendPoses[bone.AppendIndex].Translation;
                 Quaternion appendRotation = Quaternion.Identity;
                 Vector3 appendTranslation = Vector3.Zero;
                 if (bone.AppendRotate)
                 {
-                    appendRotation = Quaternion.Slerp(Quaternion.Identity, source.Rotation, bone.AppendWeight);
+                    appendRotation = Quaternion.Slerp(Quaternion.Identity, sourceRotation, bone.AppendWeight);
                     pose = pose with { Rotation = Quaternion.Normalize(pose.Rotation * appendRotation) };
                 }
                 if (bone.AppendTranslate)
                 {
-                    appendTranslation = source.Translation * bone.AppendWeight;
+                    appendTranslation = sourceTranslation * bone.AppendWeight;
                     pose = pose with { Translation = pose.Translation + appendTranslation };
                 }
                 appendPoses[index] = new BonePose(appendTranslation, appendRotation);
