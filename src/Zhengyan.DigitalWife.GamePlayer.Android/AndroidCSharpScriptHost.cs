@@ -181,7 +181,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         // The Android host may not have loaded framework assemblies that are
         // only used by a script (Console is a common example). Touch the
         // representative types first so their in-memory metadata is available.
-        Assembly[] requiredAssemblies =
+        List<Assembly> requiredAssemblies =
         [
             typeof(object).Assembly,
             typeof(Console).Assembly,
@@ -192,6 +192,19 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             typeof(RuntimeScene).Assembly,
             typeof(GameProject).Assembly
         ];
+
+        // System.Runtime is a facade on some .NET runtimes and is not
+        // necessarily loaded by the game host. Roslyn needs its async-builder
+        // contract when emitting the script submission factory.
+        try
+        {
+            requiredAssemblies.Add(Assembly.Load(new AssemblyName("System.Runtime")));
+        }
+        catch (Exception)
+        {
+            // The concrete core library reference above is still usable on
+            // runtimes that do not expose a separate System.Runtime facade.
+        }
 
         foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
         {
