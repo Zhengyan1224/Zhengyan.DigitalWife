@@ -1,0 +1,16 @@
+<linker>
+  <assembly fullname="System.Private.CoreLib">
+    <!-- Required by every Roslyn script submission factory. -->
+    <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.TaskAwaiter" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.TaskAwaiter`1" preserve="all" />
+
+    <!-- Keep explicit ValueTask/async-void usage in user scripts functional too. -->
+    <type fullname="System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.ValueTaskAwaiter" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.ValueTaskAwaiter`1" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.AsyncVoidMethodBuilder" preserve="all" />
+  </assembly>
+</linker>

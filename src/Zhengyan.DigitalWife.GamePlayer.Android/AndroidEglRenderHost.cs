@@ -448,9 +448,10 @@ internal sealed class AndroidEglRenderHost : IDisposable
                     _width, _height, _project?.Window.Width ?? _width, _project?.Window.Height ?? _height);
                 if (x >= rect.X && x <= rect.X + rect.Width && y >= rect.Y && y <= rect.Y + rect.Height)
                 {
+                    Log.Info(LogTag, $"Android GUI touch: {touch.Phase} control='{control.Name}' id='{control.Id}' event='{(touch.Phase == AndroidTouchPhase.Ended ? control.EventName : eventType)}' point=({x:F1},{y:F1}) rect=({rect.X:F1},{rect.Y:F1},{rect.Width:F1},{rect.Height:F1})");
                     _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
                         "gui", control.Id, touch.Phase == AndroidTouchPhase.Ended ? control.EventName : eventType!,
-                        touch.Position, control.Text, control.TargetEntity));
+                        touch.Position, control.Name, control.TargetEntity));
                     handled = true;
                     break;
                 }

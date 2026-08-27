@@ -13,6 +13,13 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <!--
+          Roslyn script submissions always emit an async factory returning Task<object>,
+          even when the .csx source contains no await. These members are reached only
+          from the dynamically emitted assembly, so the Android trimmer cannot discover
+          them from the host's static call graph.
+        -->
+        <TrimmerRootDescriptor Include="AndroidScriptLinker.xml" />
         <AndroidAsset Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
             <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
         </AndroidAsset>
