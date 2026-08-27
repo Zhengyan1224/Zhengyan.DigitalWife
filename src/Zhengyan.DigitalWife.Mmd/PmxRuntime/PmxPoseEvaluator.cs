@@ -33,6 +33,8 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private readonly MaterialState[] _materialStates;
     private readonly int[] _sortedBones;
     private readonly IkState[] _iks;
+    private readonly Quaternion[] _ikRotations;
+    private readonly Quaternion[] _bestIkRotations;
     private readonly PhysicsState[] _fallbackPhysics;
     private readonly IPmxPhysicsBridge? _physicsBridge;
     private readonly bool _physicsEnabled;
@@ -120,6 +122,8 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             .ThenBy(index => index)
             .ToArray();
         _iks = _bones.Select((bone, index) => new IkState(index, bone)).Where(state => state.Enabled).ToArray();
+        _ikRotations = Enumerable.Repeat(Quaternion.Identity, _bones.Length).ToArray();
+        _bestIkRotations = Enumerable.Repeat(Quaternion.Identity, _bones.Length).ToArray();
         _physicsEnabled = physicsEnabled;
         _gravity = gravity;
         _resetPhysicsOnLoop = resetPhysicsOnLoop;
@@ -240,43 +244,12 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             IntegrateFallbackPhysics(poses, deltaSeconds);
         }
 
-        Array.Fill(_globals, Matrix4x4.Identity);
-        for (int pass = 0; pass < 2; pass++)
+        RebuildGlobals(poses);
+        foreach (IkState ik in _iks)
         {
-            Array.Clear(_globals);
-            foreach (int index in _sortedBones)
-            {
-                BoneState bone = _bones[index];
-                BonePose pose = poses[index];
-                if (bone.AppendIndex >= 0 && bone.AppendIndex < poses.Length)
-                {
-                    BonePose source = bone.AppendLocal
-                        ? poses[bone.AppendIndex]
-                        : GetGlobalAppendPose(bone.AppendIndex);
-                    if (bone.AppendRotate)
-                    {
-                        pose = pose with { Rotation = pose.Rotation * Quaternion.Slerp(Quaternion.Identity, source.Rotation, bone.AppendWeight) };
-                    }
-                    if (bone.AppendTranslate)
-                    {
-                        pose = pose with { Translation = pose.Translation + source.Translation * bone.AppendWeight };
-                    }
-                }
-                pose = ApplyBoneAxisConstraints(bone, pose);
-                poses[index] = pose;
-                Matrix4x4 local = Matrix4x4.CreateFromQuaternion(pose.Rotation)
-                    * Matrix4x4.CreateTranslation(bone.RestTranslation + pose.Translation);
-                Matrix4x4 parent = bone.ParentIndex >= 0 && bone.ParentIndex < _globals.Length
-                    ? _globals[bone.ParentIndex]
-                    : Matrix4x4.Identity;
-                _globals[index] = local * parent;
-            }
-
-            foreach (IkState ik in _iks)
-            {
-                SolveIk(ik, poses);
-            }
+            SolveIk(ik, poses);
         }
+        RebuildGlobals(poses);
 
         if (_physicsBridge is not null)
         {
@@ -513,9 +486,19 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         {
             return;
         }
+        foreach (PmxBone.IKLink ikLink in ik.Links)
+        {
+            if ((uint)ikLink.BoneIndex < (uint)_ikRotations.Length)
+            {
+                _ikRotations[ikLink.BoneIndex] = Quaternion.Identity;
+                _bestIkRotations[ikLink.BoneIndex] = Quaternion.Identity;
+            }
+        }
+        RebuildGlobals(poses);
+        float bestDistance = float.MaxValue;
         for (int iteration = 0; iteration < ik.Iterations; iteration++)
         {
-            Vector3 target = GetPosition(_globals[ik.TargetIndex]);
+            Vector3 desired = GetPosition(_globals[ik.NodeIndex]);
             for (int linkIndex = 0; linkIndex < ik.Links.Length; linkIndex++)
             {
                 int link = ik.Links[linkIndex].BoneIndex;
@@ -523,34 +506,59 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                 {
                     continue;
                 }
-                Vector3 pivot = GetPosition(_globals[link]);
-                Vector3 current = GetPosition(_globals[ik.NodeIndex]);
-                Vector3 a = NormalizeOrDefault(current - pivot, Vector3.UnitZ);
-                Vector3 b = NormalizeOrDefault(target - pivot, Vector3.UnitZ);
-                float dot = Math.Clamp(Vector3.Dot(a, b), -1.0f, 1.0f);
+                Matrix4x4 inverseLink = InvertOrIdentity(_globals[link]);
+                Vector3 desiredLocal = Vector3.Transform(desired, inverseLink);
+                Vector3 effectorLocal = Vector3.Transform(GetPosition(_globals[ik.TargetIndex]), inverseLink);
+                Vector3 desiredDirection = NormalizeOrDefault(desiredLocal, Vector3.UnitZ);
+                Vector3 effectorDirection = NormalizeOrDefault(effectorLocal, Vector3.UnitZ);
+                float dot = Math.Clamp(Vector3.Dot(effectorDirection, desiredDirection), -1.0f, 1.0f);
                 float angle = MathF.Acos(dot);
                 if (angle < 1e-4f)
                 {
                     continue;
                 }
-                Vector3 axis = Vector3.Cross(a, b);
+                Vector3 axis = Vector3.Cross(effectorDirection, desiredDirection);
                 if (axis.LengthSquared() < 1e-8f)
                 {
                     continue;
                 }
                 angle = MathF.Min(angle, ik.Limit);
                 Quaternion delta = Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), angle);
-                Quaternion rotation = Quaternion.Normalize(delta * poses[link].Rotation);
+                Quaternion rotation = Quaternion.Normalize(_ikRotations[link] * poses[link].Rotation * delta);
                 if (ik.Links[linkIndex].EnableLimit)
                 {
                     rotation = ClampIkRotation(rotation, ik.Links[linkIndex]);
                 }
-                poses[link] = poses[link] with { Rotation = rotation };
+                _ikRotations[link] = Quaternion.Normalize(rotation * Quaternion.Inverse(poses[link].Rotation));
                 RebuildGlobals(poses);
-                if (Vector3.DistanceSquared(GetPosition(_globals[ik.NodeIndex]), target) < 1e-5f)
+                if (Vector3.DistanceSquared(GetPosition(_globals[ik.TargetIndex]), desired) < 1e-5f)
                 {
                     return;
                 }
+            }
+            float distance = Vector3.DistanceSquared(GetPosition(_globals[ik.TargetIndex]), desired);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                foreach (PmxBone.IKLink ikLink in ik.Links)
+                {
+                    if ((uint)ikLink.BoneIndex < (uint)_ikRotations.Length)
+                    {
+                        _bestIkRotations[ikLink.BoneIndex] = _ikRotations[ikLink.BoneIndex];
+                    }
+                }
+            }
+            else
+            {
+                foreach (PmxBone.IKLink ikLink in ik.Links)
+                {
+                    if ((uint)ikLink.BoneIndex < (uint)_ikRotations.Length)
+                    {
+                        _ikRotations[ikLink.BoneIndex] = _bestIkRotations[ikLink.BoneIndex];
+                    }
+                }
+                RebuildGlobals(poses);
+                break;
             }
         }
     }
@@ -614,50 +622,37 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private void RebuildGlobals(BonePose[] poses)
     {
         Array.Clear(_globals);
+        BonePose[] appendPoses = new BonePose[poses.Length];
         foreach (int index in _sortedBones)
         {
             BoneState bone = _bones[index];
-            Matrix4x4 local = Matrix4x4.CreateFromQuaternion(poses[index].Rotation)
-                * Matrix4x4.CreateTranslation(bone.RestTranslation + poses[index].Translation);
+            BonePose pose = poses[index];
+            if (bone.AppendIndex >= 0 && bone.AppendIndex < poses.Length)
+            {
+                BoneState sourceBone = _bones[bone.AppendIndex];
+                BonePose source = bone.AppendLocal || sourceBone.AppendIndex < 0
+                    ? poses[bone.AppendIndex]
+                    : appendPoses[bone.AppendIndex];
+                Quaternion appendRotation = Quaternion.Identity;
+                Vector3 appendTranslation = Vector3.Zero;
+                if (bone.AppendRotate)
+                {
+                    appendRotation = Quaternion.Slerp(Quaternion.Identity, source.Rotation, bone.AppendWeight);
+                    pose = pose with { Rotation = Quaternion.Normalize(pose.Rotation * appendRotation) };
+                }
+                if (bone.AppendTranslate)
+                {
+                    appendTranslation = source.Translation * bone.AppendWeight;
+                    pose = pose with { Translation = pose.Translation + appendTranslation };
+                }
+                appendPoses[index] = new BonePose(appendTranslation, appendRotation);
+            }
+            Quaternion localRotation = Quaternion.Normalize(_ikRotations[index] * pose.Rotation);
+            Matrix4x4 local = Matrix4x4.CreateFromQuaternion(localRotation)
+                * Matrix4x4.CreateTranslation(bone.RestTranslation + pose.Translation);
             Matrix4x4 parent = bone.ParentIndex >= 0 && bone.ParentIndex < _globals.Length ? _globals[bone.ParentIndex] : Matrix4x4.Identity;
             _globals[index] = local * parent;
         }
-    }
-
-    private BonePose GetGlobalAppendPose(int boneIndex)
-    {
-        Matrix4x4 deformation = _bones[boneIndex].InverseBind * _globals[boneIndex];
-        return Matrix4x4.Decompose(deformation, out _, out Quaternion rotation, out Vector3 translation)
-            ? new BonePose(translation, Quaternion.Normalize(rotation))
-            : BonePose.Identity;
-    }
-
-    private static BonePose ApplyBoneAxisConstraints(BoneState bone, BonePose pose)
-    {
-        Quaternion rotation = pose.Rotation;
-        if (bone.FixedAxis && bone.FixedAxisVector.LengthSquared() > 1e-8f)
-        {
-            Vector3 axis = Vector3.Normalize(bone.FixedAxisVector);
-            Vector3 vector = new(rotation.X, rotation.Y, rotation.Z);
-            Vector3 projected = axis * Vector3.Dot(vector, axis);
-            Quaternion twist = new(projected, rotation.W);
-            rotation = twist.LengthSquared() > 1e-8f ? Quaternion.Normalize(twist) : Quaternion.Identity;
-        }
-        if (bone.LocalAxis && bone.LocalAxisX.LengthSquared() > 1e-8f && bone.LocalAxisZ.LengthSquared() > 1e-8f)
-        {
-            Vector3 x = Vector3.Normalize(bone.LocalAxisX);
-            Vector3 z = Vector3.Normalize(bone.LocalAxisZ);
-            Vector3 y = NormalizeOrDefault(Vector3.Cross(z, x), Vector3.UnitY);
-            z = NormalizeOrDefault(Vector3.Cross(x, y), z);
-            Matrix4x4 basis = new(
-                x.X, x.Y, x.Z, 0.0f,
-                y.X, y.Y, y.Z, 0.0f,
-                z.X, z.Y, z.Z, 0.0f,
-                0.0f, 0.0f, 0.0f, 1.0f);
-            Matrix4x4 localRotation = basis * Matrix4x4.CreateFromQuaternion(rotation) * InvertOrIdentity(basis);
-            rotation = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(localRotation));
-        }
-        return pose with { Rotation = rotation };
     }
 
     private static Quaternion ClampIkRotation(Quaternion rotation, PmxBone.IKLink link)
@@ -976,6 +971,18 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     }
     private static BonePose EvaluateKey(MotionKey[] keys, float frame)
     {
-        if (keys.Length == 0) return BonePose.Identity; if (frame <= keys[0].Frame) return keys[0].Pose; if (frame >= keys[^1].Frame) return keys[^1].Pose; int upper = Array.FindIndex(keys, key => key.Frame >= frame); MotionKey a = keys[upper - 1], b = keys[upper]; float t = (frame - a.Frame) / Math.Max(1.0f, b.Frame - a.Frame); return new BonePose(new Vector3(float.Lerp(a.Pose.Translation.X, b.Pose.Translation.X, b.X.Evaluate(t)), float.Lerp(a.Pose.Translation.Y, b.Pose.Translation.Y, b.Y.Evaluate(t)), float.Lerp(a.Pose.Translation.Z, b.Pose.Translation.Z, b.Z.Evaluate(t))), Quaternion.Slerp(a.Pose.Rotation, b.Pose.Rotation, b.R.Evaluate(t)));
+        if (keys.Length == 0) return BonePose.Identity;
+        if (frame <= keys[0].Frame) return keys[0].Pose;
+        if (frame >= keys[^1].Frame) return keys[^1].Pose;
+        int upper = Array.FindIndex(keys, key => key.Frame >= frame);
+        MotionKey a = keys[upper - 1], b = keys[upper];
+        float frameRange = b.Frame - a.Frame;
+        float t = frameRange <= 1.0f ? 0.0f : (frame - a.Frame) / frameRange;
+        return new BonePose(
+            new Vector3(
+                float.Lerp(a.Pose.Translation.X, b.Pose.Translation.X, b.X.Evaluate(t)),
+                float.Lerp(a.Pose.Translation.Y, b.Pose.Translation.Y, b.Y.Evaluate(t)),
+                float.Lerp(a.Pose.Translation.Z, b.Pose.Translation.Z, b.Z.Evaluate(t))),
+            Quaternion.Normalize(Quaternion.Slerp(a.Pose.Rotation, b.Pose.Rotation, b.R.Evaluate(t))));
     }
 }
