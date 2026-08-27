@@ -496,6 +496,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         }
         RebuildGlobals(poses);
         float bestDistance = float.MaxValue;
+        float[] planeAngles = new float[ik.Links.Length];
         for (int iteration = 0; iteration < ik.Iterations; iteration++)
         {
             Vector3 desired = GetPosition(_globals[ik.NodeIndex]);
@@ -504,6 +505,32 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                 int link = ik.Links[linkIndex].BoneIndex;
                 if (link < 0 || link >= _globals.Length)
                 {
+                    continue;
+                }
+                if (ik.Links[linkIndex].EnableLimit && TryGetSingleAxisLimit(ik.Links[linkIndex], out _, out Vector3 planeAxis, out float minLimit, out float maxLimit))
+                {
+                    Matrix4x4 planeInverse = InvertOrIdentity(_globals[link]);
+                    Vector3 ikVector = NormalizeOrDefault(Vector3.Transform(desired, planeInverse), Vector3.UnitZ);
+                    Vector3 targetVector = NormalizeOrDefault(Vector3.Transform(GetPosition(_globals[ik.TargetIndex]), planeInverse), Vector3.UnitZ);
+                    float planeDot = Math.Clamp(Vector3.Dot(targetVector, ikVector), -1.0f, 1.0f);
+                    float planeAngle = MathF.Acos(planeDot);
+                    if (planeAngle > 1e-4f)
+                    {
+                        Vector3 positive = Vector3.Transform(targetVector, Quaternion.CreateFromAxisAngle(planeAxis, planeAngle));
+                        Vector3 negative = Vector3.Transform(targetVector, Quaternion.CreateFromAxisAngle(planeAxis, -planeAngle));
+                        float signed = Vector3.Dot(positive, ikVector) > Vector3.Dot(negative, ikVector) ? planeAngle : -planeAngle;
+                        float nextAngle = planeAngles[linkIndex] + signed;
+                        if (iteration == 0 && (nextAngle < minLimit || nextAngle > maxLimit))
+                        {
+                            float opposite = -nextAngle;
+                            if (opposite >= minLimit && opposite <= maxLimit) nextAngle = opposite;
+                        }
+                        nextAngle = Math.Clamp(nextAngle, minLimit, maxLimit);
+                        planeAngles[linkIndex] = nextAngle;
+                        Quaternion constrained = Quaternion.CreateFromAxisAngle(planeAxis, nextAngle);
+                        _ikRotations[link] = Quaternion.Normalize(constrained * Quaternion.Inverse(poses[link].Rotation));
+                        RebuildGlobals(poses);
+                    }
                     continue;
                 }
                 Matrix4x4 inverseLink = InvertOrIdentity(_globals[link]);
@@ -561,6 +588,24 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                 break;
             }
         }
+    }
+
+    private static bool TryGetSingleAxisLimit(PmxBone.IKLink link, out int axisIndex, out Vector3 axis, out float min, out float max)
+    {
+        Vector3 minValue = link.LimitMin;
+        Vector3 maxValue = link.LimitMax;
+        int active = (MathF.Abs(minValue.X) > 1e-6f || MathF.Abs(maxValue.X) > 1e-6f ? 1 : 0)
+            + (MathF.Abs(minValue.Y) > 1e-6f || MathF.Abs(maxValue.Y) > 1e-6f ? 1 : 0)
+            + (MathF.Abs(minValue.Z) > 1e-6f || MathF.Abs(maxValue.Z) > 1e-6f ? 1 : 0);
+        axisIndex = 0;
+        axis = Vector3.UnitX;
+        min = max = 0.0f;
+        if (active != 1) return false;
+        if (MathF.Abs(minValue.X) > 1e-6f || MathF.Abs(maxValue.X) > 1e-6f) { axisIndex = 0; axis = Vector3.UnitX; min = -maxValue.X; max = -minValue.X; }
+        else if (MathF.Abs(minValue.Y) > 1e-6f || MathF.Abs(maxValue.Y) > 1e-6f) { axisIndex = 1; axis = Vector3.UnitY; min = -maxValue.Y; max = -minValue.Y; }
+        else { axisIndex = 2; axis = Vector3.UnitZ; min = -maxValue.Z; max = -minValue.Z; }
+        if (min > max) (min, max) = (max, min);
+        return true;
     }
 
     public void Dispose()
