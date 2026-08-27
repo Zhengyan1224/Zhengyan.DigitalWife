@@ -81,6 +81,14 @@ public sealed class RuntimeEntity
         }
     }
 
+    public string ReceiveShadowMode
+    {
+        get => Definition.ReceiveShadowMode;
+        set => Definition.ReceiveShadowMode = string.Equals(value, "toon", StringComparison.OrdinalIgnoreCase)
+            ? "toon"
+            : "smooth";
+    }
+
     public Vector3 LightColor
     {
         get => IsPointLight ? Definition.PointLight.Color.ToVector3() : Definition.SpotLight.Color.ToVector3();

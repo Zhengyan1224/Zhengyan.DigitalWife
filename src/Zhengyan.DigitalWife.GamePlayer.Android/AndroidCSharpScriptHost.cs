@@ -1,8 +1,6 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Scripting;
-using Microsoft.CodeAnalysis.Scripting;
-using Microsoft.CodeAnalysis.Scripting.Hosting;
-using Android.Util;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 using System.Numerics;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -16,13 +14,13 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly string _projectDirectory;
     private readonly Action<string> _requestSceneChange;
     private readonly Func<RuntimeScene, string, bool> _playAudio;
+    private readonly Func<string, bool> _pauseAudio;
     private readonly Func<string, bool> _stopAudio;
     private readonly Func<string, bool> _refreshRenderTexture;
     private readonly Func<string, string, float, bool> _configureRenderTexture;
     private readonly Func<string, AndroidRenderTextureInfo?> _getRenderTexture;
     private readonly Func<IReadOnlyList<AndroidRenderTextureInfo>> _listRenderTextures;
-    private readonly InteractiveAssemblyLoader _assemblyLoader;
-    private readonly Dictionary<string, ScriptRunner<object?>> _runners = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -30,6 +28,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         string projectDirectory,
         Action<string> requestSceneChange,
         Func<RuntimeScene, string, bool> playAudio,
+        Func<string, bool> pauseAudio,
         Func<string, bool> stopAudio,
         Func<string, bool>? refreshRenderTexture = null,
         Func<string, string, float, bool>? configureRenderTexture = null,
@@ -39,12 +38,12 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
         _playAudio = playAudio;
+        _pauseAudio = pauseAudio;
         _stopAudio = stopAudio;
         _refreshRenderTexture = refreshRenderTexture ?? (_ => false);
         _configureRenderTexture = configureRenderTexture ?? ((_, _, _) => false);
         _getRenderTexture = getRenderTexture ?? (_ => null);
         _listRenderTextures = listRenderTextures ?? (() => []);
-        _assemblyLoader = CreateAssemblyLoader();
     }
 
     public void Start(RuntimeScene scene)
@@ -98,12 +97,22 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             scene,
             _requestSceneChange,
             name => _playAudio(scene, name),
+            _pauseAudio,
             _stopAudio,
             _refreshRenderTexture,
             _configureRenderTexture,
             _getRenderTexture,
             _listRenderTextures);
-        return new AndroidScriptGlobals(scene, entity, deltaSeconds, isStart, runtimeEvent, services);
+        return new AndroidScriptGlobals(
+            new AndroidScriptScene(scene),
+            new AndroidScriptEntity(entity),
+            new AndroidScriptInput(),
+            new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio),
+            deltaSeconds,
+            isStart,
+            !isStart && runtimeEvent is null,
+            runtimeEvent,
+            services);
     }
 
     private void Execute(ScriptBinding binding, AndroidScriptGlobals globals)
@@ -112,30 +121,13 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         if (!File.Exists(path)) return;
         try
         {
-            if (!_runners.TryGetValue(path, out ScriptRunner<object?>? runner))
+            if (!_runners.TryGetValue(path, out AndroidCompiledScript? runner))
             {
-                ScriptOptions options = ScriptOptions.Default
-                    .WithReferences(
-                    [
-                        CreateMetadataReference(typeof(object).Assembly),
-                        CreateMetadataReference(typeof(Console).Assembly),
-                        CreateMetadataReference(typeof(Vector2).Assembly),
-                        CreateMetadataReference(typeof(Enumerable).Assembly),
-                        CreateMetadataReference(typeof(AndroidScriptGlobals).Assembly),
-                        CreateMetadataReference(typeof(RuntimeScene).Assembly),
-                        CreateMetadataReference(typeof(GameProject).Assembly)
-                    ])
-                    .WithMetadataResolver(AndroidMetadataReferenceResolver.Instance)
-                    .WithImports("System", "System.Numerics", "Zhengyan.DigitalWife.GameProjects", "Zhengyan.DigitalWife.GamePlayer.Runtime");
-                runner = CSharpScript.Create<object?>(
-                    File.ReadAllText(path),
-                    options,
-                    typeof(AndroidScriptGlobals),
-                    _assemblyLoader).CreateDelegate();
+                runner = Compile(path);
                 _runners[path] = runner;
             }
 
-            runner(globals).GetAwaiter().GetResult();
+            runner.Execute(globals);
         }
         catch (Exception ex)
         {
@@ -143,31 +135,73 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
     }
 
-    private static InteractiveAssemblyLoader CreateAssemblyLoader()
+    private static AndroidCompiledScript Compile(string path)
     {
-        InteractiveAssemblyLoader loader = new();
-        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        string source = """
+            using System;
+            using System.Numerics;
+            using Zhengyan.DigitalWife.GameProjects;
+            using Zhengyan.DigitalWife.GamePlayer.Runtime;
+            using Zhengyan.DigitalWife.GamePlayer.Android;
+
+            """ + File.ReadAllText(path);
+        SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
+            source,
+            new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script),
+            path);
+        CSharpCompilation compilation = CSharpCompilation.CreateScriptCompilation(
+            "AndroidScript_" + Guid.NewGuid().ToString("N"),
+            syntaxTree,
+            GetMetadataReferences(),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release),
+            returnType: typeof(object),
+            globalsType: typeof(AndroidScriptGlobals));
+
+        using MemoryStream image = new();
+        EmitResult result = compilation.Emit(image);
+        if (!result.Success)
         {
-            if (assembly.IsDynamic)
+            string diagnostics = string.Join(Environment.NewLine, result.Diagnostics
+                .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+                .Select(diagnostic => diagnostic.ToString()));
+            throw new InvalidOperationException($"Android C# script compilation failed:{Environment.NewLine}{diagnostics}");
+        }
+
+        Assembly assembly = Assembly.Load(image.ToArray());
+        Type scriptType = assembly.GetType("Script")
+            ?? throw new InvalidOperationException("Android C# script did not produce a Script type.");
+        MethodInfo factory = scriptType.GetMethod("<Factory>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Android C# script did not produce an execution factory.");
+        return new AndroidCompiledScript(factory);
+    }
+
+    private static IEnumerable<MetadataReference> GetMetadataReferences()
+    {
+        HashSet<string> identities = new(StringComparer.OrdinalIgnoreCase);
+        // The Android host may not have loaded framework assemblies that are
+        // only used by a script (Console is a common example). Touch the
+        // representative types first so their in-memory metadata is available.
+        Assembly[] requiredAssemblies =
+        [
+            typeof(object).Assembly,
+            typeof(Console).Assembly,
+            typeof(Task).Assembly,
+            typeof(System.Linq.Enumerable).Assembly,
+            typeof(Vector3).Assembly,
+            typeof(AndroidScriptGlobals).Assembly,
+            typeof(RuntimeScene).Assembly,
+            typeof(GameProject).Assembly
+        ];
+
+        foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
+        {
+            if (assembly.IsDynamic || !identities.Add(assembly.FullName ?? assembly.GetName().Name ?? string.Empty))
             {
                 continue;
             }
 
-            try
-            {
-                // Android assemblies live inside the APK and do not have usable
-                // filesystem locations. Registering them makes script execution
-                // bind directly to the already loaded assemblies.
-                loader.RegisterDependency(assembly);
-            }
-            catch (ArgumentException)
-            {
-                // Some framework facades have duplicate identities. Their
-                // concrete implementation is already registered.
-            }
+            yield return CreateMetadataReference(assembly);
         }
-
-        return loader;
     }
 
     private static MetadataReference CreateMetadataReference(Assembly assembly)
@@ -198,43 +232,21 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         throw new InvalidOperationException($"Assembly metadata is unavailable: {assembly.FullName}");
     }
 
-    private sealed class AndroidMetadataReferenceResolver : MetadataReferenceResolver
+    private sealed class AndroidCompiledScript
     {
-        public static AndroidMetadataReferenceResolver Instance { get; } = new();
+        private readonly MethodInfo _factory;
 
-        // All references are supplied from loaded assemblies below. Do not let
-        // Roslyn fall back to probing Android's synthetic assembly paths.
-        public override bool ResolveMissingAssemblies => false;
-
-        public override System.Collections.Immutable.ImmutableArray<PortableExecutableReference> ResolveReference(
-            string reference,
-            string? baseFilePath,
-            MetadataReferenceProperties properties)
+        public AndroidCompiledScript(MethodInfo factory)
         {
-            string name = Path.GetFileNameWithoutExtension(reference);
-            Assembly? assembly = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(candidate => string.Equals(candidate.GetName().Name, name, StringComparison.OrdinalIgnoreCase));
-            return assembly is null
-                ? System.Collections.Immutable.ImmutableArray<PortableExecutableReference>.Empty
-                : System.Collections.Immutable.ImmutableArray.Create(
-                    (PortableExecutableReference)CreateMetadataReference(assembly));
+            _factory = factory;
         }
 
-        public override PortableExecutableReference? ResolveMissingAssembly(
-            MetadataReference definition,
-            AssemblyIdentity referenceIdentity)
+        public void Execute(AndroidScriptGlobals globals)
         {
-            Assembly? assembly = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(candidate => string.Equals(
-                    candidate.GetName().Name,
-                    referenceIdentity.Name,
-                    StringComparison.OrdinalIgnoreCase));
-            return assembly is null ? null : (PortableExecutableReference)CreateMetadataReference(assembly);
+            object?[] submissionArray = [globals, null];
+            Task<object?> task = (Task<object?>)_factory.Invoke(null, [submissionArray])!;
+            task.GetAwaiter().GetResult();
         }
-
-        public override bool Equals(object? obj) => ReferenceEquals(this, obj);
-
-        public override int GetHashCode() => typeof(AndroidMetadataReferenceResolver).GetHashCode();
     }
 
     private static bool IsSupported(ScriptBinding binding)
@@ -282,33 +294,128 @@ public sealed record AndroidQualityBudgetInfo(
     int AdaptiveParticleLimit,
     bool ReflectionsEnabled);
 
+public sealed class AndroidScriptScene
+{
+    private readonly RuntimeScene _scene;
+
+    internal AndroidScriptScene(RuntimeScene scene)
+    {
+        _scene = scene;
+        Camera = new AndroidScriptCamera(scene);
+    }
+
+    public string Name => _scene.Name;
+    public AndroidScriptCamera Camera { get; }
+    public RuntimeEntity? GetEntity(string idOrName) => _scene.GetEntity(idOrName);
+}
+
+public sealed class AndroidScriptEntity
+{
+    private readonly RuntimeEntity _entity;
+
+    internal AndroidScriptEntity(RuntimeEntity entity) => _entity = entity;
+
+    public string Id => _entity.Id;
+    public string Name { get => _entity.Name; set => _entity.Name = value; }
+    public Vector3 Position { get => _entity.Position; set => _entity.Position = value; }
+    public Vector3 RotationDegrees { get => _entity.RotationDegrees; set => _entity.RotationDegrees = value; }
+    public Vector3 Scale { get => _entity.Scale; set => _entity.Scale = value; }
+    public string ReceiveShadowMode { get => _entity.ReceiveShadowMode; set => _entity.ReceiveShadowMode = value; }
+
+    public void SetPosition(float x, float y, float z) => Position = new Vector3(x, y, z);
+    public void SetPosition(Vector3 position) => Position = position;
+    public void ApplyMotion(string motionPath) { }
+    public void PlayMotion(bool restart = false) { }
+    public void PauseMotion() { }
+    public void StopMotion() { }
+    public void SeekMotionFrame(float frame) { }
+    public void Speak(string text, Action? onCompleted = null) => onCompleted?.Invoke();
+    public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
+        => onCompleted?.Invoke();
+}
+
+public sealed class AndroidScriptInput
+{
+    // Android gameplay input is touch-driven. Keyboard queries are retained so
+    // desktop-authored scripts compile and simply remain inactive on touch-only devices.
+    public bool IsKeyDown(string key) => false;
+}
+
+public sealed class AndroidScriptAudio
+{
+    private readonly Func<string, bool> _play;
+    private readonly Func<string, bool> _pause;
+    private readonly Func<string, bool> _stop;
+
+    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop)
+    {
+        _play = play;
+        _pause = pause;
+        _stop = stop;
+    }
+
+    public bool Play(string idOrName) => _play(idOrName);
+    public bool Pause(string idOrName) => _pause(idOrName);
+    public bool Stop(string idOrName) => _stop(idOrName);
+}
+
+public sealed class AndroidScriptCamera
+{
+    private readonly RuntimeScene _scene;
+
+    internal AndroidScriptCamera(RuntimeScene scene) => _scene = scene;
+
+    public void SetCameraVmd(string cameraName, string path, bool loop = true, float playbackSpeed = 1.0f, bool play = true) { }
+    public void PlayCameraVmd(string cameraName, bool restart = false) { }
+    public void PauseCameraVmd(string cameraName) { }
+    public void SeekCameraVmd(string cameraName, float frame) { }
+    public void ClearCameraVmd(string cameraName) { }
+    public void UseEditorOrbitMode() { }
+}
+
 public sealed class AndroidScriptGlobals
 {
     public AndroidScriptGlobals(
-        RuntimeScene scene,
-        RuntimeEntity entity,
+        AndroidScriptScene scene,
+        AndroidScriptEntity entity,
+        AndroidScriptInput input,
+        AndroidScriptAudio audio,
         float deltaSeconds,
         bool isStart,
+        bool isUpdate,
         AndroidRuntimeEvent? runtimeEvent = null,
         AndroidScriptServices? services = null)
     {
         Scene = scene;
         Entity = entity;
+        Input = input;
+        Audio = audio;
         DeltaSeconds = deltaSeconds;
         IsStart = isStart;
+        IsUpdate = isUpdate;
         Event = runtimeEvent;
         Services = services ?? throw new ArgumentNullException(nameof(services));
     }
 
-    public RuntimeScene Scene { get; }
-    public RuntimeEntity Entity { get; }
+    public AndroidScriptScene Scene { get; }
+    public AndroidScriptEntity Entity { get; }
+    public AndroidScriptInput Input { get; }
+    public AndroidScriptAudio Audio { get; }
     public float DeltaSeconds { get; }
     public bool IsStart { get; }
+    public bool IsUpdate { get; }
 
     /// <summary>非 null 时表示一次 GUI/Sprite/触摸事件；Start/Update 时为 null。</summary>
     public AndroidRuntimeEvent? Event { get; }
 
     public bool IsEvent => Event is not null;
+    public bool IsGuiEvent => string.Equals(Event?.Type, "gui", StringComparison.OrdinalIgnoreCase);
+    public bool IsSpriteEvent => string.Equals(Event?.Type, "sprite", StringComparison.OrdinalIgnoreCase);
+    public bool IsSpeechEvent => string.Equals(Event?.Type, "speech", StringComparison.OrdinalIgnoreCase);
+    public string GuiControlId => IsGuiEvent ? Event!.Id : string.Empty;
+    public string GuiControlName => IsGuiEvent ? Event!.Text : string.Empty;
+    public string GuiEventName => IsGuiEvent ? Event!.EventName : string.Empty;
+    public string SpeechCallbackName => IsSpeechEvent ? Event!.EventName : string.Empty;
 
     public AndroidScriptServices Services { get; }
 }
@@ -318,6 +425,7 @@ public sealed class AndroidScriptServices
     private readonly RuntimeScene _scene;
     private readonly Action<string> _requestSceneChange;
     private readonly Func<string, bool> _playAudio;
+    private readonly Func<string, bool> _pauseAudio;
     private readonly Func<string, bool> _stopAudio;
     private readonly Func<string, bool> _refreshRenderTexture;
     private readonly Func<string, string, float, bool> _configureRenderTexture;
@@ -328,6 +436,7 @@ public sealed class AndroidScriptServices
         RuntimeScene scene,
         Action<string> requestSceneChange,
         Func<string, bool> playAudio,
+        Func<string, bool> pauseAudio,
         Func<string, bool> stopAudio,
         Func<string, bool> refreshRenderTexture,
         Func<string, string, float, bool> configureRenderTexture,
@@ -337,6 +446,7 @@ public sealed class AndroidScriptServices
         _scene = scene;
         _requestSceneChange = requestSceneChange;
         _playAudio = playAudio;
+        _pauseAudio = pauseAudio;
         _stopAudio = stopAudio;
         _refreshRenderTexture = refreshRenderTexture;
         _configureRenderTexture = configureRenderTexture;
@@ -352,6 +462,7 @@ public sealed class AndroidScriptServices
     public bool RemoveEntity(string idOrName) => _scene.RemoveEntity(idOrName);
     public void ChangeScene(string path) => _requestSceneChange(path);
     public bool PlayAudio(string idOrName) => _playAudio(idOrName);
+    public bool PauseAudio(string idOrName) => _pauseAudio(idOrName);
     public bool StopAudio(string idOrName) => _stopAudio(idOrName);
 
     /// <summary>使指定 RenderTexture 在下一帧强制刷新。</summary>

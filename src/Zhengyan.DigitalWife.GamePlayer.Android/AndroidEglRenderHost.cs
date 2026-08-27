@@ -59,6 +59,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
                 _projectDirectory,
                 RequestSceneChange,
                 (scene, name) => _audioHost?.Play(scene, name) == true,
+                name => _audioHost?.Pause(name) == true,
                 name => _audioHost?.Stop(name) == true,
                 name => _sceneRenderer?.RequestRenderTextureRefresh(name) == true,
                 (name, mode, interval) => _sceneRenderer?.ConfigureRenderTexture(name, mode, interval) == true,

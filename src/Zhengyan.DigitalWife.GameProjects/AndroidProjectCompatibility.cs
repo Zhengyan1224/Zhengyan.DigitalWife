@@ -329,7 +329,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_CSHARP_PRECOMPILE_REQUIRED",
                     AndroidCompatibilitySeverity.Warning,
-                    $"Enabled C# script '{script.Path}' is executed by the Android source runner; only the basic Scene/Entity/DeltaSeconds globals are available and compile/runtime failures are logged.",
+                    $"Enabled C# script '{script.Path}' is compiled in memory by the Android GamePlayer; unsupported APIs and compile/runtime failures are logged.",
                     scenePath,
                     entityName));
                 continue;

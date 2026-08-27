@@ -41,6 +41,27 @@ internal sealed class AndroidAudioHost : IDisposable
         return true;
     }
 
+    public bool Pause(string idOrName)
+    {
+        if (!_players.TryGetValue(idOrName, out MediaPlayer? player))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (player.IsPlaying)
+            {
+                player.Pause();
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private bool Play(AudioAsset asset)
     {
         string path = GameProjectPath.ToAbsolute(_projectDirectory, asset.Path);
