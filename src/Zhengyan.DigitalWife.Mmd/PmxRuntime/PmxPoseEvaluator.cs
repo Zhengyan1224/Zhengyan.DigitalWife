@@ -676,11 +676,11 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             {
                 BoneState sourceBone = _bones[bone.AppendIndex];
                 BonePose sourcePose = poses[bone.AppendIndex];
-                Quaternion sourceRotation = bone.AppendLocal || sourceBone.AppendIndex < 0
+                Quaternion sourceRotation = bone.AppendLocal || !sourceBone.AppendRotate
                     ? sourcePose.Rotation
                     : appendPoses[bone.AppendIndex].Rotation;
                 sourceRotation = Quaternion.Normalize(_ikRotations[bone.AppendIndex] * sourceRotation);
-                Vector3 sourceTranslation = bone.AppendLocal || sourceBone.AppendIndex < 0
+                Vector3 sourceTranslation = bone.AppendLocal || !sourceBone.AppendTranslate
                     ? sourcePose.Translation
                     : appendPoses[bone.AppendIndex].Translation;
                 Quaternion appendRotation = Quaternion.Identity;
