@@ -64,7 +64,9 @@ internal sealed class AndroidEglRenderHost : IDisposable
                 name => _sceneRenderer?.RequestRenderTextureRefresh(name) == true,
                 (name, mode, interval) => _sceneRenderer?.ConfigureRenderTexture(name, mode, interval) == true,
                 name => _sceneRenderer?.GetRenderTexture(name),
-                () => _sceneRenderer?.GetRenderTextures() ?? []);
+                () => _sceneRenderer?.GetRenderTextures() ?? [],
+                ApplyMotion,
+                (entity, frame, playing) => _sceneRenderer?.TrySetMotionLayerState(entity.Id, 0, frame, playing));
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -413,6 +415,25 @@ internal sealed class AndroidEglRenderHost : IDisposable
     }
 
     public void RequestSceneChange(string scenePath) => _sceneManager?.RequestSceneChange(scenePath);
+
+    private void ApplyMotion(RuntimeScene scene, RuntimeEntity entity, string motionPath)
+    {
+        string absolutePath = GameProjectPath.ToAbsolute(_projectDirectory, motionPath);
+        if (!File.Exists(absolutePath))
+        {
+            Log.Warn(LogTag, $"Android script VMD asset was not found: {absolutePath}");
+            return;
+        }
+
+        entity.Definition.MotionLayers =
+        [
+            new MotionLayerSettings { Path = motionPath, Weight = 1.0f }
+        ];
+        entity.Definition.IsPlaying = true;
+        entity.Definition.PlaybackSpeed = Math.Max(entity.Definition.PlaybackSpeed, 0.0001f);
+        _sceneRenderer?.Load(scene, _projectDirectory, _project?.AndroidQuality);
+        Log.Info(LogTag, $"Android script applied motion '{motionPath}' to '{entity.Name}'.");
+    }
 
     public bool RequestRenderTextureRefresh(string idOrName)
     {

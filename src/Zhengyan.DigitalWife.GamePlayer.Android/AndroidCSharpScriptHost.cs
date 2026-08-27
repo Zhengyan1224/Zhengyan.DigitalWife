@@ -20,6 +20,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, string, float, bool> _configureRenderTexture;
     private readonly Func<string, AndroidRenderTextureInfo?> _getRenderTexture;
     private readonly Func<IReadOnlyList<AndroidRenderTextureInfo>> _listRenderTextures;
+    private readonly Action<RuntimeScene, RuntimeEntity, string> _applyMotion;
+    private readonly Action<RuntimeEntity, float?, bool?> _setMotionState;
     private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
@@ -33,7 +35,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         Func<string, bool>? refreshRenderTexture = null,
         Func<string, string, float, bool>? configureRenderTexture = null,
         Func<string, AndroidRenderTextureInfo?>? getRenderTexture = null,
-        Func<IReadOnlyList<AndroidRenderTextureInfo>>? listRenderTextures = null)
+        Func<IReadOnlyList<AndroidRenderTextureInfo>>? listRenderTextures = null,
+        Action<RuntimeScene, RuntimeEntity, string>? applyMotion = null,
+        Action<RuntimeEntity, float?, bool?>? setMotionState = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -44,6 +48,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _configureRenderTexture = configureRenderTexture ?? ((_, _, _) => false);
         _getRenderTexture = getRenderTexture ?? (_ => null);
         _listRenderTextures = listRenderTextures ?? (() => []);
+        _applyMotion = applyMotion ?? ((_, _, _) => { });
+        _setMotionState = setMotionState ?? ((_, _, _) => { });
     }
 
     public void Start(RuntimeScene scene)
@@ -104,8 +110,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _getRenderTexture,
             _listRenderTextures);
         return new AndroidScriptGlobals(
-            new AndroidScriptScene(scene),
-            new AndroidScriptEntity(entity),
+            new AndroidScriptScene(scene, _projectDirectory),
+            new AndroidScriptEntity(
+                entity,
+                path => _applyMotion(scene, entity, path),
+                (frame, playing) => _setMotionState(entity, frame, playing)),
             new AndroidScriptInput(),
             new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio),
             deltaSeconds,
@@ -311,10 +320,10 @@ public sealed class AndroidScriptScene
 {
     private readonly RuntimeScene _scene;
 
-    internal AndroidScriptScene(RuntimeScene scene)
+    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory)
     {
         _scene = scene;
-        Camera = new AndroidScriptCamera(scene);
+        Camera = new AndroidScriptCamera(scene, projectDirectory);
     }
 
     public string Name => _scene.Name;
@@ -325,8 +334,15 @@ public sealed class AndroidScriptScene
 public sealed class AndroidScriptEntity
 {
     private readonly RuntimeEntity _entity;
+    private readonly Action<string> _applyMotion;
+    private readonly Action<float?, bool?> _setMotionState;
 
-    internal AndroidScriptEntity(RuntimeEntity entity) => _entity = entity;
+    internal AndroidScriptEntity(RuntimeEntity entity, Action<string> applyMotion, Action<float?, bool?> setMotionState)
+    {
+        _entity = entity;
+        _applyMotion = applyMotion;
+        _setMotionState = setMotionState;
+    }
 
     public string Id => _entity.Id;
     public string Name { get => _entity.Name; set => _entity.Name = value; }
@@ -337,11 +353,11 @@ public sealed class AndroidScriptEntity
 
     public void SetPosition(float x, float y, float z) => Position = new Vector3(x, y, z);
     public void SetPosition(Vector3 position) => Position = position;
-    public void ApplyMotion(string motionPath) { }
-    public void PlayMotion(bool restart = false) { }
-    public void PauseMotion() { }
-    public void StopMotion() { }
-    public void SeekMotionFrame(float frame) { }
+    public void ApplyMotion(string motionPath) => _applyMotion(motionPath);
+    public void PlayMotion(bool restart = false) => _setMotionState(restart ? 0.0f : null, true);
+    public void PauseMotion() => _setMotionState(null, false);
+    public void StopMotion() => _setMotionState(0.0f, false);
+    public void SeekMotionFrame(float frame) => _setMotionState(Math.Max(frame, 0.0f), null);
     public void Speak(string text, Action? onCompleted = null) => onCompleted?.Invoke();
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => onCompleted?.Invoke();
@@ -375,15 +391,50 @@ public sealed class AndroidScriptAudio
 public sealed class AndroidScriptCamera
 {
     private readonly RuntimeScene _scene;
+    private readonly string _projectDirectory;
 
-    internal AndroidScriptCamera(RuntimeScene scene) => _scene = scene;
+    internal AndroidScriptCamera(RuntimeScene scene, string projectDirectory)
+    {
+        _scene = scene;
+        _projectDirectory = projectDirectory;
+    }
 
-    public void SetCameraVmd(string cameraName, string path, bool loop = true, float playbackSpeed = 1.0f, bool play = true) { }
-    public void PlayCameraVmd(string cameraName, bool restart = false) { }
-    public void PauseCameraVmd(string cameraName) { }
-    public void SeekCameraVmd(string cameraName, float frame) { }
-    public void ClearCameraVmd(string cameraName) { }
-    public void UseEditorOrbitMode() { }
+    public void SetCameraVmd(string cameraName, string path, bool loop = true, float playbackSpeed = 1.0f, bool play = true)
+    {
+        RuntimeCamera? camera = Find(cameraName);
+        if (camera is null)
+        {
+            global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android script camera was not found: {cameraName}");
+            return;
+        }
+        string absolutePath = GameProjectPath.ToAbsolute(_projectDirectory, path);
+        if (!File.Exists(absolutePath))
+        {
+            global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android script camera VMD asset was not found: {absolutePath}");
+            return;
+        }
+        camera.SetVmd(path, loop, playbackSpeed, play);
+        camera.Settings.ControlMode = "vmd";
+        global::Android.Util.Log.Info("ZhengyanGamePlayer", $"Android script applied camera VMD '{path}' to '{camera.Name}'.");
+    }
+    public void PlayCameraVmd(string cameraName, bool restart = false) => Find(cameraName)?.PlayVmd(restart);
+    public void PauseCameraVmd(string cameraName) => Find(cameraName)?.PauseVmd();
+    public void SeekCameraVmd(string cameraName, float frame) => Find(cameraName)?.SeekVmd(frame);
+    public void ClearCameraVmd(string cameraName)
+    {
+        RuntimeCamera? camera = Find(cameraName);
+        if (camera is null) return;
+        camera.SetVmd(string.Empty, play: false);
+        camera.Settings.ControlMode = "custom";
+    }
+    public void UseEditorOrbitMode()
+    {
+        _scene.MainCamera.Settings.ControlMode = "editor";
+    }
+
+    private RuntimeCamera? Find(string idOrName) => _scene.Cameras.FirstOrDefault(camera =>
+        string.Equals(camera.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(camera.Name, idOrName, StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed class AndroidScriptGlobals
