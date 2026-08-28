@@ -19,6 +19,7 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
     private readonly StaticPlaneShape _groundShape;
     private readonly DefaultMotionState _groundMotionState;
     private readonly RigidBody _groundBody;
+    private readonly AndroidMmdFilterCallback _filterCallback;
     private bool _disposed;
 
     public AndroidPmxBulletPhysics(PmxParsing pmx, Vector3 gravity)
@@ -39,6 +40,9 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
             _groundBody = new RigidBody(groundInfo);
         }
         _world.AddRigidBody(_groundBody);
+        // Match the PC world: PMX group/mask filtering is enforced by the
+        // broadphase callback, while the ground plane remains collidable.
+        _world.PairCache.SetOverlapFilterCallback(_filterCallback = new AndroidMmdFilterCallback(_groundBody.BroadphaseProxy));
 
         Matrix4x4[] restGlobals = CreateRestGlobals(pmx.Bones);
         foreach (PmxRigidBody source in pmx.RigidBodies)
@@ -65,6 +69,16 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
     public IReadOnlyDictionary<int, Matrix4x4> Step(IReadOnlyList<Matrix4x4> animatedGlobals, float elapsedSeconds, bool reset)
     {
         Dictionary<int, Matrix4x4> overrides = [];
+        if (reset)
+        {
+            // PmxModel.Reset() removes stale contact pairs before restoring
+            // rigid-body transforms. Do the same when an Android animation
+            // loop or first frame resets the Bullet scene.
+            foreach (BodyState state in _bodies)
+            {
+                state.ClearContacts(_world.PairCache, _world.Dispatcher);
+            }
+        }
         foreach (BodyState state in _bodies)
         {
             if (state.BoneIndex < 0 || state.BoneIndex >= animatedGlobals.Count)
@@ -78,6 +92,13 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
             else if (reset || !state.Initialized)
             {
                 state.ResetDynamicTransform(animatedGlobals[state.BoneIndex]);
+            }
+            else
+            {
+                // PC calls SetActivation(true) before every physics update.
+                // Android bodies are created active, but explicitly activating
+                // them here also wakes bodies disturbed by a previous contact.
+                state.Activate();
             }
         }
 
@@ -170,6 +191,7 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
         _groundBody.Dispose();
         _groundMotionState.Dispose();
         _groundShape.Dispose();
+        _filterCallback.Dispose();
         foreach (CollisionShape shape in _shapes)
         {
             shape.Dispose();
@@ -312,6 +334,16 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
             Initialized = true;
         }
 
+        public void Activate() => Body.Activate(true);
+
+        public void ClearContacts(OverlappingPairCache cache, Dispatcher dispatcher)
+        {
+            if (Body.BroadphaseHandle is not null)
+            {
+                cache.CleanProxyFromPairs(Body.BroadphaseHandle, dispatcher);
+            }
+        }
+
         public Matrix4x4 ReadBoneGlobal()
         {
             return _inverseOffset * InvZ(FromBt(MotionState.Transform));
@@ -329,5 +361,22 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
         public BtMatrix Transform { get; set; } = transform;
         public override void GetWorldTransform(out BtMatrix worldTrans) => worldTrans = Transform;
         public override void SetWorldTransform(ref BtMatrix worldTrans) => Transform = worldTrans;
+    }
+
+    private sealed class AndroidMmdFilterCallback(BroadphaseProxy floor) : OverlapFilterCallback
+    {
+        public override bool NeedBroadphaseCollision(BroadphaseProxy proxy0, BroadphaseProxy proxy1)
+        {
+            if (proxy1 is null)
+            {
+                return false;
+            }
+            if (proxy0 == floor || proxy1 == floor)
+            {
+                return true;
+            }
+            return (proxy0.CollisionFilterGroup & proxy1.CollisionFilterMask) != 0
+                && (proxy1.CollisionFilterGroup & proxy0.CollisionFilterMask) != 0;
+        }
     }
 }

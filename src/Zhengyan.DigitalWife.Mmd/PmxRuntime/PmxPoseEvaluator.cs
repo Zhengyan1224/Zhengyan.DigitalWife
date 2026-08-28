@@ -173,7 +173,15 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     {
         int index = ValidateLayerIndex(layerIndex);
         _layerFrames[index] = Math.Clamp(frame, 0.0f, Math.Max(_layerDurations[index], 0.0f));
-        _previousFrame = index == 0 ? _layerFrames[index] : _previousFrame;
+        if (index == 0)
+        {
+            // Seeking/restarting is a discontinuity. Reset both clocks so the
+            // next update evaluates the requested frame without advancing it
+            // from the previous wall-clock timestamp, and resynchronizes
+            // physics at that pose just like the desktop component.
+            _previousFrame = -1.0f;
+            _previousTimeSeconds = -1.0;
+        }
     }
 
     public void SetMotionLayerPlaying(int layerIndex, bool playing) => _layerPlaying[ValidateLayerIndex(layerIndex)] = playing;
@@ -637,6 +645,14 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         {
             return;
         }
+
+        // Keep the same write-back order as the PC Bullet path:
+        // ReflectGlobalTransform() updates a rigid body's global transform and
+        // immediately propagates that transform to its children.  Only after
+        // every body has been reflected are local transforms recalculated and
+        // the hierarchy rebuilt from the roots.  Rebuilding all globals in one
+        // pass (the old Android path) loses this ordering when rigid bodies are
+        // nested, which is especially visible on skirt/leg IK chains.
         Matrix4x4[] locals = new Matrix4x4[_globals.Length];
         for (int i = 0; i < _globals.Length; i++)
         {
@@ -645,17 +661,71 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                 ? _globals[i] * InvertOrIdentity(_globals[parent])
                 : _globals[i];
         }
-        foreach (int index in _sortedBones)
+
+        // Dictionary insertion order is the rigid-body order used by the
+        // Android Bullet bridge, matching the order of the PC rigid-body list.
+        foreach ((int index, Matrix4x4 physicsGlobal) in overrides)
         {
-            if (overrides.TryGetValue(index, out Matrix4x4 physicsGlobal))
+            if ((uint)index < (uint)_globals.Length)
             {
                 _globals[index] = physicsGlobal;
+                PropagatePhysicsChildren(index, locals);
+            }
+        }
+
+        // PC CalcLocalTransform() runs for every rigid body after reflection.
+        // The bridge only returns dynamic bodies, but recalculating those
+        // entries is sufficient: static/kinematic bones retain their animated
+        // locals and their globals are rebuilt below in the normal hierarchy.
+        foreach (int index in overrides.Keys)
+        {
+            if ((uint)index >= (uint)_globals.Length)
+            {
                 continue;
             }
             int parent = _bones[index].ParentIndex;
-            _globals[index] = parent >= 0 && parent < _globals.Length
-                ? locals[index] * _globals[parent]
-                : locals[index];
+            locals[index] = parent >= 0 && parent < _globals.Length
+                ? _globals[index] * InvertOrIdentity(_globals[parent])
+                : _globals[index];
+        }
+
+        // PC root.UpdateGlobalTransform() performs the final authoritative
+        // hierarchy update.  Do the same from every root, using the locals
+        // produced above.
+        foreach (int index in _sortedBones)
+        {
+            if (_bones[index].ParentIndex < 0)
+            {
+                RebuildPhysicsHierarchy(index, locals);
+            }
+        }
+    }
+
+    private void PropagatePhysicsChildren(int parentIndex, Matrix4x4[] locals)
+    {
+        for (int child = 0; child < _bones.Length; child++)
+        {
+            if (_bones[child].ParentIndex != parentIndex)
+            {
+                continue;
+            }
+            _globals[child] = locals[child] * _globals[parentIndex];
+            PropagatePhysicsChildren(child, locals);
+        }
+    }
+
+    private void RebuildPhysicsHierarchy(int index, Matrix4x4[] locals)
+    {
+        int parent = _bones[index].ParentIndex;
+        _globals[index] = parent >= 0 && parent < _globals.Length
+            ? locals[index] * _globals[parent]
+            : locals[index];
+        for (int child = 0; child < _bones.Length; child++)
+        {
+            if (_bones[child].ParentIndex == index)
+            {
+                RebuildPhysicsHierarchy(child, locals);
+            }
         }
     }
 
@@ -859,7 +929,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     {
         double current = Math.Max(timeSeconds, 0.0);
         float elapsed = _previousTimeSeconds < 0.0
-            ? (float)current
+            ? 0.0f
             : (float)Math.Clamp(current - _previousTimeSeconds, 0.0, 0.1);
         _previousTimeSeconds = current;
         bool primaryLooped = false;

@@ -458,6 +458,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             && model.TrySetMotionLayerState(layerIndex, frame, playing, loop, playbackSpeed, weight);
     }
 
+    public bool TrySetMotionState(string entityIdOrName, float? frame = null, bool? playing = null)
+    {
+        PmxGpuModel? model = FindModel(entityIdOrName);
+        return model is not null && model.TrySetMotionState(frame, playing);
+    }
+
     public bool TryCreatePoseSnapshot(string entityIdOrName, out string snapshot)
     {
         PmxGpuModel? model = FindModel(entityIdOrName);
@@ -521,8 +527,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     textureId => _softAlphaTextures.Contains(textureId),
                     GetTextureAlphaMode,
                     motions,
-                    entity.IsPlaying ? entity.PlaybackSpeed : 0.0f,
-                    entity.LoopMotion,
                     entity.EnablePhysics,
                     entity.PhysicsGravity,
                     entity.ResetPhysicsOnMotionLoop,
@@ -1041,24 +1045,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             DrawOverlayQuad(rect, width, height, sprite.RotationDegrees, new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)), texture, true);
         }
 
-        foreach (GuiControlSettings control in scene.Definition.GuiControls.Where(control => control.Visible))
-        {
-            LayoutRect rect = LayoutResolver.Resolve(control.LayoutMode, control.X, control.Y, control.Width, control.Height, width, height, referenceWidth, referenceHeight);
-            Vector4 color = control.Style.BackgroundColor.ToVector4();
-            if (control.Checked || control.SelectedIndex >= 0) color = control.Style.ActiveColor.ToVector4();
-            DrawOverlayQuad(rect, width, height, 0.0f, color, 0, false);
-            if (string.Equals(control.Type, "progress", StringComparison.OrdinalIgnoreCase))
-            {
-                LayoutRect fill = new(rect.X, rect.Y, rect.Width * Math.Clamp(control.Progress, 0.0f, 1.0f), rect.Height);
-                DrawOverlayQuad(fill, width, height, 0.0f, control.Style.HoverColor.ToVector4(), 0, false);
-            }
-        }
-
         GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
         GLES30.GlBindVertexArray(0);
         GLES30.GlDepthMask(true);
         GLES30.GlDisable(GLES30.GlBlend);
     }
+
 
     private void DrawOverlayQuad(LayoutRect rect, int width, int height, float rotationDegrees, Vector4 color, int texture, bool textured)
     {
@@ -1124,12 +1116,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
         GLES30.GlEnable(GLES30.GlDepthTest);
         GLES30.GlDepthMask(false);
+        GLES30.GlBlendEquationSeparate(GLES30.GlFuncAdd, GLES30.GlFuncAdd);
 
         foreach (ParticleGpu particle in _particles)
         {
-            GLES30.GlBlendFunc(
-                particle.Additive ? GLES30.GlSrcAlpha : GLES30.GlSrcAlpha,
-                particle.Additive ? GLES30.GlOne : GLES30.GlOneMinusSrcAlpha);
+            GLES30.GlBlendFuncSeparate(
+                GLES30.GlSrcAlpha,
+                particle.Additive || particle.PreventDarkening ? GLES30.GlOne : GLES30.GlOneMinusSrcAlpha,
+                GLES30.GlOne,
+                GLES30.GlOneMinusSrcAlpha);
             GLES30.GlUniform1f(_particleOpacityLocation, Math.Clamp(particle.Opacity, 0.0f, 1.0f));
             GLES30.GlUniform1i(_particleUseTextureColorLocation, particle.UseTextureColor ? 1 : 0);
             GLES30.GlActiveTexture(GLES30.GlTexture0);
@@ -2999,6 +2994,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public RuntimeEntity RuntimeEntity => _runtimeEntity;
         public bool CastsShadows => _settings.CastShadows;
         public bool Additive => string.Equals(_settings.BlendMode, "additive", StringComparison.OrdinalIgnoreCase);
+        public bool PreventDarkening => _settings.PreventDarkening;
         public bool UseTextureColor => _settings.UseTextureColor;
         public float Opacity => _settings.Opacity;
         public int RenderLimit { get; private set; }
@@ -3333,8 +3329,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         private readonly ByteBuffer _vertexBytes;
         private readonly FloatBuffer _vertexData;
         private readonly PmxPoseEvaluator? _animator;
-        private readonly float _playbackSpeed;
-        private readonly bool _loopMotion;
         private readonly bool _gpuSkinning;
         private readonly bool _enableEdge;
         private readonly bool _relationBindComponentTransform;
@@ -3354,8 +3348,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             ByteBuffer vertexBytes,
             FloatBuffer vertexData,
             PmxPoseEvaluator? animator,
-            float playbackSpeed,
-            bool loopMotion,
             bool gpuSkinning,
             bool enableEdge,
             string entityId,
@@ -3371,8 +3363,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             _vertexBytes = vertexBytes;
             _vertexData = vertexData;
             _animator = animator;
-            _playbackSpeed = playbackSpeed;
-            _loopMotion = loopMotion;
             _gpuSkinning = gpuSkinning;
             _enableEdge = enableEdge;
             _relationBindComponentTransform = relation.BindComponentTransform;
@@ -3450,6 +3440,25 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return true;
         }
 
+        public bool TrySetMotionState(float? frame, bool? playing)
+        {
+            if (_animator is null || _animator.MotionLayerCount == 0)
+            {
+                return false;
+            }
+
+            for (int layerIndex = 0; layerIndex < _animator.MotionLayerCount; layerIndex++)
+            {
+                if (frame.HasValue) _animator.SetMotionLayerFrame(layerIndex, frame.Value);
+                if (playing.HasValue) _animator.SetMotionLayerPlaying(layerIndex, playing.Value);
+            }
+            if (playing.HasValue)
+            {
+                _runtimeEntity.Definition.IsPlaying = playing.Value;
+            }
+            return true;
+        }
+
         public string CreatePoseSnapshot()
         {
             return _animator is null
@@ -3470,8 +3479,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Func<int, bool> textureHasSoftAlpha,
             Func<int, int> getTextureAlphaMode,
             IReadOnlyList<(VmdParsing Animation, float Weight)> motions,
-            float playbackSpeed,
-            bool loopMotion,
             bool physicsEnabled,
             Vector3 gravity,
             bool resetPhysicsOnLoop,
@@ -3599,8 +3606,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 vertexBytes,
                 vertexData,
                 animator,
-                playbackSpeed,
-                loopMotion,
                 gpuSkinning,
                 enableEdge,
                 entityId,
@@ -3616,7 +3621,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 return;
             }
 
-            _animator.Update(timeSeconds, _playbackSpeed, _loopMotion, _vertices, !_gpuSkinning);
+            float playbackSpeed = _runtimeEntity.Definition.IsPlaying
+                ? Math.Max(_runtimeEntity.Definition.PlaybackSpeed, 0.0f)
+                : 0.0f;
+            _animator.Update(timeSeconds, playbackSpeed, _runtimeEntity.Definition.LoopMotion, _vertices, !_gpuSkinning);
             if (!_gpuSkinning)
             {
                 UploadCpuVertices();
@@ -3765,6 +3773,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlBindVertexArray(_vao);
             foreach (MaterialRange material in _materials)
             {
+                PmxPoseEvaluator.MaterialState state = GetMaterialState(material);
+                // Match PmxAuxiliaryPassRenderer on desktop: a PMX material is
+                // included in self/local-light shadow maps only when its
+                // CastSelfShadow flag is set and its effective alpha is visible.
+                if (!material.DrawMode.HasFlag(PmxDrawModeFlags.CastSelfShadow)
+                    || state.Diffuse.W <= 0.01f)
+                {
+                    continue;
+                }
                 if (material.DrawMode.HasFlag(PmxDrawModeFlags.BothFace))
                 {
                     GLES30.GlDisable(0x0B44); // GL_CULL_FACE
@@ -4432,7 +4449,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private const string ParticleFragmentShaderSource = """
         #version 300 es
-        precision mediump float;
+        precision highp float;
         uniform sampler2D uTexture;
         uniform float uOpacity;
         uniform int uUseTextureColor;

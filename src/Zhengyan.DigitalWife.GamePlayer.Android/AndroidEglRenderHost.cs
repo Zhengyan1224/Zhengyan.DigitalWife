@@ -66,7 +66,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
                 name => _sceneRenderer?.GetRenderTexture(name),
                 () => _sceneRenderer?.GetRenderTextures() ?? [],
                 ApplyMotion,
-                (entity, frame, playing) => _sceneRenderer?.TrySetMotionLayerState(entity.Id, 0, frame, playing));
+                (entity, frame, playing) => _sceneRenderer?.TrySetMotionState(entity.Id, frame, playing));
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
