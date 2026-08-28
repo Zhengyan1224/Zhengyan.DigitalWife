@@ -194,6 +194,21 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     public void Update(double timeSeconds, float playbackSpeed, bool loop, float[] destination, bool skinVertices = true)
     {
+        double current = Math.Max(timeSeconds, 0.0);
+        float physicsElapsedSeconds = _previousTimeSeconds < 0.0
+            ? 1.0f / 30.0f
+            : (float)Math.Clamp(current - _previousTimeSeconds, 0.0, 1.0 / 30.0);
+        Update(timeSeconds, playbackSpeed, loop, destination, physicsElapsedSeconds, skinVertices);
+    }
+
+    public void Update(
+        double timeSeconds,
+        float playbackSpeed,
+        bool loop,
+        float[] destination,
+        float physicsElapsedSeconds,
+        bool skinVertices = true)
+    {
         if (destination.Length < _vertices.Length * 8)
         {
             return;
@@ -203,7 +218,9 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         float frame = _layerFrames.Length == 0 ? 0.0f : _layerFrames[0];
 
         bool resetPhysics = _previousFrame < 0.0f || (_resetPhysicsOnLoop && looped);
-        float deltaSeconds = _previousFrame < 0.0f || looped ? 1.0f / 30.0f : Math.Clamp((frame - _previousFrame) / 30.0f, 0.0f, 1.0f / 15.0f);
+        float deltaSeconds = _previousFrame < 0.0f || looped
+            ? 1.0f / 30.0f
+            : Math.Clamp(physicsElapsedSeconds, 0.0f, 1.0f / 15.0f);
         if (resetPhysics && _physicsBridge is null)
         {
             foreach (PhysicsState state in _fallbackPhysics)
@@ -930,7 +947,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         double current = Math.Max(timeSeconds, 0.0);
         float elapsed = _previousTimeSeconds < 0.0
             ? 0.0f
-            : (float)Math.Clamp(current - _previousTimeSeconds, 0.0, 0.1);
+            : (float)Math.Max(current - _previousTimeSeconds, 0.0);
         _previousTimeSeconds = current;
         bool primaryLooped = false;
         for (int i = 0; i < _layerFrames.Length; i++)

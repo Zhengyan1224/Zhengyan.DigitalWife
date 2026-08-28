@@ -104,16 +104,13 @@ public sealed class RuntimeWindowControl
 
     internal static AnimationTimingMode ToAnimationTimingMode(string timingMode)
     {
-        return NormalizeTimingMode(timingMode) == "frame_rate_dependent"
+        return NormalizeTimingMode(timingMode) == GameProjectTiming.FrameRateDependent
             ? AnimationTimingMode.FrameRateDependent
             : AnimationTimingMode.TimeSynchronized;
     }
 
     internal static string NormalizeTimingMode(string timingMode)
     {
-        string normalized = (timingMode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
-        return normalized is "frame_rate_dependent" or "framerate_dependent" or "frame"
-            ? "frame_rate_dependent"
-            : "time_synchronized";
+        return GameProjectTiming.NormalizeMode(timingMode);
     }
 }

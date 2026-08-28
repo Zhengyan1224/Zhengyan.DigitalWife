@@ -665,7 +665,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _estimatedGpuBytes = 0;
     }
 
-    public void Draw(RuntimeScene scene, int referenceWidth, int referenceHeight, int width, int height, double timeSeconds)
+    public void Draw(
+        RuntimeScene scene,
+        int referenceWidth,
+        int referenceHeight,
+        int width,
+        int height,
+        double timeSeconds,
+        double animationTimeSeconds,
+        float physicsElapsedSeconds)
     {
         Stopwatch frameTimer = Stopwatch.StartNew();
         if (!ReferenceEquals(_loadedScene, scene) || _loadedEntityRevision != scene.EntityRevision)
@@ -680,7 +688,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         foreach (PmxGpuModel model in _updateOrder)
         {
-            model.UpdateAnimation(timeSeconds);
+            model.UpdateAnimation(animationTimeSeconds, physicsElapsedSeconds);
         }
         foreach (PmxGpuModel model in _updateOrder)
         {
@@ -3614,7 +3622,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 runtimeEntity);
         }
 
-        public void UpdateAnimation(double timeSeconds)
+        public void UpdateAnimation(double timeSeconds, float physicsElapsedSeconds)
         {
             if (_animator is not { RequiresUpdate: true })
             {
@@ -3624,7 +3632,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             float playbackSpeed = _runtimeEntity.Definition.IsPlaying
                 ? Math.Max(_runtimeEntity.Definition.PlaybackSpeed, 0.0f)
                 : 0.0f;
-            _animator.Update(timeSeconds, playbackSpeed, _runtimeEntity.Definition.LoopMotion, _vertices, !_gpuSkinning);
+            float modelPhysicsElapsed = _runtimeEntity.Definition.IsPlaying && _animator.HasAnimation
+                ? physicsElapsedSeconds
+                : 0.0f;
+            _animator.Update(
+                timeSeconds,
+                playbackSpeed,
+                _runtimeEntity.Definition.LoopMotion,
+                _vertices,
+                modelPhysicsElapsed,
+                !_gpuSkinning);
             if (!_gpuSkinning)
             {
                 UploadCpuVertices();

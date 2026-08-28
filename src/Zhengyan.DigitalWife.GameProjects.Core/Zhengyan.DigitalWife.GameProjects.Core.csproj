@@ -9,6 +9,7 @@
     <ItemGroup>
         <ProjectReference Include="..\Zhengyan.DigitalWife.Abstractions\Zhengyan.DigitalWife.Abstractions.csproj" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProject.cs" Link="GameProject.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectTiming.cs" Link="GameProjectTiming.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectPackage.cs" Link="GameProjectPackage.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectPath.cs" Link="GameProjectPath.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameProjectStore.cs" Link="GameProjectStore.cs" />

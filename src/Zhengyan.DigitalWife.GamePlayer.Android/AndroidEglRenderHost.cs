@@ -36,6 +36,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
     private int _actualMsaaSamples = 1;
     private long _lastFrameTimeNanos;
     private double _elapsedSeconds;
+    private double _animationElapsedSeconds;
     private bool _disposed;
     private Vector4 _clearColor = new(0.025f, 0.035f, 0.055f, 1.0f);
 
@@ -182,12 +183,16 @@ internal sealed class AndroidEglRenderHost : IDisposable
         double deltaSeconds = 0.0;
         if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
         {
-            deltaSeconds = Math.Min((frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0, 0.1);
+            deltaSeconds = (frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0;
             _elapsedSeconds += deltaSeconds;
+            _animationElapsedSeconds += GameProjectTiming.ResolveAnimationElapsedSeconds(
+                _project?.Window.TimingMode,
+                deltaSeconds);
         }
 
         _lastFrameTimeNanos = frameTimeNanos;
         double seconds = _elapsedSeconds;
+        double animationSeconds = _animationElapsedSeconds;
         RuntimeScene? inputScene = _sceneManager?.Current;
         if (inputScene is not null)
         {
@@ -212,7 +217,15 @@ internal sealed class AndroidEglRenderHost : IDisposable
         GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
         if (runtimeScene is not null)
         {
-            _sceneRenderer?.Draw(runtimeScene, _project!.Window.Width, _project.Window.Height, _width, _height, seconds);
+            _sceneRenderer?.Draw(
+                runtimeScene,
+                _project!.Window.Width,
+                _project.Window.Height,
+                _width,
+                _height,
+                seconds,
+                animationSeconds,
+                (float)Math.Min(deltaSeconds, GameProjectTiming.MaximumPhysicsElapsedSeconds));
             if (_sceneRenderer is not null)
             {
                 foreach (AndroidRuntimeEvent runtimeEvent in _sceneRenderer.DrainRuntimeEvents())
@@ -407,6 +420,7 @@ internal sealed class AndroidEglRenderHost : IDisposable
     {
         _lastFrameTimeNanos = 0;
         _elapsedSeconds = 0.0;
+        _animationElapsedSeconds = 0.0;
     }
 
     private static InvalidOperationException CreateEglException(string message)

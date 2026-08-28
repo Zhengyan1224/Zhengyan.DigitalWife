@@ -63,9 +63,37 @@ static int RunSelfTests()
     }
 
     RunRuntimeSceneLifecycleTests();
+    RunAnimationTimingTests();
 
     Console.WriteLine("PMX/VMD parity self-tests passed.");
     return 0;
+}
+
+static void RunAnimationTimingTests()
+{
+    if (GameProjectTiming.NormalizeMode("frame") != GameProjectTiming.FrameRateDependent
+        || GameProjectTiming.NormalizeMode("frame-rate-dependent") != GameProjectTiming.FrameRateDependent
+        || GameProjectTiming.NormalizeMode("TIME SYNCHRONIZED") != GameProjectTiming.TimeSynchronized)
+    {
+        throw new InvalidOperationException("Animation timing mode normalization failed.");
+    }
+
+    const double slowFrameElapsed = 0.2;
+    AssertNear(
+        (float)slowFrameElapsed,
+        (float)GameProjectTiming.ResolveAnimationElapsedSeconds(GameProjectTiming.TimeSynchronized, slowFrameElapsed),
+        1e-6f,
+        "time-synchronized slow frame");
+    AssertNear(
+        1.0f / 30.0f,
+        (float)GameProjectTiming.ResolveAnimationElapsedSeconds(GameProjectTiming.FrameRateDependent, slowFrameElapsed),
+        1e-6f,
+        "frame-rate-dependent slow frame");
+    AssertNear(
+        1.0f / 15.0f,
+        (float)GameProjectTiming.MaximumPhysicsElapsedSeconds,
+        1e-6f,
+        "physics slow-frame limit");
 }
 
 static void RunRuntimeSceneLifecycleTests()

@@ -144,7 +144,7 @@ public sealed class RuntimeScene : IDisposable
     public void Update(float deltaSeconds, RuntimeCameraInput input)
     {
         ThrowIfDisposed();
-        _animations.Update(Definition, Math.Clamp(deltaSeconds, 0.0f, 0.1f));
+        _animations.Update(Definition, Math.Max(deltaSeconds, 0.0f));
         foreach (RuntimeCamera camera in Cameras.Where(camera => camera.Enabled))
             camera.UpdateControl(this, deltaSeconds, input);
         Definition.Camera = MainCamera.Settings;
