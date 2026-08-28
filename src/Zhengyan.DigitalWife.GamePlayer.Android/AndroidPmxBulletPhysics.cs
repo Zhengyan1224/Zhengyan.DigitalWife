@@ -8,6 +8,8 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
 {
+    private const float FixedPhysicsStepSeconds = 1.0f / 120.0f;
+
     private readonly DefaultCollisionConfiguration _collisionConfiguration;
     private readonly CollisionDispatcher _dispatcher;
     private readonly DbvtBroadphase _broadphase;
@@ -87,7 +89,7 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
             }
             if (state.Operation == PmxOperation.Static)
             {
-                state.SetKinematicTransform(animatedGlobals[state.BoneIndex]);
+                state.SetKinematicTarget(animatedGlobals[state.BoneIndex], reset);
             }
             else if (reset || !state.Initialized)
             {
@@ -104,13 +106,24 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
 
         if (reset)
         {
+            ApplyKinematicTargets(1.0f);
             _world.StepSimulation(1.0f / 60.0f, 1, 1.0f / 60.0f);
         }
         float elapsed = Math.Clamp(elapsedSeconds, 0.0f, 1.0f / 15.0f);
         if (elapsed > 0.0f)
         {
-            _world.StepSimulation(elapsed, 10, 1.0f / 120.0f);
+            // Move animated collision bodies along their frame-to-frame path so
+            // dynamic cloth sees the same 120 Hz collision trajectory as on PC.
+            int substepCount = Math.Clamp((int)MathF.Ceiling(elapsed / FixedPhysicsStepSeconds), 1, 10);
+            float substepSeconds = elapsed / substepCount;
+            for (int substep = 1; substep <= substepCount; substep++)
+            {
+                ApplyKinematicTargets(substep / (float)substepCount);
+                _world.StepSimulation(substepSeconds, 1, substepSeconds);
+            }
         }
+        ApplyKinematicTargets(1.0f);
+        CommitKinematicTargets();
 
         foreach (BodyState state in _bodies)
         {
@@ -130,6 +143,28 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
             overrides[state.BoneIndex] = global;
         }
         return overrides;
+    }
+
+    private void ApplyKinematicTargets(float amount)
+    {
+        foreach (BodyState state in _bodies)
+        {
+            if (state.Operation == PmxOperation.Static)
+            {
+                state.ApplyKinematicTarget(amount);
+            }
+        }
+    }
+
+    private void CommitKinematicTargets()
+    {
+        foreach (BodyState state in _bodies)
+        {
+            if (state.Operation == PmxOperation.Static)
+            {
+                state.CommitKinematicTarget();
+            }
+        }
     }
 
     public void ApplyImpulse(PmxMorph.ImpulseMorph impulse, float weight)
@@ -307,18 +342,34 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
     private sealed class BodyState(int boneIndex, PmxOperation operation, Matrix4x4 offset, AndroidBulletMotionState motionState, RigidBody body) : IDisposable
     {
         private readonly Matrix4x4 _inverseOffset = Invert(offset);
+        private Matrix4x4 _kinematicStart = FromBt(motionState.Transform);
+        private Matrix4x4 _kinematicTarget = FromBt(motionState.Transform);
         public int BoneIndex { get; } = boneIndex;
         public PmxOperation Operation { get; } = operation;
         public AndroidBulletMotionState MotionState { get; } = motionState;
         public RigidBody Body { get; } = body;
         public bool Initialized { get; private set; }
 
-        public void SetKinematicTransform(Matrix4x4 boneGlobal)
+        public void SetKinematicTarget(Matrix4x4 boneGlobal, bool reset)
         {
-            BtMatrix transform = ToBt(InvZ(offset * boneGlobal));
-            MotionState.Transform = transform;
-            Body.WorldTransform = transform;
-            Body.CenterOfMassTransform = transform;
+            _kinematicStart = reset ? InvZ(offset * boneGlobal) : FromBt(MotionState.Transform);
+            _kinematicTarget = InvZ(offset * boneGlobal);
+            if (reset)
+            {
+                ApplyKinematicTarget(1.0f);
+            }
+        }
+
+        public void ApplyKinematicTarget(float amount)
+        {
+            Matrix4x4 transform = InterpolateTransform(_kinematicStart, _kinematicTarget, amount);
+            MotionState.Transform = ToBt(transform);
+        }
+
+        public void CommitKinematicTarget()
+        {
+            _kinematicStart = _kinematicTarget;
+            MotionState.Transform = ToBt(_kinematicTarget);
         }
 
         public void ResetDynamicTransform(Matrix4x4 boneGlobal)
@@ -353,6 +404,20 @@ internal sealed class AndroidPmxBulletPhysics : IPmxPhysicsBridge
         {
             Body.Dispose();
             MotionState.Dispose();
+        }
+
+        private static Matrix4x4 InterpolateTransform(Matrix4x4 start, Matrix4x4 target, float amount)
+        {
+            amount = Math.Clamp(amount, 0.0f, 1.0f);
+            if (!Matrix4x4.Decompose(start, out Vector3 startScale, out Quaternion startRotation, out Vector3 startTranslation)
+                || !Matrix4x4.Decompose(target, out Vector3 targetScale, out Quaternion targetRotation, out Vector3 targetTranslation))
+            {
+                return amount < 1.0f ? start : target;
+            }
+
+            return Matrix4x4.CreateScale(Vector3.Lerp(startScale, targetScale, amount))
+                * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.Slerp(startRotation, targetRotation, amount)))
+                * Matrix4x4.CreateTranslation(Vector3.Lerp(startTranslation, targetTranslation, amount));
         }
     }
 
