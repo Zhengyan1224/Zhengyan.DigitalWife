@@ -24,8 +24,8 @@ public static class RendererFactory
             return new RendererSelection(requestedBackend, GraphicsBackend.Vulkan);
         }
 
-        string vulkanReason = "Vulkan is restricted to Windows and Linux for automatic selection.";
-        if ((OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
+        string vulkanReason = "Vulkan is restricted to Windows, Linux, and Android for automatic selection.";
+        if ((OperatingSystem.IsWindows() || OperatingSystem.IsLinux() || OperatingSystem.IsAndroid())
             && Vulkan.IsSupported(out vulkanReason))
         {
             return new RendererSelection(requestedBackend, GraphicsBackend.Vulkan);

@@ -432,7 +432,7 @@ entity.clear_relation()
 - `PauseMotion` / `pause_motion`
 - `StopMotion` / `stop_motion`
 - `ResetMotion` / `reset_motion`
-- `ResetMotionPhysics` / `reset_motion_physics`
+- `ResetPhysics` / `reset_physics` (`ResetMotionPhysics` / `reset_motion_physics` remain as compatibility aliases)
 - `SeekMotionFrame` / `seek_motion_frame`
 - `SeekMotionTime` / `seek_motion_time`
 - `PlayMotionLayer` / `play_motion_layer`

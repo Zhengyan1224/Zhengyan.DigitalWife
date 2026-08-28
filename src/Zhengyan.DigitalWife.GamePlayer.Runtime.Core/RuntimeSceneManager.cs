@@ -11,13 +11,18 @@ public sealed class RuntimeSceneManager : IDisposable
 {
     private readonly GameProject _project;
     private readonly string _projectDirectory;
+    private readonly Func<string, bool>? _resetPmxPhysics;
     private string? _pendingScene;
     private bool _disposed;
 
-    public RuntimeSceneManager(GameProject project, string projectDirectory)
+    public RuntimeSceneManager(
+        GameProject project,
+        string projectDirectory,
+        Func<string, bool>? resetPmxPhysics = null)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
         _projectDirectory = Path.GetFullPath(projectDirectory ?? throw new ArgumentNullException(nameof(projectDirectory)));
+        _resetPmxPhysics = resetPmxPhysics;
         GameProjectStore.NormalizeScenes(_project);
     }
 
@@ -61,7 +66,11 @@ public sealed class RuntimeSceneManager : IDisposable
             SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.1f, "Reading scene");
             GameProjectScene definition = GameProjectStore.LoadScene(_projectDirectory, resolved);
             SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.65f, "Creating runtime scene");
-            RuntimeScene next = new(resolved, definition, path => GameProjectPath.ToAbsolute(_projectDirectory, path));
+            RuntimeScene next = new(
+                resolved,
+                definition,
+                path => GameProjectPath.ToAbsolute(_projectDirectory, path),
+                _resetPmxPhysics);
             CommitScene(resolved, definition, next);
             SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;
@@ -93,7 +102,11 @@ public sealed class RuntimeSceneManager : IDisposable
                 () => GameProjectStore.LoadScene(_projectDirectory, resolved), cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             SetProgress(resolved, RuntimeSceneLoadState.Loading, 0.65f, "Creating runtime scene");
-            RuntimeScene next = new(resolved, definition, path => GameProjectPath.ToAbsolute(_projectDirectory, path));
+            RuntimeScene next = new(
+                resolved,
+                definition,
+                path => GameProjectPath.ToAbsolute(_projectDirectory, path),
+                _resetPmxPhysics);
             CommitScene(resolved, definition, next);
             SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;

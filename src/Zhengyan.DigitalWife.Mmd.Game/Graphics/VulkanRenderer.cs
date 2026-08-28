@@ -352,24 +352,73 @@ public sealed class VulkanRenderer : IRenderer
         }
 
         RequestedAntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
-        GraphicsDeviceOptions options = new(
-            debug: false,
-            swapchainDepthFormat: PixelFormat.D24_UNorm_S8_UInt,
-            syncToVerticalBlank: true);
-        options.PreferDepthRangeZeroToOne = true;
-        options.PreferStandardClipSpaceYDirection = true;
-        _device = VeldridWindow.CreateGraphicsDevice(
+        GraphicsDeviceOptions options = CreateDeviceOptions();
+        VeldridDevice device = VeldridWindow.CreateGraphicsDevice(
             window,
             options,
             Veldrid.GraphicsBackend.Vulkan);
-        string deviceInfo =
-            $"[Vulkan] Device='{_device.DeviceName}', " +
-            $"DepthZeroToOne={_device.IsDepthRangeZeroToOne}, " +
-            $"ClipSpaceYInverted={_device.IsClipSpaceYInverted}, " +
-            $"UvOriginTopLeft={_device.IsUvOriginTopLeft}";
-        Console.WriteLine(deviceInfo);
-        _commandList = _device.ResourceFactory.CreateCommandList();
-        Resize(backBufferSize);
+        CompleteInitialization(device, backBufferSize);
+    }
+
+    /// <summary>
+    /// Initializes the Vulkan renderer for a platform-owned swapchain source, such as an Android Surface.
+    /// </summary>
+    public void Initialize(
+        SwapchainSource swapchainSource,
+        Vector2D<int> backBufferSize,
+        int requestedSamples,
+        bool syncToVerticalBlank = true)
+    {
+        if (_device is not null)
+        {
+            throw new InvalidOperationException("The Vulkan renderer is already initialized.");
+        }
+
+        RequestedAntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
+        GraphicsDeviceOptions options = CreateDeviceOptions(syncToVerticalBlank);
+        SwapchainDescription swapchain = new(
+            swapchainSource,
+            (uint)Math.Max(backBufferSize.X, 1),
+            (uint)Math.Max(backBufferSize.Y, 1),
+            options.SwapchainDepthFormat,
+            syncToVerticalBlank);
+        VeldridDevice device = VeldridDevice.CreateVulkan(options, swapchain);
+        CompleteInitialization(device, backBufferSize);
+    }
+
+    private static GraphicsDeviceOptions CreateDeviceOptions(bool syncToVerticalBlank = true)
+    {
+        GraphicsDeviceOptions options = new(
+            debug: false,
+            swapchainDepthFormat: PixelFormat.D24_UNorm_S8_UInt,
+            syncToVerticalBlank: syncToVerticalBlank);
+        options.PreferDepthRangeZeroToOne = true;
+        options.PreferStandardClipSpaceYDirection = true;
+        return options;
+    }
+
+    private void CompleteInitialization(VeldridDevice device, Vector2D<int> backBufferSize)
+    {
+        try
+        {
+            _device = device;
+            string deviceInfo =
+                $"[Vulkan] Device='{_device.DeviceName}', " +
+                $"DepthZeroToOne={_device.IsDepthRangeZeroToOne}, " +
+                $"ClipSpaceYInverted={_device.IsClipSpaceYInverted}, " +
+                $"UvOriginTopLeft={_device.IsUvOriginTopLeft}";
+            Console.WriteLine(deviceInfo);
+            _commandList = _device.ResourceFactory.CreateCommandList();
+            Resize(backBufferSize);
+        }
+        catch
+        {
+            _commandList?.Dispose();
+            _commandList = null;
+            _device = null;
+            device.Dispose();
+            throw;
+        }
     }
 
     public void Resize(Vector2D<int> backBufferSize)

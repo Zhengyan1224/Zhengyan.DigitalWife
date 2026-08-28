@@ -358,6 +358,9 @@ public sealed class AndroidScriptEntity
     public void PauseMotion() => _setMotionState(null, false);
     public void StopMotion() => _setMotionState(0.0f, false);
     public void SeekMotionFrame(float frame) => _setMotionState(Math.Max(frame, 0.0f), null);
+    public bool TryResetPhysics() => _entity.TryResetPhysics();
+    public void ResetPhysics() => _entity.ResetPhysics();
+    public void ResetMotionPhysics() => ResetPhysics();
     public void Speak(string text, Action? onCompleted = null) => onCompleted?.Invoke();
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => onCompleted?.Invoke();

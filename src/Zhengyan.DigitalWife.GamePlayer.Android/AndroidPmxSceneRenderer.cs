@@ -464,6 +464,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return model is not null && model.TrySetMotionState(frame, playing);
     }
 
+    public bool TryResetPhysics(string entityIdOrName)
+    {
+        PmxGpuModel? model = FindModel(entityIdOrName);
+        return model is not null && model.TryResetPhysics();
+    }
+
     public bool TryCreatePoseSnapshot(string entityIdOrName, out string snapshot)
     {
         PmxGpuModel? model = FindModel(entityIdOrName);
@@ -3464,6 +3470,17 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             {
                 _runtimeEntity.Definition.IsPlaying = playing.Value;
             }
+            return true;
+        }
+
+        public bool TryResetPhysics()
+        {
+            if (_animator is null)
+            {
+                return false;
+            }
+
+            _animator.ResetPhysics();
             return true;
         }
 

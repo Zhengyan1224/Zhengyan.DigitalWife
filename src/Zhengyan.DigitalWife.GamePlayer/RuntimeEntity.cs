@@ -1303,10 +1303,20 @@ public sealed class RuntimeEntity
         _model?.ResetAnimation();
     }
 
-    public void ResetMotionPhysics()
+    public bool TryResetPhysics()
     {
-        _model?.ResetPhysics();
+        if (_model is null)
+        {
+            return false;
+        }
+
+        _model.ResetPhysics();
+        return true;
     }
+
+    public void ResetPhysics() => _ = TryResetPhysics();
+
+    public void ResetMotionPhysics() => ResetPhysics();
 
     public void SeekMotionTime(float timeSeconds)
     {

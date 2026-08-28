@@ -11,7 +11,7 @@ using EGLSurface = Android.Opengl.EGLSurface;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal sealed class AndroidEglRenderHost : IDisposable
+internal sealed class AndroidEglRenderHost : IAndroidRenderHost
 {
     private const string LogTag = "ZhengyanGamePlayer";
     private const int EglContextClientVersion = 0x3098;
@@ -54,7 +54,10 @@ internal sealed class AndroidEglRenderHost : IDisposable
         _projectDirectory = projectDirectory ?? string.Empty;
         if (project is not null && !string.IsNullOrWhiteSpace(_projectDirectory))
         {
-            _sceneManager = new RuntimeSceneManager(project, _projectDirectory);
+            _sceneManager = new RuntimeSceneManager(
+                project,
+                _projectDirectory,
+                idOrName => _sceneRenderer?.TryResetPhysics(idOrName) == true);
             _audioHost = new AndroidAudioHost(_projectDirectory);
             _scriptHost = new AndroidCSharpScriptHost(
                 _projectDirectory,

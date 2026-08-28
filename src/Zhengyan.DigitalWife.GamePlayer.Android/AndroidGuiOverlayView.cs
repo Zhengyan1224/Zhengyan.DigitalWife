@@ -6,7 +6,7 @@ using Zhengyan.DigitalWife.GameProjects;
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 /// <summary>
-/// Android native text layer. GLES remains responsible for backgrounds and sprites;
+/// Android native text layer. The selected graphics backend remains responsible for backgrounds and sprites;
 /// Canvas supplies device-independent font rasterization and text input visuals.
 /// </summary>
 internal sealed class AndroidGuiOverlayView : View

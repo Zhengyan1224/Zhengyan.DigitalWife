@@ -753,8 +753,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def reset_motion(self):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "reset_motion"})
 
+                   def reset_physics(self):
+                       self._commands.append({"target": "entity", "entity": self.id, "action": "reset_physics"})
+
                    def reset_motion_physics(self):
-                       self._commands.append({"target": "entity", "entity": self.id, "action": "reset_motion_physics"})
+                       self.reset_physics()
 
                    def seek_motion_time(self, time_seconds):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "seek_motion_time", "value": time_seconds})
@@ -4543,7 +4546,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 entity.ResetMotion();
                 break;
             case "reset_motion_physics":
-                entity.ResetMotionPhysics();
+            case "reset_physics":
+                entity.ResetPhysics();
                 break;
             case "seek_motion_time" when command.Value.HasValue:
                 entity.SeekMotionTime((float)command.Value.Value);

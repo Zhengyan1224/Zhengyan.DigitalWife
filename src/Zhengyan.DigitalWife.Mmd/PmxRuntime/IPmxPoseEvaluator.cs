@@ -19,6 +19,8 @@ public interface IPmxPoseEvaluator
 
     IReadOnlyDictionary<string, float> MorphWeights { get; }
 
+    void ResetPhysics();
+
     void ApplyRelation(IPmxPoseEvaluator relation);
 }
 

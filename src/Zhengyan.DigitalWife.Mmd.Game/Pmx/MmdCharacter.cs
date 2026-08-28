@@ -127,6 +127,11 @@ public sealed class MmdCharacter
         ModelComponent.ResetAnimation();
     }
 
+    public void ResetPhysics()
+    {
+        ModelComponent.ResetPhysics();
+    }
+
     public RelationTransformUpdater BindRelationTo(MmdCharacter relationCharacter, bool bindComponentTransform = true)
     {
         ArgumentNullException.ThrowIfNull(relationCharacter);

@@ -45,7 +45,7 @@ Entity.PlayMotion();
 Entity.PauseMotion();
 Entity.SeekMotionFrame(45);
 Entity.SeekMotionTime(1.5f);
-Entity.ResetMotionPhysics();
+Entity.ResetPhysics();
 Entity.ResetMotion();
 Entity.StopMotion();
 Entity.PlayMotionLayer("assets/motions/wave.vmd");
@@ -69,7 +69,7 @@ entity.play_motion()
 entity.pause_motion()
 entity.seek_motion_frame(45)
 entity.seek_motion_time(1.5)
-entity.reset_motion_physics()
+entity.reset_physics()
 entity.reset_motion()
 entity.stop_motion()
 entity.play_motion_layer("assets/motions/wave.vmd")
@@ -147,6 +147,6 @@ entity.set_draw_shadow_in_main_pass(False)
 - `DrawShadowInMainPass` 是兼容旧示例程序的平面投影阴影开关。GameEditor/GamePlayer 已经不依赖它，通常保持默认即可。
 - `PlayMotion` / `PauseMotion` 只改变播放状态，不会清掉已加载动作层。
 - `StopMotion` 会把动作停下并重置到起始状态，效果接近“停止并回到 0 帧”。
-- `ResetMotion` 会重置动作与姿态；`ResetMotionPhysics` 只重置物理。
+- `ResetMotion` 会重置动作与姿态；`ResetPhysics` 只重置物理，并从当前骨骼姿态重新同步刚体。旧名称 `ResetMotionPhysics` / `reset_motion_physics` 仍可继续使用。
 - `SeekMotionFrame` / `SeekMotionTime` 会把当前 PMX 动作层一起跳到指定帧或秒。
 - `PlayMotionLayer` / `PauseMotionLayer` / `SetMotionLayerFrame` / `SetMotionLayerTime` 只作用于指定动作层。

@@ -5,9 +5,12 @@ namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
 public sealed class RuntimeEntity
 {
-    public RuntimeEntity(GameEntity definition)
+    private readonly Func<string, bool>? _resetPmxPhysics;
+
+    public RuntimeEntity(GameEntity definition, Func<string, bool>? resetPmxPhysics = null)
     {
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
+        _resetPmxPhysics = resetPmxPhysics;
     }
 
     public GameEntity Definition { get; }
@@ -138,6 +141,13 @@ public sealed class RuntimeEntity
     public float SpotOuterConeAngleDegrees => Definition.SpotLight.OuterConeAngleDegrees;
 
     public bool CastsShadows => IsPointLight ? Definition.PointLight.CastShadows : IsSpotLight && Definition.SpotLight.CastShadows;
+
+    public bool TryResetPhysics()
+        => IsPmxModel && _resetPmxPhysics?.Invoke(Id) == true;
+
+    public void ResetPhysics() => _ = TryResetPhysics();
+
+    public void ResetMotionPhysics() => ResetPhysics();
 
     private static string NormalizeType(string? value) => (value ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_');
 

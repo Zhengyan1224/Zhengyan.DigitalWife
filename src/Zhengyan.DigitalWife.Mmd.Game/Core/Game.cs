@@ -12,12 +12,13 @@ public abstract class Game : IDisposable
     private readonly List<GameComponent> _components = [];
     private GameComponent[] _sortedUpdateComponents = [];
     private DrawableGameComponent[] _sortedDrawableComponents = [];
-    private readonly IWindow _window;
+    private readonly IWindow? _window;
     private readonly IRenderer _renderer;
     private bool _disposed;
     private bool _initialized;
     private bool _isActive = true;
     private long _frameCount;
+    private double _hostedTotalSeconds;
 
     protected Game(GameOptions? options = null)
     {
@@ -58,6 +59,26 @@ public abstract class Game : IDisposable
         };
     }
 
+    /// <summary>
+    /// Creates a game whose renderer and presentation surface are owned by an external platform host.
+    /// The supplied renderer must already be initialized.
+    /// </summary>
+    protected Game(GameOptions options, IRenderer initializedRenderer, Vector2D<int> backBufferSize)
+    {
+        Options = options ?? throw new ArgumentNullException(nameof(options));
+        _renderer = initializedRenderer ?? throw new ArgumentNullException(nameof(initializedRenderer));
+        RendererSelection = new RendererSelection(options.GraphicsBackend, initializedRenderer.Backend);
+        Options.Samples = AntiAliasingSamples.NormalizeRequested(Options.Samples);
+        GraphicsDevice = new GraphicsDevice(_renderer, Options.ClearColor);
+        if (GraphicsDevice.BackBufferSize.X != backBufferSize.X
+            || GraphicsDevice.BackBufferSize.Y != backBufferSize.Y)
+        {
+            GraphicsDevice.Resize(backBufferSize);
+        }
+        Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL =
+            GraphicsDevice.Backend == GraphicsBackend.OpenGL && Options.UseOpenCL;
+    }
+
     public GameOptions Options { get; }
 
     public RendererSelection RendererSelection { get; }
@@ -72,7 +93,8 @@ public abstract class Game : IDisposable
 
     public string? AudioStatusMessage { get; private set; }
 
-    public IWindow Window => _window;
+    public IWindow Window => _window
+        ?? throw new InvalidOperationException("This game is driven by an external platform host and has no Silk.NET window.");
 
     public bool IsActive => _isActive;
 
@@ -84,8 +106,12 @@ public abstract class Game : IDisposable
 
     public string Title
     {
-        get => _window.Title;
-        set => _window.Title = value;
+        get => _window?.Title ?? Options.Title;
+        set
+        {
+            Options.Title = value;
+            if (_window is not null) _window.Title = value;
+        }
     }
 
     public AnimationTimingMode AnimationTimingMode
@@ -99,40 +125,88 @@ public abstract class Game : IDisposable
         int clampedWidth = Math.Max(320, width);
         int clampedHeight = Math.Max(240, height);
         Options.WindowSize = new Vector2D<int>(clampedWidth, clampedHeight);
-        _window.Size = Options.WindowSize;
+        if (_window is not null) _window.Size = Options.WindowSize;
     }
 
     public void SetFullscreen(bool fullscreen)
     {
         Options.IsFullscreen = fullscreen;
-        _window.WindowState = fullscreen ? WindowState.Fullscreen : WindowState.Normal;
+        if (_window is not null) _window.WindowState = fullscreen ? WindowState.Fullscreen : WindowState.Normal;
     }
 
     public void SetResizable(bool resizable)
     {
         Options.IsResizable = resizable;
-        _window.WindowBorder = Options.HideWindowBorder
-            ? WindowBorder.Hidden
-            : resizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        if (_window is not null)
+        {
+            _window.WindowBorder = Options.HideWindowBorder
+                ? WindowBorder.Hidden
+                : resizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        }
     }
 
     public void SetTopMost(bool topMost)
     {
         Options.IsTopMost = topMost;
-        _window.TopMost = topMost;
+        if (_window is not null) _window.TopMost = topMost;
     }
 
     public void SetWindowBorderHidden(bool hidden)
     {
         Options.HideWindowBorder = hidden;
-        _window.WindowBorder = hidden
-            ? WindowBorder.Hidden
-            : Options.IsResizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        if (_window is not null)
+        {
+            _window.WindowBorder = hidden
+                ? WindowBorder.Hidden
+                : Options.IsResizable ? WindowBorder.Resizable : WindowBorder.Fixed;
+        }
     }
 
-    public void Run() => _window.Run();
+    public void Run() => Window.Run();
 
-    public void Exit() => _window.Close();
+    public void Exit() => Window.Close();
+
+    public void InitializeHosted()
+    {
+        if (_window is not null)
+        {
+            throw new InvalidOperationException("Hosted initialization is only valid for an externally hosted game.");
+        }
+        if (_initialized)
+        {
+            return;
+        }
+
+        InitializeGameContent();
+    }
+
+    public void ResizeHosted(Vector2D<int> size)
+    {
+        if (_window is not null)
+        {
+            throw new InvalidOperationException("Hosted resize is only valid for an externally hosted game.");
+        }
+        if (_initialized) GraphicsDevice.Resize(size);
+    }
+
+    public void UpdateHosted(double deltaSeconds)
+    {
+        if (_window is not null)
+        {
+            throw new InvalidOperationException("Hosted update is only valid for an externally hosted game.");
+        }
+        _hostedTotalSeconds += Math.Max(deltaSeconds, 0.0);
+        UpdateFrame(deltaSeconds);
+    }
+
+    public void RenderHosted(double deltaSeconds)
+    {
+        if (_window is not null)
+        {
+            throw new InvalidOperationException("Hosted rendering is only valid for an externally hosted game.");
+        }
+        RenderFrame(deltaSeconds);
+    }
 
     public T AddComponent<T>(T component) where T : GameComponent
     {
@@ -200,14 +274,15 @@ public abstract class Game : IDisposable
 
     private void OnLoad()
     {
-        _renderer.Initialize(_window, _window.Size, Options.Samples);
+        IWindow window = Window;
+        _renderer.Initialize(window, window.Size, Options.Samples);
         GraphicsDevice = new GraphicsDevice(_renderer, Options.ClearColor);
 
         // OpenCL is only a valid compute option for the OpenGL compatibility backend.
         Zhengyan.DigitalWife.Mmd.Kernel.UseOpenCL =
             GraphicsDevice.Backend == GraphicsBackend.OpenGL && Options.UseOpenCL;
 
-        Input = new InputManager(_window.CreateInput(), _window);
+        Input = new InputManager(window.CreateInput(), window);
         if (Options.EnableAudio)
         {
             try
@@ -223,15 +298,7 @@ public abstract class Game : IDisposable
             }
         }
 
-        Initialize();
-
-        foreach (GameComponent component in _components)
-        {
-            component.Attach(this);
-        }
-
-        _initialized = true;
-        LoadContent();
+        InitializeGameContent();
     }
 
     private void OnResize(Vector2D<int> size)
@@ -245,13 +312,16 @@ public abstract class Game : IDisposable
     }
 
     private void OnUpdate(double deltaSeconds)
+        => UpdateFrame(deltaSeconds);
+
+    private void UpdateFrame(double deltaSeconds)
     {
         if (!_initialized)
         {
             return;
         }
 
-        Input.BeginFrame();
+        Input?.BeginFrame();
 
         GameTime gameTime = CreateGameTime(deltaSeconds);
         Update(gameTime);
@@ -271,6 +341,9 @@ public abstract class Game : IDisposable
     }
 
     private void OnRender(double deltaSeconds)
+        => RenderFrame(deltaSeconds);
+
+    private void RenderFrame(double deltaSeconds)
     {
         if (!_initialized)
         {
@@ -300,7 +373,21 @@ public abstract class Game : IDisposable
 
     private GameTime CreateGameTime(double deltaSeconds)
     {
-        return new GameTime(TimeSpan.FromSeconds(_window.Time), TimeSpan.FromSeconds(deltaSeconds), _frameCount);
+        double totalSeconds = _window?.Time ?? _hostedTotalSeconds;
+        return new GameTime(TimeSpan.FromSeconds(totalSeconds), TimeSpan.FromSeconds(deltaSeconds), _frameCount);
+    }
+
+    private void InitializeGameContent()
+    {
+        Initialize();
+
+        foreach (GameComponent component in _components)
+        {
+            component.Attach(this);
+        }
+
+        _initialized = true;
+        LoadContent();
     }
 
     private void SortComponents()

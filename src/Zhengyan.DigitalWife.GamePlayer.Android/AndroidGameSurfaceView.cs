@@ -1,14 +1,21 @@
 using Android.Content;
 using Android.Graphics;
+using Android.Util;
 using Android.Views;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallback, Choreographer.IFrameCallback
 {
+    private const string LogTag = "ZhengyanGamePlayer";
     private readonly AndroidTouchState _touchState = new();
-    private readonly AndroidEglRenderHost _renderHost = new();
+    private IAndroidRenderHost _renderHost;
+    private GameProject? _project;
+    private string _projectDirectory = string.Empty;
+    private GraphicsBackend _requestedBackend;
+    private Surface? _surface;
     private bool _hasSurface;
     private bool _isResumed;
     private bool _frameScheduled;
@@ -20,7 +27,11 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     {
         SetZOrderMediaOverlay(true);
         _gestureDetector = new GestureDetector(context, new LongPressListener(this));
+        _requestedBackend = GraphicsBackendNames.Parse(project?.Runtime.GraphicsBackend);
+        _renderHost = CreateRenderHost(_requestedBackend);
         _renderHost.SetProject(project, projectDirectory);
+        _project = project;
+        _projectDirectory = projectDirectory ?? string.Empty;
         Holder?.AddCallback(this);
         Focusable = true;
         FocusableInTouchMode = true;
@@ -34,7 +45,9 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public void SurfaceCreated(ISurfaceHolder holder)
     {
         _hasSurface = true;
-        _renderHost.CreateSurface(holder.Surface ?? throw new InvalidOperationException("Android surface is unavailable."));
+        _surface = holder.Surface ?? throw new InvalidOperationException("Android surface is unavailable.");
+        _renderHost.Resize(Math.Max(Width, 1), Math.Max(Height, 1));
+        CreateSelectedSurface(_surface);
         ScheduleFrame();
     }
 
@@ -46,6 +59,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public void SurfaceDestroyed(ISurfaceHolder holder)
     {
         _hasSurface = false;
+        _surface = null;
         CancelFrame();
         _renderHost.DestroySurface();
     }
@@ -59,7 +73,21 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public void SetProject(GameProject? project, string? projectDirectory)
     {
         _firstFramePresented = false;
-        _renderHost.SetProject(project, projectDirectory);
+        GraphicsBackend requested = GraphicsBackendNames.Parse(project?.Runtime.GraphicsBackend);
+        bool backendChanged = requested != _requestedBackend;
+        _project = project;
+        _projectDirectory = projectDirectory ?? string.Empty;
+        _requestedBackend = requested;
+        if (backendChanged)
+        {
+            _renderHost.Dispose();
+            _renderHost = CreateRenderHost(requested);
+            _renderHost.SetProject(project, _projectDirectory);
+            if (_hasSurface && _surface is not null) CreateSelectedSurface(_surface);
+            return;
+        }
+
+        _renderHost.SetProject(project, _projectDirectory);
     }
 
     public void RequestSceneChange(string scenePath)
@@ -184,4 +212,26 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         Choreographer.Instance?.RemoveFrameCallback(this);
         _frameScheduled = false;
     }
+
+    private void CreateSelectedSurface(Surface surface)
+    {
+        try
+        {
+            _renderHost.CreateSurface(surface);
+        }
+        catch (Exception ex) when (_requestedBackend == GraphicsBackend.Auto
+            && _renderHost is AndroidVulkanRenderHost)
+        {
+            Log.Warn(LogTag, $"Vulkan initialization failed in Auto mode; falling back to OpenGL ES. {ex}");
+            _renderHost.Dispose();
+            _renderHost = new AndroidEglRenderHost();
+            _renderHost.SetProject(_project, _projectDirectory);
+            _renderHost.CreateSurface(surface);
+        }
+    }
+
+    private static IAndroidRenderHost CreateRenderHost(GraphicsBackend requestedBackend)
+        => requestedBackend == GraphicsBackend.OpenGL
+            ? new AndroidEglRenderHost()
+            : new AndroidVulkanRenderHost();
 }

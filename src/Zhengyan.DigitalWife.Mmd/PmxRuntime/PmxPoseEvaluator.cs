@@ -192,6 +192,17 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     public void SetMotionLayerWeight(int layerIndex, float weight) => _layerWeights[ValidateLayerIndex(layerIndex)] = Math.Clamp(weight, 0.0f, 1.0f);
 
+    public void ResetPhysics()
+    {
+        _previousFrame = -1.0f;
+        _previousTimeSeconds = -1.0;
+        foreach (PhysicsState state in _fallbackPhysics)
+        {
+            state.Offset = Vector3.Zero;
+            state.Velocity = Vector3.Zero;
+        }
+    }
+
     public void Update(double timeSeconds, float playbackSpeed, bool loop, float[] destination, bool skinVertices = true)
     {
         double current = Math.Max(timeSeconds, 0.0);

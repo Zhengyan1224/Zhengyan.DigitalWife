@@ -8,9 +8,14 @@ public sealed class RuntimeScene : IDisposable
     private readonly Dictionary<string, RuntimeEntity> _entitiesById = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RuntimeEntity> _entitiesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly RuntimeSceneAnimationController _animations;
+    private readonly Func<string, bool>? _resetPmxPhysics;
     private bool _disposed;
 
-    public RuntimeScene(string scenePath, GameProjectScene definition, Func<string, string> resolvePath)
+    public RuntimeScene(
+        string scenePath,
+        GameProjectScene definition,
+        Func<string, string> resolvePath,
+        Func<string, bool>? resetPmxPhysics = null)
     {
         ScenePath = scenePath;
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
@@ -18,7 +23,8 @@ public sealed class RuntimeScene : IDisposable
         Cameras = definition.Cameras.Select(camera => new RuntimeCamera(camera)).ToArray();
         Lighting = new RuntimeLighting(definition.Lighting);
         _animations = new RuntimeSceneAnimationController(resolvePath);
-        foreach (GameEntity entity in definition.Entities) Register(new RuntimeEntity(entity));
+        _resetPmxPhysics = resetPmxPhysics;
+        foreach (GameEntity entity in definition.Entities) Register(new RuntimeEntity(entity, _resetPmxPhysics));
     }
 
     public event Action<RuntimeEntity>? EntityAdded;
@@ -73,7 +79,7 @@ public sealed class RuntimeScene : IDisposable
         if (string.IsNullOrWhiteSpace(definition.Id)) definition.Id = Guid.NewGuid().ToString("N");
         if (_entitiesById.ContainsKey(definition.Id)) throw new InvalidOperationException($"Entity id already exists: {definition.Id}");
         Definition.Entities.Add(definition);
-        RuntimeEntity entity = new(definition);
+        RuntimeEntity entity = new(definition, _resetPmxPhysics);
         Register(entity);
         EntityAdded?.Invoke(entity);
         return entity;
