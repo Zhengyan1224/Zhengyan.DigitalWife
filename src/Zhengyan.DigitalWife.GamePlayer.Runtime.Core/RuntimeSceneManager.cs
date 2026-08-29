@@ -1,3 +1,4 @@
+using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
@@ -12,17 +13,23 @@ public sealed class RuntimeSceneManager : IDisposable
     private readonly GameProject _project;
     private readonly string _projectDirectory;
     private readonly Func<string, bool>? _resetPmxPhysics;
+    private readonly Func<string, ColliderSettings, RuntimeMeshCollider?>? _meshColliderResolver;
+    private readonly Func<string, string, Matrix4x4?>? _nodeWorldResolver;
     private string? _pendingScene;
     private bool _disposed;
 
     public RuntimeSceneManager(
         GameProject project,
         string projectDirectory,
-        Func<string, bool>? resetPmxPhysics = null)
+        Func<string, bool>? resetPmxPhysics = null,
+        Func<string, ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null,
+        Func<string, string, Matrix4x4?>? nodeWorldResolver = null)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
         _projectDirectory = Path.GetFullPath(projectDirectory ?? throw new ArgumentNullException(nameof(projectDirectory)));
         _resetPmxPhysics = resetPmxPhysics;
+        _meshColliderResolver = meshColliderResolver;
+        _nodeWorldResolver = nodeWorldResolver;
         GameProjectStore.NormalizeScenes(_project);
     }
 
@@ -70,7 +77,7 @@ public sealed class RuntimeSceneManager : IDisposable
                 resolved,
                 definition,
                 path => GameProjectPath.ToAbsolute(_projectDirectory, path),
-                _resetPmxPhysics);
+                _resetPmxPhysics, _meshColliderResolver, _nodeWorldResolver);
             CommitScene(resolved, definition, next);
             SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;
@@ -106,7 +113,7 @@ public sealed class RuntimeSceneManager : IDisposable
                 resolved,
                 definition,
                 path => GameProjectPath.ToAbsolute(_projectDirectory, path),
-                _resetPmxPhysics);
+                _resetPmxPhysics, _meshColliderResolver, _nodeWorldResolver);
             CommitScene(resolved, definition, next);
             SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;

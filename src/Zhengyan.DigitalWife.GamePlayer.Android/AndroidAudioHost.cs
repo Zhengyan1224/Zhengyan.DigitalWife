@@ -72,6 +72,39 @@ internal sealed class AndroidAudioHost : IDisposable
         }
     }
 
+    public bool SetVolume(string idOrName, float volume)
+    {
+        string key = ResolveKey(idOrName);
+        if (!_players.TryGetValue(key, out MediaPlayer? player)) return false;
+        float value = Math.Clamp(volume, 0.0f, 1.0f);
+        try { player.SetVolume(value, value); return true; } catch { return false; }
+    }
+
+    public bool SetLoop(string idOrName, bool loop)
+    {
+        string key = ResolveKey(idOrName);
+        if (!_players.TryGetValue(key, out MediaPlayer? player)) return false;
+        try { player.Looping = loop; return true; } catch { return false; }
+    }
+
+    public bool IsPlaying(string idOrName)
+    {
+        string key = ResolveKey(idOrName);
+        try { return _players.TryGetValue(key, out MediaPlayer? player) && player.IsPlaying; } catch { return false; }
+    }
+
+    public int GetPosition(string idOrName)
+    {
+        string key = ResolveKey(idOrName);
+        try { return _players.TryGetValue(key, out MediaPlayer? player) ? player.CurrentPosition : 0; } catch { return 0; }
+    }
+
+    public int GetDuration(string idOrName)
+    {
+        string key = ResolveKey(idOrName);
+        try { return _players.TryGetValue(key, out MediaPlayer? player) ? player.Duration : 0; } catch { return 0; }
+    }
+
     private bool Play(AudioAsset asset)
     {
         string path = GameProjectPath.ToAbsolute(_projectDirectory, asset.Path);

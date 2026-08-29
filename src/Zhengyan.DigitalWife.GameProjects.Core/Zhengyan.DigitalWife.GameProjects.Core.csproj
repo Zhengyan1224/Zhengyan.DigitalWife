@@ -17,6 +17,7 @@
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\LayoutResolver.cs" Link="LayoutResolver.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\SpriteLayoutResolver.cs" Link="SpriteLayoutResolver.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\CollisionGeometry.cs" Link="CollisionGeometry.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameEntityCollision.cs" Link="GameEntityCollision.cs" />
     </ItemGroup>
 
 </Project>

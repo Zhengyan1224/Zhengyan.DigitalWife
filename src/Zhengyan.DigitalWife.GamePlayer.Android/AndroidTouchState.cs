@@ -28,20 +28,22 @@ public readonly record struct AndroidTouchPoint(
 
 public sealed class AndroidInputSnapshot
 {
-    public static AndroidInputSnapshot Empty { get; } = new([], null, 0, false, false);
+    public static AndroidInputSnapshot Empty { get; } = new([], null, 0, false, false, AndroidDeviceInputSnapshot.Empty);
 
     internal AndroidInputSnapshot(
         IReadOnlyList<AndroidTouchPoint> touches,
         AndroidTouchPoint? primaryTouch,
         int activeTouchCount,
         bool touchStarted,
-        bool touchEnded)
+        bool touchEnded,
+        AndroidDeviceInputSnapshot deviceInput)
     {
         Touches = touches;
         PrimaryTouch = primaryTouch;
         ActiveTouchCount = activeTouchCount;
         IsTouchStarted = touchStarted;
         IsTouchEnded = touchEnded;
+        DeviceInput = deviceInput;
     }
 
     public IReadOnlyList<AndroidTouchPoint> Touches { get; }
@@ -55,6 +57,11 @@ public sealed class AndroidInputSnapshot
     public bool IsTouchStarted { get; }
 
     public bool IsTouchEnded { get; }
+
+    public AndroidDeviceInputSnapshot DeviceInput { get; }
+
+    internal AndroidInputSnapshot WithDeviceInput(AndroidDeviceInputSnapshot deviceInput)
+        => new(Touches, PrimaryTouch, ActiveTouchCount, IsTouchStarted, IsTouchEnded, deviceInput);
 }
 
 internal sealed class AndroidTouchState
@@ -124,7 +131,8 @@ internal sealed class AndroidTouchState
                 primary,
                 ordered.Count(static state => state.IsActive),
                 ordered.Any(static state => state.StartedThisFrame),
-                ordered.Any(static state => state.EndedThisFrame));
+                ordered.Any(static state => state.EndedThisFrame),
+                AndroidDeviceInputSnapshot.Empty);
 
             foreach (int id in _touches
                 .Where(static pair => !pair.Value.IsActive)

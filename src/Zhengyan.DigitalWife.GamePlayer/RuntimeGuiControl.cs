@@ -122,6 +122,12 @@ public sealed class RuntimeGuiControl
             NormalizeTextSelectionState();
             return _control.CursorPosition;
         }
+        set
+        {
+            _control.CursorPosition = Math.Clamp(value, 0, (_control.Text ?? string.Empty).Length);
+            _control.SelectionStart = _control.CursorPosition;
+            _control.SelectionEnd = _control.CursorPosition;
+        }
     }
 
     public int SelectionStart
@@ -130,6 +136,11 @@ public sealed class RuntimeGuiControl
         {
             NormalizeTextSelectionState();
             return Math.Min(_control.SelectionStart, _control.SelectionEnd);
+        }
+        set
+        {
+            _control.SelectionStart = Math.Clamp(value, 0, (_control.Text ?? string.Empty).Length);
+            NormalizeTextSelectionState();
         }
     }
 
@@ -140,11 +151,20 @@ public sealed class RuntimeGuiControl
             NormalizeTextSelectionState();
             return Math.Max(_control.SelectionStart, _control.SelectionEnd);
         }
+        set
+        {
+            _control.SelectionEnd = Math.Clamp(value, 0, (_control.Text ?? string.Empty).Length);
+            NormalizeTextSelectionState();
+        }
     }
 
     public int SelectionLength => SelectionEnd - SelectionStart;
 
     public bool HasSelection => SelectionLength > 0;
+
+    public int CompositionStart => _control.CompositionStart;
+
+    public int CompositionEnd => _control.CompositionEnd;
 
     public string SelectedText => GetSelectedText();
 

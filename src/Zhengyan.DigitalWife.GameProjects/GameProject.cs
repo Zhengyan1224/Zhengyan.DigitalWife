@@ -929,6 +929,12 @@ public sealed class GuiControlSettings
     [JsonIgnore]
     public int SelectionEnd { get; set; }
 
+    [JsonIgnore]
+    public int CompositionStart { get; set; } = -1;
+
+    [JsonIgnore]
+    public int CompositionEnd { get; set; } = -1;
+
     public GuiControlStyleSettings Style { get; set; } = new();
 }
 

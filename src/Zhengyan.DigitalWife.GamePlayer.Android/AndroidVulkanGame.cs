@@ -37,6 +37,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private AndroidVulkanSpriteComponent? _spriteComponent;
     private IImGuiBackendController? _imgui;
     private DrawableGameComponent? _imguiComponent;
+    private AndroidVulkanRuntimeDebugDrawComponent? _debugDrawComponent;
     private readonly Dictionary<string, RenderTextureState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _renderingRenderTexture;
     private bool _sceneRenderedThisFrame;
@@ -70,6 +71,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
             .CreateUnderwaterPostProcessRenderer("AndroidVulkanUnderwater");
         _imgui = GraphicsDevice.Renderer.Services.CreateImGuiController(this);
+        _debugDrawComponent = AddComponent(new AndroidVulkanRuntimeDebugDrawComponent(this) { DrawOrder = 9000 });
         _imguiComponent = AddComponent(new ImGuiDrawComponent(this)
         {
             DrawOrder = int.MaxValue
@@ -320,6 +322,8 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 
     private void SyncSceneComponents()
     {
+        ReconcileSceneComponents();
+
         foreach (RuntimeEntity entity in _scene.Entities)
         {
             if (_models.TryGetValue(entity.Id, out PmxModelComponent? model)) ApplyEntity(entity, model, includeMotions: false);
@@ -340,6 +344,54 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             model.ShadowColor = lighting.ShadowColor.ToVector4();
             model.PointLights = _pointLights;
             model.SpotLights = _spotLights;
+        }
+    }
+
+    private void ReconcileSceneComponents()
+    {
+        RuntimeEntity[] entities = _scene.Entities.ToArray();
+        HashSet<string> pmxIds = entities.Where(entity => entity.IsPmxModel)
+            .Select(entity => entity.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> particleIds = entities.Where(entity => entity.IsParticleSystem)
+            .Select(entity => entity.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> waterIds = entities.Where(entity => entity.IsWaterSurface)
+            .Select(entity => entity.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> planeIds = entities.Where(entity => entity.IsTexturedPlane)
+            .Select(entity => entity.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        RemoveStaleComponents(_models, pmxIds);
+        RemoveStaleComponents(_particles, particleIds);
+        RemoveStaleComponents(_waters, waterIds);
+        RemoveStaleComponents(_planes, planeIds);
+
+        foreach (RuntimeEntity entity in entities)
+        {
+            if (entity.IsPmxModel && !_models.ContainsKey(entity.Id)) LoadPmx(entity);
+            else if (entity.IsParticleSystem && !_particles.ContainsKey(entity.Id)) LoadParticle(entity);
+            else if (entity.IsWaterSurface && !_waters.ContainsKey(entity.Id)) LoadWater(entity);
+            else if (entity.IsTexturedPlane && !_planes.ContainsKey(entity.Id)) LoadPlane(entity);
+        }
+
+        if (_spriteComponent is null && _scene.Definition.Sprites.Count != 0)
+        {
+            _spriteComponent = AddComponent(new AndroidVulkanSpriteComponent(
+                _scene.Definition,
+                _windowSettings,
+                ResolvePath)
+            {
+                DrawOrder = 10000
+            });
+        }
+    }
+
+    private void RemoveStaleComponents<T>(Dictionary<string, T> components, HashSet<string> validIds)
+        where T : DrawableGameComponent
+    {
+        foreach (string staleId in components.Keys.Where(id => !validIds.Contains(id)).ToArray())
+        {
+            T component = components[staleId];
+            components.Remove(staleId);
+            RemoveComponent(component);
         }
     }
 
@@ -747,6 +799,44 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         component.MirrorReflectionEnabled = settings.MirrorReflectionEnabled;
         component.MirrorReflectionStrength = settings.MirrorReflectionStrength;
     }
+
+    internal PmxModelComponent? GetPmxModel(string idOrName) => FindModel(idOrName);
+    internal OrbitCamera Camera => _camera;
+    internal RuntimeScene Scene => _scene;
+
+    internal RuntimeMeshCollider? TryCreateMeshCollider(string idOrName, ColliderSettings settings)
+    {
+        PmxModelComponent? component = FindModel(idOrName);
+        if (component?.Model is not { } model || !component.IsLoaded) return null;
+        unsafe
+        {
+            int vertexCount = model.GetVertexCount();
+            int indexCount = model.GetIndexCount();
+            Vector3* positions = model.GetPositions();
+            uint* indices = model.GetIndices();
+            if (positions is null || indices is null || vertexCount <= 0 || indexCount < 3) return null;
+            Vector3 scale = settings.Size.ToVector3();
+            Vector3 radians = settings.RotationDegrees.ToVector3() * (MathF.PI / 180.0f);
+            Matrix4x4 local = Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateFromYawPitchRoll(radians.Y, radians.X, radians.Z)
+                * Matrix4x4.CreateTranslation(settings.Position.ToVector3());
+            Matrix4x4 world = local * component.World;
+            List<RuntimeMeshTriangle> triangles = [];
+            for (int i = 0; i + 2 < indexCount; i += 3)
+            {
+                uint ia = indices[i], ib = indices[i + 1], ic = indices[i + 2];
+                if (ia >= vertexCount || ib >= vertexCount || ic >= vertexCount) continue;
+                Vector3 a = Vector3.Transform(positions[(int)ia], world);
+                Vector3 b = Vector3.Transform(positions[(int)ib], world);
+                Vector3 c = Vector3.Transform(positions[(int)ic], world);
+                if (Vector3.Cross(b - a, c - a).LengthSquared() > 0.000001f) triangles.Add(new RuntimeMeshTriangle(a, b, c));
+            }
+            return triangles.Count == 0 ? null : new RuntimeMeshCollider(triangles);
+        }
+    }
+
+    internal Matrix4x4? TryGetNodeWorld(string idOrName, string nodeName)
+        => FindModel(idOrName)?.TryGetNodeWorld(nodeName, out Matrix4x4 world) == true ? world : null;
 
     private PmxModelComponent? FindModel(string idOrName)
     {

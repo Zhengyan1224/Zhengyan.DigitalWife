@@ -6,6 +6,8 @@ using Android.Views;
 using Android.Views.InputMethods;
 using Android.Widget;
 using Android.Graphics;
+using Android.Text;
+using Android.Text.Method;
 using Zhengyan.DigitalWife.GameProjects;
 using System.Threading.Tasks;
 
@@ -47,7 +49,7 @@ public sealed class MainActivity : Activity
     private AndroidGameSurfaceView? _gameView;
     private AndroidGuiOverlayView? _guiOverlay;
     private FrameLayout? _root;
-    private EditText? _textEditor;
+    private ImeEditText? _textEditor;
     private AndroidGameProjectLoadResult? _projectLoadResult;
     private AndroidLoadingOverlayView? _loadingOverlay;
 
@@ -57,6 +59,11 @@ public sealed class MainActivity : Activity
 
         Window?.SetFlags(WindowManagerFlags.KeepScreenOn, WindowManagerFlags.KeepScreenOn);
         EnterImmersiveMode();
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.M
+            && CheckSelfPermission(Android.Manifest.Permission.RecordAudio) != Permission.Granted)
+        {
+            RequestPermissions([Android.Manifest.Permission.RecordAudio], 7001);
+        }
 
         _root = new FrameLayout(this);
         _loadingOverlay = new AndroidLoadingOverlayView(this);
@@ -106,7 +113,7 @@ public sealed class MainActivity : Activity
         {
             CloseTextEditor();
             if (_root is null) return;
-            EditText editor = new(this)
+            ImeEditText editor = new(this)
             {
                 Text = control.Text,
                 TextSize = control.Style.FontSize
@@ -114,28 +121,82 @@ public sealed class MainActivity : Activity
             editor.SetSingleLine(!control.Multiline);
             editor.SetTextColor(Color.White);
             editor.SetBackgroundColor(Color.Argb(230, 25, 55, 90));
+            editor.SetSelectAllOnFocus(false);
+            editor.SetTextIsSelectable(true);
+            editor.SetLongClickable(true);
+            editor.InputType = control.Multiline
+                ? (Android.Text.InputTypes.ClassText | Android.Text.InputTypes.TextFlagMultiLine | Android.Text.InputTypes.TextFlagCapSentences)
+                : (Android.Text.InputTypes.ClassText | Android.Text.InputTypes.TextFlagCapSentences);
+            editor.ImeOptions = control.Multiline ? ImeAction.None : ImeAction.Done;
             FrameLayout.LayoutParams layout = new((int)Math.Max(rect.Width, 1), (int)Math.Max(rect.Height, 1))
             {
                 LeftMargin = (int)rect.X,
                 TopMargin = (int)rect.Y
             };
-            editor.TextChanged += (_, _) => control.Text = editor.Text ?? string.Empty;
+            editor.TextChanged += (_, _) =>
+            {
+                string value = editor.Text ?? string.Empty;
+                control.Text = value;
+                control.CursorPosition = Math.Clamp(editor.SelectionStart, 0, value.Length);
+                control.SelectionStart = Math.Clamp(editor.SelectionStart, 0, value.Length);
+                control.SelectionEnd = Math.Clamp(editor.SelectionEnd, 0, value.Length);
+                control.CompositionStart = editor.CompositionStart;
+                control.CompositionEnd = editor.CompositionEnd;
+                _gameView?.InvalidateOverlay();
+            };
+            editor.SelectionChanged += (_, _) =>
+            {
+                int length = (editor.Text ?? string.Empty).Length;
+                control.CursorPosition = Math.Clamp(editor.SelectionStart, 0, length);
+                control.SelectionStart = Math.Clamp(editor.SelectionStart, 0, length);
+                control.SelectionEnd = Math.Clamp(editor.SelectionEnd, 0, length);
+            };
             editor.FocusChange += (_, args) => { if (!args.HasFocus) CloseTextEditor(); };
             _root.AddView(editor, layout);
             _textEditor = editor;
             editor.RequestFocus();
+            int textLength = (editor.Text ?? string.Empty).Length;
+            editor.SetSelection(Math.Clamp(control.SelectionStart, 0, textLength), Math.Clamp(control.SelectionEnd, 0, textLength));
             ((InputMethodManager?)GetSystemService(InputMethodService))?.ShowSoftInput(editor, ShowFlags.Implicit);
         });
     }
 
     private void CloseTextEditor()
     {
-        EditText? editor = _textEditor;
+        ImeEditText? editor = _textEditor;
         _textEditor = null;
         if (editor is null) return;
         ((InputMethodManager?)GetSystemService(InputMethodService))?.HideSoftInputFromWindow(editor.WindowToken, HideSoftInputFlags.None);
         _root?.RemoveView(editor);
         editor.Dispose();
+    }
+
+    private sealed class ImeEditText(Context context) : EditText(context)
+    {
+        public new event EventHandler? SelectionChanged;
+        public int CompositionStart { get; private set; } = -1;
+        public int CompositionEnd { get; private set; } = -1;
+
+        protected override void OnSelectionChanged(int selStart, int selEnd)
+        {
+            base.OnSelectionChanged(selStart, selEnd);
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        protected override void OnTextChanged(Java.Lang.ICharSequence? text, int start, int before, int count)
+        {
+            base.OnTextChanged(text, start, before, count);
+            if (text is ISpanned spanned)
+            {
+                CompositionStart = BaseInputConnection.GetComposingSpanStart(spanned);
+                CompositionEnd = BaseInputConnection.GetComposingSpanEnd(spanned);
+            }
+            else
+            {
+                CompositionStart = -1;
+                CompositionEnd = -1;
+            }
+        }
     }
 
     private void ShowContextMenu(ContextMenuSettings menu, float x, float y)

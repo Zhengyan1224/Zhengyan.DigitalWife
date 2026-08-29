@@ -6,11 +6,15 @@ namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 public sealed class RuntimeEntity
 {
     private readonly Func<string, bool>? _resetPmxPhysics;
+    private readonly Func<ColliderSettings, RuntimeMeshCollider?>? _meshColliderResolver;
+    private readonly Func<string, Matrix4x4?>? _nodeWorldResolver;
 
-    public RuntimeEntity(GameEntity definition, Func<string, bool>? resetPmxPhysics = null)
+    public RuntimeEntity(GameEntity definition, Func<string, bool>? resetPmxPhysics = null, Func<ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null, Func<string, Matrix4x4?>? nodeWorldResolver = null)
     {
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _resetPmxPhysics = resetPmxPhysics;
+        _meshColliderResolver = meshColliderResolver;
+        _nodeWorldResolver = nodeWorldResolver;
     }
 
     public GameEntity Definition { get; }
@@ -144,6 +148,46 @@ public sealed class RuntimeEntity
 
     public bool TryResetPhysics()
         => IsPmxModel && _resetPmxPhysics?.Invoke(Id) == true;
+
+    public CollisionSettings Collision => Definition.Collision;
+    public IList<ColliderSettings> Colliders => Definition.Colliders;
+    internal IEnumerable<ColliderSettings> EffectiveColliders => GameEntityCollision.GetEffectiveColliders(Definition);
+    public bool CollisionEnabled
+    {
+        get => EffectiveColliders.Any(c => c.Enabled);
+        set { if (Definition.Colliders.Count == 0) Definition.Collision.Enabled = value; else foreach (ColliderSettings c in Definition.Colliders) c.Enabled = value; }
+    }
+    public string CollisionShape => EffectiveColliders.FirstOrDefault()?.Shape ?? Definition.Collision.Shape;
+    public Vector3 CollisionPosition { get => Definition.Colliders.Count == 0 ? Definition.Collision.Center.ToVector3() : GetPrimaryCollider().Position.ToVector3(); set { if (Definition.Colliders.Count == 0) Definition.Collision.Center = Vector3Dto.FromVector3(value); else GetPrimaryCollider().Position = Vector3Dto.FromVector3(value); } }
+    public Vector3 ColliderPosition { get => CollisionPosition; set => CollisionPosition = value; }
+    public float CollisionRadius { get => Definition.Colliders.Count == 0 ? Definition.Collision.Radius : GetPrimaryCollider().Radius; set { if (Definition.Colliders.Count == 0) Definition.Collision.Radius = Math.Max(0.0001f, value); else GetPrimaryCollider().Radius = Math.Max(0.0001f, value); } }
+    public float ColliderRadius { get => CollisionRadius; set => CollisionRadius = value; }
+    public float CollisionHeight { get => Definition.Colliders.Count == 0 ? Definition.Collision.Height : GetPrimaryCollider().Height; set { if (Definition.Colliders.Count == 0) Definition.Collision.Height = Math.Max(0.0f, value); else GetPrimaryCollider().Height = Math.Max(0.0f, value); } }
+    public float ColliderHeight { get => CollisionHeight; set => CollisionHeight = value; }
+    public string CollisionAxis { get => Definition.Colliders.Count == 0 ? Definition.Collision.Axis : GetPrimaryCollider().Axis; set { if (Definition.Colliders.Count == 0) Definition.Collision.Axis = NormalizeAxis(value); else GetPrimaryCollider().Axis = NormalizeAxis(value); } }
+    public string ColliderAxis { get => CollisionAxis; set => CollisionAxis = value; }
+
+    public void SetCapsuleCollider(float radius, float height, float centerX = 0, float centerY = 1, float centerZ = 0, string axis = "y")
+    { Definition.Collision.Enabled = false; Definition.Colliders.Clear(); AddCapsuleCollider("Capsule Collider", radius, height, centerX, centerY, centerZ, axis); }
+    public string AddCapsuleCollider(string name, float radius, float height, float centerX = 0, float centerY = 1, float centerZ = 0, string axis = "y", float rotationX = 0, float rotationY = 0, float rotationZ = 0)
+    { ColliderSettings c = new() { Name = string.IsNullOrWhiteSpace(name) ? "Capsule Collider" : name, Enabled = true, Shape = "capsule", Position = new Vector3Dto(centerX, centerY, centerZ), Radius = Math.Max(0.0001f, radius), Height = Math.Max(0, height), Axis = NormalizeAxis(axis), RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ) }; Definition.Colliders.Add(c); Definition.Collision.Enabled = false; return c.Id; }
+    public string AddBoxCollider(string name, float sizeX, float sizeY, float sizeZ, float centerX = 0, float centerY = .5f, float centerZ = 0, float rotationX = 0, float rotationY = 0, float rotationZ = 0)
+    { ColliderSettings c = new() { Name = string.IsNullOrWhiteSpace(name) ? "Box Collider" : name, Enabled = true, Shape = "box", Position = new Vector3Dto(centerX, centerY, centerZ), Size = new Vector3Dto(Math.Max(.001f, sizeX), Math.Max(.001f, sizeY), Math.Max(.001f, sizeZ)), RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ) }; Definition.Colliders.Add(c); Definition.Collision.Enabled = false; return c.Id; }
+    public string AddMeshCollider(string name, bool walkable = true, float maxSlopeDegrees = 55, float offsetX = 0, float offsetY = 0, float offsetZ = 0, float scaleX = 1, float scaleY = 1, float scaleZ = 1, float rotationX = 0, float rotationY = 0, float rotationZ = 0)
+    { ColliderSettings c = new() { Name = string.IsNullOrWhiteSpace(name) ? "Mesh Collider" : name, Enabled = true, Shape = "mesh", Position = new Vector3Dto(offsetX, offsetY, offsetZ), Size = new Vector3Dto(Math.Max(.001f, MathF.Abs(scaleX)), Math.Max(.001f, MathF.Abs(scaleY)), Math.Max(.001f, MathF.Abs(scaleZ))), RotationDegrees = new Vector3Dto(rotationX, rotationY, rotationZ), Walkable = walkable, MaxSlopeDegrees = Math.Clamp(maxSlopeDegrees, 0, 89.9f) }; Definition.Colliders.Add(c); Definition.Collision.Enabled = false; return c.Id; }
+    public bool RemoveCollider(string idOrName) { int i = Definition.Colliders.FindIndex(c => string.Equals(c.Id, idOrName, StringComparison.OrdinalIgnoreCase) || string.Equals(c.Name, idOrName, StringComparison.OrdinalIgnoreCase)); if (i < 0) return false; Definition.Colliders.RemoveAt(i); return true; }
+    public void ClearColliders() { Definition.Colliders.Clear(); Definition.Collision.Enabled = false; }
+    public void DisableCollider() { foreach (ColliderSettings c in Definition.Colliders) c.Enabled = false; Definition.Collision.Enabled = false; }
+    public bool TryGetCapsule(out RuntimeCapsule capsule) => RuntimePhysics.TryCreateCapsule(this, out capsule);
+    public bool Raycast(RuntimeRay ray, out float distance, out Vector3 point) => RuntimePhysics.TryRaycastEntity(this, ray, out _, out distance, out point);
+    public bool CheckCollision(RuntimeEntity other) => RuntimePhysics.CheckCollision(this, other);
+    public float DistanceToCollider(RuntimeEntity other) => RuntimePhysics.DistanceBetween(this, other);
+
+    internal Matrix4x4 GetColliderParentWorld(ColliderSettings collider) => !string.IsNullOrWhiteSpace(collider.BoundBoneName) && _nodeWorldResolver?.Invoke(collider.BoundBoneName) is Matrix4x4 bone ? bone : TransformMatrix;
+    internal bool TryCreateMeshCollider(ColliderSettings collider, out RuntimeMeshCollider mesh) { mesh = _meshColliderResolver?.Invoke(collider) ?? default; return mesh.Triangles is { Count: > 0 }; }
+
+    private ColliderSettings GetPrimaryCollider() => EffectiveColliders.FirstOrDefault() ?? throw new InvalidOperationException("Entity has no collider.");
+    private static string NormalizeAxis(string? axis) => (axis ?? string.Empty).Trim().ToLowerInvariant() switch { "x" => "x", "z" => "z", _ => "y" };
 
     public void ResetPhysics() => _ = TryResetPhysics();
 

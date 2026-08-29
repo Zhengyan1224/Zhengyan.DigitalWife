@@ -26,10 +26,19 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private bool _surfaceAvailable;
     private bool _disposed;
     private Surface? _surface;
+    private readonly object _lifecycleLock = new();
 
     public GameProject? Project => _project;
 
     public void SetProject(GameProject? project, string? projectDirectory)
+    {
+        lock (_lifecycleLock)
+        {
+            SetProjectCore(project, projectDirectory);
+        }
+    }
+
+    private void SetProjectCore(GameProject? project, string? projectDirectory)
     {
         DisposeRuntime();
         _project = project;
@@ -39,7 +48,9 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             _sceneManager = new RuntimeSceneManager(
                 project,
                 _projectDirectory,
-                idOrName => _game?.TryResetPhysics(idOrName) == true);
+                idOrName => _game?.TryResetPhysics(idOrName) == true,
+                (id, collider) => _game?.TryCreateMeshCollider(id, collider),
+                (id, node) => _game?.TryGetNodeWorld(id, node));
             _audioHost = new AndroidAudioHost(_projectDirectory);
             _scriptHost = new AndroidCSharpScriptHost(
                 _projectDirectory,
@@ -55,7 +66,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 (entity, frame, playing) =>
                 {
                     _ = _game?.TrySetMotionState(entity.Id, frame, playing);
-                });
+                },
+                entity => _game?.GetPmxModel(entity.Id),
+                (name, volume) => _audioHost?.SetVolume(name, volume) == true,
+                (name, loop) => _audioHost?.SetLoop(name, loop) == true,
+                name => _audioHost?.IsPlaying(name) == true);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -71,65 +86,98 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     public void CreateSurface(Surface surface)
     {
         ArgumentNullException.ThrowIfNull(surface);
-        DestroySurface();
-        _surface = surface;
-        _surfaceAvailable = true;
-        ReloadGame();
-        ResetFrameClock();
+        lock (_lifecycleLock)
+        {
+            DestroySurfaceCore();
+            _surface = surface;
+            _surfaceAvailable = true;
+            ReloadGame();
+            ResetFrameClock();
+        }
     }
 
     public void Resize(int width, int height)
     {
-        _width = Math.Max(width, 1);
-        _height = Math.Max(height, 1);
-        _game?.ResizeHosted(new Vector2D<int>(_width, _height));
+        lock (_lifecycleLock)
+        {
+            _width = Math.Max(width, 1);
+            _height = Math.Max(height, 1);
+            _game?.ResizeHosted(new Vector2D<int>(_width, _height));
+        }
     }
 
     public void Render(long frameTimeNanos, AndroidInputSnapshot input)
     {
-        if (_game is null)
+        lock (_lifecycleLock)
         {
-            return;
+            if (_game is null || !_surfaceAvailable || _surface is null)
+            {
+                return;
+            }
+
+            double deltaSeconds = 0.0;
+            if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
+            {
+                deltaSeconds = (frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0;
+            }
+            _lastFrameTimeNanos = frameTimeNanos;
+
+            RuntimeScene? inputScene = _sceneManager?.Current;
+            if (inputScene is not null) DispatchTouchEvents(inputScene, input);
+            _sceneManager?.Update((float)deltaSeconds, ToCameraInput(input));
+
+            RuntimeScene? scene = _sceneManager?.Current;
+            if (scene is not null)
+            {
+                _scriptHost?.Update(scene, (float)deltaSeconds, input);
+                _project!.Scene = scene.Definition;
+            }
+
+            try
+            {
+                _game.UpdateHosted(deltaSeconds);
+                _game.RenderHosted(deltaSeconds);
+            }
+            catch (Exception ex)
+            {
+                // Android may invalidate the native surface between frame callbacks
+                // (rotation, backgrounding, or driver-level swapchain loss). Recreate
+                // the Vulkan device on the next frame instead of killing the activity.
+                Log.Warn(LogTag, $"Vulkan frame submission failed; recreating device. {ex}");
+                _game.Dispose();
+                _game = null;
+                if (_surfaceAvailable && _surface is not null)
+                {
+                    ReloadGame();
+                }
+            }
         }
-
-        double deltaSeconds = 0.0;
-        if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
-        {
-            deltaSeconds = (frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0;
-        }
-        _lastFrameTimeNanos = frameTimeNanos;
-
-        RuntimeScene? inputScene = _sceneManager?.Current;
-        if (inputScene is not null) DispatchTouchEvents(inputScene, input);
-        _sceneManager?.Update((float)deltaSeconds, ToCameraInput(input));
-
-        RuntimeScene? scene = _sceneManager?.Current;
-        if (scene is not null)
-        {
-            _scriptHost?.Update(scene, (float)deltaSeconds);
-            _project!.Scene = scene.Definition;
-        }
-
-        _game.UpdateHosted(deltaSeconds);
-        _game.RenderHosted(deltaSeconds);
     }
 
     public void Pause() => ResetFrameClock();
 
     public void DestroySurface()
     {
-        _surfaceAvailable = false;
-        _surface = null;
-        _game?.Dispose();
-        _game = null;
-        ResetFrameClock();
+        lock (_lifecycleLock)
+        {
+            DestroySurfaceCore();
+        }
     }
 
-    public void RequestSceneChange(string scenePath) => _sceneManager?.RequestSceneChange(scenePath);
+    public void RequestSceneChange(string scenePath)
+    {
+        lock (_lifecycleLock)
+        {
+            _sceneManager?.RequestSceneChange(scenePath);
+        }
+    }
 
     public bool RequestRenderTextureRefresh(string idOrName)
     {
-        return _game?.RequestRenderTextureRefresh(idOrName) == true;
+        lock (_lifecycleLock)
+        {
+            return _game?.RequestRenderTextureRefresh(idOrName) == true;
+        }
     }
 
     public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)
@@ -143,10 +191,13 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        DestroySurface();
-        DisposeRuntime();
+        lock (_lifecycleLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            DestroySurfaceCore();
+            DisposeRuntime();
+        }
     }
 
     private void ReloadGame()
@@ -220,6 +271,15 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _scriptHost = null;
         _audioHost?.Dispose();
         _audioHost = null;
+    }
+
+    private void DestroySurfaceCore()
+    {
+        _surfaceAvailable = false;
+        _surface = null;
+        _game?.Dispose();
+        _game = null;
+        ResetFrameClock();
     }
 
     private static RuntimeCameraInput ToCameraInput(AndroidInputSnapshot input)

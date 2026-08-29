@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
+using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -24,6 +25,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<IReadOnlyList<AndroidRenderTextureInfo>> _listRenderTextures;
     private readonly Action<RuntimeScene, RuntimeEntity, string> _applyMotion;
     private readonly Action<RuntimeEntity, float?, bool?> _setMotionState;
+    private readonly Func<RuntimeEntity, PmxModelComponent?> _resolvePmxModel;
+    private readonly Func<string, float, bool> _setAudioVolume;
+    private readonly Func<string, bool, bool> _setAudioLoop;
+    private readonly Func<string, bool> _isAudioPlaying;
     private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
@@ -39,7 +44,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         Func<string, AndroidRenderTextureInfo?>? getRenderTexture = null,
         Func<IReadOnlyList<AndroidRenderTextureInfo>>? listRenderTextures = null,
         Action<RuntimeScene, RuntimeEntity, string>? applyMotion = null,
-        Action<RuntimeEntity, float?, bool?>? setMotionState = null)
+        Action<RuntimeEntity, float?, bool?>? setMotionState = null,
+        Func<RuntimeEntity, PmxModelComponent?>? resolvePmxModel = null,
+        Func<string, float, bool>? setAudioVolume = null,
+        Func<string, bool, bool>? setAudioLoop = null,
+        Func<string, bool>? isAudioPlaying = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -52,6 +61,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _listRenderTextures = listRenderTextures ?? (() => []);
         _applyMotion = applyMotion ?? ((_, _, _) => { });
         _setMotionState = setMotionState ?? ((_, _, _) => { });
+        _resolvePmxModel = resolvePmxModel ?? (_ => null);
+        _setAudioVolume = setAudioVolume ?? ((_, _) => false);
+        _setAudioLoop = setAudioLoop ?? ((_, _) => false);
+        _isAudioPlaying = isAudioPlaying ?? (_ => false);
     }
 
     public void Start(RuntimeScene scene)
@@ -60,18 +73,18 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
             {
-                Execute(binding, CreateGlobals(scene, entity, 0.0f, true));
+                Execute(binding, CreateGlobals(scene, entity, 0.0f, true, input: AndroidInputSnapshot.Empty));
             }
         }
     }
 
-    public void Update(RuntimeScene scene, float deltaSeconds)
+    public void Update(RuntimeScene scene, float deltaSeconds, AndroidInputSnapshot? input = null)
     {
         foreach (RuntimeEntity entity in scene.Entities)
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
             {
-                Execute(binding, CreateGlobals(scene, entity, deltaSeconds, false));
+                Execute(binding, CreateGlobals(scene, entity, deltaSeconds, false, input: input ?? AndroidInputSnapshot.Empty));
             }
         }
     }
@@ -99,10 +112,12 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         RuntimeEntity entity,
         float deltaSeconds,
         bool isStart,
-        AndroidRuntimeEvent? runtimeEvent = null)
+        AndroidRuntimeEvent? runtimeEvent = null,
+        AndroidInputSnapshot? input = null)
     {
         AndroidScriptServices services = new(
             scene,
+            _projectDirectory,
             _requestSceneChange,
             name => _playAudio(scene, name),
             _pauseAudio,
@@ -116,9 +131,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             new AndroidScriptEntity(
                 entity,
                 path => _applyMotion(scene, entity, path),
-                (frame, playing) => _setMotionState(entity, frame, playing)),
-            new AndroidScriptInput(),
-            new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio),
+                (frame, playing) => _setMotionState(entity, frame, playing),
+                () => _resolvePmxModel(entity),
+                ResolveScriptAssetPath),
+            new AndroidScriptInput(input ?? AndroidInputSnapshot.Empty),
+            new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying),
             deltaSeconds,
             isStart,
             !isStart && runtimeEvent is null,
@@ -146,6 +163,19 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
     }
 
+    private string ResolveScriptAssetPath(string value)
+    {
+        string normalized = GameProjectPath.NormalizePathText(value ?? string.Empty);
+        if (normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(AndroidBundledResourceStore.RootDirectory))
+        {
+            string relative = normalized["app:".Length..].TrimStart('/', '\\');
+            return Path.Combine(AndroidBundledResourceStore.RootDirectory, relative);
+        }
+
+        return GameProjectPath.ToAbsolute(_projectDirectory, normalized);
+    }
+
     private static AndroidCompiledScript Compile(string path)
     {
         string source = """
@@ -154,6 +184,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             using Zhengyan.DigitalWife.GameProjects;
             using Zhengyan.DigitalWife.GamePlayer.Runtime;
             using Zhengyan.DigitalWife.GamePlayer.Android;
+            using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
             """ + File.ReadAllText(path);
         SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
@@ -330,6 +361,9 @@ public sealed class AndroidScriptScene
 
     public string Name => _scene.Name;
     public AndroidScriptCamera Camera { get; }
+    public RuntimeScenePhysics Physics => _scene.Physics;
+    public RuntimeSceneNavigation Navigation => _scene.Navigation;
+    public RuntimeDebug Debug => _scene.Debug;
     public RuntimeEntity? GetEntity(string idOrName) => _scene.GetEntity(idOrName);
 }
 
@@ -338,12 +372,21 @@ public sealed class AndroidScriptEntity
     private readonly RuntimeEntity _entity;
     private readonly Action<string> _applyMotion;
     private readonly Action<float?, bool?> _setMotionState;
+    private readonly Func<PmxModelComponent?> _resolvePmxModel;
+    private readonly Func<string, string> _resolveAssetPath;
 
-    internal AndroidScriptEntity(RuntimeEntity entity, Action<string> applyMotion, Action<float?, bool?> setMotionState)
+    internal AndroidScriptEntity(
+        RuntimeEntity entity,
+        Action<string> applyMotion,
+        Action<float?, bool?> setMotionState,
+        Func<PmxModelComponent?> resolvePmxModel,
+        Func<string, string>? resolveAssetPath = null)
     {
         _entity = entity;
         _applyMotion = applyMotion;
         _setMotionState = setMotionState;
+        _resolvePmxModel = resolvePmxModel;
+        _resolveAssetPath = resolveAssetPath ?? (path => path);
     }
 
     public string Id => _entity.Id;
@@ -352,27 +395,282 @@ public sealed class AndroidScriptEntity
     public Vector3 RotationDegrees { get => _entity.RotationDegrees; set => _entity.RotationDegrees = value; }
     public Vector3 Scale { get => _entity.Scale; set => _entity.Scale = value; }
     public string ReceiveShadowMode { get => _entity.ReceiveShadowMode; set => _entity.ReceiveShadowMode = value; }
+    public bool IsPmxModel => _entity.IsPmxModel;
+    public CollisionSettings Collision => _entity.Collision;
+    public IList<ColliderSettings> Colliders => _entity.Colliders;
+    public bool CollisionEnabled { get => _entity.CollisionEnabled; set => _entity.CollisionEnabled = value; }
+    public string CollisionShape => _entity.CollisionShape;
+    public Vector3 ColliderPosition { get => _entity.ColliderPosition; set => _entity.ColliderPosition = value; }
+    public float ColliderRadius { get => _entity.ColliderRadius; set => _entity.ColliderRadius = value; }
+    public float ColliderHeight { get => _entity.ColliderHeight; set => _entity.ColliderHeight = value; }
+    public string ColliderAxis { get => _entity.ColliderAxis; set => _entity.ColliderAxis = value; }
+    public int MotionLayerCount => Pmx?.MotionLayerCount ?? 0;
+    public IReadOnlyList<string> MaterialNames => Pmx?.MaterialNames ?? [];
+    public IReadOnlyList<string> MorphNames => Pmx?.MorphNames ?? [];
+    public IReadOnlyList<string> NodeNames => Pmx?.NodeNames ?? [];
+    public IReadOnlyDictionary<string, float> MorphWeights => Pmx?.MorphWeights ?? new Dictionary<string, float>();
+    public IReadOnlyDictionary<string, float> MorphSaveAnimWeights => Pmx?.MorphSaveAnimWeights ?? new Dictionary<string, float>();
+    public bool PhysicsEnabled
+    {
+        get => _entity.Definition.EnablePhysics;
+        set { _entity.Definition.EnablePhysics = value; if (Pmx is { } model) model.EnablePhysical = value; }
+    }
+    public Vector3 PhysicsGravity
+    {
+        get => Pmx?.PhysicsGravity ?? _entity.Definition.PhysicsGravity;
+        set { _entity.Definition.PhysicsGravity = value; if (Pmx is { } model) model.PhysicsGravity = value; }
+    }
+    public Vector3 PhysicsGravityDirection
+    {
+        get => _entity.Definition.PhysicsGravityDirection.ToVector3();
+        set { _entity.Definition.PhysicsGravityDirection = Vector3Dto.FromVector3(value); if (Pmx is { } model) model.PhysicsGravity = _entity.Definition.PhysicsGravity; }
+    }
+    public float PhysicsGravityMagnitude
+    {
+        get => _entity.Definition.PhysicsGravityMagnitude;
+        set { _entity.Definition.PhysicsGravityMagnitude = Math.Max(value, 0.0f); if (Pmx is { } model) model.PhysicsGravity = _entity.Definition.PhysicsGravity; }
+    }
+    public bool EnableShadow
+    {
+        get => _entity.Definition.EnableShadow;
+        set { _entity.Definition.EnableShadow = value; if (Pmx is { } model) model.EnableShadow = value; }
+    }
+    public bool ReceiveShadow
+    {
+        get => _entity.Definition.ReceiveShadow;
+        set { _entity.Definition.ReceiveShadow = value; if (Pmx is { } model) model.ReceiveShadow = value; }
+    }
+    public bool DrawShadowInMainPass
+    {
+        get => _entity.Definition.DrawShadowInMainPass;
+        set { _entity.Definition.DrawShadowInMainPass = value; if (Pmx is { } model) model.DrawShadowInMainPass = value; }
+    }
+    public bool LoopMotion
+    {
+        get => _entity.Definition.LoopMotion;
+        set { _entity.Definition.LoopMotion = value; if (Pmx is { } model) model.LoopMotion = value; }
+    }
+    public bool ResetPhysicsOnMotionLoop
+    {
+        get => _entity.Definition.ResetPhysicsOnMotionLoop;
+        set { _entity.Definition.ResetPhysicsOnMotionLoop = value; if (Pmx is { } model) model.ResetPhysicsOnMotionLoop = value; }
+    }
+    public float PlaybackSpeed
+    {
+        get => _entity.Definition.PlaybackSpeed;
+        set { _entity.Definition.PlaybackSpeed = Math.Max(value, 0.0f); if (Pmx is { } model) model.PlaybackSpeed = _entity.Definition.PlaybackSpeed; }
+    }
 
     public void SetPosition(float x, float y, float z) => Position = new Vector3(x, y, z);
     public void SetPosition(Vector3 position) => Position = position;
-    public void ApplyMotion(string motionPath) => _applyMotion(motionPath);
-    public void PlayMotion(bool restart = false) => _setMotionState(restart ? 0.0f : null, true);
-    public void PauseMotion() => _setMotionState(null, false);
-    public void StopMotion() => _setMotionState(0.0f, false);
-    public void SeekMotionFrame(float frame) => _setMotionState(Math.Max(frame, 0.0f), null);
+    public void ApplyMotion(string motionPath)
+    {
+        if (Pmx is { } model)
+        {
+            model.ApplyMotion(_resolveAssetPath(motionPath));
+            _entity.Definition.IsPlaying = true;
+        }
+        else _applyMotion(motionPath);
+    }
+    public void PlayMotion(bool restart = false)
+    {
+        if (Pmx is { } model)
+        {
+            if (restart) model.ResetAnimation();
+            model.PlayMotion();
+            _entity.Definition.IsPlaying = true;
+            return;
+        }
+        _setMotionState(restart ? 0.0f : null, true);
+    }
+    public void PauseMotion()
+    {
+        if (Pmx is { } model) { model.PauseMotion(); _entity.Definition.IsPlaying = false; }
+        else _setMotionState(null, false);
+    }
+    public void StopMotion()
+    {
+        if (Pmx is { } model) { model.StopMotion(); _entity.Definition.IsPlaying = false; }
+        else _setMotionState(0.0f, false);
+    }
+    public void SeekMotionFrame(float frame)
+    {
+        if (Pmx is { } model) model.SeekMotionFrame(Math.Max(frame, 0.0f));
+        else _setMotionState(Math.Max(frame, 0.0f), null);
+    }
     public bool TryResetPhysics() => _entity.TryResetPhysics();
     public void ResetPhysics() => _entity.ResetPhysics();
     public void ResetMotionPhysics() => ResetPhysics();
+    public void SetCapsuleCollider(float radius, float height, float centerX = 0, float centerY = 1, float centerZ = 0, string axis = "y") => _entity.SetCapsuleCollider(radius, height, centerX, centerY, centerZ, axis);
+    public string AddCapsuleCollider(string name, float radius, float height, float centerX = 0, float centerY = 1, float centerZ = 0, string axis = "y", float rotationX = 0, float rotationY = 0, float rotationZ = 0) => _entity.AddCapsuleCollider(name, radius, height, centerX, centerY, centerZ, axis, rotationX, rotationY, rotationZ);
+    public string AddBoxCollider(string name, float sizeX, float sizeY, float sizeZ, float centerX = 0, float centerY = .5f, float centerZ = 0, float rotationX = 0, float rotationY = 0, float rotationZ = 0) => _entity.AddBoxCollider(name, sizeX, sizeY, sizeZ, centerX, centerY, centerZ, rotationX, rotationY, rotationZ);
+    public string AddMeshCollider(string name, bool walkable = true, float maxSlopeDegrees = 55) => _entity.AddMeshCollider(name, walkable, maxSlopeDegrees);
+    public bool RemoveCollider(string idOrName) => _entity.RemoveCollider(idOrName);
+    public void ClearColliders() => _entity.ClearColliders();
+    public void DisableCollider() => _entity.DisableCollider();
+    public bool TryGetCapsule(out RuntimeCapsule capsule) => _entity.TryGetCapsule(out capsule);
+    public bool Raycast(RuntimeRay ray, out float distance, out Vector3 point) => _entity.Raycast(ray, out distance, out point);
+    public bool CheckCollision(AndroidScriptEntity other) => _entity.CheckCollision(other._entity);
+    public float DistanceToCollider(AndroidScriptEntity other) => _entity.DistanceToCollider(other._entity);
+    public void AddMotionLayer(string motionPath, float weight = 1.0f)
+        => RequirePmx().AddMotionLayer(_resolveAssetPath(motionPath), weight);
+    public void AddMotionLayer(string motionPath, float weight, bool resetPhysicsOnLoop)
+        => RequirePmx().AddMotionLayer(_resolveAssetPath(motionPath), weight, resetPhysicsOnLoop);
+    public void SetMotionLayers(IEnumerable<MotionLayerDefinition> motionLayers)
+        => RequirePmx().SetMotionLayers(motionLayers.Select(layer => new MotionLayerDefinition(
+            _resolveAssetPath(layer.MotionPath), layer.Weight, layer.ResetPhysicsOnLoop)));
+    public void ClearMotion() => RequirePmx().ClearMotion();
+    public void RemoveMotionLayer(string motionPath) => RequirePmx().RemoveMotionLayer(_resolveAssetPath(motionPath));
+    public IReadOnlyList<MotionLayerInfo> GetMotionLayers() => Pmx?.GetMotionLayers() ?? [];
+    public MotionLayerInfo? GetMotionLayer(string motionPath)
+        => Pmx?.GetMotionLayers().FirstOrDefault(layer =>
+            string.Equals(layer.MotionPath, _resolveAssetPath(motionPath), StringComparison.OrdinalIgnoreCase));
+    public void SeekMotionTime(float timeSeconds) => RequirePmx().SeekMotionTime(Math.Max(timeSeconds, 0.0f));
+    public void ResetMotion() { RequirePmx().ResetAnimation(); _entity.Definition.IsPlaying = false; }
+    public bool PlayMotionLayer(string motionPath) => TrySetMotionLayerPlaying(motionPath, true);
+    public bool PauseMotionLayer(string motionPath) => TrySetMotionLayerPlaying(motionPath, false);
+    public void SetMotionLayerPlaying(string motionPath, bool isPlaying) => RequirePmx().SetMotionLayerPlaying(_resolveAssetPath(motionPath), isPlaying);
+    public void SetMotionLayerTime(string motionPath, float timeSeconds) => RequirePmx().SetMotionLayerTime(_resolveAssetPath(motionPath), Math.Max(timeSeconds, 0.0f));
+    public void SetMotionLayerFrame(string motionPath, float frame) => RequirePmx().SetMotionLayerFrame(_resolveAssetPath(motionPath), Math.Max(frame, 0.0f));
+    public void SetMotionLayerWeight(string motionPath, float weight) => RequirePmx().SetMotionLayerWeight(_resolveAssetPath(motionPath), weight);
+    public void SetMotionLayerResetPhysicsOnLoop(string motionPath, bool reset) => RequirePmx().SetMotionLayerResetPhysicsOnLoop(_resolveAssetPath(motionPath), reset);
+    public bool TrySetMotionLayerPlaying(string motionPath, bool isPlaying) => Pmx?.TrySetMotionLayerPlaying(_resolveAssetPath(motionPath), isPlaying) == true;
+    public bool TrySetMotionLayerTime(string motionPath, float timeSeconds) => Pmx?.TrySetMotionLayerTime(_resolveAssetPath(motionPath), timeSeconds) == true;
+    public bool TrySetMotionLayerFrame(string motionPath, float frame) => Pmx?.TrySetMotionLayerFrame(_resolveAssetPath(motionPath), frame) == true;
+    public bool TrySetMotionLayerWeight(string motionPath, float weight) => Pmx?.TrySetMotionLayerWeight(_resolveAssetPath(motionPath), weight) == true;
+    public bool TrySetMotionLayerResetPhysicsOnLoop(string motionPath, bool reset) => Pmx?.TrySetMotionLayerResetPhysicsOnLoop(_resolveAssetPath(motionPath), reset) == true;
+    public bool TryGetMorphWeight(string morphName, out float weight) { weight = 0.0f; return Pmx?.TryGetMorphWeight(morphName, out weight) == true; }
+    public float GetMorphWeight(string morphName) => RequirePmx().GetMorphWeight(morphName);
+    public bool TrySetMorphWeight(string morphName, float weight, bool overrideAnimation = true) => Pmx?.TrySetMorphWeight(morphName, weight, overrideAnimation) == true;
+    public void SetMorphWeight(string morphName, float weight, bool overrideAnimation = true) => RequirePmx().SetMorphWeight(morphName, weight, overrideAnimation);
+    public bool TryGetMorphSaveAnimWeight(string morphName, out float weight) { weight = 0.0f; return Pmx?.TryGetMorphSaveAnimWeight(morphName, out weight) == true; }
+    public float GetMorphSaveAnimWeight(string morphName) => RequirePmx().GetMorphSaveAnimWeight(morphName);
+    public bool TrySetMorphSaveAnimWeight(string morphName, float weight) => Pmx?.TrySetMorphSaveAnimWeight(morphName, weight) == true;
+    public void SetMorphSaveAnimWeight(string morphName, float weight) => RequirePmx().SetMorphSaveAnimWeight(morphName, weight);
+    public bool SaveMorphAnimWeight(string morphName) => Pmx?.SaveMorphAnimWeight(morphName) == true;
+    public bool SaveAnimWeight(string morphName) => SaveMorphAnimWeight(morphName);
+    public bool LoadMorphAnimWeight(string morphName) => Pmx?.LoadMorphAnimWeight(morphName) == true;
+    public bool ClearMorphAnimWeight(string morphName) => Pmx?.ClearMorphAnimWeight(morphName) == true;
+    public bool ClearMorphWeightOverride(string morphName) => Pmx?.ClearMorphWeightOverride(morphName) == true;
+    public void ClearMorphWeightOverrides() => Pmx?.ClearMorphWeightOverrides();
+    public void SaveBaseAnimation() => Pmx?.SaveBaseAnimation();
+    public void LoadBaseAnimation() => Pmx?.LoadBaseAnimation();
+    public void ClearBaseAnimation() => Pmx?.ClearBaseAnimation();
+
+    public bool TryGetNodeState(string nodeName, out PmxNodeState state) { state = default; return Pmx?.TryGetNodeState(nodeName, out state) == true; }
+    public bool TryGetNodeWorld(string nodeName, out Matrix4x4 world) { world = default; return Pmx?.TryGetNodeWorld(nodeName, out world) == true; }
+    public PmxNodeState GetNodeState(string nodeName) => RequirePmx().GetNodeState(nodeName);
+    public bool TrySetNodeTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => Pmx?.TrySetNodeTranslate(nodeName, value, overrideAnimation) == true;
+    public void SetNodeTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => RequirePmx().SetNodeTranslate(nodeName, value, overrideAnimation);
+    public void SetNodeTranslate(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeTranslate(nodeName, new Vector3(x, y, z), overrideAnimation);
+    public bool TrySetNodeRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => Pmx?.TrySetNodeRotate(nodeName, value, overrideAnimation) == true;
+    public void SetNodeRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => RequirePmx().SetNodeRotate(nodeName, value, overrideAnimation);
+    public void SetNodeRotateEuler(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeRotate(nodeName, Quaternion.CreateFromYawPitchRoll(y * MathF.PI / 180.0f, x * MathF.PI / 180.0f, z * MathF.PI / 180.0f), overrideAnimation);
+    public bool TrySetNodeScale(string nodeName, Vector3 value, bool overrideAnimation = true) => Pmx?.TrySetNodeScale(nodeName, value, overrideAnimation) == true;
+    public void SetNodeScale(string nodeName, Vector3 value, bool overrideAnimation = true) => RequirePmx().SetNodeScale(nodeName, value, overrideAnimation);
+    public void SetNodeScale(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeScale(nodeName, new Vector3(x, y, z), overrideAnimation);
+    public bool TrySetNodeAnimTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => Pmx?.TrySetNodeAnimTranslate(nodeName, value, overrideAnimation) == true;
+    public void SetNodeAnimTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => RequirePmx().SetNodeAnimTranslate(nodeName, value, overrideAnimation);
+    public void SetNodeAnimTranslate(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeAnimTranslate(nodeName, new Vector3(x, y, z), overrideAnimation);
+    public bool TrySetNodeAnimRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => Pmx?.TrySetNodeAnimRotate(nodeName, value, overrideAnimation) == true;
+    public void SetNodeAnimRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => RequirePmx().SetNodeAnimRotate(nodeName, value, overrideAnimation);
+    public void SetNodeAnimRotateEuler(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeAnimRotate(nodeName, Quaternion.CreateFromYawPitchRoll(y * MathF.PI / 180.0f, x * MathF.PI / 180.0f, z * MathF.PI / 180.0f), overrideAnimation);
+    public bool SaveNodeBaseAnimation(string nodeName) => Pmx?.SaveNodeBaseAnimation(nodeName) == true;
+    public bool LoadNodeBaseAnimation(string nodeName) => Pmx?.LoadNodeBaseAnimation(nodeName) == true;
+    public bool ClearNodeBaseAnimation(string nodeName) => Pmx?.ClearNodeBaseAnimation(nodeName) == true;
+    public bool ClearNodeOverrides(string nodeName) => Pmx?.ClearNodeOverrides(nodeName) == true;
+    public void ClearAllNodeOverrides() => Pmx?.ClearAllNodeOverrides();
+
+    public bool SetMaterialTexture(int materialIndex, string textureReference) => Pmx?.SetMaterialTexture(materialIndex, ResolveTextureReference(textureReference)) == true;
+    public bool SetMaterialTexture(string materialName, string textureReference) => Pmx?.SetMaterialTexture(materialName, ResolveTextureReference(textureReference)) == true;
+    public bool SetMaterialRenderTexture(int materialIndex, string renderTextureName) => SetMaterialTexture(materialIndex, "rt:" + renderTextureName);
+    public bool SetMaterialRenderTexture(string materialName, string renderTextureName) => SetMaterialTexture(materialName, "rt:" + renderTextureName);
+    public void ClearMaterialTextureOverride(int materialIndex) => Pmx?.ClearMaterialTextureOverride(materialIndex);
+    public void ClearMaterialTextureOverrides() => Pmx?.ClearMaterialTextureOverrides();
+    public bool SetCustomShader(string vertexShaderPath, string fragmentShaderPath)
+    {
+        if (Pmx is not { } model) return false;
+        model.SetCustomShader(_resolveAssetPath(vertexShaderPath), _resolveAssetPath(fragmentShaderPath));
+        return true;
+    }
+    public bool SetCustomShader(string openGlVertexShaderPath, string openGlFragmentShaderPath, string vulkanVertexSpirvPath, string vulkanFragmentSpirvPath)
+    {
+        if (Pmx is not { } model) return false;
+        model.SetCustomShader(
+            _resolveAssetPath(openGlVertexShaderPath),
+            _resolveAssetPath(openGlFragmentShaderPath),
+            _resolveAssetPath(vulkanVertexSpirvPath),
+            _resolveAssetPath(vulkanFragmentSpirvPath));
+        return true;
+    }
+    public void SetCustomShaderFloat(string name, float value) => Pmx?.SetCustomShaderFloat(name, value);
+    public void SetCustomShaderInt(string name, int value) => Pmx?.SetCustomShaderInt(name, value);
+    public void SetCustomShaderVector2(string name, float x, float y) => Pmx?.SetCustomShaderVector2(name, x, y);
+    public void SetCustomShaderVector3(string name, float x, float y, float z) => Pmx?.SetCustomShaderVector3(name, x, y, z);
+    public void SetCustomShaderVector4(string name, float x, float y, float z, float w) => Pmx?.SetCustomShaderVector4(name, x, y, z, w);
+    public void SetCustomShaderColor(string name, float r, float g, float b, float a = 1.0f) => SetCustomShaderVector4(name, r, g, b, a);
+    public void ClearCustomShaderUniform(string name) => Pmx?.ClearCustomShaderUniform(name);
+    public void ClearCustomShaderUniforms() => Pmx?.ClearCustomShaderUniforms();
+    public void ClearCustomShader() => Pmx?.ClearCustomShader();
+
     public void Speak(string text, Action? onCompleted = null) => onCompleted?.Invoke();
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => onCompleted?.Invoke();
+
+    private PmxModelComponent? Pmx => _resolvePmxModel();
+    private PmxModelComponent RequirePmx() => Pmx ?? throw new InvalidOperationException("Entity is not a PMX model or its renderer does not expose PMX controls.");
+    private string ResolveTextureReference(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim();
+        return normalized.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? normalized : _resolveAssetPath(normalized);
+    }
 }
 
 public sealed class AndroidScriptInput
 {
-    // Android gameplay input is touch-driven. Keyboard queries are retained so
-    // desktop-authored scripts compile and simply remain inactive on touch-only devices.
-    public bool IsKeyDown(string key) => false;
+    private readonly AndroidInputSnapshot _snapshot;
+
+    internal AndroidScriptInput(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
+
+    public bool IsKeyDown(string key)
+        => Enum.TryParse(key, true, out Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);
+    public bool IsKeyPressed(string key)
+        => Enum.TryParse(key, true, out Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyPressed(parsed);
+    public bool IsKeyReleased(string key)
+        => Enum.TryParse(key, true, out Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyReleased(parsed);
+
+    public float MouseX => _snapshot.DeviceInput.MousePosition.X;
+    public float MouseY => _snapshot.DeviceInput.MousePosition.Y;
+    public float MouseDeltaX => _snapshot.DeviceInput.MouseDelta.X;
+    public float MouseDeltaY => _snapshot.DeviceInput.MouseDelta.Y;
+    public float ScrollX => _snapshot.DeviceInput.ScrollDelta.X;
+    public float ScrollY => _snapshot.DeviceInput.ScrollDelta.Y;
+    public bool IsMouseButtonDown(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.IsMouseButtonDown(value);
+    public bool IsMouseButtonPressed(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.PressedMouseButtons.Contains(value);
+    public bool IsMouseButtonReleased(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.ReleasedMouseButtons.Contains(value);
+    public bool HasGamepad => _snapshot.DeviceInput.Gamepad.Connected;
+    public string GamepadName => _snapshot.DeviceInput.Gamepad.Name;
+    public float LeftStickX => _snapshot.DeviceInput.Gamepad.LeftStick.X;
+    public float LeftStickY => _snapshot.DeviceInput.Gamepad.LeftStick.Y;
+    public float RightStickX => _snapshot.DeviceInput.Gamepad.RightStick.X;
+    public float RightStickY => _snapshot.DeviceInput.Gamepad.RightStick.Y;
+    public float LeftTrigger => _snapshot.DeviceInput.Gamepad.LeftTrigger;
+    public float RightTrigger => _snapshot.DeviceInput.Gamepad.RightTrigger;
+    public bool IsGamepadButtonDown(string button)
+        => TryGamepadButton(button, out Android.Views.Keycode key) && _snapshot.DeviceInput.Gamepad.IsButtonDown(key);
+
+    private static bool TryMouseButton(string value, out int button)
+    {
+        button = (value ?? string.Empty).Trim().ToLowerInvariant() switch { "left" or "button0" or "0" => 0, "right" or "button1" or "1" => 1, "middle" or "button2" or "2" => 2, "back" or "button3" or "3" => 3, "forward" or "button4" or "4" => 4, _ => -1 };
+        return button >= 0;
+    }
+
+    private static bool TryGamepadButton(string value, out Android.Views.Keycode key)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("_", string.Empty).Replace("-", string.Empty);
+        key = normalized switch { "a" => Android.Views.Keycode.ButtonA, "b" => Android.Views.Keycode.ButtonB, "x" => Android.Views.Keycode.ButtonX, "y" => Android.Views.Keycode.ButtonY, "lb" or "l1" => Android.Views.Keycode.ButtonL1, "rb" or "r1" => Android.Views.Keycode.ButtonR1, "back" or "select" => Android.Views.Keycode.ButtonSelect, "start" or "options" => Android.Views.Keycode.ButtonStart, "home" or "guide" => Android.Views.Keycode.ButtonMode, "ls" or "l3" => Android.Views.Keycode.ButtonThumbl, "rs" or "r3" => Android.Views.Keycode.ButtonThumbr, "dpadup" or "up" => Android.Views.Keycode.DpadUp, "dpaddown" or "down" => Android.Views.Keycode.DpadDown, "dpadleft" or "left" => Android.Views.Keycode.DpadLeft, "dpadright" or "right" => Android.Views.Keycode.DpadRight, _ => Android.Views.Keycode.Unknown };
+        return key != Android.Views.Keycode.Unknown;
+    }
 
     public string ClipboardText
     {
@@ -424,17 +722,26 @@ public sealed class AndroidScriptAudio
     private readonly Func<string, bool> _play;
     private readonly Func<string, bool> _pause;
     private readonly Func<string, bool> _stop;
+    private readonly Func<string, float, bool> _setVolume;
+    private readonly Func<string, bool, bool> _setLoop;
+    private readonly Func<string, bool> _isPlaying;
 
-    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop)
+    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop, Func<string, float, bool>? setVolume = null, Func<string, bool, bool>? setLoop = null, Func<string, bool>? isPlaying = null)
     {
         _play = play;
         _pause = pause;
         _stop = stop;
+        _setVolume = setVolume ?? ((_, _) => false);
+        _setLoop = setLoop ?? ((_, _) => false);
+        _isPlaying = isPlaying ?? (_ => false);
     }
 
     public bool Play(string idOrName) => _play(idOrName);
     public bool Pause(string idOrName) => _pause(idOrName);
     public bool Stop(string idOrName) => _stop(idOrName);
+    public bool SetVolume(string idOrName, float volume) => _setVolume(idOrName, volume);
+    public bool SetLoop(string idOrName, bool loop) => _setLoop(idOrName, loop);
+    public bool IsPlaying(string idOrName) => _isPlaying(idOrName);
 }
 
 public sealed class AndroidScriptCamera
@@ -514,6 +821,12 @@ public sealed class AndroidScriptGlobals
     public AndroidScriptEntity Entity { get; }
     public AndroidScriptInput Input { get; }
     public AndroidScriptAudio Audio { get; }
+    public AndroidScriptNetwork Network => Services.Network;
+    public AndroidScriptSaveStore Save => Services.Save;
+    public AndroidScriptLlm Llm => Services.Llm;
+    public AndroidScriptTts Tts => Services.Tts;
+    public AndroidScriptAsr Asr => Services.Asr;
+    public AndroidScriptRealtime Realtime => Services.Realtime;
     public float DeltaSeconds { get; }
     public bool IsStart { get; }
     public bool IsUpdate { get; }
@@ -544,9 +857,16 @@ public sealed class AndroidScriptServices
     private readonly Func<string, string, float, bool> _configureRenderTexture;
     private readonly Func<string, AndroidRenderTextureInfo?> _getRenderTexture;
     private readonly Func<IReadOnlyList<AndroidRenderTextureInfo>> _listRenderTextures;
+    public AndroidScriptNetwork Network { get; }
+    public AndroidScriptSaveStore Save { get; }
+    public AndroidScriptLlm Llm { get; }
+    public AndroidScriptTts Tts { get; }
+    public AndroidScriptRealtime Realtime { get; }
+    public AndroidScriptAsr Asr { get; }
 
     internal AndroidScriptServices(
         RuntimeScene scene,
+        string projectDirectory,
         Action<string> requestSceneChange,
         Func<string, bool> playAudio,
         Func<string, bool> pauseAudio,
@@ -565,6 +885,14 @@ public sealed class AndroidScriptServices
         _configureRenderTexture = configureRenderTexture;
         _getRenderTexture = getRenderTexture;
         _listRenderTextures = listRenderTextures;
+        Network = new AndroidScriptNetwork();
+        string saveRoot = Android.App.Application.Context.FilesDir?.AbsolutePath
+            ?? Path.Combine(projectDirectory, "saves");
+        Save = new AndroidScriptSaveStore(Path.Combine(saveRoot, "saves"));
+        Llm = new AndroidScriptLlm(Network);
+        Tts = AndroidScriptTts.Shared;
+        Realtime = AndroidScriptRealtime.Shared;
+        Asr = AndroidScriptAsr.Shared;
     }
 
     public RuntimeEntity? FindEntity(string idOrName) => _scene.GetEntity(idOrName);

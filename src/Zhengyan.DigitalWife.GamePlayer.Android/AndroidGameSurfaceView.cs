@@ -11,6 +11,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 {
     private const string LogTag = "ZhengyanGamePlayer";
     private readonly AndroidTouchState _touchState = new();
+    private readonly AndroidDeviceInputState _deviceInputState = new();
     private IAndroidRenderHost _renderHost;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
@@ -118,7 +119,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
             return;
         }
 
-        Input = _touchState.BeginFrame(Width, Height);
+        Input = _touchState.BeginFrame(Width, Height).WithDeviceInput(_deviceInputState.BeginFrame());
         _renderHost.Render(frameTimeNanos, Input);
         if (!_firstFramePresented)
         {
@@ -133,6 +134,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public event Action? FirstFramePresented;
     public event Action<GuiControlSettings, LayoutRect>? TextInputRequested;
     public event Action<ContextMenuSettings, float, float>? ContextMenuRequested;
+    public void InvalidateOverlay() => OverlayInvalidated?.Invoke();
 
     public override bool OnTouchEvent(MotionEvent? e)
     {
@@ -142,6 +144,9 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         }
 
         _touchState.Apply(e);
+        _deviceInputState.ApplyMotion(e);
+        if (e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
+            _deviceInputState.SetMouseButton(MapMouseButton(e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
         _gestureDetector.OnTouchEvent(e);
         if (e.ActionMasked == MotionEventActions.Up)
         {
@@ -149,6 +154,36 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         }
         return true;
     }
+
+    public override bool OnKeyDown(Keycode keyCode, KeyEvent? e)
+    {
+        _deviceInputState.ApplyKey(e, true);
+        return base.OnKeyDown(keyCode, e);
+    }
+
+    public override bool OnKeyUp(Keycode keyCode, KeyEvent? e)
+    {
+        _deviceInputState.ApplyKey(e, false);
+        return base.OnKeyUp(keyCode, e);
+    }
+
+    public override bool OnGenericMotionEvent(MotionEvent? e)
+    {
+        _deviceInputState.ApplyMotion(e);
+        if (e is not null && e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
+            _deviceInputState.SetMouseButton(MapMouseButton(e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
+        return base.OnGenericMotionEvent(e);
+    }
+
+    private static int MapMouseButton(MotionEventButton button) => button switch
+    {
+        MotionEventButton.Primary => 0,
+        MotionEventButton.Secondary => 1,
+        MotionEventButton.Tertiary => 2,
+        MotionEventButton.Back => 3,
+        MotionEventButton.Forward => 4,
+        _ => -1
+    };
 
     private void RequestTextInput(float x, float y)
     {
@@ -174,9 +209,24 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
         public override void OnLongPress(MotionEvent e)
         {
+            if (owner.IsTextInputAt(e.GetX(), e.GetY())) return;
             ContextMenuSettings? menu = owner.Project?.Scene.ContextMenus.FirstOrDefault(menu => menu.Enabled);
             if (menu is not null) owner.ContextMenuRequested?.Invoke(menu, e.GetX(), e.GetY());
         }
+    }
+
+    private bool IsTextInputAt(float x, float y)
+    {
+        GameProject? project = Project;
+        if (project is null) return false;
+        return project.Scene.GuiControls.Any(control =>
+            control.Visible
+            && (string.Equals(control.Type, "textbox", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(control.Type, "text_input", StringComparison.OrdinalIgnoreCase))
+            && LayoutResolver.Resolve(control.LayoutMode, control.X, control.Y, control.Width, control.Height,
+                Width, Height, project.Window.Width, project.Window.Height) is LayoutRect rect
+            && x >= rect.X && x <= rect.X + rect.Width
+            && y >= rect.Y && y <= rect.Y + rect.Height);
     }
 
     protected override void Dispose(bool disposing)

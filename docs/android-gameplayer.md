@@ -593,3 +593,60 @@ dotnet build Zhengyan.DigitalWife.Android.slnx `
 
 完整环境安装、Release APK 和真机部署命令见
 [Android GamePlayer 环境安装与部署说明](../src/Zhengyan.DigitalWife.GamePlayer.Android/README.md)。
+## Android PMX RuntimeEntity API (Vulkan)
+
+The Android C# script `Entity` wrapper now forwards PMX runtime controls to the
+shared `PmxModelComponent` when the active renderer is Vulkan. It covers motion
+layers, morph weights and animation overrides, bone/node transforms and base
+animation overrides, material texture and `rt:<name>` overrides, custom
+GLSL/SPIR-V shaders and uniforms, plus physics and shadow properties.
+
+Relative paths resolve against the game project directory. `app:` paths resolve
+against the Android bundled resource root, while `rt:` references remain
+runtime texture handles. `Auto` selects this path whenever Vulkan is available
+and otherwise falls back to the existing GLES renderer.
+
+The legacy GLES renderer currently exposes the original motion/reset bridge;
+fine-grained PMX mutation requires the Vulkan renderer path.
+
+## Scene physics, navigation and debug lines
+
+Android scripts now expose the same scene-level runtime surfaces as the desktop
+runtime:
+
+```csharp
+var ground = Scene.Physics.SampleGround(x, z, out var hit);
+var path = Scene.Navigation.FindPath(start, target);
+Scene.Debug.DrawColliders(new[] { Entity });
+Scene.Navigation.DrawDebug(Scene.Debug);
+```
+
+`RuntimeEntity` supports capsule, box and mesh collider creation, enable/disable,
+removal, per-entity raycasts, collision checks and collider distance queries.
+Vulkan supplies loaded PMX triangles to mesh colliders; GLES keeps capsule/box
+colliders available and falls back gracefully when a runtime mesh is unavailable.
+Debug lines are rendered by the Vulkan line renderer and expire automatically
+after their requested duration.
+
+## Android external input
+
+`Input` in Android scripts now exposes external keyboard, mouse, wheel and
+gamepad state. Keyboard methods accept Android key names and include
+`IsKeyDown`, `IsKeyPressed` and `IsKeyReleased`. Mouse state includes position,
+delta, wheel axes and button edge queries. Gamepad state includes both sticks,
+normalized triggers and common A/B/X/Y, shoulder, start/select, stick and D-pad
+buttons. Touch input remains available through the existing touch properties.
+
+## Android media, AI, network and save services
+
+Android script services now provide:
+
+- `Audio`: scene asset playback plus volume, looping and playback-state queries.
+- `Tts`: Android system Text-to-Speech with language selection and stop control.
+- `Asr`: Android `SpeechRecognizer` with partial/final result events and runtime
+  microphone permission.
+- `Realtime`: persistent WebSocket connect/send/receive/disconnect operations.
+- `Llm`: OpenAI-compatible chat completions over the Android network stack.
+- `Network`: HTTP GET/POST text/JSON requests with timeout and headers.
+- `Save`: sandboxed JSON/text files under the application save directory with
+  path traversal protection.

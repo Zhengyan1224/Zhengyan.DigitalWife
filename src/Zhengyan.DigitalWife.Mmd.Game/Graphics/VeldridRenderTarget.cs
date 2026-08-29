@@ -47,8 +47,12 @@ public sealed class VeldridRenderTarget : IRenderTarget
             (uint)width, (uint)height, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm,
             TextureUsage.RenderTarget | TextureUsage.Sampled));
         _colorView = factory.CreateTextureView(_colorTexture);
+        // Keep off-screen targets on the same widely-supported packed depth
+        // format as the swapchain. D32S8 is optional on a number of Android
+        // Vulkan devices and would make RenderTexture/reflection allocation
+        // fail even though the main surface is usable.
         _depthTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            (uint)width, (uint)height, 1, 1, PixelFormat.D32_Float_S8_UInt,
+            (uint)width, (uint)height, 1, 1, PixelFormat.D24_UNorm_S8_UInt,
             TextureUsage.DepthStencil | TextureUsage.Sampled));
         _depthView = factory.CreateTextureView(_depthTexture);
         _framebuffer = factory.CreateFramebuffer(new FramebufferDescription(_depthTexture, _colorTexture));

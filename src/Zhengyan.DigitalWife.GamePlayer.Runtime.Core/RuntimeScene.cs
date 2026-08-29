@@ -9,13 +9,17 @@ public sealed class RuntimeScene : IDisposable
     private readonly Dictionary<string, RuntimeEntity> _entitiesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly RuntimeSceneAnimationController _animations;
     private readonly Func<string, bool>? _resetPmxPhysics;
+    private readonly Func<string, ColliderSettings, RuntimeMeshCollider?>? _meshColliderResolver;
+    private readonly Func<string, string, Matrix4x4?>? _nodeWorldResolver;
     private bool _disposed;
 
     public RuntimeScene(
         string scenePath,
         GameProjectScene definition,
         Func<string, string> resolvePath,
-        Func<string, bool>? resetPmxPhysics = null)
+        Func<string, bool>? resetPmxPhysics = null,
+        Func<string, ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null,
+        Func<string, string, Matrix4x4?>? nodeWorldResolver = null)
     {
         ScenePath = scenePath;
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
@@ -24,7 +28,12 @@ public sealed class RuntimeScene : IDisposable
         Lighting = new RuntimeLighting(definition.Lighting);
         _animations = new RuntimeSceneAnimationController(resolvePath);
         _resetPmxPhysics = resetPmxPhysics;
-        foreach (GameEntity entity in definition.Entities) Register(new RuntimeEntity(entity, _resetPmxPhysics));
+        _meshColliderResolver = meshColliderResolver;
+        _nodeWorldResolver = nodeWorldResolver;
+        Physics = new RuntimeScenePhysics(() => Entities);
+        Navigation = new RuntimeSceneNavigation(() => Entities);
+        Debug = new RuntimeDebug();
+        foreach (GameEntity entity in definition.Entities) Register(CreateEntity(entity));
     }
 
     public event Action<RuntimeEntity>? EntityAdded;
@@ -43,6 +52,9 @@ public sealed class RuntimeScene : IDisposable
     public IEnumerable<RuntimeEntity> ParticleSystems => Entities.Where(entity => entity.IsParticleSystem);
     public IEnumerable<RuntimeEntity> WaterSurfaces => Entities.Where(entity => entity.IsWaterSurface);
     public long EntityRevision { get; private set; }
+    public RuntimeScenePhysics Physics { get; }
+    public RuntimeSceneNavigation Navigation { get; }
+    public RuntimeDebug Debug { get; }
 
     public RuntimeCamera MainCamera => Cameras.FirstOrDefault(camera => camera.Enabled && camera.IsMain)
         ?? Cameras.FirstOrDefault(camera => camera.Enabled)
@@ -79,7 +91,7 @@ public sealed class RuntimeScene : IDisposable
         if (string.IsNullOrWhiteSpace(definition.Id)) definition.Id = Guid.NewGuid().ToString("N");
         if (_entitiesById.ContainsKey(definition.Id)) throw new InvalidOperationException($"Entity id already exists: {definition.Id}");
         Definition.Entities.Add(definition);
-        RuntimeEntity entity = new(definition, _resetPmxPhysics);
+        RuntimeEntity entity = CreateEntity(definition);
         Register(entity);
         EntityAdded?.Invoke(entity);
         return entity;
@@ -151,6 +163,7 @@ public sealed class RuntimeScene : IDisposable
     {
         ThrowIfDisposed();
         _animations.Update(Definition, Math.Max(deltaSeconds, 0.0f));
+        Debug.Update(Math.Max(deltaSeconds, 0.0f));
         foreach (RuntimeCamera camera in Cameras.Where(camera => camera.Enabled))
             camera.UpdateControl(this, deltaSeconds, input);
         Definition.Camera = MainCamera.Settings;
@@ -165,6 +178,7 @@ public sealed class RuntimeScene : IDisposable
         foreach (RuntimeEntity entity in _entitiesById.Values.ToArray()) EntityRemoving?.Invoke(entity);
         _entitiesById.Clear();
         _entitiesByName.Clear();
+        Debug.Clear();
     }
 
     private void Register(RuntimeEntity entity)
@@ -173,6 +187,10 @@ public sealed class RuntimeScene : IDisposable
         if (!string.IsNullOrWhiteSpace(entity.Name)) _entitiesByName.TryAdd(entity.Name, entity);
         EntityRevision++;
     }
+
+    private RuntimeEntity CreateEntity(GameEntity entity) => new(entity, _resetPmxPhysics,
+        collider => _meshColliderResolver?.Invoke(entity.Id, collider),
+        node => _nodeWorldResolver?.Invoke(entity.Id, node));
 
     private static void NormalizeCameras(GameProjectScene scene)
     {

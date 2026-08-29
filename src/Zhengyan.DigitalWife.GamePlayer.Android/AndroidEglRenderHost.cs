@@ -70,7 +70,11 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 name => _sceneRenderer?.GetRenderTexture(name),
                 () => _sceneRenderer?.GetRenderTextures() ?? [],
                 ApplyMotion,
-                (entity, frame, playing) => _sceneRenderer?.TrySetMotionState(entity.Id, frame, playing));
+                (entity, frame, playing) => _sceneRenderer?.TrySetMotionState(entity.Id, frame, playing),
+                resolvePmxModel: null,
+                setAudioVolume: (name, volume) => _audioHost?.SetVolume(name, volume) == true,
+                setAudioLoop: (name, loop) => _audioHost?.SetLoop(name, loop) == true,
+                isAudioPlaying: name => _audioHost?.IsPlaying(name) == true);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -206,7 +210,7 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         RuntimeScene? runtimeScene = _sceneManager?.Current;
         if (runtimeScene is not null)
         {
-            _scriptHost?.Update(runtimeScene, (float)deltaSeconds);
+            _scriptHost?.Update(runtimeScene, (float)deltaSeconds, input);
             _project!.Scene = runtimeScene.Definition;
             SetClearColor(runtimeScene.Definition.Lighting.ClearColor);
         }
