@@ -9,8 +9,16 @@ using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal sealed class AndroidVulkanGame : Game
+internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 {
+    private sealed class RenderTextureState
+    {
+        public required IRenderTarget Target { get; init; }
+        public OrbitCamera Camera { get; } = new();
+        public double LastRenderedSeconds { get; set; } = double.NegativeInfinity;
+        public bool RefreshRequested { get; set; }
+    }
+
     private readonly RuntimeScene _scene;
     private readonly string _projectDirectory;
     private readonly GameWindowSettings _windowSettings;
@@ -23,7 +31,15 @@ internal sealed class AndroidVulkanGame : Game
     private readonly List<SpotLightData> _spotLights = [];
     private ShadowMapRenderer? _shadowRenderer;
     private LocalLightShadowRenderer? _localLightShadowRenderer;
+    private PlanarReflectionRenderer? _planarReflectionRenderer;
+    private IUnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
     private SkyboxComponent? _skybox;
+    private AndroidVulkanSpriteComponent? _spriteComponent;
+    private IImGuiBackendController? _imgui;
+    private DrawableGameComponent? _imguiComponent;
+    private readonly Dictionary<string, RenderTextureState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
+    private bool _renderingRenderTexture;
+    private bool _sceneRenderedThisFrame;
 
     public AndroidVulkanGame(
         GameProject project,
@@ -50,6 +66,14 @@ internal sealed class AndroidVulkanGame : Game
         {
             Resolution = 2048
         };
+        _planarReflectionRenderer = new PlanarReflectionRenderer(this);
+        _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
+            .CreateUnderwaterPostProcessRenderer("AndroidVulkanUnderwater");
+        _imgui = GraphicsDevice.Renderer.Services.CreateImGuiController(this);
+        _imguiComponent = AddComponent(new ImGuiDrawComponent(this)
+        {
+            DrawOrder = int.MaxValue
+        });
     }
 
     protected override void Update(GameTime gameTime)
@@ -57,11 +81,13 @@ internal sealed class AndroidVulkanGame : Game
         _ = gameTime;
         SyncCamera();
         SyncSceneComponents();
+        _imgui?.Update((float)Math.Max(gameTime.ElapsedSeconds, 1.0 / 1000.0));
     }
 
     protected override void Draw(GameTime gameTime)
     {
-        if (_shadowRenderer is null || _localLightShadowRenderer is null || _models.Count == 0)
+        _sceneRenderedThisFrame = false;
+        if (_shadowRenderer is null || _localLightShadowRenderer is null)
         {
             return;
         }
@@ -92,6 +118,25 @@ internal sealed class AndroidVulkanGame : Game
             model.LocalLightShadowMap = _localLightShadowRenderer.CurrentBinding;
         }
         foreach (TexturedPlaneComponent plane in _planes.Values) plane.ShadowMap = binding;
+
+        _planarReflectionRenderer?.RenderAll(
+            gameTime,
+            _camera,
+            _waters.Values.ToArray(),
+            _planes.Values.ToArray(),
+            _spriteComponent is null ? [] : [_spriteComponent],
+            ApplyCameraToComponents,
+            RestoreMainCameraOnComponents,
+            lighting.ClearColor.ToVector4(),
+            Math.Max(GraphicsDevice.BackBufferSize.X, 1),
+            Math.Max(GraphicsDevice.BackBufferSize.Y, 1));
+
+        RenderSceneTextures(gameTime);
+
+        if (TryDrawUnderwater(gameTime))
+        {
+            _sceneRenderedThisFrame = true;
+        }
     }
 
     protected override void UnloadContent()
@@ -100,6 +145,17 @@ internal sealed class AndroidVulkanGame : Game
         _shadowRenderer = null;
         _localLightShadowRenderer?.Dispose();
         _localLightShadowRenderer = null;
+        _planarReflectionRenderer?.Dispose();
+        _planarReflectionRenderer = null;
+        _underwaterPostProcessRenderer?.Dispose();
+        _underwaterPostProcessRenderer = null;
+        _imgui?.Dispose();
+        _imgui = null;
+        foreach (RenderTextureState state in _renderTextures.Values)
+        {
+            state.Target.Dispose();
+        }
+        _renderTextures.Clear();
     }
 
     public bool TrySetMotionLayerState(
@@ -196,7 +252,7 @@ internal sealed class AndroidVulkanGame : Game
 
         if (_scene.Definition.Sprites.Count != 0)
         {
-            AddComponent(new AndroidVulkanSpriteComponent(
+            _spriteComponent = AddComponent(new AndroidVulkanSpriteComponent(
                 _scene.Definition,
                 _windowSettings,
                 ResolvePath)
@@ -217,6 +273,7 @@ internal sealed class AndroidVulkanGame : Game
         PmxModelComponent model = AddComponent(new PmxModelComponent(path)
         {
             Camera = _camera,
+            RuntimeTextureProvider = this,
             DrawOrder = 100
         });
         ApplyEntity(entity, model, includeMotions: true);
@@ -231,6 +288,7 @@ internal sealed class AndroidVulkanGame : Game
         {
             DrawOrder = 130
         });
+        component.RuntimeTextureProvider = this;
         ApplyEntity(entity, component, resetParticles: false);
         _particles[entity.Id] = component;
     }
@@ -255,6 +313,7 @@ internal sealed class AndroidVulkanGame : Game
         {
             DrawOrder = 115
         });
+        component.RuntimeTextureProvider = this;
         ApplyEntity(entity, component);
         _planes[entity.Id] = component;
     }
@@ -287,18 +346,307 @@ internal sealed class AndroidVulkanGame : Game
     private void SyncCamera()
     {
         RuntimeCamera camera = _scene.MainCamera;
-        CameraSettings settings = camera.Settings;
         _camera.Width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
         _camera.Height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
-        _camera.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3(),
+        ApplyCameraSettings(_camera, camera.Settings, _camera.Width, _camera.Height);
+    }
+
+    public bool RequestRenderTextureRefresh(string idOrName)
+    {
+        RenderTextureSettings? settings = FindRenderTextureSettings(idOrName);
+        if (settings is null) return false;
+        RenderTextureState state = GetOrCreateRenderTexture(settings.Name);
+        state.RefreshRequested = true;
+        return true;
+    }
+
+    public bool ConfigureRenderTexture(string idOrName, string refreshMode, float intervalSeconds)
+    {
+        RenderTextureSettings? settings = FindRenderTextureSettings(idOrName);
+        if (settings is null) return false;
+        string normalized = NormalizeRefreshMode(refreshMode);
+        settings.RefreshMode = normalized;
+        settings.RefreshIntervalSeconds = Math.Max(intervalSeconds, 0.01f);
+        RenderTextureState state = GetOrCreateRenderTexture(settings.Name);
+        state.RefreshRequested = true;
+        return true;
+    }
+
+    public AndroidRenderTextureInfo? GetRenderTexture(string idOrName)
+    {
+        RenderTextureSettings? settings = FindRenderTextureSettings(idOrName);
+        if (settings is null || string.IsNullOrWhiteSpace(settings.Name)) return null;
+        if (!_renderTextures.TryGetValue(settings.Name, out RenderTextureState? state)) return null;
+        return ToRenderTextureInfo(settings, state);
+    }
+
+    public IReadOnlyList<AndroidRenderTextureInfo> GetRenderTextures()
+    {
+        List<AndroidRenderTextureInfo> result = [];
+        foreach (RenderTextureSettings settings in _scene.Definition.RenderTextures.Where(item => item.Enabled && !string.IsNullOrWhiteSpace(item.Name)))
+        {
+            if (_renderTextures.TryGetValue(settings.Name, out RenderTextureState? state))
+            {
+                result.Add(ToRenderTextureInfo(settings, state));
+            }
+        }
+        return result;
+    }
+
+    public bool TryGetTexture(string textureReference, out uint textureId)
+    {
+        textureId = 0;
+        return false;
+    }
+
+    public bool TryGetTextureHandle(string textureReference, out RuntimeTextureHandle handle)
+    {
+        string name = NormalizeRenderTextureName(textureReference);
+        if (!string.IsNullOrWhiteSpace(name)
+            && _renderTextures.TryGetValue(name, out RenderTextureState? state)
+            && state.Target.NativeColorResource is not null)
+        {
+            handle = new RuntimeTextureHandle(
+                state.Target.Backend,
+                state.Target.LegacyColorTextureId,
+                state.Target.NativeColorResource);
+            return handle.IsValid;
+        }
+
+        handle = default;
+        return false;
+    }
+
+    private void RenderSceneTextures(GameTime gameTime)
+    {
+        if (_renderingRenderTexture || _scene.Definition.RenderTextures.Count == 0)
+        {
+            return;
+        }
+
+        _renderingRenderTexture = true;
+        try
+        {
+            HashSet<string> validNames = new(StringComparer.OrdinalIgnoreCase);
+            foreach (RenderTextureSettings settings in _scene.Definition.RenderTextures.Where(item => item.Enabled))
+            {
+                if (string.IsNullOrWhiteSpace(settings.Name)) continue;
+                validNames.Add(settings.Name);
+                RenderTextureState state = GetOrCreateRenderTexture(settings.Name);
+                state.Target.EnsureSize(Math.Max(settings.Width, 1), Math.Max(settings.Height, 1));
+                if (!ShouldRenderRenderTexture(settings, state, gameTime.TotalSeconds)) continue;
+
+                RuntimeCamera camera = _scene.GetCamera(settings.Camera) ?? _scene.MainCamera;
+                state.Camera.Width = state.Target.Width;
+                state.Camera.Height = state.Target.Height;
+                ApplyCameraSettings(state.Camera, camera.Settings, state.Target.Width, state.Target.Height);
+                state.Target.BeginPass(settings.ClearColor.ToVector4());
+                try
+                {
+                    DrawSceneComponentsWithCamera(gameTime, state.Camera);
+                    state.LastRenderedSeconds = gameTime.TotalSeconds;
+                    state.RefreshRequested = false;
+                }
+                finally
+                {
+                    state.Target.EndPass();
+                    GraphicsDevice.RestoreBackBuffer();
+                }
+            }
+
+            foreach (string staleName in _renderTextures.Keys.Where(name => !validNames.Contains(name)).ToArray())
+            {
+                _renderTextures[staleName].Target.Dispose();
+                _renderTextures.Remove(staleName);
+            }
+        }
+        finally
+        {
+            GraphicsDevice.RestoreBackBuffer();
+            _renderingRenderTexture = false;
+        }
+    }
+
+    private void DrawSceneComponentsWithCamera(GameTime gameTime, OrbitCamera camera)
+    {
+        OrbitCamera? previousSkybox = _skybox?.Camera;
+        OrbitCamera?[] previousModels = _models.Values.Select(model => model.Camera).ToArray();
+        OrbitCamera[] previousParticles = _particles.Values.Select(particle => particle.Camera).ToArray();
+        OrbitCamera[] previousWaters = _waters.Values.Select(water => water.Camera).ToArray();
+        OrbitCamera[] previousPlanes = _planes.Values.Select(plane => plane.Camera).ToArray();
+        try
+        {
+            ApplyCameraToComponents(camera);
+
+            List<DrawableGameComponent> drawables = [];
+            if (_skybox is not null) drawables.Add(_skybox);
+            drawables.AddRange(_models.Values);
+            drawables.AddRange(_planes.Values);
+            drawables.AddRange(_waters.Values);
+            drawables.AddRange(_particles.Values);
+            foreach (DrawableGameComponent drawable in drawables.OrderBy(component => component.DrawOrder))
+            {
+                if (drawable.Visible) drawable.Draw(gameTime);
+            }
+        }
+        finally
+        {
+            if (_skybox is not null && previousSkybox is not null) _skybox.Camera = previousSkybox;
+            int modelIndex = 0;
+            foreach (PmxModelComponent model in _models.Values) model.Camera = previousModels[modelIndex++];
+            int particleIndex = 0;
+            foreach (ParticleSystemComponent particle in _particles.Values) particle.Camera = previousParticles[particleIndex++];
+            int waterIndex = 0;
+            foreach (WaterSurfaceComponent water in _waters.Values) water.Camera = previousWaters[waterIndex++];
+            int planeIndex = 0;
+            foreach (TexturedPlaneComponent plane in _planes.Values) plane.Camera = previousPlanes[planeIndex++];
+        }
+    }
+
+    private void ApplyCameraToComponents(OrbitCamera camera)
+    {
+        if (_skybox is not null) _skybox.Camera = camera;
+        foreach (PmxModelComponent model in _models.Values) model.Camera = camera;
+        foreach (ParticleSystemComponent particle in _particles.Values) particle.Camera = camera;
+        foreach (WaterSurfaceComponent water in _waters.Values) water.Camera = camera;
+        foreach (TexturedPlaneComponent plane in _planes.Values) plane.Camera = camera;
+    }
+
+    private void RestoreMainCameraOnComponents(OrbitCamera _)
+    {
+        ApplyCameraToComponents(_camera);
+    }
+
+    private bool TryDrawUnderwater(GameTime gameTime)
+    {
+        if (_underwaterPostProcessRenderer is null || !TryResolveUnderwaterSettings(_camera, out UnderwaterPostProcessSettings settings))
+        {
+            return false;
+        }
+
+        int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        _underwaterPostProcessRenderer.BeginCapture(width, height, GraphicsDevice.ClearColor);
+        DrawSceneComponentsWithCamera(gameTime, _camera);
+        GraphicsDevice.RestoreBackBuffer();
+        GraphicsDevice.SetViewport(0, 0, width, height);
+        GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
+        _underwaterPostProcessRenderer.Draw(_camera, settings, gameTime.TotalSeconds, width, height);
+        return true;
+    }
+
+    private bool TryResolveUnderwaterSettings(OrbitCamera camera, out UnderwaterPostProcessSettings settings)
+    {
+        settings = default;
+        float nearestDepth = float.MaxValue;
+        RuntimeEntity? activeWater = null;
+        foreach ((string id, WaterSurfaceComponent component) in _waters)
+        {
+            RuntimeEntity? waterEntity = _scene.GetEntity(id);
+            if (waterEntity is null || !waterEntity.Definition.Water.UnderwaterEffectEnabled
+                || !component.Visible || !component.Enabled || !component.TryGetSurfaceHeight(camera.Position, out float surfaceHeight)
+                || camera.Position.Y >= surfaceHeight + 0.03f)
+            {
+                continue;
+            }
+
+            float depth = Math.Max(surfaceHeight - camera.Position.Y, 0.001f);
+            if (depth < nearestDepth)
+            {
+                nearestDepth = depth;
+                activeWater = _scene.GetEntity(id);
+            }
+        }
+
+        if (activeWater is null)
+        {
+            return false;
+        }
+
+        WaterSurfaceSettings water = activeWater.Definition.Water;
+        settings = new UnderwaterPostProcessSettings(
+            ClampVector3(water.UnderwaterTint.ToVector3(), 0.0f, 2.0f),
+            ClampVector3(water.UnderwaterFogColor.ToVector3(), 0.0f, 2.0f),
+            Math.Clamp(water.UnderwaterFogDensity, 0.0f, 4.0f),
+            Math.Max(water.UnderwaterVisibilityDistance, 0.1f),
+            Math.Clamp(water.UnderwaterDistortionStrength, 0.0f, 0.05f),
+            Math.Clamp(water.UnderwaterCausticsStrength, 0.0f, 1.0f),
+            Math.Clamp(water.UnderwaterBubbleStrength, 0.0f, 1.0f),
+            nearestDepth);
+        return true;
+    }
+
+    private static Vector3 ClampVector3(Vector3 value, float min, float max)
+        => new(Math.Clamp(value.X, min, max), Math.Clamp(value.Y, min, max), Math.Clamp(value.Z, min, max));
+
+    private RenderTextureState GetOrCreateRenderTexture(string name)
+    {
+        if (!_renderTextures.TryGetValue(name, out RenderTextureState? state))
+        {
+            state = new RenderTextureState
+            {
+                Target = GraphicsDevice.CreateRenderTarget($"AndroidVulkan-{name}"),
+                RefreshRequested = true
+            };
+            _renderTextures[name] = state;
+        }
+        return state;
+    }
+
+    private RenderTextureSettings? FindRenderTextureSettings(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName)) return null;
+        return _scene.Definition.RenderTextures.FirstOrDefault(settings =>
+            string.Equals(settings.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(settings.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ShouldRenderRenderTexture(RenderTextureSettings settings, RenderTextureState state, double nowSeconds)
+    {
+        if (state.RefreshRequested) return true;
+        return NormalizeRefreshMode(settings.RefreshMode) switch
+        {
+            "on_demand" => double.IsNegativeInfinity(state.LastRenderedSeconds),
+            "fixed_rate" => nowSeconds - state.LastRenderedSeconds >= Math.Max(settings.RefreshIntervalSeconds, 0.01f),
+            _ => true
+        };
+    }
+
+    private static AndroidRenderTextureInfo ToRenderTextureInfo(RenderTextureSettings settings, RenderTextureState state)
+        => new(settings.Id, settings.Name, state.Target.Width, state.Target.Height, NormalizeRefreshMode(settings.RefreshMode),
+            Math.Max(settings.RefreshIntervalSeconds, 0.01f), !double.IsNegativeInfinity(state.LastRenderedSeconds), state.LastRenderedSeconds);
+
+    private static string NormalizeRenderTextureName(string textureReference)
+    {
+        string normalized = (textureReference ?? string.Empty).Trim();
+        if (normalized.StartsWith("rt:", StringComparison.OrdinalIgnoreCase)) normalized = normalized[3..];
+        return normalized.Trim();
+    }
+
+    private static string NormalizeRefreshMode(string refreshMode)
+    {
+        string normalized = (refreshMode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized switch
+        {
+            "manual" or "on_demand" or "ondemand" => "on_demand",
+            "fixed_rate" or "fixedrate" or "interval" => "fixed_rate",
+            _ => "every_frame"
+        };
+    }
+
+    private static void ApplyCameraSettings(OrbitCamera target, CameraSettings settings, int width, int height)
+    {
+        target.Width = Math.Max(width, 1);
+        target.Height = Math.Max(height, 1);
+        target.SetLookAt(settings.Position.ToVector3(), settings.Target.ToVector3(),
             settings.VmdHasUp ? settings.VmdUp.ToVector3() : Vector3.UnitY);
-        _camera.Fov = Math.Clamp(settings.Fov, 1.0f, 90.0f);
-        _camera.NearClipPlane = settings.NearClipPlane;
-        _camera.FarClipPlane = settings.FarClipPlane;
-        _camera.ProjectionMode = string.Equals(settings.ProjectionMode, "orthographic", StringComparison.OrdinalIgnoreCase)
+        target.Fov = Math.Clamp(settings.Fov, 1.0f, 90.0f);
+        target.NearClipPlane = settings.NearClipPlane;
+        target.FarClipPlane = settings.FarClipPlane;
+        target.ProjectionMode = string.Equals(settings.ProjectionMode, "orthographic", StringComparison.OrdinalIgnoreCase)
             ? CameraProjectionMode.Orthographic
             : CameraProjectionMode.Perspective;
-        _camera.OrthographicSize = settings.OrthographicSize;
+        target.OrthographicSize = settings.OrthographicSize;
     }
 
     private void RefreshLights()
@@ -478,6 +826,28 @@ internal sealed class AndroidVulkanGame : Game
         };
         result.Validate();
         return result;
+    }
+
+    public override bool ShouldDrawComponent(DrawableGameComponent component)
+    {
+        if (!_sceneRenderedThisFrame)
+        {
+            return true;
+        }
+
+        // The underwater path renders world components into a capture target
+        // and then composites it to the swapchain. Keep screen-space sprites on
+        // top of that composite while suppressing the second world draw.
+        return ReferenceEquals(component, _spriteComponent) || ReferenceEquals(component, _imguiComponent);
+    }
+
+    private sealed class ImGuiDrawComponent(AndroidVulkanGame owner) : DrawableGameComponent
+    {
+        public override void Draw(GameTime gameTime)
+        {
+            _ = gameTime;
+            owner._imgui?.Render();
+        }
     }
 
     private static GameOptions CreateOptions(GameProject project, Vector2D<int> size)

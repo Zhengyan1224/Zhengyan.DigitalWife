@@ -52,7 +52,8 @@ internal static class AndroidGameProjectLoader
                 {
                     SaveDirectory = Path.Combine(activity.FilesDir?.AbsolutePath ?? activity.CacheDir?.AbsolutePath ?? string.Empty, "saves"),
                     TempRootDirectory = Path.Combine(activity.CacheDir?.AbsolutePath ?? string.Empty, "GamePackages"),
-                    UsePersistentCache = false
+                    PersistentCacheDirectory = Path.Combine(activity.FilesDir?.AbsolutePath ?? activity.CacheDir?.AbsolutePath ?? string.Empty, "PackageCache"),
+                    UsePersistentCache = true
                 });
 
             GameProject project = GameProjectStore.Load(session.ProjectDirectory);

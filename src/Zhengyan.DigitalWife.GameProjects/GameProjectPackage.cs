@@ -39,6 +39,12 @@ public sealed class GameProjectPackageOpenOptions
 
     public string? TempRootDirectory { get; set; }
 
+    /// <summary>
+    /// Optional application-owned root for extracted package cache data.
+    /// When omitted, the platform-local default is used.
+    /// </summary>
+    public string? PersistentCacheDirectory { get; set; }
+
     public bool UsePersistentCache { get; set; } = true;
 }
 
@@ -236,7 +242,8 @@ public static class GameProjectPackage
         PackageHeader packageHeader = ReadPackageInputHeader(packageInput);
         bool usePersistentCache = options.UsePersistentCache
             && packageHeader.Crypto is null
-            && string.IsNullOrWhiteSpace(options.TempRootDirectory);
+            && (string.IsNullOrWhiteSpace(options.TempRootDirectory)
+                || !string.IsNullOrWhiteSpace(options.PersistentCacheDirectory));
         string? cacheKey = usePersistentCache
             ? NormalizeCacheKey(packageHeader.PlainSha256)
             : null;
@@ -263,7 +270,7 @@ public static class GameProjectPackage
         string extractDirectory;
         if (usePersistentCache && cacheKey is not null)
         {
-            cacheWorkRoot = Path.Combine(CreatePackageCacheRootDirectory(), cacheKey + ".tmp." + Guid.NewGuid().ToString("N"));
+            cacheWorkRoot = Path.Combine(CreatePackageCacheRootDirectory(options.PersistentCacheDirectory), cacheKey + ".tmp." + Guid.NewGuid().ToString("N"));
             extractDirectory = Path.Combine(cacheWorkRoot, "project");
         }
         else
@@ -304,7 +311,7 @@ public static class GameProjectPackage
 
             if (usePersistentCache && cacheKey is not null && inputFingerprint is not null && cacheWorkRoot is not null)
             {
-                string cacheRoot = GetPackageCacheDirectory(cacheKey);
+                string cacheRoot = GetPackageCacheDirectory(cacheKey, options.PersistentCacheDirectory);
                 WriteCacheMarker(cacheWorkRoot, inputPath, cacheKey, inputFingerprint);
                 ReplaceCacheDirectory(cacheWorkRoot, cacheRoot);
                 cacheWorkRoot = null;
@@ -715,7 +722,7 @@ public static class GameProjectPackage
         out GameProjectPackageSession? session)
     {
         session = null;
-        string cacheRoot = GetPackageCacheDirectory(cacheKey);
+        string cacheRoot = GetPackageCacheDirectory(cacheKey, options.PersistentCacheDirectory);
         string markerPath = Path.Combine(cacheRoot, ".dwgame-cache.json");
         string projectDirectory = Path.Combine(cacheRoot, "project");
         string projectFile = Path.Combine(projectDirectory, GameProjectStore.ProjectFileName);
@@ -785,8 +792,15 @@ public static class GameProjectPackage
         Directory.Move(sourceRoot, targetRoot);
     }
 
-    private static string CreatePackageCacheRootDirectory()
+    private static string CreatePackageCacheRootDirectory(string? configuredRoot = null)
     {
+        if (!string.IsNullOrWhiteSpace(configuredRoot))
+        {
+            string normalizedRoot = Path.GetFullPath(GameProjectPath.NormalizePathText(configuredRoot));
+            Directory.CreateDirectory(normalizedRoot);
+            return normalizedRoot;
+        }
+
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData))
         {
@@ -801,9 +815,9 @@ public static class GameProjectPackage
         return cacheRoot;
     }
 
-    private static string GetPackageCacheDirectory(string cacheKey)
+    private static string GetPackageCacheDirectory(string cacheKey, string? configuredRoot = null)
     {
-        return Path.Combine(CreatePackageCacheRootDirectory(), cacheKey);
+        return Path.Combine(CreatePackageCacheRootDirectory(configuredRoot), cacheKey);
     }
 
     private static string ComputePackageInputFingerprint(PackageInput packageInput)

@@ -236,8 +236,10 @@ GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推�
 
 - Android 脚本只支持 C#；Python 脚本会在发布兼容性检查中被拒绝。
 - 不支持桌面精灵、透明点击穿透、窗口拖拽和系统托盘。
-- Android 当前主机使用 OpenGL ES；Vulkan 主机仍按项目进度接入，不能把桌面 Vulkan 设置
-  当作 Android 一定可用的保证。
+- Android 支持 OpenGL ES 和 Vulkan；Renderer=Auto 时优先尝试 Vulkan，设备初始化失败后自动
+  回退到 OpenGL ES。Vulkan 已覆盖 PMX、天空盒、水面、粒子、Textured Plane、阴影、平面反射、
+  水下后处理、RenderTexture 和 hosted ImGui 生命周期，但 ImGui 触摸/IME 输入仍由 Android
+  原生 GUI 路径负责。
 - OpenCL 不会在 Android 上启用。使用 Vulkan 后端时才可能使用 Vulkan Compute。
 - 未完成的粒子、阴影、后处理、音频、软键盘和手柄能力会在兼容性检查中提示，发布前应逐项
   查看 GameEditor 的 Android 检查结果。

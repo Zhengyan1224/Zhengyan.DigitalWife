@@ -47,10 +47,10 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 (scene, name) => _audioHost?.Play(scene, name) == true,
                 name => _audioHost?.Pause(name) == true,
                 name => _audioHost?.Stop(name) == true,
-                _ => false,
-                (_, _, _) => false,
-                _ => null,
-                () => [],
+                name => _game?.RequestRenderTextureRefresh(name) == true,
+                (name, mode, interval) => _game?.ConfigureRenderTexture(name, mode, interval) == true,
+                name => _game?.GetRenderTexture(name),
+                () => _game?.GetRenderTextures() ?? [],
                 ApplyMotion,
                 (entity, frame, playing) =>
                 {
@@ -129,8 +129,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     public bool RequestRenderTextureRefresh(string idOrName)
     {
-        _ = idOrName;
-        return false;
+        return _game?.RequestRenderTextureRefresh(idOrName) == true;
     }
 
     public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)

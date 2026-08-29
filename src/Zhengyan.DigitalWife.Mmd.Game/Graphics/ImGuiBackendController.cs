@@ -52,8 +52,11 @@ internal sealed class VulkanImGuiBackendController : IImGuiBackendController
         _game = game;
         _controller = new VeldridImGuiRenderer(renderer, configureFonts);
 
-        _keyboard = game.Input.Context.Keyboards.FirstOrDefault();
-        _mouse = game.Input.Context.Mice.FirstOrDefault();
+        // Hosted platforms (Android Surface, embedded previews) do not create a
+        // Silk.NET InputManager. ImGui remains renderable and can still receive
+        // platform input through a future adapter in that case.
+        _keyboard = game.Input?.Context.Keyboards.FirstOrDefault();
+        _mouse = game.Input?.Context.Mice.FirstOrDefault();
         if (_keyboard is not null) _keyboard.KeyChar += OnKeyChar;
         if (_mouse is not null) _mouse.Scroll += OnScroll;
     }

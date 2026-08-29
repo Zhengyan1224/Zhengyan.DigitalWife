@@ -65,7 +65,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | --- | --- | --- | --- |
 | 应用生命周期 | 窗口、暂停、恢复、退出 | 部分 | 已有 Activity/Surface 生命周期；没有运行时状态保存、后台资源策略、焦点/音频焦点和低内存处理 |
 | 工程目录加载 | 支持 | 部分 | 可加载初始工程；错误只有 Toast，缺少选择器、最近项目、可恢复错误界面 |
-| `.dwgame` 普通包 | 支持缓存和独立保存目录 | 部分 | Android 每次使用临时解包，持久缓存、缓存失效和清理策略未完成 |
+| `.dwgame` 普通包 | 支持缓存和独立保存目录 | 部分（缓存已接入） | Android 使用应用私有 `files/PackageCache` 持久缓存，按包指纹自动失效；LRU 清理策略仍未完成 |
 | 加密/分包 `.dwgame` | 支持密码和多分包 | 缺失 | 没有密码输入 UI；`content://` 只复制单个文件，不能收集 `.001/.002/...` |
 | 多场景和场景切换 | 支持加载界面和脚本事件 | 部分（阶段 3） | 已有同步队列、异步加载、卸载、进度和失败恢复；加载界面/脚本事件待后续阶段 |
 | 加载界面 | 背景图、进度条、加载脚本 | 部分 | 共享层有分阶段进度状态；Android 可视化加载界面和加载脚本待阶段 5/6 |
@@ -81,10 +81,10 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | PMX Morph | 位置、UV、骨骼、材质、组、翻转、冲量 | 部分（阶段 2 已实现） | 附加 UV 与材质边界样例仍需增加黄金测试 |
 | PMX IK/附加骨骼 | 完整 PMX 求值顺序 | 部分（阶段 2 已实现） | 复杂模型和 PC 物理顺序仍需黄金样例验证 |
 | SDEF/QDEF | PC 实现 | 部分（阶段 2 已实现） | 已实现 QDEF 双四元数与 SDEF 路径；移动端性能/数值容差仍需验证 |
-| GPU 蒙皮 | OpenGL/OpenCL 或 Vulkan Compute 链路 | 部分（阶段 1/2 已接入能力分级） | GLES 仍受 96 骨骼 uniform 限制；复杂模型走共享姿态结果的 CPU 上传，Vulkan Compute 待阶段 9 |
+| GPU 蒙皮 | OpenGL/OpenCL 或 Vulkan Compute 链路 | 部分（阶段 1/2/9） | GLES 仍受 96 骨骼 uniform 限制；Vulkan 已接入 PMX Compute 蒙皮并在设备/资源不满足时回退 CPU，真机能力矩阵仍待验证 |
 | PMX 物理 | Bullet 刚体、关节和骨骼回写 | 部分（阶段 2 已接入桥接） | 固定步长、子步、初始化/循环重置和 PC 结果黄金对比仍需阶段 3/8 |
 | PMX 骨骼关联 | 同名骨骼同步，可绑定组件 Transform/Lighting | 部分（阶段 2 已实现） | 当前在 PMX Renderer 内建立关联；统一 RuntimeEntity 注册表待阶段 3 |
-| PMX 脚本控制 | 动作、Morph、骨骼、材质、阴影、物理 | 缺失 | 没有 Android `RuntimeEntity` 和 C# 脚本主机 |
+| PMX 脚本控制 | 动作、Morph、骨骼、材质、阴影、物理 | 部分（阶段 4/6） | Android C# source runner 已支持动作、场景实体、灯光、相机和物理重置；Morph/骨骼/材质细粒度 API 及发布预编译仍缺失 |
 | 相机 | 多控制模式、透视/正交、动态 API | 部分（阶段 3） | 已接入共享控制、触摸旋转/平移/捏合和相机集合；完整脚本 API 待阶段 6 |
 | 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 部分（阶段 3） | 已推进独立 Camera VMD、Roll/Up 和投影；编辑器控制面板/脚本 Seek 待后续阶段 |
 | 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3/4） | 已实现 viewport 布局换算、局部 color/depth/stencil clear，以及相机绑定的 Render Texture FBO；复杂后处理链仍缺失 |
@@ -101,7 +101,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 自定义 Shader | GLSL/SPIR-V 双路径及 Uniform | 已完成阶段 4 GLES 契约 | Android GLES 自定义 shader 使用 `#version 300 es` 和固定 uniform 资源契约；运行时和 `tools/Validate-AndroidGlesShader.ps1` 均可离线校验 |
 | 抗锯齿 | 配置倍数和硬件回退 | 部分（阶段 4） | EGL 已按项目设置申请 1/2/4/8/16x，并自动回退和输出实际倍数；真机能力矩阵仍待验证 |
 | OpenGL ES 后端 | PC Pass 功能 | 部分 | 目前是 Android 专用单 shader，不是现有 `IRenderer`/Pass 架构的移动实现 |
-| Vulkan 后端 | PC Vulkan | 缺失 | 没有 Android Surface、Swapchain、RenderTarget、ImGui 或 Compute 链路 |
+| Vulkan 后端 | PC Vulkan | 部分（阶段 9） | Android 已支持 Surface、Swapchain、PMX/天空盒/水面/粒子/Plane/阴影、RenderTexture 离屏 Pass、ImGui hosted 生命周期和 Auto 回退；ImGui 触摸/IME 输入、完整后处理链和真机 Compute 验证仍缺失 |
 | GUI 控件 | Button/Label/Checkbox/Dropdown/Textbox/Progress | 部分（阶段 4/5） | Android 已支持 GLES 背景/进度、Canvas 字体和 GUI 触摸事件；完整 Android IME 编辑会话和持久化上下文菜单仍有限制 |
 | 上下文菜单 | 窗口/实体/碰撞体/GUI/Sprite | 缺失 | 触摸端还需定义长按语义，外接鼠标保留右键语义 |
 | 对话气泡 | 文本、目标实体和生命周期 | 缺失 | 没有投影到屏幕、布局和脚本管理器 |
@@ -111,7 +111,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 键鼠输入 | PC 支持 | 缺失/平台化 | 需支持软键盘、外接键鼠和 Pointer；不照搬桌面窗口输入 |
 | 触摸输入 | PC/移动抽象 | 部分 | 已生成快照，但没有接入 RuntimeInput、GUI、相机、射线和手势 |
 | 手柄输入 | PC 支持 | 缺失 | Android `InputDevice`、轴/按键映射、热插拔和脚本快照未实现 |
-| 剪贴板/文本选择 | PC GUI/API 支持 | 缺失 | 需要 Android ClipboardManager 和 IME 集成 |
+| 剪贴板/文本选择 | PC GUI/API 支持 | 部分 | 脚本剪贴板 API 已接入 Android ClipboardManager；Textbox 的完整 IME 组合输入和文本选区仍未完成 |
 | 场景音频 | 播放、暂停、循环、音量 | 缺失 | 没有 AudioTrack/AAudio/OpenSL ES/OpenAL 移动实现，也未加载 `AudioAsset` |
 | TTS 和口型 | 合成、播放、PMX Morph 驱动 | 缺失 | 需要 Android ABI 的推理库、音频输出和共享口型控制 |
 | 麦克风/ASR | PortAudio/Sherpa/Whisper | 缺失 | 需要权限、AudioRecord、音频焦点、Android ABI 和生命周期处理 |
@@ -474,7 +474,7 @@ Android 不应在设备上启动 Roslyn 编译 `.csx`。推荐提供两种发布
 - 扩展兼容性检查：实体类型、Shader、纹理格式、脚本 API、原生 ABI、加密/分包、权限、内存
   预算、灯光/阴影预算和后端能力。
 - 支持加密包密码 UI；支持分包的多文件选择/导入和完整性校验。
-- 加入持久解包缓存、LRU 清理、版本/哈希失效和独立 Save 目录。
+- 持久解包缓存、版本/哈希失效和独立 Save 目录已接入；仍需加入 LRU 清理和发布器配置入口。
 - 生成 Android 图标/启动画面、崩溃日志、隐私说明和第三方许可证。
 - 建立签名密钥安全流程，支持 `adb` 测试 APK 和 Google Play AAB。
 

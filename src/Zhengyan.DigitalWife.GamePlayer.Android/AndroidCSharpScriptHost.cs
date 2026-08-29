@@ -1,3 +1,5 @@
+using Android.App;
+using Android.Content;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
@@ -371,6 +373,50 @@ public sealed class AndroidScriptInput
     // Android gameplay input is touch-driven. Keyboard queries are retained so
     // desktop-authored scripts compile and simply remain inactive on touch-only devices.
     public bool IsKeyDown(string key) => false;
+
+    public string ClipboardText
+    {
+        get
+        {
+            try
+            {
+                ClipboardManager? clipboard = Application.Context.GetSystemService(Context.ClipboardService) as ClipboardManager;
+                if (clipboard?.HasPrimaryClip != true)
+                {
+                    return string.Empty;
+                }
+
+                return clipboard.PrimaryClip?.GetItemAt(0)?.CoerceToText(Application.Context)?.ToString() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+    }
+
+    public bool HasClipboardText => ClipboardText.Length > 0;
+
+    public bool TrySetClipboardText(string text)
+    {
+        try
+        {
+            ClipboardManager? clipboard = Application.Context.GetSystemService(Context.ClipboardService) as ClipboardManager;
+            if (clipboard is null)
+            {
+                return false;
+            }
+
+            clipboard.PrimaryClip = ClipData.NewPlainText("text", text ?? string.Empty);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public void SetClipboardText(string text) => _ = TrySetClipboardText(text);
 }
 
 public sealed class AndroidScriptAudio
