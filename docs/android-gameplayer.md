@@ -66,7 +66,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 应用生命周期 | 窗口、暂停、恢复、退出 | 部分 | 已有 Activity/Surface 生命周期；没有运行时状态保存、后台资源策略、焦点/音频焦点和低内存处理 |
 | 工程目录加载 | 支持 | 部分 | 可加载初始工程；错误只有 Toast，缺少选择器、最近项目、可恢复错误界面 |
 | `.dwgame` 普通包 | 支持缓存和独立保存目录 | 部分（缓存已接入） | Android 使用应用私有 `files/PackageCache` 持久缓存，按包指纹自动失效；LRU 清理策略仍未完成 |
-| 加密/分包 `.dwgame` | 支持密码和多分包 | 缺失 | 没有密码输入 UI；`content://` 只复制单个文件，不能收集 `.001/.002/...` |
+| 加密/分包 `.dwgame` | 支持密码和多分包 | 已支持 | Android 提供密码重试 UI，并支持 `ACTION_SEND_MULTIPLE`/`ClipData` 导入 `.001/.002/...` 分片 |
 | 多场景和场景切换 | 支持加载界面和脚本事件 | 部分（阶段 3） | 已有同步队列、异步加载、卸载、进度和失败恢复；加载界面/脚本事件待后续阶段 |
 | 加载界面 | 背景图、进度条、加载脚本 | 部分 | 共享层有分阶段进度状态；Android 可视化加载界面和加载脚本待阶段 5/6 |
 | 运行时实体系统 | `RuntimeScene`/`RuntimeEntity` | 部分（阶段 3） | Android 已接入共享注册表、查询、添加、删除和更新；完整脚本对象待阶段 6 |
@@ -84,7 +84,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | GPU 蒙皮 | OpenGL/OpenCL 或 Vulkan Compute 链路 | 部分（阶段 1/2/9） | GLES 仍受 96 骨骼 uniform 限制；Vulkan 已接入 PMX Compute 蒙皮并在设备/资源不满足时回退 CPU，真机能力矩阵仍待验证 |
 | PMX 物理 | Bullet 刚体、关节和骨骼回写 | 部分（阶段 2 已接入桥接） | 固定步长、子步、初始化/循环重置和 PC 结果黄金对比仍需阶段 3/8 |
 | PMX 骨骼关联 | 同名骨骼同步，可绑定组件 Transform/Lighting | 部分（阶段 2 已实现） | 当前在 PMX Renderer 内建立关联；统一 RuntimeEntity 注册表待阶段 3 |
-| PMX 脚本控制 | 动作、Morph、骨骼、材质、阴影、物理 | 部分（阶段 4/6） | Android C# source runner 已支持动作、场景实体、灯光、相机和物理重置；Morph/骨骼/材质细粒度 API 及发布预编译仍缺失 |
+| PMX 脚本控制 | 动作、Morph、骨骼、材质、阴影、物理 | 部分（阶段 4/6） | Android C# runner 已支持动作、场景实体、灯光、相机和物理重置；发布时可将 C# 脚本预编译为 `compiled/android` 程序集 |
 | 相机 | 多控制模式、透视/正交、动态 API | 部分（阶段 3） | 已接入共享控制、触摸旋转/平移/捏合和相机集合；完整脚本 API 待阶段 6 |
 | 相机 VMD | 播放、循环、Seek、Roll、投影切换 | 部分（阶段 3） | 已推进独立 Camera VMD、Roll/Up 和投影；编辑器控制面板/脚本 Seek 待后续阶段 |
 | 多相机 Viewport | 支持叠加和局部清理 | 部分（阶段 3/4） | 已实现 viewport 布局换算、局部 color/depth/stencil clear，以及相机绑定的 Render Texture FBO；复杂后处理链仍缺失 |
@@ -106,7 +106,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 上下文菜单 | 窗口/实体/碰撞体/GUI/Sprite | 缺失 | 触摸端还需定义长按语义，外接鼠标保留右键语义 |
 | 对话气泡 | 文本、目标实体和生命周期 | 缺失 | 没有投影到屏幕、布局和脚本管理器 |
 | 游戏内 2D Sprite | 背景/前景、布局、旋转、透明度 | 部分（阶段 4/5） | Android 已支持纹理、绝对/相对布局、旋转、透明度、DrawOrder 和 Sprite 触摸事件派发 |
-| C# 脚本 | Start/Update/各类事件和完整运行时 API | 部分（阶段 4/6） | Android 已加入 `.csx` source runner、GUI/Sprite/水面事件 globals、场景/灯光增删改、场景切换和音频播放/停止服务；发布预编译仍缺失 |
+| C# 脚本 | Start/Update/各类事件和完整运行时 API | 已支持发布预编译 | Android 开发目录保留 `.csx` 回退；Android 发布会生成程序集和 `compiled/android/manifest.json`，设备端优先加载程序集 |
 | Python 脚本 | PC 支持 | 排除 | Android 明确不实现 |
 | 键鼠输入 | PC 支持 | 缺失/平台化 | 需支持软键盘、外接键鼠和 Pointer；不照搬桌面窗口输入 |
 | 触摸输入 | PC/移动抽象 | 部分 | 已生成快照，但没有接入 RuntimeInput、GUI、相机、射线和手势 |
@@ -114,15 +114,15 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 剪贴板/文本选择 | PC GUI/API 支持 | 部分 | 脚本剪贴板 API 已接入 Android ClipboardManager；Textbox 的完整 IME 组合输入和文本选区仍未完成 |
 | 场景音频 | 播放、暂停、循环、音量 | 缺失 | 没有 AudioTrack/AAudio/OpenSL ES/OpenAL 移动实现，也未加载 `AudioAsset` |
 | TTS 和口型 | 合成、播放、PMX Morph 驱动 | 缺失 | 需要 Android ABI 的推理库、音频输出和共享口型控制 |
-| 麦克风/ASR | PortAudio/Sherpa/Whisper | 缺失 | 需要权限、AudioRecord、音频焦点、Android ABI 和生命周期处理 |
-| Realtime Voice | WebSocket、采音、播放和事件 | 缺失 | 网络/麦克风/音频基础未接入 |
+| 麦克风/ASR | PortAudio/Sherpa/Whisper | 已接入 Android SpeechRecognizer/AudioRecord | 需要运行时 `RECORD_AUDIO` 权限 |
+| Realtime Voice | WebSocket、采音、播放和事件 | 已接入完整 PCM16 双向闭环 | 需要 WebSocket endpoint、API Key 和模型配置 |
 | LLM | Chat、流式、工具调用、Skills/Memory | 缺失 | 没有 Android RuntimeScene、网络服务和安全存储策略 |
 | 网络 API | HTTP/运行时封装 | 缺失 | Manifest 权限、客户端生命周期、证书和脚本 API 未接入 |
 | Save | 工程外保存目录 | 缺失 | Loader 创建了保存路径，但没有 `RuntimeSaveStore` 或迁移/备份策略 |
 | Collider/Raycast | Box/Capsule/Mesh、骨骼绑定 | 缺失 | 场景 Collider 与 PMX 内部 Bullet 物理是两套概念；Android 只实现了后者 |
 | NavMesh | 烘焙结果、路径查询、贴地采样 | 缺失 | GameProjects.Core 也未包含相关运行时代码 |
 | Debug Draw/性能 API | 线框、射线、计时和日志 | 缺失 | 没有移动端 Debug Pass、帧统计和脚本性能接口 |
-| Android 发布器 | 兼容检查、C# 编译、APK/AAB | 部分 | 只有基础检查和通用 APK；没有资产转换、脚本预编译、签名/AAB 和工程专用发布 |
+| Android 发布器 | 兼容检查、C# 编译、APK/AAB | 部分 | 已加入 Android C# 发布预编译；资产转换、签名/AAB 和工程专用发布仍需后续接入 |
 | 桌面精灵窗口模式 | PC 专用 | 排除 | Android 不实现 |
 
 ## PMX 显示和动作问题的根因
@@ -646,7 +646,35 @@ Android script services now provide:
 - `Asr`: Android `SpeechRecognizer` with partial/final result events and runtime
   microphone permission.
 - `Realtime`: persistent WebSocket connect/send/receive/disconnect operations.
+- Realtime PCM: `Realtime.Audio` uses Android `AudioRecord` for microphone PCM16
+  capture and `AudioTrack` for PCM16 playback. `StartMicrophone`,
+  `StartSpeaker`, `QueuePcm16` and `SendPcm16Async` are available; captured
+  chunks are exposed through `PcmCaptured`.
+- Realtime voice loop: `StartVoiceLoopAsync` establishes the authenticated
+  session, sends the same nested `session.update` audio format used by PC,
+  streams captured PCM16 through a bounded queue, receives audio deltas into
+  `AudioTrack`, and exposes assistant/input transcript delta and completion
+  events. Server VAD is enabled with `create_response=true`; scripts may also
+  call `CommitInputAudioAsync`, `CreateResponseAsync` and `CancelResponseAsync`
+  for manual turn control. Android input/output PCM uses one shared sample rate
+  per loop (default 24 kHz), matching the native `AudioRecord`/`AudioTrack`
+  stream.
 - `Llm`: OpenAI-compatible chat completions over the Android network stack.
 - `Network`: HTTP GET/POST text/JSON requests with timeout and headers.
 - `Save`: sandboxed JSON/text files under the application save directory with
   path traversal protection.
+
+### Android C# published assemblies and package import
+
+The editor's `Export Package` action precompiles every enabled C#/CSX binding
+from all project scenes into `compiled/android/<script>.dll` and writes a
+`compiled/android/manifest.json` hash manifest. Android loads that assembly
+first and falls back to the source runner for development packages or older
+packages without compiled output.
+
+Encrypted packages prompt for a password in the Android player. A wrong
+password can be retried up to three times. `ACTION_SEND_MULTIPLE` and picker
+`ClipData` imports copy all selected package parts into one private cache
+directory, so `.dwgame.001`, `.002`, and later parts are discovered together;
+missing parts still fail integrity/package validation instead of silently
+starting a partial package.

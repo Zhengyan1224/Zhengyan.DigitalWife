@@ -28,6 +28,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private bool _packageSplit;
     private int _packageSplitPartSizeMb = 512;
     private bool _packageIncludeSaves;
+    private bool _packagePrecompileAndroid = true;
     private int _selectedMotionAssetIndex;
     private string _particlePreset = "sakura";
     private bool _copyAssets = true;
@@ -748,7 +749,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         ImGui.Checkbox("Encrypt package", ref _packageEncrypt);
         if (_packageEncrypt)
         {
-            _ = DrawTextInputWithPaste("Password", ref _packagePassword, 256, "packagePassword");
+            _ = DrawTextInputWithPaste("Password", ref _packagePassword, 256, "packagePassword", ImGuiInputTextFlags.Password);
         }
 
         ImGui.Checkbox("Split package", ref _packageSplit);
@@ -759,6 +760,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.Checkbox("Include saves", ref _packageIncludeSaves);
+        ImGui.Checkbox("Precompile Android C#", ref _packagePrecompileAndroid);
         if (ImGui.Button("Export Package"))
         {
             try
@@ -771,7 +773,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     _packageOutputPath,
                     password,
                     splitBytes,
-                    _packageIncludeSaves);
+                    _packageIncludeSaves,
+                    _packagePrecompileAndroid);
             }
             catch (Exception ex)
             {

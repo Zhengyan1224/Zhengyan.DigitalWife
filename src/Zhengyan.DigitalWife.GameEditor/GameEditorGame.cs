@@ -762,9 +762,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string outputPath,
         string? password = null,
         long splitPartSizeBytes = 0,
-        bool includeSaves = false)
+        bool includeSaves = false,
+        bool precompileAndroid = true)
     {
         SaveProject();
+        AndroidScriptPrecompileResult precompile = precompileAndroid
+            ? AndroidCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project)
+            : new AndroidScriptPrecompileResult([]);
         GameProjectPackageBuildResult result = GameProjectPackage.Create(
             ProjectDirectory,
             new GameProjectPackageBuildOptions
@@ -778,7 +782,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string outputSummary = result.Split
             ? $"{result.PartPaths.Count} part(s), first: {result.PartPaths[0]}"
             : result.OutputPath;
-        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nTotal bytes: {result.TotalBytes:N0}");
+        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nPrecompiled C# scripts: {precompile.Entries.Count}\nTotal bytes: {result.TotalBytes:N0}");
         return result;
     }
 

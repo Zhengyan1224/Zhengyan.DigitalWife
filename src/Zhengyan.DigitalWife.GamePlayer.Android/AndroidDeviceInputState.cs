@@ -61,7 +61,7 @@ internal sealed class AndroidDeviceInputState
         lock (_sync)
         {
             Keycode key = keyEvent.KeyCode;
-            bool gamepad = IsGamepadSource(keyEvent.Source);
+            bool gamepad = IsGamepadSource((int)keyEvent.Source);
             if (gamepad)
             {
                 _gamepadConnected = true;
@@ -75,7 +75,7 @@ internal sealed class AndroidDeviceInputState
     public void ApplyMotion(MotionEvent? motionEvent)
     {
         if (motionEvent is null) return;
-        int source = motionEvent.Source;
+        int source = (int)motionEvent.Source;
         lock (_sync)
         {
             if ((source & (int)InputSourceType.Mouse) != 0)
@@ -84,16 +84,16 @@ internal sealed class AndroidDeviceInputState
                 _mouseDelta += position - _mousePosition;
                 _mousePosition = position;
                 if (motionEvent.ActionMasked == MotionEventActions.Scroll)
-                    _scrollDelta += new Vector2(motionEvent.GetAxisValue(MotionEventAxis.Hscroll), motionEvent.GetAxisValue(MotionEventAxis.Vscroll));
+                    _scrollDelta += new Vector2(motionEvent.GetAxisValue(Axis.Hscroll), motionEvent.GetAxisValue(Axis.Vscroll));
             }
             if (IsGamepadSource(source))
             {
                 _gamepadConnected = true;
                 _gamepadName = motionEvent.Device?.Name ?? _gamepadName;
-                _leftStick = new Vector2(DeadZone(motionEvent.GetAxisValue(MotionEventAxis.X)), DeadZone(motionEvent.GetAxisValue(MotionEventAxis.Y)));
-                _rightStick = new Vector2(DeadZone(motionEvent.GetAxisValue(MotionEventAxis.Z)), DeadZone(motionEvent.GetAxisValue(MotionEventAxis.Rz)));
-                _leftTrigger = NormalizeTrigger(motionEvent.GetAxisValue(MotionEventAxis.Ltrigger));
-                _rightTrigger = NormalizeTrigger(motionEvent.GetAxisValue(MotionEventAxis.Rtrigger));
+                _leftStick = new Vector2(DeadZone(motionEvent.GetAxisValue(Axis.X)), DeadZone(motionEvent.GetAxisValue(Axis.Y)));
+                _rightStick = new Vector2(DeadZone(motionEvent.GetAxisValue(Axis.Z)), DeadZone(motionEvent.GetAxisValue(Axis.Rz)));
+                _leftTrigger = NormalizeTrigger(motionEvent.GetAxisValue(Axis.Ltrigger));
+                _rightTrigger = NormalizeTrigger(motionEvent.GetAxisValue(Axis.Rtrigger));
             }
         }
     }

@@ -1,4 +1,6 @@
 using Android.Content;
+using Android.Database;
+using Android.Provider;
 using AndroidUri = Android.Net.Uri;
 using Android.Util;
 using Zhengyan.DigitalWife.GameProjects;
@@ -32,7 +34,7 @@ internal static class AndroidGameProjectLoader
     private const string LogTag = "ZhengyanGamePlayer";
     private const string ProjectPathExtra = "zhengyan.project_path";
 
-    public static AndroidGameProjectLoadResult Load(Activity activity, Intent? intent)
+    public static AndroidGameProjectLoadResult Load(Activity activity, Intent? intent, string? password = null)
     {
         ArgumentNullException.ThrowIfNull(activity);
 
@@ -50,6 +52,7 @@ internal static class AndroidGameProjectLoader
                 inputPath,
                 new GameProjectPackageOpenOptions
                 {
+                    Password = password,
                     SaveDirectory = Path.Combine(activity.FilesDir?.AbsolutePath ?? activity.CacheDir?.AbsolutePath ?? string.Empty, "saves"),
                     TempRootDirectory = Path.Combine(activity.CacheDir?.AbsolutePath ?? string.Empty, "GamePackages"),
                     PersistentCacheDirectory = Path.Combine(activity.FilesDir?.AbsolutePath ?? activity.CacheDir?.AbsolutePath ?? string.Empty, "PackageCache"),
@@ -89,15 +92,16 @@ internal static class AndroidGameProjectLoader
             return NormalizeLocalPath(explicitPath);
         }
 
-        AndroidUri? data = ResolveIntentUri(intent);
-        if (data is not null)
+        IReadOnlyList<AndroidUri> intentUris = ResolveIntentUris(intent);
+        if (intentUris.Count > 0)
         {
-            string? copiedPath = TryCopyContentUri(activity, data);
+            string? copiedPath = TryCopyContentUris(activity, intentUris);
             if (!string.IsNullOrWhiteSpace(copiedPath))
             {
                 return copiedPath;
             }
 
+            AndroidUri data = intentUris[0];
             string? localPath = data.Path;
             if (!string.IsNullOrWhiteSpace(localPath) && (data.Scheme is null || data.Scheme.Equals("file", StringComparison.OrdinalIgnoreCase)))
             {
@@ -115,41 +119,57 @@ internal static class AndroidGameProjectLoader
         return null;
     }
 
-    private static AndroidUri? ResolveIntentUri(Intent? intent)
+    private static IReadOnlyList<AndroidUri> ResolveIntentUris(Intent? intent)
     {
+        List<AndroidUri> uris = [];
         if (intent?.Data is { } data)
         {
-            return data;
+            uris.Add(data);
         }
 
-        if (intent?.ClipData is { ItemCount: > 0 } clipData
-            && clipData.GetItemAt(0)?.Uri is { } clipUri)
+        if (intent?.ClipData is { ItemCount: > 0 } clipData)
         {
-            return clipUri;
+            for (int i = 0; i < clipData.ItemCount; i++)
+            {
+                if (clipData.GetItemAt(i)?.Uri is { } clipUri
+                    && !uris.Any(existing => string.Equals(existing.ToString(), clipUri.ToString(), StringComparison.Ordinal)))
+                {
+                    uris.Add(clipUri);
+                }
+            }
         }
 
         if (intent is null)
         {
-            return null;
+            return uris;
         }
 
         if (global::Android.OS.Build.VERSION.SdkInt >= global::Android.OS.BuildVersionCodes.Tiramisu)
         {
 #pragma warning disable CA1416 // Guarded by the Android 13 runtime version check above.
-            return intent.GetParcelableExtra(
+            if (intent.GetParcelableExtra(
                 Intent.ExtraStream,
-                Java.Lang.Class.FromType(typeof(AndroidUri))) as AndroidUri;
+                Java.Lang.Class.FromType(typeof(AndroidUri))) is AndroidUri streamUri
+                && !uris.Any(existing => string.Equals(existing.ToString(), streamUri.ToString(), StringComparison.Ordinal)))
+            {
+                uris.Add(streamUri);
+            }
 #pragma warning restore CA1416
         }
 
 #pragma warning disable CS0618, CA1422 // Type-safe overload is unavailable below Android 13.
-        return intent.GetParcelableExtra(Intent.ExtraStream) as AndroidUri;
+        if (intent.GetParcelableExtra(Intent.ExtraStream) is AndroidUri legacyUri
+            && !uris.Any(existing => string.Equals(existing.ToString(), legacyUri.ToString(), StringComparison.Ordinal)))
+        {
+            uris.Add(legacyUri);
+        }
 #pragma warning restore CS0618, CA1422
+        return uris;
     }
 
-    private static string? TryCopyContentUri(Activity activity, AndroidUri data)
+    private static string? TryCopyContentUris(Activity activity, IReadOnlyList<AndroidUri> uris)
     {
-        if (!string.Equals(data.Scheme, "content", StringComparison.OrdinalIgnoreCase))
+        if (uris.Count == 0 || uris.Any(uri => !string.Equals(uri.Scheme, "content", StringComparison.OrdinalIgnoreCase)))
         {
             return null;
         }
@@ -161,20 +181,64 @@ internal static class AndroidGameProjectLoader
         }
 
         Directory.CreateDirectory(cacheRoot);
-        string extension = data.ToString()?.EndsWith(GameProjectPackage.PackageExtension, StringComparison.OrdinalIgnoreCase) == true
-            ? GameProjectPackage.PackageExtension
-            : ".dwgame";
-        string targetPath = Path.Combine(cacheRoot, "imported-project" + extension);
-
-        using Stream? source = activity.ContentResolver?.OpenInputStream(data);
-        if (source is null)
+        string importRoot = Path.Combine(cacheRoot, "imported-project-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(importRoot);
+        List<string> copiedPaths = [];
+        for (int index = 0; index < uris.Count; index++)
         {
-            return null;
+            AndroidUri uri = uris[index];
+            string fileName = ResolveDisplayName(activity, uri);
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                fileName = uri.LastPathSegment ?? string.Empty;
+            }
+
+            fileName = SanitizeFileName(fileName);
+            if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)))
+            {
+                fileName += index == 0 && uris.Count == 1 ? GameProjectPackage.PackageExtension : $"{GameProjectPackage.PackageExtension}.{index + 1:000}";
+            }
+
+            string targetPath = Path.Combine(importRoot, fileName);
+            if (File.Exists(targetPath))
+            {
+                targetPath = Path.Combine(importRoot, $"part-{index + 1:000}{Path.GetExtension(fileName)}");
+            }
+
+            using Stream? source = activity.ContentResolver?.OpenInputStream(uri);
+            if (source is null) return null;
+            using FileStream target = File.Create(targetPath);
+            source.CopyTo(target);
+            copiedPaths.Add(targetPath);
         }
 
-        using FileStream target = File.Create(targetPath);
-        source.CopyTo(target);
-        return targetPath;
+        string? firstPart = copiedPaths.FirstOrDefault(path => Path.GetExtension(path).Length == 4 && Path.GetExtension(path)[1..].All(char.IsDigit));
+        return firstPart ?? copiedPaths.FirstOrDefault();
+    }
+
+    private static string ResolveDisplayName(Activity activity, AndroidUri uri)
+    {
+        try
+        {
+            string[] projection = [IOpenableColumns.DisplayName];
+            using ICursor? cursor = activity.ContentResolver?.Query(uri, projection, null, null, null);
+            if (cursor?.MoveToFirst() == true && cursor.GetString(0) is { } name)
+            {
+                return name;
+            }
+        }
+        catch
+        {
+        }
+
+        return string.Empty;
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        string name = Path.GetFileName(value.Trim().Trim('"'));
+        foreach (char invalid in Path.GetInvalidFileNameChars()) name = name.Replace(invalid, '_');
+        return string.IsNullOrWhiteSpace(name) ? "part.dwgame" : name;
     }
 
     private static string NormalizeLocalPath(string path)

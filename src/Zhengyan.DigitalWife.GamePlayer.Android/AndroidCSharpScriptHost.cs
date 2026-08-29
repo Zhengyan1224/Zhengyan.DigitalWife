@@ -151,7 +151,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             if (!_runners.TryGetValue(path, out AndroidCompiledScript? runner))
             {
-                runner = Compile(path);
+                runner = TryLoadPrecompiled(path) ?? Compile(path);
                 _runners[path] = runner;
             }
 
@@ -210,6 +210,28 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
 
         Assembly assembly = Assembly.Load(image.ToArray());
+        return CreateCompiledScript(assembly);
+    }
+
+    private AndroidCompiledScript? TryLoadPrecompiled(string sourcePath)
+    {
+        string relative = Path.GetRelativePath(_projectDirectory, sourcePath);
+        if (relative.StartsWith("..", StringComparison.Ordinal)) return null;
+        string assemblyPath = Path.Combine(_projectDirectory, "compiled", "android", Path.ChangeExtension(relative, ".dll"));
+        if (!File.Exists(assemblyPath)) return null;
+        try
+        {
+            return CreateCompiledScript(Assembly.Load(File.ReadAllBytes(assemblyPath)));
+        }
+        catch (Exception ex)
+        {
+            global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Precompiled Android C# script could not be loaded '{assemblyPath}': {ex.Message}");
+            return null;
+        }
+    }
+
+    private static AndroidCompiledScript CreateCompiledScript(Assembly assembly)
+    {
         Type scriptType = assembly.GetType("Script")
             ?? throw new InvalidOperationException("Android C# script did not produce a Script type.");
         MethodInfo factory = scriptType.GetMethod("<Factory>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
@@ -633,11 +655,11 @@ public sealed class AndroidScriptInput
     internal AndroidScriptInput(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
 
     public bool IsKeyDown(string key)
-        => Enum.TryParse(key, true, out Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);
+        => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);
     public bool IsKeyPressed(string key)
-        => Enum.TryParse(key, true, out Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyPressed(parsed);
+        => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyPressed(parsed);
     public bool IsKeyReleased(string key)
-        => Enum.TryParse(key, true, out Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyReleased(parsed);
+        => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyReleased(parsed);
 
     public float MouseX => _snapshot.DeviceInput.MousePosition.X;
     public float MouseY => _snapshot.DeviceInput.MousePosition.Y;
@@ -657,7 +679,7 @@ public sealed class AndroidScriptInput
     public float LeftTrigger => _snapshot.DeviceInput.Gamepad.LeftTrigger;
     public float RightTrigger => _snapshot.DeviceInput.Gamepad.RightTrigger;
     public bool IsGamepadButtonDown(string button)
-        => TryGamepadButton(button, out Android.Views.Keycode key) && _snapshot.DeviceInput.Gamepad.IsButtonDown(key);
+        => TryGamepadButton(button, out global::Android.Views.Keycode key) && _snapshot.DeviceInput.Gamepad.IsButtonDown(key);
 
     private static bool TryMouseButton(string value, out int button)
     {
@@ -665,11 +687,11 @@ public sealed class AndroidScriptInput
         return button >= 0;
     }
 
-    private static bool TryGamepadButton(string value, out Android.Views.Keycode key)
+    private static bool TryGamepadButton(string value, out global::Android.Views.Keycode key)
     {
         string normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("_", string.Empty).Replace("-", string.Empty);
-        key = normalized switch { "a" => Android.Views.Keycode.ButtonA, "b" => Android.Views.Keycode.ButtonB, "x" => Android.Views.Keycode.ButtonX, "y" => Android.Views.Keycode.ButtonY, "lb" or "l1" => Android.Views.Keycode.ButtonL1, "rb" or "r1" => Android.Views.Keycode.ButtonR1, "back" or "select" => Android.Views.Keycode.ButtonSelect, "start" or "options" => Android.Views.Keycode.ButtonStart, "home" or "guide" => Android.Views.Keycode.ButtonMode, "ls" or "l3" => Android.Views.Keycode.ButtonThumbl, "rs" or "r3" => Android.Views.Keycode.ButtonThumbr, "dpadup" or "up" => Android.Views.Keycode.DpadUp, "dpaddown" or "down" => Android.Views.Keycode.DpadDown, "dpadleft" or "left" => Android.Views.Keycode.DpadLeft, "dpadright" or "right" => Android.Views.Keycode.DpadRight, _ => Android.Views.Keycode.Unknown };
-        return key != Android.Views.Keycode.Unknown;
+        key = normalized switch { "a" => global::Android.Views.Keycode.ButtonA, "b" => global::Android.Views.Keycode.ButtonB, "x" => global::Android.Views.Keycode.ButtonX, "y" => global::Android.Views.Keycode.ButtonY, "lb" or "l1" => global::Android.Views.Keycode.ButtonL1, "rb" or "r1" => global::Android.Views.Keycode.ButtonR1, "back" or "select" => global::Android.Views.Keycode.ButtonSelect, "start" or "options" => global::Android.Views.Keycode.ButtonStart, "home" or "guide" => global::Android.Views.Keycode.ButtonMode, "ls" or "l3" => global::Android.Views.Keycode.ButtonThumbl, "rs" or "r3" => global::Android.Views.Keycode.ButtonThumbr, "dpadup" or "up" => global::Android.Views.Keycode.DpadUp, "dpaddown" or "down" => global::Android.Views.Keycode.DpadDown, "dpadleft" or "left" => global::Android.Views.Keycode.DpadLeft, "dpadright" or "right" => global::Android.Views.Keycode.DpadRight, _ => global::Android.Views.Keycode.Unknown };
+        return key != global::Android.Views.Keycode.Unknown;
     }
 
     public string ClipboardText
@@ -793,7 +815,7 @@ public sealed class AndroidScriptCamera
         || string.Equals(camera.Name, idOrName, StringComparison.OrdinalIgnoreCase));
 }
 
-public sealed class AndroidScriptGlobals
+public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
 {
     public AndroidScriptGlobals(
         AndroidScriptScene scene,
@@ -815,35 +837,57 @@ public sealed class AndroidScriptGlobals
         IsUpdate = isUpdate;
         Event = runtimeEvent;
         Services = services ?? throw new ArgumentNullException(nameof(services));
+        base.Scene = scene;
+        base.Entity = entity;
+        base.Input = input;
+        base.Audio = audio;
+        base.Network = Services.Network;
+        base.Save = Services.Save;
+        base.Llm = Services.Llm;
+        base.Tts = Services.Tts;
+        base.Asr = Services.Asr;
+        base.Realtime = Services.Realtime;
+        base.Event = runtimeEvent;
+        base.Services = Services;
+        base.DeltaSeconds = deltaSeconds;
+        base.IsStart = isStart;
+        base.IsUpdate = isUpdate;
+        base.IsGuiEvent = IsGuiEvent;
+        base.IsSpriteEvent = IsSpriteEvent;
+        base.IsSpeechEvent = IsSpeechEvent;
+        base.GuiControlId = GuiControlId;
+        base.GuiControlName = GuiControlName;
+        base.GuiEventName = GuiEventName;
+        base.SpeechCallbackName = SpeechCallbackName;
     }
 
-    public AndroidScriptScene Scene { get; }
-    public AndroidScriptEntity Entity { get; }
-    public AndroidScriptInput Input { get; }
-    public AndroidScriptAudio Audio { get; }
-    public AndroidScriptNetwork Network => Services.Network;
-    public AndroidScriptSaveStore Save => Services.Save;
-    public AndroidScriptLlm Llm => Services.Llm;
-    public AndroidScriptTts Tts => Services.Tts;
-    public AndroidScriptAsr Asr => Services.Asr;
-    public AndroidScriptRealtime Realtime => Services.Realtime;
-    public float DeltaSeconds { get; }
-    public bool IsStart { get; }
-    public bool IsUpdate { get; }
+    public new AndroidScriptScene Scene { get; }
+    public new AndroidScriptEntity Entity { get; }
+    public new AndroidScriptInput Input { get; }
+    public new AndroidScriptAudio Audio { get; }
+    public new AndroidScriptNetwork Network => Services.Network;
+    public new AndroidScriptSaveStore Save => Services.Save;
+    public new AndroidScriptLlm Llm => Services.Llm;
+    public new AndroidScriptTts Tts => Services.Tts;
+    public new AndroidScriptAsr Asr => Services.Asr;
+    public new AndroidScriptRealtime Realtime => Services.Realtime;
+    public new float DeltaSeconds { get; }
+    public new bool IsStart { get; }
+    public new bool IsUpdate { get; }
 
     /// <summary>非 null 时表示一次 GUI/Sprite/触摸事件；Start/Update 时为 null。</summary>
-    public AndroidRuntimeEvent? Event { get; }
+    public new AndroidRuntimeEvent? Event { get; }
 
-    public bool IsEvent => Event is not null;
-    public bool IsGuiEvent => string.Equals(Event?.Type, "gui", StringComparison.OrdinalIgnoreCase);
-    public bool IsSpriteEvent => string.Equals(Event?.Type, "sprite", StringComparison.OrdinalIgnoreCase);
-    public bool IsSpeechEvent => string.Equals(Event?.Type, "speech", StringComparison.OrdinalIgnoreCase);
-    public string GuiControlId => IsGuiEvent ? Event!.Id : string.Empty;
-    public string GuiControlName => IsGuiEvent ? Event!.Text : string.Empty;
-    public string GuiEventName => IsGuiEvent ? Event!.EventName : string.Empty;
-    public string SpeechCallbackName => IsSpeechEvent ? Event!.EventName : string.Empty;
+    public new bool IsEvent => Event is not null;
+    public new bool IsGuiEvent => string.Equals(Event?.Type, "gui", StringComparison.OrdinalIgnoreCase);
+    public new bool IsSpriteEvent => string.Equals(Event?.Type, "sprite", StringComparison.OrdinalIgnoreCase);
+    public new bool IsSpeechEvent => string.Equals(Event?.Type, "speech", StringComparison.OrdinalIgnoreCase);
+    public new string GuiControlId => IsGuiEvent ? Event!.Id : string.Empty;
+    public new string GuiControlName => IsGuiEvent ? Event!.Text : string.Empty;
+    public new string GuiEventName => IsGuiEvent ? Event!.EventName : string.Empty;
+    public new string SpeechCallbackName => IsSpeechEvent ? Event!.EventName : string.Empty;
 
-    public AndroidScriptServices Services { get; }
+    public new AndroidScriptServices Services { get; }
 }
 
 public sealed class AndroidScriptServices
@@ -886,7 +930,7 @@ public sealed class AndroidScriptServices
         _getRenderTexture = getRenderTexture;
         _listRenderTextures = listRenderTextures;
         Network = new AndroidScriptNetwork();
-        string saveRoot = Android.App.Application.Context.FilesDir?.AbsolutePath
+        string saveRoot = global::Android.App.Application.Context.FilesDir?.AbsolutePath
             ?? Path.Combine(projectDirectory, "saves");
         Save = new AndroidScriptSaveStore(Path.Combine(saveRoot, "saves"));
         Llm = new AndroidScriptLlm(Network);

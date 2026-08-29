@@ -13,4 +13,11 @@
     <type fullname="System.Runtime.CompilerServices.ValueTaskAwaiter`1" preserve="all" />
     <type fullname="System.Runtime.CompilerServices.AsyncVoidMethodBuilder" preserve="all" />
   </assembly>
+  <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Android">
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptRealtime" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidPcmAudioStream" preserve="all" />
+  </assembly>
+  <assembly fullname="Zhengyan.DigitalWife.Abstractions">
+    <type fullname="Zhengyan.DigitalWife.GameProjects.AndroidScriptGlobalsContract" preserve="all" />
+  </assembly>
 </linker>

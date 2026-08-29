@@ -146,7 +146,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         _touchState.Apply(e);
         _deviceInputState.ApplyMotion(e);
         if (e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
-            _deviceInputState.SetMouseButton(MapMouseButton(e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
+            _deviceInputState.SetMouseButton(MapMouseButton((int)e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
         _gestureDetector.OnTouchEvent(e);
         if (e.ActionMasked == MotionEventActions.Up)
         {
@@ -171,17 +171,17 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     {
         _deviceInputState.ApplyMotion(e);
         if (e is not null && e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
-            _deviceInputState.SetMouseButton(MapMouseButton(e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
+            _deviceInputState.SetMouseButton(MapMouseButton((int)e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
         return base.OnGenericMotionEvent(e);
     }
 
-    private static int MapMouseButton(MotionEventButton button) => button switch
+    private static int MapMouseButton(int button) => button switch
     {
-        MotionEventButton.Primary => 0,
-        MotionEventButton.Secondary => 1,
-        MotionEventButton.Tertiary => 2,
-        MotionEventButton.Back => 3,
-        MotionEventButton.Forward => 4,
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        8 => 3,
+        16 => 4,
         _ => -1
     };
 

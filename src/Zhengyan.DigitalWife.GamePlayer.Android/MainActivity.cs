@@ -60,9 +60,9 @@ public sealed class MainActivity : Activity
         Window?.SetFlags(WindowManagerFlags.KeepScreenOn, WindowManagerFlags.KeepScreenOn);
         EnterImmersiveMode();
         if (Build.VERSION.SdkInt >= BuildVersionCodes.M
-            && CheckSelfPermission(Android.Manifest.Permission.RecordAudio) != Permission.Granted)
+            && CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio) != Permission.Granted)
         {
-            RequestPermissions([Android.Manifest.Permission.RecordAudio], 7001);
+            RequestPermissions([global::Android.Manifest.Permission.RecordAudio], 7001);
         }
 
         _root = new FrameLayout(this);
@@ -123,10 +123,10 @@ public sealed class MainActivity : Activity
             editor.SetBackgroundColor(Color.Argb(230, 25, 55, 90));
             editor.SetSelectAllOnFocus(false);
             editor.SetTextIsSelectable(true);
-            editor.SetLongClickable(true);
+            editor.LongClickable = true;
             editor.InputType = control.Multiline
-                ? (Android.Text.InputTypes.ClassText | Android.Text.InputTypes.TextFlagMultiLine | Android.Text.InputTypes.TextFlagCapSentences)
-                : (Android.Text.InputTypes.ClassText | Android.Text.InputTypes.TextFlagCapSentences);
+                ? (global::Android.Text.InputTypes.ClassText | global::Android.Text.InputTypes.TextFlagMultiLine | global::Android.Text.InputTypes.TextFlagCapSentences)
+                : (global::Android.Text.InputTypes.ClassText | global::Android.Text.InputTypes.TextFlagCapSentences);
             editor.ImeOptions = control.Multiline ? ImeAction.None : ImeAction.Done;
             FrameLayout.LayoutParams layout = new((int)Math.Max(rect.Width, 1), (int)Math.Max(rect.Height, 1))
             {
@@ -173,7 +173,7 @@ public sealed class MainActivity : Activity
 
     private sealed class ImeEditText(Context context) : EditText(context)
     {
-        public new event EventHandler? SelectionChanged;
+        public event EventHandler? SelectionChanged;
         public int CompositionStart { get; private set; } = -1;
         public int CompositionEnd { get; private set; } = -1;
 
@@ -186,7 +186,7 @@ public sealed class MainActivity : Activity
         protected override void OnTextChanged(Java.Lang.ICharSequence? text, int start, int before, int count)
         {
             base.OnTextChanged(text, start, before, count);
-            if (text is ISpanned spanned)
+            if (text is global::Android.Text.ISpannable spanned)
             {
                 CompositionStart = BaseInputConnection.GetComposingSpanStart(spanned);
                 CompositionEnd = BaseInputConnection.GetComposingSpanEnd(spanned);
@@ -263,14 +263,27 @@ public sealed class MainActivity : Activity
 #pragma warning restore CA1422
     }
 
-    private async Task LoadProjectAsync(Intent? intent)
+    private async Task LoadProjectAsync(Intent? intent, string? packagePassword = null, int passwordAttempt = 0)
     {
         _loadingOverlay?.ShowLoading();
-        AndroidGameProjectLoadResult result = await Task.Run(() => AndroidGameProjectLoader.Load(this, intent));
+        AndroidGameProjectLoadResult result = await Task.Run(() => AndroidGameProjectLoader.Load(this, intent, packagePassword));
         if (IsFinishing || IsDestroyed)
         {
             result.Dispose();
             return;
+        }
+
+        if (!result.Succeeded
+            && passwordAttempt < 3
+            && IsPackagePasswordError(result.Error))
+        {
+            result.Dispose();
+            string? enteredPassword = await PromptPackagePasswordAsync();
+            if (!string.IsNullOrEmpty(enteredPassword))
+            {
+                await LoadProjectAsync(intent, enteredPassword, passwordAttempt + 1);
+                return;
+            }
         }
 
         RunOnUiThread(() =>
@@ -308,6 +321,49 @@ public sealed class MainActivity : Activity
                 Toast.MakeText(this, report.ToStatusMessage(), ToastLength.Long)?.Show();
             }
         });
+    }
+
+    private Task<string?> PromptPackagePasswordAsync()
+    {
+        TaskCompletionSource<string?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        RunOnUiThread(() =>
+        {
+            EditText input = new(this)
+            {
+                Hint = "Password"
+            };
+            input.InputType = global::Android.Text.InputTypes.ClassText
+                | global::Android.Text.InputTypes.TextVariationPassword;
+            input.SetSingleLine(true);
+            input.SetSelectAllOnFocus(false);
+#pragma warning disable CS8600, CS8602
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                .SetTitle("Encrypted package")
+                .SetMessage("Enter the package password to continue.")
+                .SetView(input)
+                .SetNegativeButton("Cancel", (_, _) => completion.TrySetResult(null))
+                .SetPositiveButton("Open", (_, _) => completion.TrySetResult(input.Text ?? string.Empty))
+                .Create();
+            dialog.SetOnDismissListener(new DialogDismissListener(() => completion.TrySetResult(null)));
+            dialog.Show();
+#pragma warning restore CS8600, CS8602
+            input.RequestFocus();
+        });
+        return completion.Task;
+    }
+
+    private static bool IsPackagePasswordError(string? error)
+    {
+        if (string.IsNullOrWhiteSpace(error)) return false;
+        return error.Contains("requires a password", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("integrity check failed", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("需要密码", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("完整性校验", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class DialogDismissListener(Action dismissed) : Java.Lang.Object, IDialogInterfaceOnDismissListener
+    {
+        public void OnDismiss(global::Android.Content.IDialogInterface? dialog) => dismissed();
     }
 
     private void OnFirstFramePresented()
