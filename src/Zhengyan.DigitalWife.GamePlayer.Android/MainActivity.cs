@@ -52,6 +52,8 @@ public sealed class MainActivity : Activity
     private ImeEditText? _textEditor;
     private AndroidGameProjectLoadResult? _projectLoadResult;
     private AndroidLoadingOverlayView? _loadingOverlay;
+    private bool _packagePickerActive;
+    private const int PackagePickerRequestCode = 7002;
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
@@ -225,6 +227,14 @@ public sealed class MainActivity : Activity
         _ = LoadProjectAsync(intent);
     }
 
+    protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
+    {
+        base.OnActivityResult(requestCode, resultCode, data);
+        if (requestCode != PackagePickerRequestCode) return;
+        _packagePickerActive = false;
+        if (resultCode == Result.Ok && data is not null) _ = LoadProjectAsync(data);
+    }
+
     public override void OnWindowFocusChanged(bool hasFocus)
     {
         base.OnWindowFocusChanged(hasFocus);
@@ -290,6 +300,13 @@ public sealed class MainActivity : Activity
         {
             if (!result.Succeeded)
             {
+                if (!_packagePickerActive && IsNoProjectSuppliedError(result.Error))
+                {
+                    result.Dispose();
+                    _loadingOverlay?.SetError("Select a .dwgame package or all of its split parts to open.");
+                    OpenPackagePicker();
+                    return;
+                }
                 _loadingOverlay?.SetError(result.Error ?? "场景加载失败");
                 Toast.MakeText(this, result.Error, ToastLength.Long)?.Show();
                 result.Dispose();
@@ -359,6 +376,30 @@ public sealed class MainActivity : Activity
             || error.Contains("integrity check failed", StringComparison.OrdinalIgnoreCase)
             || error.Contains("需要密码", StringComparison.OrdinalIgnoreCase)
             || error.Contains("完整性校验", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNoProjectSuppliedError(string? error) =>
+        !string.IsNullOrWhiteSpace(error)
+        && (error.Contains("No game project was supplied", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("没有提供游戏工程", StringComparison.OrdinalIgnoreCase));
+
+    private void OpenPackagePicker()
+    {
+        if (_packagePickerActive || IsFinishing || IsDestroyed) return;
+        _packagePickerActive = true;
+        Intent picker = new(Intent.ActionOpenDocument);
+        picker.AddCategory(Intent.CategoryOpenable);
+        picker.SetType("*/*");
+        picker.PutExtra(Intent.ExtraAllowMultiple, true);
+        try
+        {
+            StartActivityForResult(picker, PackagePickerRequestCode);
+        }
+        catch (Exception ex)
+        {
+            _packagePickerActive = false;
+            _loadingOverlay?.SetError($"Unable to open package picker: {ex.Message}");
+        }
     }
 
     private sealed class DialogDismissListener(Action dismissed) : Java.Lang.Object, IDialogInterfaceOnDismissListener
