@@ -28,6 +28,8 @@ internal static unsafe class DesktopSpritePlatform
     private static bool _glfwX11DisplayUnavailable;
     private static bool _glfwX11WindowUnavailable;
     private static bool _x11NativeUnavailable;
+    private static bool _x11DamageUnavailable;
+    private static bool _x11DamageExtensionsChecked;
 
     static DesktopSpritePlatform()
     {
@@ -101,6 +103,71 @@ internal static unsafe class DesktopSpritePlatform
         if (OperatingSystem.IsLinux())
         {
             TryEnableX11ClickThrough(window, true);
+        }
+    }
+
+    public static void NotifyTransparentVulkanFramePresented(IWindow window)
+    {
+        if (!OperatingSystem.IsLinux() || _x11DamageUnavailable)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!TryGetX11Handles(window, out IntPtr display, out nint windowHandle, logFailure: false))
+            {
+                return;
+            }
+
+            if (!_x11DamageExtensionsChecked)
+            {
+                _x11DamageExtensionsChecked = true;
+                bool damageSupported = X11Native.XDamageQueryExtension(display, out _, out _) != 0;
+                bool fixesSupported = X11Native.XFixesQueryExtension(display, out _, out _) != 0;
+                if (!damageSupported || !fixesSupported)
+                {
+                    _x11DamageUnavailable = true;
+                    LogOnce(
+                        "linux-vulkan-xdamage-unsupported",
+                        "[DesktopSprite] The XDamage/XFixes server extensions are unavailable; Vulkan transparent-window damage notifications are disabled.");
+                    return;
+                }
+            }
+
+            X11Rectangle rectangle = new()
+            {
+                X = 0,
+                Y = 0,
+                Width = (ushort)Math.Clamp(window.Size.X, 1, ushort.MaxValue),
+                Height = (ushort)Math.Clamp(window.Size.Y, 1, ushort.MaxValue)
+            };
+            IntPtr region = X11Native.XFixesCreateRegion(display, ref rectangle, 1);
+            if (region == IntPtr.Zero)
+            {
+                return;
+            }
+
+            try
+            {
+                // Some X11 compositors do not invalidate the full ARGB window after a
+                // Vulkan present. Explicit damage prevents stale transparent pixels
+                // from remaining behind moving desktop-sprite content.
+                X11Native.XDamageAdd(display, windowHandle, region);
+            }
+            finally
+            {
+                X11Native.XFixesDestroyRegion(display, region);
+            }
+
+            X11Native.XFlush(display);
+        }
+        catch (Exception ex) when (IsNativeBindingFailure(ex))
+        {
+            _x11DamageUnavailable = true;
+            LogOnce(
+                "linux-vulkan-xdamage-unavailable",
+                $"[DesktopSprite] XDamage is unavailable; Vulkan transparent-window damage notifications are disabled: {ex.Message}");
         }
     }
 
@@ -1662,6 +1729,21 @@ internal static unsafe class DesktopSpritePlatform
 
         [DllImport("libXext.so.6")]
         internal static extern void XShapeCombineMask(IntPtr display, nint window, int destKind, int xOff, int yOff, IntPtr bitmap, int op);
+
+        [DllImport("libXfixes.so.3")]
+        internal static extern int XFixesQueryExtension(IntPtr display, out int eventBaseReturn, out int errorBaseReturn);
+
+        [DllImport("libXfixes.so.3")]
+        internal static extern IntPtr XFixesCreateRegion(IntPtr display, ref X11Rectangle rectangles, int rectangleCount);
+
+        [DllImport("libXfixes.so.3")]
+        internal static extern void XFixesDestroyRegion(IntPtr display, IntPtr region);
+
+        [DllImport("libXdamage.so.1")]
+        internal static extern int XDamageQueryExtension(IntPtr display, out int eventBaseReturn, out int errorBaseReturn);
+
+        [DllImport("libXdamage.so.1")]
+        internal static extern void XDamageAdd(IntPtr display, nint drawable, IntPtr region);
 
         [DllImport("libXi.so.6")]
         internal static extern int XIQueryVersion(IntPtr display, ref int majorVersionInOut, ref int minorVersionInOut);

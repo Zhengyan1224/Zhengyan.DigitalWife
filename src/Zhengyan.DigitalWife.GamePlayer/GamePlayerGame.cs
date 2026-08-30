@@ -363,6 +363,16 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _guiOverlay?.DrawBackgroundSprites(width, height, 0, 0, width, height);
     }
 
+    protected override void AfterPresent()
+    {
+        if (OperatingSystem.IsLinux()
+            && Project.Window.DesktopSpriteMode
+            && GraphicsDevice.Backend == GraphicsBackend.Vulkan)
+        {
+            DesktopSpritePlatform.NotifyTransparentVulkanFramePresented(Window);
+        }
+    }
+
     private bool TryDrawCameraViewports(GameTime gameTime)
     {
         if (_renderTextureManager is null || GraphicsDevice is null)
