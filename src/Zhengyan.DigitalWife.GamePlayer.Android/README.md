@@ -234,7 +234,7 @@ GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推�
 
 ### 9. Android 版本的功能边界
 
-- Android 脚本只支持 C#；Python 脚本会在发布兼容性检查中被拒绝。
+- Android 脚本只支持 C#；Python 脚本会在发布兼容性检查中被拒绝。C# 脚本可通过 `Scene.GetSprite(...)` 获取 `AndroidScriptSprite`，并在运行时调用 `SetSourceRect(x, y, width, height)` 播放精灵表动画。
 - 不支持桌面精灵、透明点击穿透、窗口拖拽和系统托盘。
 - Android 支持 OpenGL ES 和 Vulkan；Renderer=Auto 时优先尝试 Vulkan，设备初始化失败后自动
   回退到 OpenGL ES。Vulkan 已覆盖 PMX、天空盒、水面、粒子、Textured Plane、阴影、平面反射、

@@ -14,6 +14,8 @@
     <type fullname="System.Runtime.CompilerServices.AsyncVoidMethodBuilder" preserve="all" />
   </assembly>
   <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Android">
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptScene" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptSprite" preserve="all" />
     <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptRealtime" preserve="all" />
     <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidPcmAudioStream" preserve="all" />
   </assembly>

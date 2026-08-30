@@ -219,7 +219,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             Vector2 min = viewportMin + new Vector2(rect.X, rect.Y);
             Vector2 max = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, _controller!.GetTextureBinding(texture), min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
+            AddSpriteImage(drawList, _controller!.GetTextureBinding(texture), min, max, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path), GetSpriteSourceUv(sprite));
         }
 
         drawList.PopClipRect();
@@ -261,18 +261,20 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 max,
                 sprite.RotationDegrees,
                 sprite.Opacity,
-                IsRuntimeTextureReference(sprite.Path)));
+                IsRuntimeTextureReference(sprite.Path)) { SourceUv = GetSpriteSourceUv(sprite) });
         }
 
         _backgroundSpriteRenderer.Draw(_backgroundSpriteCommands, viewportWidth, viewportHeight);
     }
 
-    private static void AddSpriteImage(ImDrawListPtr drawList, nint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
+    private static void AddSpriteImage(ImDrawListPtr drawList, nint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV, Vector4 sourceUv)
     {
-        Vector2 uv0 = flipV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
-        Vector2 uv1 = flipV ? new Vector2(1.0f, 0.0f) : Vector2.One;
-        Vector2 uvTopRight = flipV ? Vector2.One : new Vector2(1.0f, 0.0f);
-        Vector2 uvBottomLeft = flipV ? Vector2.Zero : new Vector2(0.0f, 1.0f);
+        float u0 = Math.Clamp(sourceUv.X, 0.0f, 1.0f), u1 = Math.Clamp(sourceUv.Z, u0, 1.0f);
+        float v0 = Math.Clamp(sourceUv.Y, 0.0f, 1.0f), v1 = Math.Clamp(sourceUv.W, v0, 1.0f);
+        Vector2 uv0 = new(u0, flipV ? v1 : v0);
+        Vector2 uv1 = new(u1, flipV ? v0 : v1);
+        Vector2 uvTopRight = new(u1, flipV ? v1 : v0);
+        Vector2 uvBottomLeft = new(u0, flipV ? v0 : v1);
 
         if (MathF.Abs(rotationDegrees) <= 0.001f)
         {
@@ -797,6 +799,13 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         ImGui.TextWrapped("GamePlayer can load either the development project directory or the exported .dwgame package. Split packages are written as .dwgame.001, .dwgame.002, ... and GamePlayer can start from the .dwgame path or the first .001 part. Encryption prevents casual editing, but the password must still be provided at runtime. Android projects support C# scripts only; desktop sprite features are ignored.");
         ImGui.PopID();
+    }
+
+    private Vector4 GetSpriteSourceUv(SpriteSettings sprite)
+    {
+        if (IsRuntimeTextureReference(sprite.Path)) return new Vector4(0, 0, 1, 1);
+        ITexture2D? texture = GetSpriteTexture(sprite.Path);
+        return texture?.Width > 0 && texture.Height > 0 ? sprite.GetSourceUv(texture.Width, texture.Height) : new Vector4(0, 0, 1, 1);
     }
 
     private string BuildDefaultPackageOutputPath()
@@ -3879,6 +3888,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             string targetEntity = sprite.TargetEntity;
             Vector2 position = new(sprite.X, sprite.Y);
             Vector2 size = new(sprite.Width, sprite.Height);
+            Vector4 sourceRect = new(sprite.SourceX, sprite.SourceY, sprite.SourceWidth, sprite.SourceHeight);
             float rotation = sprite.RotationDegrees;
             float opacity = sprite.Opacity;
             int drawOrder = sprite.DrawOrder;
@@ -3898,6 +3908,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             changed |= DrawStringCombo("Layout mode", ref layoutMode, ["absolute", "relative"]);
             changed |= ImGui.DragFloat2("Position", ref position, 1.0f);
             changed |= ImGui.DragFloat2("Size", ref size, 1.0f, 1.0f, 4096.0f);
+            changed |= ImGui.DragFloat4("Source rect (x, y, w, h)", ref sourceRect, 1.0f, 0.0f, 16384.0f);
+            ImGui.TextWrapped("Source width/height set to 0 uses the full texture.");
             changed |= ImGui.DragFloat("Rotation", ref rotation, 1.0f, -360.0f, 360.0f);
             changed |= ImGui.SliderFloat("Opacity", ref opacity, 0.0f, 1.0f);
             changed |= ImGui.DragInt("Draw order", ref drawOrder, 1.0f);
@@ -3914,6 +3926,10 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 sprite.Y = position.Y;
                 sprite.Width = Math.Max(1.0f, size.X);
                 sprite.Height = Math.Max(1.0f, size.Y);
+                sprite.SourceX = Math.Max(0.0f, sourceRect.X);
+                sprite.SourceY = Math.Max(0.0f, sourceRect.Y);
+                sprite.SourceWidth = Math.Max(0.0f, sourceRect.Z);
+                sprite.SourceHeight = Math.Max(0.0f, sourceRect.W);
                 sprite.RotationDegrees = rotation;
                 sprite.Opacity = Math.Clamp(opacity, 0.0f, 1.0f);
                 sprite.DrawOrder = drawOrder;

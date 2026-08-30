@@ -130,7 +130,7 @@ internal sealed class RuntimeGuiOverlayComponent(
             Vector2 min = new(rect.X, rect.Y);
             Vector2 spriteMax = min + new Vector2(Math.Max(rect.Width, 1.0f), Math.Max(rect.Height, 1.0f));
             uint tint = ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)));
-            AddSpriteImage(drawList, _controller!.GetTextureBinding(texture), min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path));
+            AddSpriteImage(drawList, _controller!.GetTextureBinding(texture), min, spriteMax, sprite.RotationDegrees, tint, IsRuntimeTextureReference(sprite.Path), GetSpriteSourceUv(sprite));
         }
 
         drawList.PopClipRect();
@@ -178,7 +178,7 @@ internal sealed class RuntimeGuiOverlayComponent(
                 max,
                 sprite.RotationDegrees,
                 sprite.Opacity,
-                IsRuntimeTextureReference(sprite.Path)));
+                IsRuntimeTextureReference(sprite.Path)) { SourceUv = GetSpriteSourceUv(sprite) });
         }
 
         _backgroundSpriteRenderer.Draw(_backgroundSpriteCommands, viewportWidth, viewportHeight);
@@ -336,12 +336,14 @@ internal sealed class RuntimeGuiOverlayComponent(
         return true;
     }
 
-    private static void AddSpriteImage(ImDrawListPtr drawList, nint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV)
+    private static void AddSpriteImage(ImDrawListPtr drawList, nint textureId, Vector2 min, Vector2 max, float rotationDegrees, uint tint, bool flipV, Vector4 sourceUv)
     {
-        Vector2 uv0 = flipV ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
-        Vector2 uv1 = flipV ? new Vector2(1.0f, 0.0f) : Vector2.One;
-        Vector2 uvTopRight = flipV ? Vector2.One : new Vector2(1.0f, 0.0f);
-        Vector2 uvBottomLeft = flipV ? Vector2.Zero : new Vector2(0.0f, 1.0f);
+        float u0 = Math.Clamp(sourceUv.X, 0.0f, 1.0f), u1 = Math.Clamp(sourceUv.Z, u0, 1.0f);
+        float v0 = Math.Clamp(sourceUv.Y, 0.0f, 1.0f), v1 = Math.Clamp(sourceUv.W, v0, 1.0f);
+        Vector2 uv0 = new(u0, flipV ? v1 : v0);
+        Vector2 uv1 = new(u1, flipV ? v0 : v1);
+        Vector2 uvTopRight = new(u1, flipV ? v1 : v0);
+        Vector2 uvBottomLeft = new(u0, flipV ? v0 : v1);
 
         if (MathF.Abs(rotationDegrees) <= 0.001f)
         {
@@ -365,6 +367,13 @@ internal sealed class RuntimeGuiOverlayComponent(
         Vector2 p3 = Rotate(new Vector2(half.X, half.Y));
         Vector2 p4 = Rotate(new Vector2(-half.X, half.Y));
         drawList.AddImageQuad((nint)textureId, p1, p2, p3, p4, uv0, uvTopRight, uv1, uvBottomLeft, tint);
+    }
+
+    private Vector4 GetSpriteSourceUv(SpriteSettings sprite)
+    {
+        if (IsRuntimeTextureReference(sprite.Path)) return new Vector4(0, 0, 1, 1);
+        ITexture2D? texture = GetSpriteTexture(sprite.Path);
+        return texture?.Width > 0 && texture.Height > 0 ? sprite.GetSourceUv(texture.Width, texture.Height) : new Vector4(0, 0, 1, 1);
     }
 
     private ITexture2D? GetSpriteTexture(string path)

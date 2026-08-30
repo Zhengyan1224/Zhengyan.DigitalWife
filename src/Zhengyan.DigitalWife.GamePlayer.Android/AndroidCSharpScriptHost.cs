@@ -387,6 +387,50 @@ public sealed class AndroidScriptScene
     public RuntimeSceneNavigation Navigation => _scene.Navigation;
     public RuntimeDebug Debug => _scene.Debug;
     public RuntimeEntity? GetEntity(string idOrName) => _scene.GetEntity(idOrName);
+    public IEnumerable<AndroidScriptSprite> Sprites => _scene.Definition.Sprites.Select(sprite => new AndroidScriptSprite(sprite));
+    public AndroidScriptSprite? GetSprite(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName)) return null;
+        SpriteSettings? sprite = _scene.Definition.Sprites.FirstOrDefault(item =>
+            string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+        return sprite is null ? null : new AndroidScriptSprite(sprite);
+    }
+}
+
+public sealed class AndroidScriptSprite
+{
+    private readonly SpriteSettings _sprite;
+
+    internal AndroidScriptSprite(SpriteSettings sprite) => _sprite = sprite;
+
+    public string Id => _sprite.Id;
+    public string Name { get => _sprite.Name; set => _sprite.Name = value ?? string.Empty; }
+    public bool Visible { get => _sprite.Visible; set => _sprite.Visible = value; }
+    public float X { get => _sprite.X; set => _sprite.X = value; }
+    public float Y { get => _sprite.Y; set => _sprite.Y = value; }
+    public float Width { get => _sprite.Width; set => _sprite.Width = Math.Max(1.0f, value); }
+    public float Height { get => _sprite.Height; set => _sprite.Height = Math.Max(1.0f, value); }
+    public float RotationDegrees { get => _sprite.RotationDegrees; set => _sprite.RotationDegrees = value; }
+    public float Opacity { get => _sprite.Opacity; set => _sprite.Opacity = Math.Clamp(value, 0.0f, 1.0f); }
+    public int DrawOrder { get => _sprite.DrawOrder; set => _sprite.DrawOrder = value; }
+    public string Texture { get => _sprite.Path; set => _sprite.Path = value ?? string.Empty; }
+    public string Path { get => _sprite.Path; set => _sprite.Path = value ?? string.Empty; }
+    public string LayoutMode { get => _sprite.LayoutMode; set => _sprite.LayoutMode = value ?? "absolute"; }
+    public float SourceX { get => _sprite.SourceX; set => _sprite.SourceX = Math.Max(0.0f, value); }
+    public float SourceY { get => _sprite.SourceY; set => _sprite.SourceY = Math.Max(0.0f, value); }
+    public float SourceWidth { get => _sprite.SourceWidth; set => _sprite.SourceWidth = Math.Max(0.0f, value); }
+    public float SourceHeight { get => _sprite.SourceHeight; set => _sprite.SourceHeight = Math.Max(0.0f, value); }
+
+    public void SetPosition(float x, float y) { X = x; Y = y; }
+    public void SetSize(float width, float height) { Width = width; Height = height; }
+    public void SetSourceRect(float x, float y, float width, float height)
+    {
+        SourceX = x; SourceY = y; SourceWidth = width; SourceHeight = height;
+    }
+    public void ResetSourceRect() => SetSourceRect(0.0f, 0.0f, 0.0f, 0.0f);
+    public void Show() => Visible = true;
+    public void Hide() => Visible = false;
 }
 
 public sealed class AndroidScriptEntity

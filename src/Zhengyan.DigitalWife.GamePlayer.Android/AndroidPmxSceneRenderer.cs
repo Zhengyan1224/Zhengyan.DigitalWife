@@ -33,6 +33,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly Dictionary<string, int> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _softAlphaTextures = [];
     private readonly Dictionary<int, int> _textureAlphaModes = [];
+    private readonly Dictionary<int, (int Width, int Height)> _textureDimensions = [];
     private readonly Queue<AndroidRuntimeEvent> _waterEvents = new();
     private readonly HashSet<string> _activeWaterContacts = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _program;
@@ -1056,7 +1057,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             int texture = ResolveSceneTexture(sprite.Path, _projectDirectory ?? string.Empty);
             if (texture == 0) continue;
             LayoutRect rect = SpriteLayoutResolver.Resolve(sprite, width, height, referenceWidth, referenceHeight);
-            DrawOverlayQuad(rect, width, height, sprite.RotationDegrees, new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)), texture, true);
+            DrawOverlayQuad(rect, width, height, sprite.RotationDegrees, new Vector4(1.0f, 1.0f, 1.0f, Math.Clamp(sprite.Opacity, 0.0f, 1.0f)), texture, true, GetSourceUv(sprite, texture));
         }
 
         GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
@@ -1066,7 +1067,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     }
 
 
-    private void DrawOverlayQuad(LayoutRect rect, int width, int height, float rotationDegrees, Vector4 color, int texture, bool textured)
+    private void DrawOverlayQuad(LayoutRect rect, int width, int height, float rotationDegrees, Vector4 color, int texture, bool textured, Vector4 sourceUv)
     {
         float centerX = rect.X + rect.Width * 0.5f;
         float centerY = rect.Y + rect.Height * 0.5f;
@@ -1089,8 +1090,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             int offset = i * 8;
             vertices[offset] = x / Math.Max(width, 1) * 2.0f - 1.0f;
             vertices[offset + 1] = 1.0f - y / Math.Max(height, 1) * 2.0f;
-            vertices[offset + 2] = corner is 1 or 2 ? 1.0f : 0.0f;
-            vertices[offset + 3] = corner >= 2 ? 1.0f : 0.0f;
+            float u0 = Math.Clamp(sourceUv.X, 0.0f, 1.0f), v0 = Math.Clamp(sourceUv.Y, 0.0f, 1.0f);
+            float u1 = Math.Clamp(sourceUv.Z, u0, 1.0f), v1 = Math.Clamp(sourceUv.W, v0, 1.0f);
+            vertices[offset + 2] = corner is 1 or 2 ? u1 : u0;
+            vertices[offset + 3] = corner >= 2 ? v1 : v0;
             vertices[offset + 4] = color.X; vertices[offset + 5] = color.Y;
             vertices[offset + 6] = color.Z; vertices[offset + 7] = color.W;
         }
@@ -1104,6 +1107,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         data.Put(vertices.ToArray()); data.Position(0);
         GLES30.GlBufferSubData(GLES30.GlArrayBuffer, 0, vertices.Length * sizeof(float), data);
         GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 6);
+    }
+
+    private Vector4 GetSourceUv(SpriteSettings sprite, int textureId)
+    {
+        return _textureDimensions.TryGetValue(textureId, out (int Width, int Height) dimensions)
+            ? sprite.GetSourceUv(dimensions.Width, dimensions.Height)
+            : new Vector4(0.0f, 0.0f, 1.0f, 1.0f);
     }
 
     private void DrawParticles(RuntimeScene scene, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection, double timeSeconds)
@@ -2169,6 +2179,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             _textures.Clear();
             _softAlphaTextures.Clear();
             _textureAlphaModes.Clear();
+            _textureDimensions.Clear();
         }
     }
 
@@ -2332,6 +2343,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
         _textureAlphaModes[texture] = (int)decoded.AlphaMode;
         _textures[fullPath] = texture;
+        _textureDimensions[texture] = (decoded.Width, decoded.Height);
         return texture;
     }
 

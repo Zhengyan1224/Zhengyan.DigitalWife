@@ -69,6 +69,10 @@ if (portrait is not null)
 }
 ```
 
+## Source Rectangle
+
+`SourceX`, `SourceY`, `SourceWidth`, and `SourceHeight` select a pixel-space rectangle from the texture. A width or height of `0` keeps the legacy full-texture behavior. They can be changed every frame with `RuntimeSpriteControl.SetSourceRect(...)` / `reset_source_rect()` (and the equivalent `AndroidScriptSprite` API on Android), which is suitable for sprite-sheet animation.
+
 Python：
 
 ```python

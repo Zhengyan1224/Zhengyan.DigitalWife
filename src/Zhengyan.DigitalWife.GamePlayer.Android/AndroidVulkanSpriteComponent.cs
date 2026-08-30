@@ -40,7 +40,7 @@ internal sealed class AndroidVulkanSpriteComponent(
                 new Vector2(rect.X + Math.Max(rect.Width, 1.0f), rect.Y + Math.Max(rect.Height, 1.0f)),
                 sprite.RotationDegrees,
                 sprite.Opacity,
-                false));
+                false) { SourceUv = sprite.GetSourceUv(texture.Width, texture.Height) });
         }
 
         _renderer.Draw(commands, width, height);

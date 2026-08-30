@@ -51,6 +51,30 @@ public sealed class RuntimeSpriteControl
         set => _sprite.Height = Math.Max(1.0f, value);
     }
 
+    public float SourceX
+    {
+        get => _sprite.SourceX;
+        set => _sprite.SourceX = Math.Max(0.0f, value);
+    }
+
+    public float SourceY
+    {
+        get => _sprite.SourceY;
+        set => _sprite.SourceY = Math.Max(0.0f, value);
+    }
+
+    public float SourceWidth
+    {
+        get => _sprite.SourceWidth;
+        set => _sprite.SourceWidth = Math.Max(0.0f, value);
+    }
+
+    public float SourceHeight
+    {
+        get => _sprite.SourceHeight;
+        set => _sprite.SourceHeight = Math.Max(0.0f, value);
+    }
+
     public float RotationDegrees
     {
         get => _sprite.RotationDegrees;
@@ -103,6 +127,19 @@ public sealed class RuntimeSpriteControl
     {
         Width = width;
         Height = height;
+    }
+
+    public void SetSourceRect(float x, float y, float width, float height)
+    {
+        SourceX = x;
+        SourceY = y;
+        SourceWidth = width;
+        SourceHeight = height;
+    }
+
+    public void ResetSourceRect()
+    {
+        SetSourceRect(0.0f, 0.0f, 0.0f, 0.0f);
     }
 
     public void SetLayoutMode(string layoutMode)

@@ -1012,6 +1012,15 @@ public sealed class SpriteSettings
 
     public float Height { get; set; } = 128.0f;
 
+    // Pixel-space source rectangle. A zero width or height means the full texture.
+    public float SourceX { get; set; }
+
+    public float SourceY { get; set; }
+
+    public float SourceWidth { get; set; }
+
+    public float SourceHeight { get; set; }
+
     public float RotationDegrees { get; set; }
 
     public float Opacity { get; set; } = 1.0f;
@@ -1019,6 +1028,20 @@ public sealed class SpriteSettings
     public bool Visible { get; set; } = true;
 
     public int DrawOrder { get; set; } = 500;
+
+    public Vector4 GetSourceUv(int textureWidth, int textureHeight)
+    {
+        if (textureWidth <= 0 || textureHeight <= 0 || SourceWidth <= 0.0f || SourceHeight <= 0.0f)
+        {
+            return new Vector4(0.0f, 0.0f, 1.0f, 1.0f);
+        }
+
+        float x = Math.Clamp(SourceX / textureWidth, 0.0f, 1.0f);
+        float y = Math.Clamp(SourceY / textureHeight, 0.0f, 1.0f);
+        float width = Math.Clamp(SourceWidth / textureWidth, 0.0f, 1.0f - x);
+        float height = Math.Clamp(SourceHeight / textureHeight, 0.0f, 1.0f - y);
+        return new Vector4(x, y, x + width, y + height);
+    }
 }
 
 public sealed class GuiControlStyleSettings

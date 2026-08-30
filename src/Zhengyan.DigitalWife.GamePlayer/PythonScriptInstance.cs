@@ -3040,6 +3040,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.y = data.get("y", 0)
                        self.width = data.get("width", 1)
                        self.height = data.get("height", 1)
+                       self.source_x = float(data.get("sourceX", 0.0))
+                       self.source_y = float(data.get("sourceY", 0.0))
+                       self.source_width = float(data.get("sourceWidth", 0.0))
+                       self.source_height = float(data.get("sourceHeight", 0.0))
                        self.rotation_degrees = float(data.get("rotationDegrees", 0.0))
                        self.opacity = data.get("opacity", 1)
                        self.draw_order = int(data.get("drawOrder", 500))
@@ -3055,6 +3059,16 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.width = width
                        self.height = height
                        self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_size", "width": width, "height": height})
+
+                   def set_source_rect(self, x, y, width, height):
+                       self.source_x = max(float(x), 0.0)
+                       self.source_y = max(float(y), 0.0)
+                       self.source_width = max(float(width), 0.0)
+                       self.source_height = max(float(height), 0.0)
+                       self._commands.append({"target": "sprite", "sprite": self.id, "action": "set_source_rect", "x": x, "y": y, "width": width, "height": height})
+
+                   def reset_source_rect(self):
+                       self.set_source_rect(0, 0, 0, 0)
 
                    def set_visible(self, enabled):
                        self.visible = bool(enabled)
@@ -4106,6 +4120,12 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 break;
             case "set_size" when command.Width.HasValue && command.Height.HasValue:
                 sprite.SetSize((float)command.Width.Value, (float)command.Height.Value);
+                break;
+            case "set_source_rect" when command.X.HasValue && command.Y.HasValue && command.Width.HasValue && command.Height.HasValue:
+                sprite.SetSourceRect((float)command.X.Value, (float)command.Y.Value, (float)command.Width.Value, (float)command.Height.Value);
+                break;
+            case "reset_source_rect":
+                sprite.ResetSourceRect();
                 break;
             case "set_layout_mode" when !string.IsNullOrWhiteSpace(command.Mode):
                 sprite.SetLayoutMode(command.Mode!);
@@ -5872,6 +5892,14 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
         public float Height { get; set; }
 
+        public float SourceX { get; set; }
+
+        public float SourceY { get; set; }
+
+        public float SourceWidth { get; set; }
+
+        public float SourceHeight { get; set; }
+
         public float RotationDegrees { get; set; }
 
         public float Opacity { get; set; }
@@ -5893,6 +5921,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 Y = sprite.Y,
                 Width = sprite.Width,
                 Height = sprite.Height,
+                SourceX = sprite.SourceX,
+                SourceY = sprite.SourceY,
+                SourceWidth = sprite.SourceWidth,
+                SourceHeight = sprite.SourceHeight,
                 RotationDegrees = sprite.RotationDegrees,
                 Opacity = sprite.Opacity,
                 DrawOrder = sprite.DrawOrder,

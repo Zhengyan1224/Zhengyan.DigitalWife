@@ -9,7 +9,10 @@ public readonly record struct ScreenSpriteDrawCommand(
     Vector2 Max,
     float RotationDegrees,
     float Opacity,
-    bool FlipV);
+    bool FlipV)
+{
+    public Vector4 SourceUv { get; init; } = new(0.0f, 0.0f, 1.0f, 1.0f);
+}
 
 public sealed unsafe class ScreenSpriteRenderer : IScreenSpriteRenderer
 {
@@ -145,15 +148,20 @@ public sealed unsafe class ScreenSpriteRenderer : IScreenSpriteRenderer
         Vector2 p2 = Rotate(new Vector2(half.X, -half.Y));
         Vector2 p3 = Rotate(new Vector2(half.X, half.Y));
         Vector2 p4 = Rotate(new Vector2(-half.X, half.Y));
-        float topV = command.FlipV ? 1.0f : 0.0f;
-        float bottomV = command.FlipV ? 0.0f : 1.0f;
+        Vector4 uv = command.SourceUv;
+        float u0 = Math.Clamp(uv.X, 0.0f, 1.0f);
+        float v0 = Math.Clamp(uv.Y, 0.0f, 1.0f);
+        float u1 = Math.Clamp(uv.Z, u0, 1.0f);
+        float v1 = Math.Clamp(uv.W, v0, 1.0f);
+        float topV = command.FlipV ? v1 : v0;
+        float bottomV = command.FlipV ? v0 : v1;
 
-        WriteVertex(vertices, 0, p1, 0.0f, topV);
-        WriteVertex(vertices, 4, p2, 1.0f, topV);
-        WriteVertex(vertices, 8, p3, 1.0f, bottomV);
-        WriteVertex(vertices, 12, p1, 0.0f, topV);
-        WriteVertex(vertices, 16, p3, 1.0f, bottomV);
-        WriteVertex(vertices, 20, p4, 0.0f, bottomV);
+        WriteVertex(vertices, 0, p1, u0, topV);
+        WriteVertex(vertices, 4, p2, u1, topV);
+        WriteVertex(vertices, 8, p3, u1, bottomV);
+        WriteVertex(vertices, 12, p1, u0, topV);
+        WriteVertex(vertices, 16, p3, u1, bottomV);
+        WriteVertex(vertices, 20, p4, u0, bottomV);
     }
 
     private static void WriteVertex(Span<float> vertices, int offset, Vector2 position, float u, float v)
