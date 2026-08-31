@@ -313,11 +313,35 @@ GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推�
 `content://` 临时读取权限。工程目录必须包含 `game.project.json` 及其 `assets`、场景和脚本
 文件；`.dwgame` 包则由 GamePlayer 自动解压到应用缓存目录。
 
+为了避免 Android 设备在启动时进行耗时的 Roslyn 编译，发布 `.dwgame` 时请在 GameEditor
+中保持 **Android C# 预编译** 选项开启。正确导出的包会包含
+`compiled/android/manifest.json` 和对应的 `*.dll`。如果加载的是较旧的包或预编译未开启，
+GamePlayer 仍会对脚本执行一次运行时编译作为兼容回退；编译失败的脚本会被记录并跳过后续每帧
+执行，不会反复阻塞渲染线程。重新导出带有 Android 预编译程序集的包，可以同时消除启动卡顿并
+确保脚本 API 在发布前完成兼容性检查。
+
 查看启动和兼容性日志：
 
 ```powershell
 & "$sdk\platform-tools\adb.exe" logcat -s ZhengyanGamePlayer
 ```
+
+如果应用闪退，需同时查看引擎日志、Android 主线程异常和 .NET/Mono 异常。仅使用
+`-s ZhengyanGamePlayer` 会过滤掉 `AndroidRuntime` 的崩溃堆栈，此时使用：
+
+```powershell
+& "$sdk\platform-tools\adb.exe" logcat -v threadtime `
+  ZhengyanGamePlayer:V AndroidRuntime:E MonoDroid:V mono-rt:E '*:S'
+```
+
+如果 `adb` 已经加入 `PATH`，也可以直接执行：
+
+```powershell
+adb logcat -v threadtime ZhengyanGamePlayer:V AndroidRuntime:E MonoDroid:V mono-rt:E '*:S'
+```
+
+PowerShell 中需要给 `*:S` 加引号，避免 `*` 被当作通配符处理。建议在复现问题前先执行
+`adb logcat -c` 清空旧日志，然后启动应用并再次触发问题。
 
 ### 9. Android 版本的功能边界
 
@@ -325,8 +349,8 @@ GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推�
 - 不支持桌面精灵、透明点击穿透、窗口拖拽和系统托盘。
 - Android 支持 OpenGL ES 和 Vulkan；Renderer=Auto 时优先尝试 Vulkan，设备初始化失败后自动
   回退到 OpenGL ES。Vulkan 已覆盖 PMX、天空盒、水面、粒子、Textured Plane、阴影、平面反射、
-  水下后处理、RenderTexture 和 hosted ImGui 生命周期，但 ImGui 触摸/IME 输入仍由 Android
-  原生 GUI 路径负责。
+  水下后处理和 RenderTexture。GUI、触摸和 IME 统一使用 Android 原生 Canvas/View 路径，
+  Android Vulkan 不加载桌面 `cimgui` 原生库。
 - OpenCL 不会在 Android 上启用。使用 Vulkan 后端时才可能使用 Vulkan Compute。
 - 未完成的粒子、阴影、后处理、音频、软键盘和手柄能力会在兼容性检查中提示，发布前应逐项
   查看 GameEditor 的 Android 检查结果。

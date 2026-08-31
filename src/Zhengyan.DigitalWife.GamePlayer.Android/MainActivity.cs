@@ -95,6 +95,7 @@ public sealed class MainActivity : Activity
         {
             _gameView.OverlayInvalidated -= OnOverlayInvalidated;
             _gameView.FirstFramePresented -= OnFirstFramePresented;
+            _gameView.RenderInitializationFailed -= OnRenderInitializationFailed;
             _gameView.TextInputRequested -= ShowTextEditor;
             _gameView.ContextMenuRequested -= ShowContextMenu;
         }
@@ -340,6 +341,7 @@ public sealed class MainActivity : Activity
                 _guiOverlay = new AndroidGuiOverlayView(this, _gameView);
                 _gameView.OverlayInvalidated += OnOverlayInvalidated;
                 _gameView.FirstFramePresented += OnFirstFramePresented;
+                _gameView.RenderInitializationFailed += OnRenderInitializationFailed;
                 _gameView.TextInputRequested += ShowTextEditor;
                 _gameView.ContextMenuRequested += ShowContextMenu;
                 _root?.AddView(_gameView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
@@ -442,6 +444,15 @@ public sealed class MainActivity : Activity
             {
                 _loadingOverlay.Visibility = ViewStates.Gone;
             }
+        });
+    }
+
+    private void OnRenderInitializationFailed(string message)
+    {
+        RunOnUiThread(() =>
+        {
+            _loadingOverlay?.SetError(message);
+            Toast.MakeText(this, message, ToastLength.Long)?.Show();
         });
     }
 }

@@ -101,7 +101,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | 自定义 Shader | GLSL/SPIR-V 双路径及 Uniform | 已完成阶段 4 GLES 契约 | Android GLES 自定义 shader 使用 `#version 300 es` 和固定 uniform 资源契约；运行时和 `tools/Validate-AndroidGlesShader.ps1` 均可离线校验 |
 | 抗锯齿 | 配置倍数和硬件回退 | 部分（阶段 4） | EGL 已按项目设置申请 1/2/4/8/16x，并自动回退和输出实际倍数；真机能力矩阵仍待验证 |
 | OpenGL ES 后端 | PC Pass 功能 | 部分 | 目前是 Android 专用单 shader，不是现有 `IRenderer`/Pass 架构的移动实现 |
-| Vulkan 后端 | PC Vulkan | 部分（阶段 9） | Android 已支持 Surface、Swapchain、PMX/天空盒/水面/粒子/Plane/阴影、RenderTexture 离屏 Pass、ImGui hosted 生命周期和 Auto 回退；ImGui 触摸/IME 输入、完整后处理链和真机 Compute 验证仍缺失 |
+| Vulkan 后端 | PC Vulkan | 部分（阶段 9） | Android 已支持 Surface、Swapchain、PMX/天空盒/水面/粒子/Plane/阴影、RenderTexture 离屏 Pass 和 Auto 回退；GUI 使用 Android 原生 Canvas/IME 路径，不加载桌面 `cimgui` 原生库，完整后处理链和真机 Compute 验证仍缺失 |
 | GUI 控件 | Button/Label/Checkbox/Dropdown/Textbox/Progress | 部分（阶段 4/5） | Android 已支持 GLES 背景/进度、Canvas 字体和 GUI 触摸事件；完整 Android IME 编辑会话和持久化上下文菜单仍有限制 |
 | 上下文菜单 | 窗口/实体/碰撞体/GUI/Sprite | 缺失 | 触摸端还需定义长按语义，外接鼠标保留右键语义 |
 | 对话气泡 | 文本、目标实体和生命周期 | 缺失 | 没有投影到屏幕、布局和脚本管理器 |

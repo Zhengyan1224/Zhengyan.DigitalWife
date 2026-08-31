@@ -35,8 +35,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private IUnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
     private SkyboxComponent? _skybox;
     private AndroidVulkanSpriteComponent? _spriteComponent;
-    private IImGuiBackendController? _imgui;
-    private DrawableGameComponent? _imguiComponent;
     private AndroidVulkanRuntimeDebugDrawComponent? _debugDrawComponent;
     private readonly Dictionary<string, RenderTextureState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _renderingRenderTexture;
@@ -70,12 +68,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
             .CreateUnderwaterPostProcessRenderer("AndroidVulkanUnderwater");
-        _imgui = GraphicsDevice.Renderer.Services.CreateImGuiController(this);
         _debugDrawComponent = AddComponent(new AndroidVulkanRuntimeDebugDrawComponent(this) { DrawOrder = 9000 });
-        _imguiComponent = AddComponent(new ImGuiDrawComponent(this)
-        {
-            DrawOrder = int.MaxValue
-        });
     }
 
     protected override void Update(GameTime gameTime)
@@ -83,7 +76,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         _ = gameTime;
         SyncCamera();
         SyncSceneComponents();
-        _imgui?.Update((float)Math.Max(gameTime.ElapsedSeconds, 1.0 / 1000.0));
     }
 
     protected override void Draw(GameTime gameTime)
@@ -151,8 +143,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         _planarReflectionRenderer = null;
         _underwaterPostProcessRenderer?.Dispose();
         _underwaterPostProcessRenderer = null;
-        _imgui?.Dispose();
-        _imgui = null;
         foreach (RenderTextureState state in _renderTextures.Values)
         {
             state.Target.Dispose();
@@ -928,16 +918,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         // The underwater path renders world components into a capture target
         // and then composites it to the swapchain. Keep screen-space sprites on
         // top of that composite while suppressing the second world draw.
-        return ReferenceEquals(component, _spriteComponent) || ReferenceEquals(component, _imguiComponent);
-    }
-
-    private sealed class ImGuiDrawComponent(AndroidVulkanGame owner) : DrawableGameComponent
-    {
-        public override void Draw(GameTime gameTime)
-        {
-            _ = gameTime;
-            owner._imgui?.Render();
-        }
+        return ReferenceEquals(component, _spriteComponent);
     }
 
     private static GameOptions CreateOptions(GameProject project, Vector2D<int> size)

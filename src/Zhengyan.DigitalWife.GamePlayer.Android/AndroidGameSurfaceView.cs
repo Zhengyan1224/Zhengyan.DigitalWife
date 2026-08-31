@@ -132,6 +132,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
     public event Action? OverlayInvalidated;
     public event Action? FirstFramePresented;
+    public event Action<string>? RenderInitializationFailed;
     public event Action<GuiControlSettings, LayoutRect>? TextInputRequested;
     public event Action<ContextMenuSettings, float, float>? ContextMenuRequested;
     public void InvalidateOverlay() => OverlayInvalidated?.Invoke();
@@ -276,8 +277,28 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
             _renderHost.Dispose();
             _renderHost = new AndroidEglRenderHost();
             _renderHost.SetProject(_project, _projectDirectory);
-            _renderHost.CreateSurface(surface);
+            try
+            {
+                _renderHost.CreateSurface(surface);
+            }
+            catch (Exception fallbackException)
+            {
+                ReportRenderInitializationFailure("OpenGL ES fallback initialization failed", fallbackException);
+            }
         }
+        catch (Exception ex)
+        {
+            ReportRenderInitializationFailure($"{_requestedBackend} initialization failed", ex);
+        }
+    }
+
+    private void ReportRenderInitializationFailure(string message, Exception exception)
+    {
+        _hasSurface = false;
+        CancelFrame();
+        string detail = $"{message}: {exception.Message}";
+        Log.Error(LogTag, $"{detail}\n{exception}");
+        RenderInitializationFailed?.Invoke(detail);
     }
 
     private static IAndroidRenderHost CreateRenderHost(GraphicsBackend requestedBackend)

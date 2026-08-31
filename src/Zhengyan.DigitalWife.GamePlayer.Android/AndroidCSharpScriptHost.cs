@@ -30,6 +30,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, bool, bool> _setAudioLoop;
     private readonly Func<string, bool> _isAudioPlaying;
     private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -147,11 +148,40 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         string path = GameProjectPath.ToAbsolute(_projectDirectory, binding.Path);
         if (!File.Exists(path)) return;
+        FileInfo sourceFile = new(path);
+        FailedScriptVersion version = new(sourceFile.LastWriteTimeUtc.Ticks, sourceFile.Length);
+        if (_failedScripts.TryGetValue(path, out FailedScriptVersion failedVersion))
+        {
+            if (failedVersion == version)
+            {
+                return;
+            }
+
+            _failedScripts.Remove(path);
+            _runners.Remove(path);
+        }
+
         try
         {
             if (!_runners.TryGetValue(path, out AndroidCompiledScript? runner))
             {
-                runner = TryLoadPrecompiled(path) ?? Compile(path);
+                runner = TryLoadPrecompiled(path);
+                if (runner is null)
+                {
+                    // Runtime Roslyn compilation is kept as a compatibility
+                    // fallback for older packages, but it must not be an
+                    // invisible per-frame cost when an assembly is missing.
+                    if (sourceFile.Length > 0)
+                    {
+                        global::Android.Util.Log.Warn(
+                            "ZhengyanGamePlayer",
+                            $"Android C# script is not precompiled; compiling once at runtime: '{path}'. " +
+                            "Re-export the .dwgame with Android C# precompilation enabled to avoid startup stalls.");
+                    }
+
+                    runner = Compile(path);
+                }
+
                 _runners[path] = runner;
             }
 
@@ -159,6 +189,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
         catch (Exception ex)
         {
+            _failedScripts[path] = version;
             global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {ex}");
         }
     }
@@ -178,6 +209,12 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     private static AndroidCompiledScript Compile(string path)
     {
+        string scriptSource = File.ReadAllText(path);
+        if (string.IsNullOrWhiteSpace(scriptSource))
+        {
+            return AndroidCompiledScript.NoOp;
+        }
+
         string source = """
             using System;
             using System.Numerics;
@@ -186,7 +223,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             using Zhengyan.DigitalWife.GamePlayer.Android;
             using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
-            """ + File.ReadAllText(path);
+            """ + scriptSource;
         SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
             source,
             new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script),
@@ -203,9 +240,17 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         EmitResult result = compilation.Emit(image);
         if (!result.Success)
         {
-            string diagnostics = string.Join(Environment.NewLine, result.Diagnostics
+            Diagnostic[] errors = result.Diagnostics
                 .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
-                .Select(diagnostic => diagnostic.ToString()));
+                .ToArray();
+            IEnumerable<Diagnostic> displayedDiagnostics = errors.Length > 0
+                ? errors
+                : result.Diagnostics;
+            string diagnostics = string.Join(Environment.NewLine, displayedDiagnostics.Select(diagnostic => diagnostic.ToString()));
+            if (string.IsNullOrWhiteSpace(diagnostics))
+            {
+                diagnostics = "Roslyn Emit returned failure without diagnostics. Publish the .dwgame with Android C# precompilation enabled.";
+            }
             throw new InvalidOperationException($"Android C# script compilation failed:{Environment.NewLine}{diagnostics}");
         }
 
@@ -311,20 +356,29 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     private sealed class AndroidCompiledScript
     {
-        private readonly MethodInfo _factory;
+        private readonly MethodInfo? _factory;
 
-        public AndroidCompiledScript(MethodInfo factory)
+        public static AndroidCompiledScript NoOp { get; } = new(null);
+
+        public AndroidCompiledScript(MethodInfo? factory)
         {
             _factory = factory;
         }
 
         public void Execute(AndroidScriptGlobals globals)
         {
+            if (_factory is null)
+            {
+                return;
+            }
+
             object?[] submissionArray = [globals, null];
             Task<object?> task = (Task<object?>)_factory.Invoke(null, [submissionArray])!;
             task.GetAwaiter().GetResult();
         }
     }
+
+    private readonly record struct FailedScriptVersion(long LastWriteTimeUtcTicks, long Length);
 
     private static bool IsSupported(ScriptBinding binding)
     {
@@ -338,6 +392,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         if (_disposed) return;
         _disposed = true;
         _runners.Clear();
+        _failedScripts.Clear();
         _started.Clear();
     }
 }
