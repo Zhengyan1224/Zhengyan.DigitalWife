@@ -117,6 +117,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string projectDirectory,
         GraphicsBackend? graphicsBackendOverride)
     {
+        bool linuxDesktopSpriteMode = false;
+        Environment.SetEnvironmentVariable("ZHENGYAN_VULKAN_TRANSPARENT_SWAPCHAIN", null);
         GameOptions options = new()
         {
             Title = "Zhengyan.DigitalWife Game Player",
@@ -142,6 +144,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             GameProject project = GameProjectStore.Load(projectDirectory);
             options.GraphicsBackend = graphicsBackendOverride
                 ?? GraphicsBackendNames.Parse(project.Runtime.GraphicsBackend);
+            linuxDesktopSpriteMode = OperatingSystem.IsLinux() && project.Window.DesktopSpriteMode;
             options.UseOpenCL = project.Runtime.UseOpenCL;
             options.UseVulkanCompute = project.Runtime.UseVulkanCompute;
             options.Samples = AntiAliasingSamples.NormalizeRequested(project.Window.AntiAliasingSamples);
@@ -165,6 +168,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         options.GraphicsBackend = graphicsBackendOverride ?? options.GraphicsBackend;
+        Environment.SetEnvironmentVariable(
+            "ZHENGYAN_VULKAN_TRANSPARENT_SWAPCHAIN",
+            linuxDesktopSpriteMode && options.GraphicsBackend != GraphicsBackend.OpenGL ? "1" : null);
         return options;
     }
 
@@ -361,16 +367,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         GraphicsDevice.SetViewport(0, 0, width, height);
         DrawSceneSkybox(gameTime);
         _guiOverlay?.DrawBackgroundSprites(width, height, 0, 0, width, height);
-    }
-
-    protected override void AfterPresent()
-    {
-        if (OperatingSystem.IsLinux()
-            && Project.Window.DesktopSpriteMode
-            && GraphicsDevice.Backend == GraphicsBackend.Vulkan)
-        {
-            DesktopSpritePlatform.NotifyTransparentVulkanFramePresented(Window);
-        }
     }
 
     private bool TryDrawCameraViewports(GameTime gameTime)

@@ -11,6 +11,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.3.0" />
+    <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
     <PackageVersion Include="Evergine.Bullet" Version="2025.3.18.659" />
     <PackageVersion Include="Evergine.BulletSharpPInvoke" Version="2023.11.28.20" />
     <PackageVersion Include="Evergine.LibBulletc.Natives" Version="2025.8.29.27" />

@@ -245,8 +245,6 @@ public abstract class Game : IDisposable
 
     protected virtual void Draw(GameTime gameTime) { }
 
-    protected virtual void AfterPresent() { }
-
     public virtual bool ShouldDrawComponent(DrawableGameComponent component) => true;
 
     protected virtual void UnloadContent() { }
@@ -366,7 +364,6 @@ public abstract class Game : IDisposable
         }
 
         _renderer.Present();
-        AfterPresent();
     }
 
     private void OnClosing()

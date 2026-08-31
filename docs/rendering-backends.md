@@ -80,6 +80,11 @@ bottom-left RGBA layout before native window regions are updated. Windows,
 macOS, and X11 have native window-region implementations. Native Wayland input
 regions are not implemented yet; Linux desktop-sprite click-through currently
 requires an X11 session or `GLFW_PLATFORM=x11`.
+The GamePlayer build patches Veldrid 4.9's Vulkan swapchain selection so Linux
+desktop-sprite windows prefer `PreMultipliedKHR` composite alpha, with supported
+fallbacks for other surfaces. Normal Vulkan windows keep the original opaque
+selection because the transparent-swapchain flag is only enabled for Linux
+desktop-sprite projects.
 
 ## Selecting a backend
 

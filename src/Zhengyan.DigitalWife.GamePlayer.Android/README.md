@@ -7,6 +7,8 @@
 - 建立 EGL/OpenGL ES 清屏、绘制和画面提交循环；
 - 在平台边界生成每帧不可变的多点触摸状态快照；
 - 通过 Android `Intent` 或应用私有的 `files/GameProject` 目录加载本地工程目录和 `.dwgame` 包；
+- 直接启动应用时打开系统文件选择器，选择 `.dwgame` 后加载；通过“打开方式”或“分享/发送”传入
+  `.dwgame` 的启动方式保持不变；
 - 在开始渲染前执行 Android 兼容性检查；
 - 使用 GLES3 绘制 PMX 几何体、基础纹理、实体变换、主相机、环境光和平行光；
 - 支持多层 VMD 播放、CPU/GPU 蒙皮、循环和播放速度设置。
@@ -15,6 +17,42 @@
 API 带入 Android 目标。当前已经接入 PMX IK、附加骨骼、Morph 动画、多层 VMD 混合、
 Sphere/Toon 材质、GPU BDEF 蒙皮，以及 Bullet 刚体、关节和碰撞物理。剩余差异主要集中在其他
 场景渲染 Pass、阴影、音频和发布流程。
+
+## APK 图标自定义
+
+可以自定义。Android APK 使用构建时固定的应用图标，与运行时加载的游戏工程图标无关。
+默认图标来自仓库中的 `assets/mmd/samples/GameData/Logo/favicon.png`，并以
+`@drawable/app_icon` 写入 APK。建议使用带透明背景、至少 192x192 像素的 PNG。
+
+有两种替换方式：
+
+1. 直接替换 `assets/mmd/samples/GameData/Logo/favicon.png`，保持文件名不变（这也会影响使用
+   同一默认资源的桌面程序）；
+2. 构建时传入自定义 PNG 路径，不修改仓库文件：
+
+   ```powershell
+   dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj `
+     -c Release -p:AndroidApplicationIconPath="D:\Icons\my-game-icon.png"
+   ```
+
+自定义文件会被作为 `Resources/drawable/app_icon.png` 打包，并同时用于 Android 的普通图标
+和圆形图标。指定的图标路径必须存在且是有效 PNG；否则 Android 构建会报告资源缺失。
+
+## APK 应用名称
+
+APK 的应用名称由 Android 项目文件中的 `ApplicationTitle` 控制，安装后桌面启动器显示的名称
+也来自该属性。直接修改：
+
+```xml
+<ApplicationTitle>我的游戏</ApplicationTitle>
+```
+
+也可以在构建时覆盖，不修改项目文件：
+
+```powershell
+dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj `
+  -c Release -p:ApplicationTitle="我的游戏"
+```
 
 当电脑没有配置 `ANDROID_HOME` 或 `JAVA_HOME` 时，可安装 .NET Android workload，并在构建
 命令中显式传入 SDK 路径：
@@ -68,6 +106,55 @@ Workload 会安装 Android 项目所需的 MSBuild 目标、Android SDK 工具�
 
 ### 3. 安装 Android SDK 和 JDK
 
+#### 不安装 Android Studio：使用 Android SDK Command-line Tools
+
+Android Studio 不是构建必需品。可以直接从 Android 官方页面下载 **Command line tools
+only**：<https://developer.android.com/studio#command-tools>。Windows 机器按以下步骤安装：
+
+1. 下载 Windows 版 command-line tools 压缩包，并解压到临时目录。
+2. 创建 SDK 目录和 `cmdline-tools\latest` 目录，将压缩包内的 `bin`、`lib`、`NOTICE.txt`
+   等内容放到 `cmdline-tools\latest` 下，最终应存在：
+
+   ```text
+   %LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin\sdkmanager.bat
+   ```
+
+3. 准备 JDK 21。当前 .NET 10 Android workload（36.x）要求 JDK 21。可以单独安装
+   Microsoft OpenJDK、Eclipse Temurin 等 JDK 21。某些 .NET Android 安装目录会附带 JDK，
+   但必须先用 `java -version` 确认版本为 21；不需要安装 Android Studio 自带的 JBR。
+4. 在 PowerShell 中设置路径并安装构建所需的 SDK 包：
+
+   ```powershell
+   $sdk = "$env:LOCALAPPDATA\Android\Sdk"
+   $jdk = "C:\Program Files\Microsoft\jdk-21"
+   $sdkManager = "$sdk\cmdline-tools\latest\bin\sdkmanager.bat"
+   $androidApi = "35"
+   $buildTools = "35.0.0"
+
+   $env:ANDROID_HOME = $sdk
+   $env:ANDROID_SDK_ROOT = $sdk
+   $env:JAVA_HOME = $jdk
+   $env:Path = "$sdk\platform-tools;$sdk\cmdline-tools\latest\bin;$env:Path"
+
+   & $sdkManager "--sdk_root=$sdk" "platform-tools" `
+     "platforms;android-$androidApi" "build-tools;$buildTools"
+   & $sdkManager "--sdk_root=$sdk" --licenses
+   ```
+
+   如果 `$jdk` 路径不同，请改成实际的 JDK 21 目录。若某个 Build-Tools 版本不可用，
+   可先执行 `& $sdkManager "--sdk_root=$sdk" --list`，再选择列表中的版本。
+5. 验证命令行工具：
+
+   ```powershell
+   Test-Path "$sdk\platform-tools\adb.exe"
+   Test-Path "$sdk\platforms\android-$androidApi\android.jar"
+   Test-Path "$sdk\build-tools\$buildTools\aapt2.exe"
+   Test-Path "$jdk\bin\java.exe"
+   ```
+
+   以上命令都应输出 `True`。之后按照本文后面的构建命令执行，并显式传入
+   `AndroidSdkDirectory` 和 `JavaSdkDirectory`。
+
 最容易的方式是安装 Android Studio（只使用它的 SDK Manager，不需要用 Android Studio 打开
 本项目）：
 
@@ -81,7 +168,7 @@ Workload 会安装 Android 项目所需的 MSBuild 目标、Android SDK 工具�
    - Android Emulator（只有需要模拟器时才必须安装）。
 4. 记下 SDK 位置（SDK Location）。Windows 默认位置通常是
    `%LOCALAPPDATA%\Android\Sdk`。
-5. JDK 建议使用 **JDK 17**。当前 .NET Android 环境通常会在
+5. JDK 建议使用 **JDK 21**。当前 .NET Android 环境通常会在
    `%LOCALAPPDATA%\Android\jdk` 提供可用 JDK；也可以使用 Android Studio 自带的 JBR，
    但构建时必须把路径写给 `JavaSdkDirectory`。
 
@@ -95,7 +182,7 @@ Test-Path "$jdk\bin\java.exe"
 ```
 
 两个命令都应输出 `True`。若 JDK 路径不存在，请在 Android Studio 的 SDK Manager 或 .NET
-Android 安装目录中找到 JDK 17，并将 `$jdk` 改为该目录。
+Android 安装目录中找到 JDK 21，并将 `$jdk` 改为该目录。
 
 ### 4. 配置环境变量（推荐）
 
@@ -250,8 +337,8 @@ GamePlayer 可以加载 GameEditor 的工程目录或 `.dwgame` 发布包。推�
 | --- | --- |
 | `NETSDK1147` | 执行 `dotnet workload install android`，然后重新打开终端。 |
 | `XA5300` 或找不到 SDK | 检查 `$sdk`，并在 `restore/build` 命令中传入 `AndroidSdkDirectory`。 |
-| 找不到 `java.exe` | 使用 JDK 17，检查 `$jdk\bin\java.exe`，并传入 `JavaSdkDirectory`。 |
+| 找不到 `java.exe` | 使用 JDK 21，检查 `$jdk\bin\java.exe`，并传入 `JavaSdkDirectory`。 |
 | `adb` 显示 `unauthorized` | 解锁手机、允许 USB 调试，必要时在开发者选项中撤销 USB 调试授权后重连。 |
 | `INSTALL_FAILED_NO_MATCHING_ABIS` | 当前 APK 包含 arm64-v8a 和 x86_64；确认设备 ABI 或使用匹配的构建产物。 |
-| 应用提示没有项目 | 通过文件管理器“打开方式”选择 `.dwgame`，或确认 `zhengyan.project_path` 指向有效工程。 |
+| 直接启动应用 | 应用会自动打开系统文件选择器；选择 `.dwgame`（或分包的全部文件）即可启动。也可以通过文件管理器“打开方式”或“分享/发送”传入 `.dwgame`。 |
 | 黑屏或无法创建 GLES 上下文 | 使用支持 OpenGL ES 3.0 的设备，查看 `adb logcat -s ZhengyanGamePlayer`。 |

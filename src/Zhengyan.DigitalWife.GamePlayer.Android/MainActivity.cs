@@ -15,7 +15,6 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 [Activity(
     Name = "com.zhengyan.digitalwife.gameplayer.MainActivity",
-    Label = "@string/app_name",
     MainLauncher = true,
     Exported = true,
     LaunchMode = LaunchMode.SingleTask,
@@ -61,17 +60,20 @@ public sealed class MainActivity : Activity
 
         Window?.SetFlags(WindowManagerFlags.KeepScreenOn, WindowManagerFlags.KeepScreenOn);
         EnterImmersiveMode();
-        if (Build.VERSION.SdkInt >= BuildVersionCodes.M
-            && CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio) != Permission.Granted)
-        {
-            RequestPermissions([global::Android.Manifest.Permission.RecordAudio], 7001);
-        }
-
         _root = new FrameLayout(this);
         _loadingOverlay = new AndroidLoadingOverlayView(this);
         _root.AddView(_loadingOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
         SetContentView(_root);
-        _ = LoadProjectAsync(Intent);
+        if (AndroidGameProjectLoader.HasProjectInput(this, Intent))
+        {
+            RequestRecordAudioPermissionIfNeeded();
+            _ = LoadProjectAsync(Intent);
+        }
+        else
+        {
+            // Let the activity finish its first layout before launching the system picker.
+            Window?.DecorView?.Post(OpenPackagePicker);
+        }
     }
 
     protected override void OnResume()
@@ -224,7 +226,15 @@ public sealed class MainActivity : Activity
     {
         base.OnNewIntent(intent);
         Intent = intent;
-        _ = LoadProjectAsync(intent);
+        if (AndroidGameProjectLoader.HasProjectInput(this, intent))
+        {
+            RequestRecordAudioPermissionIfNeeded();
+            _ = LoadProjectAsync(intent);
+        }
+        else
+        {
+            Window?.DecorView?.Post(OpenPackagePicker);
+        }
     }
 
     protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
@@ -232,7 +242,15 @@ public sealed class MainActivity : Activity
         base.OnActivityResult(requestCode, resultCode, data);
         if (requestCode != PackagePickerRequestCode) return;
         _packagePickerActive = false;
-        if (resultCode == Result.Ok && data is not null) _ = LoadProjectAsync(data);
+        if (resultCode == Result.Ok && data is not null)
+        {
+            RequestRecordAudioPermissionIfNeeded();
+            _ = LoadProjectAsync(data);
+        }
+        else if (resultCode != Result.Ok)
+        {
+            _loadingOverlay?.SetError("Select a .dwgame package to start a game.");
+        }
     }
 
     public override void OnWindowFocusChanged(bool hasFocus)
@@ -399,6 +417,15 @@ public sealed class MainActivity : Activity
         {
             _packagePickerActive = false;
             _loadingOverlay?.SetError($"Unable to open package picker: {ex.Message}");
+        }
+    }
+
+    private void RequestRecordAudioPermissionIfNeeded()
+    {
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.M
+            && CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio) != Permission.Granted)
+        {
+            RequestPermissions([global::Android.Manifest.Permission.RecordAudio], 7001);
         }
     }
 

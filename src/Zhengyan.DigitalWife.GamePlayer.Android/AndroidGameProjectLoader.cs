@@ -34,6 +34,20 @@ internal static class AndroidGameProjectLoader
     private const string LogTag = "ZhengyanGamePlayer";
     private const string ProjectPathExtra = "zhengyan.project_path";
 
+    public static bool HasProjectInput(Activity activity, Intent? intent)
+    {
+        ArgumentNullException.ThrowIfNull(activity);
+        if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra(ProjectPathExtra))
+            || ResolveIntentUris(intent).Count > 0)
+        {
+            return true;
+        }
+
+        string filesRoot = activity.FilesDir?.AbsolutePath ?? string.Empty;
+        string bundledProject = Path.Combine(filesRoot, "GameProject");
+        return Directory.Exists(bundledProject) || File.Exists(bundledProject);
+    }
+
     public static AndroidGameProjectLoadResult Load(Activity activity, Intent? intent, string? password = null)
     {
         ArgumentNullException.ThrowIfNull(activity);

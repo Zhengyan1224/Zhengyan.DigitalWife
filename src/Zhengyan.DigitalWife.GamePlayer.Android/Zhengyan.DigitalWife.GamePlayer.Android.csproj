@@ -5,14 +5,20 @@
         <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
         <OutputType>Exe</OutputType>
         <ApplicationId>com.zhengyan.digitalwife.gameplayer</ApplicationId>
+        <ApplicationTitle>Zhengyan DigitalWife GamePlayer</ApplicationTitle>
         <ApplicationVersion>1</ApplicationVersion>
         <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+        <!-- Replace this file or override AndroidApplicationIconPath at build time. -->
+        <AndroidApplicationIconPath Condition="'$(AndroidApplicationIconPath)' == ''">$(MSBuildThisFileDirectory)..\..\assets\mmd\samples\GameData\Logo\favicon.png</AndroidApplicationIconPath>
         <!-- Keep project JSON model types available until the Android source-generated JSON context is complete. -->
         <TrimMode>partial</TrimMode>
         <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     </PropertyGroup>
 
     <ItemGroup>
+        <AndroidResource Include="$(AndroidApplicationIconPath)" Condition="Exists('$(AndroidApplicationIconPath)')">
+            <Link>Resources\drawable\app_icon.png</Link>
+        </AndroidResource>
         <!--
           Roslyn script submissions always emit an async factory returning Task<object>,
           even when the .csx source contains no await. These members are reached only

@@ -80,7 +80,7 @@ macOS 不使用 `.desktop`。正式分发时应打包为 `.app`，并在 bundle 
 
 ## Linux 运行依赖
 
-Linux 运行 3D / GUI / 桌面精灵入口时需要安装 OpenGL、X11、OpenAL、PortAudio 等运行库。桌面精灵在 X11 点击穿透模式下还会使用 `libXi.so.6` 读取全局鼠标滚轮事件；Vulkan 透明窗口使用 `libXdamage.so.1` 和 `libXfixes.so.3` 通知合成器完整重绘。Debian / Ubuntu / Kali 系统对应包名是 `libxi6`、`libxdamage1` 和 `libxfixes3`。
+Linux 运行 3D / GUI / 桌面精灵入口时需要安装 OpenGL、Vulkan、X11、OpenAL、PortAudio 等运行库。桌面精灵在 X11 点击穿透模式下还会使用 `libXi.so.6` 读取全局鼠标滚轮事件；Vulkan 桌面精灵会为 X11 交换链选择受支持的预乘透明合成模式。Debian / Ubuntu / Kali 系统对应包名是 `libxi6`。
 
 ```bash
 sudo apt install -y libxi6
