@@ -6,8 +6,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Numerics;
-using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
 namespace Zhengyan.DigitalWife.GameEditor;
 
@@ -16,6 +16,7 @@ internal sealed record AndroidScriptPrecompileEntry(string Source, string Assemb
 internal sealed record AndroidScriptPrecompileResult(IReadOnlyList<AndroidScriptPrecompileEntry> Entries)
 {
     public string ManifestPath { get; init; } = string.Empty;
+    public IReadOnlyList<string> Errors { get; init; } = [];
 }
 
 internal static class AndroidCSharpScriptPrecompiler
@@ -61,20 +62,20 @@ internal static class AndroidCSharpScriptPrecompiler
             }
         }
 
-        if (errors.Count > 0)
-        {
-            throw new InvalidOperationException("Android C# precompile failed:" + Environment.NewLine + string.Join(Environment.NewLine, errors));
-        }
-
         string manifestPath = Path.Combine(outputDirectory, "manifest.json");
         File.WriteAllBytes(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new
         {
             version = 1,
             generatedAtUtc = DateTimeOffset.UtcNow,
             globalsContract = typeof(AndroidScriptGlobalsContract).Assembly.GetName().Name,
-            scripts = entries
+            scripts = entries,
+            errors
         }, new JsonSerializerOptions { WriteIndented = true }));
-        return new AndroidScriptPrecompileResult(entries) { ManifestPath = manifestPath };
+        return new AndroidScriptPrecompileResult(entries)
+        {
+            ManifestPath = manifestPath,
+            Errors = errors
+        };
     }
 
     private static void AddBindings(IEnumerable<ScriptBinding> bindings, string projectDirectory, ISet<string> paths)
@@ -102,7 +103,6 @@ internal static class AndroidCSharpScriptPrecompiler
             + "using System.Threading;\n"
             + "using System.Threading.Tasks;\n"
             + "using Zhengyan.DigitalWife.GameProjects;\n"
-            + "using Zhengyan.DigitalWife.GamePlayer.Runtime;\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n\n"
             + File.ReadAllText(path);
         SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
@@ -113,7 +113,11 @@ internal static class AndroidCSharpScriptPrecompiler
             "AndroidScript_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).Substring(0, 16),
             syntaxTree,
             GetMetadataReferences(),
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release),
+            new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: OptimizationLevel.Release,
+                allowUnsafe: true,
+                concurrentBuild: false),
             returnType: typeof(object),
             globalsType: typeof(AndroidScriptGlobalsContract));
 
@@ -121,9 +125,21 @@ internal static class AndroidCSharpScriptPrecompiler
         EmitResult result = compilation.Emit(image);
         if (!result.Success)
         {
-            string diagnostics = string.Join(Environment.NewLine, result.Diagnostics
-                .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
-                .Select(diagnostic => diagnostic.ToString()));
+            // Emit diagnostics can be empty for script compilations when the
+            // failure is produced by the compilation pipeline itself. Include
+            // the complete compilation diagnostic set as a fallback so export
+            // never fails with an opaque "no diagnostics" message.
+            IEnumerable<Diagnostic> allDiagnostics = result.Diagnostics
+                .Concat(compilation.GetDiagnostics())
+                .GroupBy(diagnostic => diagnostic.ToString(), StringComparer.Ordinal)
+                .Select(group => group.First())
+                .Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning);
+            string diagnostics = string.Join(Environment.NewLine, allDiagnostics.Select(diagnostic => diagnostic.ToString()));
+            if (string.IsNullOrWhiteSpace(diagnostics))
+            {
+                diagnostics = $"Roslyn did not emit an assembly (result.Success={result.Success}, " +
+                    $"diagnosticCount={result.Diagnostics.Length}, compilationDiagnosticCount={compilation.GetDiagnostics().Length}).";
+            }
             throw new InvalidOperationException(diagnostics);
         }
 
@@ -132,24 +148,52 @@ internal static class AndroidCSharpScriptPrecompiler
 
     private static IEnumerable<MetadataReference> GetMetadataReferences()
     {
-        HashSet<string> identities = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
         Assembly[] requiredAssemblies =
         [
             typeof(object).Assembly,
             typeof(Console).Assembly,
             typeof(Task).Assembly,
+            typeof(System.Runtime.CompilerServices.CallSite).Assembly,
+            typeof(System.Linq.Expressions.Expression).Assembly,
+            typeof(System.Dynamic.DynamicObject).Assembly,
+            typeof(System.Runtime.CompilerServices.DynamicAttribute).Assembly,
             typeof(System.Linq.Enumerable).Assembly,
             typeof(Vector3).Assembly,
             typeof(AndroidScriptGlobalsContract).Assembly,
             typeof(GameProject).Assembly,
-            typeof(RuntimeScene).Assembly,
+            typeof(PmxModelComponent).Assembly,
             typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly
         ];
         foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
         {
-            if (assembly.IsDynamic || !identities.Add(assembly.FullName ?? assembly.GetName().Name ?? string.Empty)) continue;
-            if (string.IsNullOrWhiteSpace(assembly.Location) || !File.Exists(assembly.Location)) continue;
+            if (assembly.IsDynamic || string.IsNullOrWhiteSpace(assembly.Location) || !File.Exists(assembly.Location)
+                || !paths.Add(Path.GetFullPath(assembly.Location))) continue;
             yield return MetadataReference.CreateFromFile(assembly.Location);
         }
+
+        // Keep the runtime binder reference explicit. On some .NET SDK layouts an
+        // AppDomain-loaded facade with the same identity can otherwise hide the
+        // implementation metadata required for dynamic globals in script submissions.
+        string binderPath = typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly.Location;
+        if (File.Exists(binderPath) && paths.Add(Path.GetFullPath(binderPath)))
+        {
+            yield return MetadataReference.CreateFromFile(binderPath);
+        }
+
+        // Include the complete .NET shared-framework reference set. This is
+        // required by dynamic script submissions on machines where the editor's
+        // plugin load context does not have every runtime facade loaded yet.
+        if (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") is string trustedAssemblies)
+        {
+            foreach (string path in trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (File.Exists(path) && paths.Add(Path.GetFullPath(path)))
+                {
+                    yield return MetadataReference.CreateFromFile(path);
+                }
+            }
+        }
+
     }
 }

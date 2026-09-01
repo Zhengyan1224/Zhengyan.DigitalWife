@@ -2,6 +2,7 @@ using Android.App;
 using Android.Content;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Emit;
 using System.Numerics;
 using System.Reflection;
@@ -31,6 +32,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, bool> _isAudioPlaying;
     private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<ScriptExecutionKey, AndroidScriptExecutionContext> _executionContexts = [];
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -74,7 +76,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
             {
-                Execute(binding, CreateGlobals(scene, entity, 0.0f, true, input: AndroidInputSnapshot.Empty));
+                Execute(binding, scene, entity, 0.0f, true, input: AndroidInputSnapshot.Empty);
             }
         }
     }
@@ -85,7 +87,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
             {
-                Execute(binding, CreateGlobals(scene, entity, deltaSeconds, false, input: input ?? AndroidInputSnapshot.Empty));
+                Execute(binding, scene, entity, deltaSeconds, false, input: input ?? AndroidInputSnapshot.Empty);
             }
         }
     }
@@ -103,18 +105,15 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
             {
-                Execute(binding, CreateGlobals(scene, entity, 0.0f, false, runtimeEvent));
+                Execute(binding, scene, entity, 0.0f, false, runtimeEvent);
             }
         }
     }
 
-    private AndroidScriptGlobals CreateGlobals(
+    private AndroidScriptExecutionContext CreateExecutionContext(
         RuntimeScene scene,
         RuntimeEntity entity,
-        float deltaSeconds,
-        bool isStart,
-        AndroidRuntimeEvent? runtimeEvent = null,
-        AndroidInputSnapshot? input = null)
+        AndroidInputSnapshot input)
     {
         AndroidScriptServices services = new(
             scene,
@@ -127,7 +126,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _configureRenderTexture,
             _getRenderTexture,
             _listRenderTextures);
-        return new AndroidScriptGlobals(
+        AndroidScriptInput scriptInput = new(input);
+        AndroidScriptGlobals globals = new(
             new AndroidScriptScene(scene, _projectDirectory),
             new AndroidScriptEntity(
                 entity,
@@ -135,18 +135,32 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 (frame, playing) => _setMotionState(entity, frame, playing),
                 () => _resolvePmxModel(entity),
                 ResolveScriptAssetPath),
-            new AndroidScriptInput(input ?? AndroidInputSnapshot.Empty),
+            scriptInput,
             new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying),
-            deltaSeconds,
-            isStart,
-            !isStart && runtimeEvent is null,
-            runtimeEvent,
+            0.0f,
+            false,
+            false,
+            null,
             services);
+        return new AndroidScriptExecutionContext(globals, scriptInput);
     }
 
-    private void Execute(ScriptBinding binding, AndroidScriptGlobals globals)
+    private void Execute(
+        ScriptBinding binding,
+        RuntimeScene scene,
+        RuntimeEntity entity,
+        float deltaSeconds,
+        bool isStart,
+        AndroidRuntimeEvent? runtimeEvent = null,
+        AndroidInputSnapshot? input = null)
     {
         string path = GameProjectPath.ToAbsolute(_projectDirectory, binding.Path);
+        if (_runners.TryGetValue(path, out AndroidCompiledScript? cachedRunner))
+        {
+            ExecuteCached(cachedRunner, path, scene, entity, deltaSeconds, isStart, runtimeEvent, input);
+            return;
+        }
+
         if (!File.Exists(path)) return;
         FileInfo sourceFile = new(path);
         FailedScriptVersion version = new(sourceFile.LastWriteTimeUtc.Ticks, sourceFile.Length);
@@ -163,35 +177,60 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
         try
         {
-            if (!_runners.TryGetValue(path, out AndroidCompiledScript? runner))
+            AndroidCompiledScript? runner = TryLoadPrecompiled(path);
+            if (runner is null)
             {
-                runner = TryLoadPrecompiled(path);
-                if (runner is null)
+                // Runtime Roslyn compilation is kept as a compatibility
+                // fallback for older packages, but it must not be an
+                // invisible per-frame cost when an assembly is missing.
+                if (sourceFile.Length > 0)
                 {
-                    // Runtime Roslyn compilation is kept as a compatibility
-                    // fallback for older packages, but it must not be an
-                    // invisible per-frame cost when an assembly is missing.
-                    if (sourceFile.Length > 0)
-                    {
-                        global::Android.Util.Log.Warn(
-                            "ZhengyanGamePlayer",
-                            $"Android C# script is not precompiled; compiling once at runtime: '{path}'. " +
-                            "Re-export the .dwgame with Android C# precompilation enabled to avoid startup stalls.");
-                    }
-
-                    runner = Compile(path);
+                    global::Android.Util.Log.Warn(
+                        "ZhengyanGamePlayer",
+                        $"Android C# script is not precompiled; compiling once at runtime: '{path}'. " +
+                        "Re-export the .dwgame with Android C# precompilation enabled to avoid startup stalls.");
                 }
 
-                _runners[path] = runner;
+                runner = Compile(path);
             }
 
-            runner.Execute(globals);
+            _runners[path] = runner;
+            ExecuteCached(runner, path, scene, entity, deltaSeconds, isStart, runtimeEvent, input);
         }
         catch (Exception ex)
         {
             _failedScripts[path] = version;
             global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {ex}");
         }
+    }
+
+    private void ExecuteCached(
+        AndroidCompiledScript runner,
+        string path,
+        RuntimeScene scene,
+        RuntimeEntity entity,
+        float deltaSeconds,
+        bool isStart,
+        AndroidRuntimeEvent? runtimeEvent,
+        AndroidInputSnapshot? input)
+    {
+        ScriptExecutionPhases phase = isStart
+            ? ScriptExecutionPhases.Start
+            : runtimeEvent is null ? ScriptExecutionPhases.Update : ScriptExecutionPhases.Event;
+        if (runner.IsNoOp || (runner.Phases & phase) == 0)
+        {
+            return;
+        }
+
+        ScriptExecutionKey key = new(scene, entity, path);
+        if (!_executionContexts.TryGetValue(key, out AndroidScriptExecutionContext? context))
+        {
+            context = CreateExecutionContext(scene, entity, input ?? AndroidInputSnapshot.Empty);
+            _executionContexts.Add(key, context);
+        }
+
+        context.Update(deltaSeconds, isStart, runtimeEvent, input ?? AndroidInputSnapshot.Empty);
+        runner.Execute(context.Globals, context.SubmissionArray);
     }
 
     private string ResolveScriptAssetPath(string value)
@@ -228,6 +267,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             source,
             new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script),
             path);
+        ScriptExecutionPhases phases = AnalyzeScriptPhases(scriptSource);
         CSharpCompilation compilation = CSharpCompilation.CreateScriptCompilation(
             "AndroidScript_" + Guid.NewGuid().ToString("N"),
             syntaxTree,
@@ -255,7 +295,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
 
         Assembly assembly = Assembly.Load(image.ToArray());
-        return CreateCompiledScript(assembly);
+        return CreateCompiledScript(assembly, phases);
     }
 
     private AndroidCompiledScript? TryLoadPrecompiled(string sourcePath)
@@ -266,7 +306,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         if (!File.Exists(assemblyPath)) return null;
         try
         {
-            return CreateCompiledScript(Assembly.Load(File.ReadAllBytes(assemblyPath)));
+            ScriptExecutionPhases phases = AnalyzeScriptPhases(File.ReadAllText(sourcePath));
+            return CreateCompiledScript(Assembly.Load(File.ReadAllBytes(assemblyPath)), phases);
         }
         catch (Exception ex)
         {
@@ -275,13 +316,124 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
     }
 
-    private static AndroidCompiledScript CreateCompiledScript(Assembly assembly)
+    private static AndroidCompiledScript CreateCompiledScript(Assembly assembly, ScriptExecutionPhases phases)
     {
         Type scriptType = assembly.GetType("Script")
             ?? throw new InvalidOperationException("Android C# script did not produce a Script type.");
         MethodInfo factory = scriptType.GetMethod("<Factory>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Android C# script did not produce an execution factory.");
-        return new AndroidCompiledScript(factory);
+        return new AndroidCompiledScript(factory, phases);
+    }
+
+    private static ScriptExecutionPhases AnalyzeScriptPhases(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return ScriptExecutionPhases.None;
+        }
+
+        SyntaxNode root = CSharpSyntaxTree.ParseText(
+            source,
+            new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script)).GetRoot();
+        ScriptExecutionPhases phases = ScriptExecutionPhases.None;
+        foreach (GlobalStatementSyntax global in root.DescendantNodes().OfType<GlobalStatementSyntax>())
+        {
+            if (global.Statement is EmptyStatementSyntax)
+            {
+                continue;
+            }
+
+            if (global.Statement is not IfStatementSyntax conditional
+                || conditional.Else is not null)
+            {
+                return ScriptExecutionPhases.All;
+            }
+
+            ScriptExecutionPhases conditionalPhase = ClassifyCondition(conditional.Condition);
+            if (conditionalPhase == ScriptExecutionPhases.All)
+            {
+                return ScriptExecutionPhases.All;
+            }
+
+            if (HasExecutableStatement(conditional.Statement))
+            {
+                phases |= conditionalPhase;
+            }
+        }
+
+        return phases;
+    }
+
+    private static ScriptExecutionPhases ClassifyCondition(ExpressionSyntax condition)
+    {
+        IdentifierNameSyntax[] phaseIdentifiers = condition.DescendantNodesAndSelf()
+            .OfType<IdentifierNameSyntax>()
+            .Where(identifier => identifier.Identifier.ValueText is
+                nameof(AndroidScriptGlobals.IsStart)
+                or nameof(AndroidScriptGlobals.IsUpdate)
+                or nameof(AndroidScriptGlobals.IsEvent)
+                or nameof(AndroidScriptGlobals.IsGuiEvent)
+                or nameof(AndroidScriptGlobals.IsSpriteEvent)
+                or nameof(AndroidScriptGlobals.IsSpeechEvent))
+            .ToArray();
+        if (phaseIdentifiers.Any(identifier => HasUnsafeConditionAncestor(identifier, condition)))
+        {
+            return ScriptExecutionPhases.All;
+        }
+
+        HashSet<string> identifiers = phaseIdentifiers
+            .Select(identifier => identifier.Identifier.ValueText)
+            .ToHashSet(StringComparer.Ordinal);
+        bool start = identifiers.Contains(nameof(AndroidScriptGlobals.IsStart));
+        bool update = identifiers.Contains(nameof(AndroidScriptGlobals.IsUpdate));
+        bool runtimeEvent = identifiers.Overlaps(
+        [
+            nameof(AndroidScriptGlobals.IsEvent),
+            nameof(AndroidScriptGlobals.IsGuiEvent),
+            nameof(AndroidScriptGlobals.IsSpriteEvent),
+            nameof(AndroidScriptGlobals.IsSpeechEvent)
+        ]);
+        int phaseCount = (start ? 1 : 0) + (update ? 1 : 0) + (runtimeEvent ? 1 : 0);
+        if (phaseCount != 1)
+        {
+            return ScriptExecutionPhases.All;
+        }
+
+        return start
+            ? ScriptExecutionPhases.Start
+            : update ? ScriptExecutionPhases.Update : ScriptExecutionPhases.Event;
+    }
+
+    private static bool HasExecutableStatement(StatementSyntax statement)
+        => statement is not BlockSyntax block || block.Statements.Count != 0;
+
+    private static bool HasUnsafeConditionAncestor(IdentifierNameSyntax identifier, ExpressionSyntax condition)
+    {
+        if (ReferenceEquals(identifier, condition))
+        {
+            return false;
+        }
+
+        for (SyntaxNode? current = identifier.Parent; current is not null; current = current.Parent)
+        {
+            if (current is ParenthesizedExpressionSyntax)
+            {
+                if (ReferenceEquals(current, condition)) return false;
+                continue;
+            }
+
+            if (current is BinaryExpressionSyntax binary
+                && (binary.IsKind(SyntaxKind.LogicalAndExpression)
+                    || binary.IsKind(SyntaxKind.LogicalOrExpression)))
+            {
+                if (ReferenceEquals(current, condition)) return false;
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     private static IEnumerable<MetadataReference> GetMetadataReferences()
@@ -356,26 +508,57 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     private sealed class AndroidCompiledScript
     {
-        private readonly MethodInfo? _factory;
+        private readonly Func<object?[], Task<object?>>? _factory;
 
-        public static AndroidCompiledScript NoOp { get; } = new(null);
+        public static AndroidCompiledScript NoOp { get; } = new(null, ScriptExecutionPhases.None);
 
-        public AndroidCompiledScript(MethodInfo? factory)
+        public AndroidCompiledScript(MethodInfo? factory, ScriptExecutionPhases phases)
         {
-            _factory = factory;
+            _factory = factory is null
+                ? null
+                : factory.CreateDelegate<Func<object?[], Task<object?>>>();
+            Phases = phases;
         }
 
-        public void Execute(AndroidScriptGlobals globals)
+        public bool IsNoOp => _factory is null;
+        public ScriptExecutionPhases Phases { get; }
+
+        public void Execute(AndroidScriptGlobals globals, object?[] submissionArray)
         {
             if (_factory is null)
             {
                 return;
             }
 
-            object?[] submissionArray = [globals, null];
-            Task<object?> task = (Task<object?>)_factory.Invoke(null, [submissionArray])!;
+            submissionArray[0] = globals;
+            submissionArray[1] = null;
+            Task<object?> task = _factory(submissionArray);
             task.GetAwaiter().GetResult();
         }
+    }
+
+    private sealed class AndroidScriptExecutionContext(AndroidScriptGlobals globals, AndroidScriptInput input)
+    {
+        public AndroidScriptGlobals Globals { get; } = globals;
+        public object?[] SubmissionArray { get; } = new object?[2];
+
+        public void Update(float deltaSeconds, bool isStart, AndroidRuntimeEvent? runtimeEvent, AndroidInputSnapshot snapshot)
+        {
+            input.Update(snapshot);
+            Globals.Update(deltaSeconds, isStart, runtimeEvent);
+        }
+    }
+
+    private readonly record struct ScriptExecutionKey(RuntimeScene Scene, RuntimeEntity Entity, string Path);
+
+    [Flags]
+    private enum ScriptExecutionPhases
+    {
+        None = 0,
+        Start = 1,
+        Update = 2,
+        Event = 4,
+        All = Start | Update | Event
     }
 
     private readonly record struct FailedScriptVersion(long LastWriteTimeUtcTicks, long Length);
@@ -393,6 +576,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _disposed = true;
         _runners.Clear();
         _failedScripts.Clear();
+        _executionContexts.Clear();
         _started.Clear();
     }
 }
@@ -749,9 +933,11 @@ public sealed class AndroidScriptEntity
 
 public sealed class AndroidScriptInput
 {
-    private readonly AndroidInputSnapshot _snapshot;
+    private AndroidInputSnapshot _snapshot;
 
     internal AndroidScriptInput(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
+
+    internal void Update(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
 
     public bool IsKeyDown(string key)
         => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);
@@ -970,12 +1156,12 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new AndroidScriptTts Tts => Services.Tts;
     public new AndroidScriptAsr Asr => Services.Asr;
     public new AndroidScriptRealtime Realtime => Services.Realtime;
-    public new float DeltaSeconds { get; }
-    public new bool IsStart { get; }
-    public new bool IsUpdate { get; }
+    public new float DeltaSeconds { get; private set; }
+    public new bool IsStart { get; private set; }
+    public new bool IsUpdate { get; private set; }
 
     /// <summary>非 null 时表示一次 GUI/Sprite/触摸事件；Start/Update 时为 null。</summary>
-    public new AndroidRuntimeEvent? Event { get; }
+    public new AndroidRuntimeEvent? Event { get; private set; }
 
     public new bool IsEvent => Event is not null;
     public new bool IsGuiEvent => string.Equals(Event?.Type, "gui", StringComparison.OrdinalIgnoreCase);
@@ -987,6 +1173,25 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new string SpeechCallbackName => IsSpeechEvent ? Event!.EventName : string.Empty;
 
     public new AndroidScriptServices Services { get; }
+
+    internal void Update(float deltaSeconds, bool isStart, AndroidRuntimeEvent? runtimeEvent)
+    {
+        DeltaSeconds = deltaSeconds;
+        IsStart = isStart;
+        IsUpdate = !isStart && runtimeEvent is null;
+        Event = runtimeEvent;
+        base.Event = runtimeEvent;
+        base.DeltaSeconds = DeltaSeconds;
+        base.IsStart = IsStart;
+        base.IsUpdate = IsUpdate;
+        base.IsGuiEvent = IsGuiEvent;
+        base.IsSpriteEvent = IsSpriteEvent;
+        base.IsSpeechEvent = IsSpeechEvent;
+        base.GuiControlId = GuiControlId;
+        base.GuiControlName = GuiControlName;
+        base.GuiEventName = GuiEventName;
+        base.SpeechCallbackName = SpeechCallbackName;
+    }
 }
 
 public sealed class AndroidScriptServices

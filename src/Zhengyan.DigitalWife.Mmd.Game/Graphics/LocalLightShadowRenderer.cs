@@ -44,13 +44,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
             return;
         }
 
-        List<PmxModelComponent> casters = pmxModels
-            .Where(model => model.Visible && model.EnableShadow)
-            .ToList();
-        List<ParticleSystemComponent> particleCasters = particleSystems
-            .Where(particle => particle.Visible && particle.CastShadows)
-            .ToList();
-        if ((casters.Count == 0 && particleCasters.Count == 0) || shadowStrength <= 0.001f)
+        if (shadowStrength <= 0.001f)
         {
             CurrentBinding = null;
             _lastRenderedFrame = gameTime.FrameCount;
@@ -60,6 +54,19 @@ public sealed class LocalLightShadowRenderer : IDisposable
         List<(int PackedIndex, PointLightData Light)> points = SelectPointLights(pointLights);
         List<(int PackedIndex, SpotLightData Light)> spots = SelectSpotLights(spotLights);
         if (points.Count == 0 && spots.Count == 0)
+        {
+            CurrentBinding = null;
+            _lastRenderedFrame = gameTime.FrameCount;
+            return;
+        }
+
+        List<PmxModelComponent> casters = pmxModels
+            .Where(model => model.Visible && model.EnableShadow)
+            .ToList();
+        List<ParticleSystemComponent> particleCasters = particleSystems
+            .Where(particle => particle.Visible && particle.CastShadows)
+            .ToList();
+        if (casters.Count == 0 && particleCasters.Count == 0)
         {
             CurrentBinding = null;
             _lastRenderedFrame = gameTime.FrameCount;

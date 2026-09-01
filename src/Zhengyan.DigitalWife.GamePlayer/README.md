@@ -41,6 +41,21 @@ dotnet run --project src/Zhengyan.DigitalWife.GamePlayer/Zhengyan.DigitalWife.Ga
 
 包加载时，GamePlayer 会按原有工程目录流程加载。未加密 `.dwgame` 首次启动会解包到用户本地包缓存目录，后续启动会按包文件 hash 直接复用缓存，避免每次重复解包；加密包为了避免明文资源长期留在磁盘上，仍会解包到运行时临时目录并在退出时尝试清理。包模式下 `Scene.Save` / `scene.save` 不会写入解包目录，而是写入用户数据目录，例如 Windows 下的 `%LOCALAPPDATA%\Zhengyan.DigitalWife\GamePlayer\Saves\<GameName>`。
 
+### C# 脚本预编译
+
+GameEditor 导出 `.dwgame` 时，默认启用 **Precompile desktop C#**，将所有场景中已启用的
+C# / CSX 脚本编译到：
+
+```text
+compiled/desktop/<脚本相对路径>.dll
+compiled/desktop/manifest.json
+```
+
+PC GamePlayer 会优先加载对应 DLL，找不到时继续使用 `.csx` 源码进行 Roslyn 运行时编译。
+生成的 DLL 名称中编码了源码 SHA-256；如果开发期导出后又修改了源脚本，GamePlayer 会判定 DLL 已过期并
+自动回退到最新源码，避免运行旧逻辑。Android 使用独立的 `compiled/android` 程序集，两种平台
+的 globals/API 契约不会混用。原始脚本仍会保留在 `.dwgame` 中作为兼容回退。
+
 ### 隐藏控制台 / 无终端启动
 
 开发调试时推荐保留控制台，方便查看加载日志、脚本错误和平台兼容性提示。正式使用时可按平台选择无终端启动方式：

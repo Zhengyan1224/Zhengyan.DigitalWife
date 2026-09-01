@@ -13,7 +13,7 @@ internal sealed class ScriptHost
     {
         return language.Trim().ToLowerInvariant() switch
         {
-            "csharp" or "cs" or "csx" => new CSharpScriptInstance(scriptPath),
+            "csharp" or "cs" or "csx" => new CSharpScriptInstance(scriptPath, _projectDirectory),
             "python" or "py" => new PythonScriptInstance(scriptPath, _projectDirectory),
             _ => throw new NotSupportedException($"Unsupported script language: {language}")
         };

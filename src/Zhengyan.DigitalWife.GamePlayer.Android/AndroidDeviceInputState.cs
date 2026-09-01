@@ -111,6 +111,21 @@ internal sealed class AndroidDeviceInputState
     {
         lock (_sync)
         {
+            if (_keys.Count == 0
+                && _pressedKeys.Count == 0
+                && _releasedKeys.Count == 0
+                && _mouseButtons.Count == 0
+                && _pressedMouseButtons.Count == 0
+                && _releasedMouseButtons.Count == 0
+                && _gamepadButtons.Count == 0
+                && !_gamepadConnected
+                && _mousePosition == Vector2.Zero
+                && _mouseDelta == Vector2.Zero
+                && _scrollDelta == Vector2.Zero)
+            {
+                return AndroidDeviceInputSnapshot.Empty;
+            }
+
             AndroidDeviceInputSnapshot result = new(new HashSet<Keycode>(_keys), new HashSet<Keycode>(_pressedKeys), new HashSet<Keycode>(_releasedKeys), _mousePosition, _mouseDelta, _scrollDelta,
                 new HashSet<int>(_mouseButtons), new HashSet<int>(_pressedMouseButtons), new HashSet<int>(_releasedMouseButtons),
                 new AndroidGamepadSnapshot(_gamepadConnected, _gamepadName, _leftStick, _rightStick, _leftTrigger, _rightTrigger, new HashSet<Keycode>(_gamepadButtons)));

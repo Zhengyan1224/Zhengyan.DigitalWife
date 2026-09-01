@@ -763,12 +763,16 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string? password = null,
         long splitPartSizeBytes = 0,
         bool includeSaves = false,
-        bool precompileAndroid = true)
+        bool precompileAndroid = true,
+        bool precompileDesktop = true)
     {
         SaveProject();
         AndroidScriptPrecompileResult precompile = precompileAndroid
             ? AndroidCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project)
             : new AndroidScriptPrecompileResult([]);
+        DesktopScriptPrecompileResult desktopPrecompile = precompileDesktop
+            ? DesktopCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project)
+            : new DesktopScriptPrecompileResult([]);
         GameProjectPackageBuildResult result = GameProjectPackage.Create(
             ProjectDirectory,
             new GameProjectPackageBuildOptions
@@ -782,7 +786,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string outputSummary = result.Split
             ? $"{result.PartPaths.Count} part(s), first: {result.PartPaths[0]}"
             : result.OutputPath;
-        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nPrecompiled C# scripts: {precompile.Entries.Count}\nTotal bytes: {result.TotalBytes:N0}");
+        string precompileWarning = precompile.Errors.Count == 0
+            ? string.Empty
+            : $"\nAndroid precompile warnings: {precompile.Errors.Count} (see compiled/android/manifest.json)";
+        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nPrecompiled Android C# scripts: {precompile.Entries.Count}\nPrecompiled desktop C# scripts: {desktopPrecompile.Entries.Count}\nTotal bytes: {result.TotalBytes:N0}{precompileWarning}");
         return result;
     }
 

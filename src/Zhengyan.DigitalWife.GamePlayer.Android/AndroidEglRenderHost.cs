@@ -167,7 +167,10 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         }
 
         MakeCurrent();
-        Log.Info(LogTag, $"Android graphics backend: OpenGL ES {_openGlEsVersion}; MSAA requested={_requestedMsaaSamples}x, actual={_actualMsaaSamples}x");
+        Log.Info(
+            LogTag,
+            $"Android graphics backend: OpenGL; renderer: OpenGL ES {_openGlEsVersion}; " +
+            $"MSAA requested={_requestedMsaaSamples}x, actual={_actualMsaaSamples}x");
         ReloadScene();
         _ = EGL14.EglSwapInterval(_display, 1);
         ResetFrameClock();

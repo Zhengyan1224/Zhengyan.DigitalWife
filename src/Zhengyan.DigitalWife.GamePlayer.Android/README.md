@@ -243,11 +243,19 @@ dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.Ga
 生成可安装的 Release APK：
 
 ```powershell
+dotnet restore src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj `
+  -p:Configuration=Release `
+  -p:AndroidSdkDirectory="$sdk" `
+  -p:JavaSdkDirectory="$jdk"
+
 dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj `
   -c Release --no-restore `
   -p:AndroidSdkDirectory="$sdk" `
   -p:JavaSdkDirectory="$jdk"
 ```
+
+`--no-restore` 只有在同一配置（这里是 `Release`）的 `dotnet restore` 成功完成后才能使用。
+如果 NuGet 源暂时不可用，请先修复网络/代理或启用可用的镜像源，再重复 restore；不要直接跳过 restore。
 
 APK 位于：
 

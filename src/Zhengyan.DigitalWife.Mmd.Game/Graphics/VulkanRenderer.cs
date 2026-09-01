@@ -44,6 +44,13 @@ public sealed class VulkanRenderer : IRenderer
 
     public int AntiAliasingSamples => (int)_sampleCount;
 
+    /// <summary>
+    /// Forces completion of the submitted command buffer before the next frame
+    /// can update dynamic PMX buffers. Android Mali drivers may return from
+    /// FIFO presentation while those buffers are still in use.
+    /// </summary>
+    public bool WaitForIdleAfterPresent { get; set; }
+
     public IRenderBackendServices Services => _services;
 
     public Vector2D<int> BackBufferSize { get; private set; }
@@ -498,6 +505,10 @@ public sealed class VulkanRenderer : IRenderer
             device.SubmitCommands(commands);
         }
         device.SwapBuffers();
+        if (WaitForIdleAfterPresent)
+        {
+            device.WaitForIdle();
+        }
         _frameOpen = false;
     }
 

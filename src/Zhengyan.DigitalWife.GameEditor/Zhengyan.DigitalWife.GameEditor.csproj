@@ -11,7 +11,6 @@
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
         <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects\Zhengyan.DigitalWife.GameProjects.csproj" />
-        <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
     </ItemGroup>
 
@@ -32,6 +31,39 @@
             <Link>Resources\Logo\favicon.png</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
+        <None Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.dll">
+            <Link>Zhengyan.DigitalWife.GamePlayer.Runtime.Core.dll</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <Visible>False</Visible>
+        </None>
+        <None Include="..\Zhengyan.DigitalWife.GamePlayer\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.GamePlayer.dll">
+            <Link>Zhengyan.DigitalWife.GamePlayer.dll</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <Visible>False</Visible>
+        </None>
+        <None Include="..\Zhengyan.DigitalWife.GamePlayer\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.Llm.OpenAI.dll">
+            <Link>Zhengyan.DigitalWife.Llm.OpenAI.dll</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <Visible>False</Visible>
+        </None>
     </ItemGroup>
+
+    <Target Name="BuildScriptCompilerContracts" BeforeTargets="Build">
+        <MSBuild Projects="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj"
+                 Targets="Build"
+                 Properties="Configuration=$(Configuration)" />
+        <MSBuild Projects="..\Zhengyan.DigitalWife.GamePlayer\Zhengyan.DigitalWife.GamePlayer.csproj"
+                 Targets="Build"
+                 Properties="Configuration=$(Configuration)" />
+    </Target>
+
+    <Target Name="CopyScriptCompilerContracts" AfterTargets="Build">
+        <ItemGroup>
+            <ScriptCompilerContractFiles Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.dll" />
+            <ScriptCompilerContractFiles Include="..\Zhengyan.DigitalWife.GamePlayer\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.GamePlayer.dll" />
+            <ScriptCompilerContractFiles Include="..\Zhengyan.DigitalWife.GamePlayer\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.Llm.OpenAI.dll" />
+        </ItemGroup>
+        <Copy SourceFiles="@(ScriptCompilerContractFiles)" DestinationFolder="$(TargetDir)" />
+    </Target>
 
 </Project>

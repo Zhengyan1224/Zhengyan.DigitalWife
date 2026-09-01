@@ -21,7 +21,6 @@ internal sealed class AndroidGuiOverlayView : View
         SetWillNotDraw(false);
         Clickable = false;
         Focusable = false;
-        SetLayerType(LayerType.Software, null);
     }
 
     protected override void OnDraw(Canvas canvas)

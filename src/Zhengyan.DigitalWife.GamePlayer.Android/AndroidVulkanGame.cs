@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Diagnostics;
 using Silk.NET.Maths;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.GameProjects;
@@ -11,6 +12,20 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 {
+    internal readonly record struct DrawProfile(
+        long DirectionalShadowTicks,
+        long LocalShadowTicks,
+        long ReflectionTicks,
+        long RenderTextureTicks,
+        long UnderwaterTicks)
+    {
+        public long AccountedTicks => DirectionalShadowTicks
+            + LocalShadowTicks
+            + ReflectionTicks
+            + RenderTextureTicks
+            + UnderwaterTicks;
+    }
+
     private sealed class RenderTextureState
     {
         public required IRenderTarget Target { get; init; }
@@ -22,11 +37,17 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private readonly RuntimeScene _scene;
     private readonly string _projectDirectory;
     private readonly GameWindowSettings _windowSettings;
+    private readonly AndroidQualitySettings _quality;
     private readonly OrbitCamera _camera = new();
     private readonly Dictionary<string, PmxModelComponent> _models = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ParticleSystemComponent> _particles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WaterSurfaceComponent> _waters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TexturedPlaneComponent> _planes = new(StringComparer.OrdinalIgnoreCase);
+    private PmxModelComponent[] _modelSnapshot = [];
+    private ParticleSystemComponent[] _particleSnapshot = [];
+    private WaterSurfaceComponent[] _waterSnapshot = [];
+    private TexturedPlaneComponent[] _planeSnapshot = [];
+    private long _loadedEntityRevision = -1;
     private readonly List<PointLightData> _pointLights = [];
     private readonly List<SpotLightData> _spotLights = [];
     private ShadowMapRenderer? _shadowRenderer;
@@ -39,6 +60,8 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private readonly Dictionary<string, RenderTextureState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _renderingRenderTexture;
     private bool _sceneRenderedThisFrame;
+    private int _diagnosticFrameCount;
+    internal DrawProfile LastDrawProfile { get; private set; }
 
     public AndroidVulkanGame(
         GameProject project,
@@ -51,6 +74,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         _scene = scene ?? throw new ArgumentNullException(nameof(scene));
         _projectDirectory = projectDirectory ?? throw new ArgumentNullException(nameof(projectDirectory));
         _windowSettings = project.Window;
+        _quality = project.AndroidQuality;
     }
 
     protected override void Initialize()
@@ -59,11 +83,11 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         LoadSceneComponents();
         _shadowRenderer = new ShadowMapRenderer(this)
         {
-            Resolution = Math.Clamp(Options.Samples > 1 ? 1536 : 1024, 256, 2048)
+            Resolution = Math.Clamp(_quality.MaxShadowMapSize, 256, 2048)
         };
         _localLightShadowRenderer = new LocalLightShadowRenderer(this)
         {
-            Resolution = 2048
+            Resolution = Math.Clamp(_quality.MaxLocalShadowMapSize, 256, 2048) * 4
         };
         _planarReflectionRenderer = new PlanarReflectionRenderer(this);
         _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
@@ -80,6 +104,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 
     protected override void Draw(GameTime gameTime)
     {
+        LastDrawProfile = default;
         _sceneRenderedThisFrame = false;
         if (_shadowRenderer is null || _localLightShadowRenderer is null)
         {
@@ -87,24 +112,27 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         }
 
         LightingSettings lighting = _scene.Definition.Lighting;
+        long phaseStart = Stopwatch.GetTimestamp();
         _shadowRenderer.Render(
             gameTime,
-            _models.Values.ToArray(),
-            _particles.Values.ToArray(),
-            _planes.Values.ToArray(),
+            _modelSnapshot,
+            _particleSnapshot,
+            _planeSnapshot,
             lighting.LightDirection.ToVector3(),
             lighting.ShadowColor.ToVector4(),
             Math.Max(GraphicsDevice.BackBufferSize.X, 1),
             Math.Max(GraphicsDevice.BackBufferSize.Y, 1),
             GraphicsDevice.RestoreBackBuffer);
+        long directionalShadowEnd = Stopwatch.GetTimestamp();
         _localLightShadowRenderer.Render(
             gameTime,
-            _models.Values.ToArray(),
-            _particles.Values.ToArray(),
+            _modelSnapshot,
+            _particleSnapshot,
             _pointLights,
             _spotLights,
             lighting.ShadowColor.W,
             GraphicsDevice.RestoreBackBuffer);
+        long localShadowEnd = Stopwatch.GetTimestamp();
         ShadowMapBinding? binding = _shadowRenderer.CurrentBinding;
         foreach (PmxModelComponent model in _models.Values)
         {
@@ -113,23 +141,47 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         }
         foreach (TexturedPlaneComponent plane in _planes.Values) plane.ShadowMap = binding;
 
-        _planarReflectionRenderer?.RenderAll(
-            gameTime,
-            _camera,
-            _waters.Values.ToArray(),
-            _planes.Values.ToArray(),
-            _spriteComponent is null ? [] : [_spriteComponent],
-            ApplyCameraToComponents,
-            RestoreMainCameraOnComponents,
-            lighting.ClearColor.ToVector4(),
-            Math.Max(GraphicsDevice.BackBufferSize.X, 1),
-            Math.Max(GraphicsDevice.BackBufferSize.Y, 1));
+        if (_quality.MaxReflectionSurfaces > 0 && (_waterSnapshot.Length != 0 || _planeSnapshot.Length != 0))
+        {
+            _planarReflectionRenderer?.RenderAll(
+                gameTime,
+                _camera,
+                _waterSnapshot,
+                _planeSnapshot,
+                _spriteComponent is null ? [] : [_spriteComponent],
+                ApplyCameraToComponents,
+                RestoreMainCameraOnComponents,
+                lighting.ClearColor.ToVector4(),
+                Math.Max(GraphicsDevice.BackBufferSize.X, 1),
+                Math.Max(GraphicsDevice.BackBufferSize.Y, 1));
+        }
+        long reflectionEnd = Stopwatch.GetTimestamp();
 
         RenderSceneTextures(gameTime);
+        long renderTextureEnd = Stopwatch.GetTimestamp();
 
         if (TryDrawUnderwater(gameTime))
         {
             _sceneRenderedThisFrame = true;
+        }
+        long underwaterEnd = Stopwatch.GetTimestamp();
+        LastDrawProfile = new DrawProfile(
+            directionalShadowEnd - phaseStart,
+            localShadowEnd - directionalShadowEnd,
+            reflectionEnd - localShadowEnd,
+            renderTextureEnd - reflectionEnd,
+            underwaterEnd - renderTextureEnd);
+
+        // Keep a low-rate diagnostic of the two PMX instances.  This is useful on
+        // Android where a compositor/swapchain problem can look like a model was
+        // skipped even though the CPU submitted both draw lists.
+        if (++_diagnosticFrameCount >= 120)
+        {
+            _diagnosticFrameCount = 0;
+            string models = string.Join(", ", _models.Values.Select(model =>
+                $"{model.ModelPath is null ? "<unloaded>" : Path.GetFileNameWithoutExtension(model.ModelPath)}:" +
+                $"visible={model.Visible},enabled={model.Enabled},opaque={model.LastOpaqueMeshDrawCount},edge={model.LastEdgeMeshDrawCount}"));
+            global::Android.Util.Log.Info("ZhengyanGamePlayer", $"Android Vulkan PMX draw diagnostic: {models}");
         }
     }
 
@@ -252,6 +304,9 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
                 DrawOrder = 10000
             });
         }
+
+        RefreshComponentSnapshots();
+        _loadedEntityRevision = _scene.EntityRevision;
     }
 
     private void LoadPmx(RuntimeEntity entity)
@@ -312,7 +367,12 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 
     private void SyncSceneComponents()
     {
-        ReconcileSceneComponents();
+        if (_loadedEntityRevision != _scene.EntityRevision)
+        {
+            ReconcileSceneComponents();
+            RefreshComponentSnapshots();
+            _loadedEntityRevision = _scene.EntityRevision;
+        }
 
         foreach (RuntimeEntity entity in _scene.Entities)
         {
@@ -335,6 +395,14 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             model.PointLights = _pointLights;
             model.SpotLights = _spotLights;
         }
+    }
+
+    private void RefreshComponentSnapshots()
+    {
+        _modelSnapshot = _models.Values.ToArray();
+        _particleSnapshot = _particles.Values.ToArray();
+        _waterSnapshot = _waters.Values.ToArray();
+        _planeSnapshot = _planes.Values.ToArray();
     }
 
     private void ReconcileSceneComponents()
@@ -928,7 +996,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         {
             GraphicsBackend = GraphicsBackend.Vulkan,
             WindowSize = size,
-            Samples = project.Window.AntiAliasingSamples,
+            Samples = ResolveAntiAliasingSamples(project),
             VSync = true,
             ClearColor = lighting.ClearColor.ToVector4(),
             UseOpenCL = false,
@@ -937,6 +1005,18 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             AnimationTimingMode = GameProjectTiming.NormalizeMode(project.Window.TimingMode) == GameProjectTiming.FrameRateDependent
                 ? AnimationTimingMode.FrameRateDependent
                 : AnimationTimingMode.TimeSynchronized
+        };
+    }
+
+    internal static int ResolveAntiAliasingSamples(GameProject project)
+    {
+        int requested = AntiAliasingSamples.NormalizeRequested(project.Window.AntiAliasingSamples);
+        string profile = (project.AndroidQuality.Profile ?? "auto").Trim().ToLowerInvariant();
+        return profile switch
+        {
+            "low" or "auto" => 1,
+            "medium" => Math.Min(requested, 2),
+            _ => requested
         };
     }
 }

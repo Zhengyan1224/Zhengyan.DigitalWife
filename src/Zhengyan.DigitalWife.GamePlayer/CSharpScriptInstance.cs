@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.Scripting;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -13,12 +14,16 @@ namespace Zhengyan.DigitalWife.GamePlayer;
 internal sealed class CSharpScriptInstance : IScriptInstance
 {
     private readonly string _scriptPath;
+    private readonly string _projectDirectory;
     private readonly ScriptOptions _options;
     private ScriptRunner<object?>? _runner;
+    private MethodInfo? _precompiledFactory;
+    private bool _precompiledChecked;
 
-    public CSharpScriptInstance(string scriptPath)
+    public CSharpScriptInstance(string scriptPath, string projectDirectory)
     {
         _scriptPath = scriptPath;
+        _projectDirectory = Path.GetFullPath(projectDirectory);
         _options = ScriptOptions.Default
             .WithFilePath(scriptPath)
             .WithSourceResolver(new SourceFileResolver([], Path.GetDirectoryName(scriptPath)!))
@@ -105,6 +110,8 @@ internal sealed class CSharpScriptInstance : IScriptInstance
 
     public void Dispose()
     {
+        _runner = null;
+        _precompiledFactory = null;
     }
 
     private object? Execute(
@@ -140,10 +147,6 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         RuntimeAsrScriptEvent? asrEvent,
         RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
     {
-        _runner ??= CSharpScript
-            .Create<object?>(File.ReadAllText(_scriptPath), _options, typeof(CSharpScriptGlobals))
-            .CreateDelegate();
-
         CSharpScriptGlobals globals = new()
         {
             Entity = entity,
@@ -179,7 +182,62 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             SpeechCallbackName = speechCallbackName
         };
 
+        if (!_precompiledChecked)
+        {
+            _precompiledChecked = true;
+            _precompiledFactory = TryLoadPrecompiledFactory();
+        }
+
+        if (_precompiledFactory is not null)
+        {
+            object?[] submissionArray = [globals, null];
+            Task<object?> task = (Task<object?>)_precompiledFactory.Invoke(null, [submissionArray])!;
+            return task.GetAwaiter().GetResult();
+        }
+
+        _runner ??= CSharpScript
+            .Create<object?>(File.ReadAllText(_scriptPath), _options, typeof(CSharpScriptGlobals))
+            .CreateDelegate();
+
         return _runner(globals).GetAwaiter().GetResult();
+    }
+
+    private MethodInfo? TryLoadPrecompiledFactory()
+    {
+        string relative = Path.GetRelativePath(_projectDirectory, _scriptPath);
+        if (relative.StartsWith("..", StringComparison.Ordinal)) return null;
+        string assemblyPath = Path.Combine(_projectDirectory, "compiled", "desktop", Path.ChangeExtension(relative, ".dll"));
+        if (!File.Exists(assemblyPath)) return null;
+
+        try
+        {
+            Assembly assembly = Assembly.Load(File.ReadAllBytes(assemblyPath));
+            string currentSourceSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadAllText(_scriptPath))));
+            string expectedAssemblyName = "DesktopScript_" + currentSourceSha256;
+            if (!string.Equals(assembly.GetName().Name, expectedAssemblyName, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"[GamePlayer] Precompiled desktop C# script is stale; compiling source instead: '{_scriptPath}'.");
+                return null;
+            }
+
+            Type? scriptType = assembly.GetType("Script");
+            MethodInfo? factory = scriptType?.GetMethod("<Factory>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            if (factory is null)
+            {
+                Console.Error.WriteLine($"[GamePlayer] Precompiled desktop C# script has no execution factory: '{assemblyPath}'.");
+            }
+            else
+            {
+                Console.WriteLine($"[GamePlayer] Loaded precompiled desktop C# script: '{assemblyPath}'.");
+            }
+
+            return factory;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[GamePlayer] Precompiled desktop C# script could not be loaded '{assemblyPath}': {ex.Message}");
+            return null;
+        }
     }
 
     private static IEnumerable<Assembly> GetScriptReferences()

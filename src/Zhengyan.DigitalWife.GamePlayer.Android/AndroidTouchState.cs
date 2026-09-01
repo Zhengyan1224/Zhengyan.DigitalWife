@@ -61,7 +61,9 @@ public sealed class AndroidInputSnapshot
     public AndroidDeviceInputSnapshot DeviceInput { get; }
 
     internal AndroidInputSnapshot WithDeviceInput(AndroidDeviceInputSnapshot deviceInput)
-        => new(Touches, PrimaryTouch, ActiveTouchCount, IsTouchStarted, IsTouchEnded, deviceInput);
+        => ReferenceEquals(this, Empty) && deviceInput.Equals(AndroidDeviceInputSnapshot.Empty)
+            ? this
+            : new(Touches, PrimaryTouch, ActiveTouchCount, IsTouchStarted, IsTouchEnded, deviceInput);
 }
 
 internal sealed class AndroidTouchState
@@ -112,6 +114,11 @@ internal sealed class AndroidTouchState
 
         lock (_sync)
         {
+            if (_touches.Count == 0)
+            {
+                return AndroidInputSnapshot.Empty;
+            }
+
             List<TouchState> ordered = _touches.Values
                 .OrderBy(static state => state.Id)
                 .ToList();

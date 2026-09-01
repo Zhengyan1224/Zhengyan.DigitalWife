@@ -26,10 +26,14 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public AndroidGameSurfaceView(Context context, GameProject? project, string? projectDirectory)
         : base(context)
     {
+        // Keep the game surface in the media-overlay layer so the Android Canvas
+        // GUI remains composited above it without exposing the window clear color
+        // while a Vulkan FIFO present is waiting.
         SetZOrderMediaOverlay(true);
         _gestureDetector = new GestureDetector(context, new LongPressListener(this));
         _requestedBackend = GraphicsBackendNames.Parse(project?.Runtime.GraphicsBackend);
         _renderHost = CreateRenderHost(_requestedBackend);
+        LogBackendRequest(project, _requestedBackend);
         _renderHost.SetProject(project, projectDirectory);
         _project = project;
         _projectDirectory = projectDirectory ?? string.Empty;
@@ -79,6 +83,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         _project = project;
         _projectDirectory = projectDirectory ?? string.Empty;
         _requestedBackend = requested;
+        LogBackendRequest(project, requested);
         if (backendChanged)
         {
             _renderHost.Dispose();
@@ -121,12 +126,15 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
         Input = _touchState.BeginFrame(Width, Height).WithDeviceInput(_deviceInputState.BeginFrame());
         _renderHost.Render(frameTimeNanos, Input);
+        // GUI controls can be changed by scripts every frame (for example progress bars).
+        // Keep the overlay synchronized while the hardware Canvas layer avoids software
+        // bitmap uploads on every invalidation.
+        OverlayInvalidated?.Invoke();
         if (!_firstFramePresented)
         {
             _firstFramePresented = true;
             FirstFramePresented?.Invoke();
         }
-        OverlayInvalidated?.Invoke();
         ScheduleFrame();
     }
 
@@ -269,6 +277,10 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         try
         {
             _renderHost.CreateSurface(surface);
+            Log.Info(
+                LogTag,
+                $"Android graphics backend selected: requested={_requestedBackend.ToSettingValue()}; " +
+                $"resolved={DescribeBackend(_renderHost)}.");
         }
         catch (Exception ex) when (_requestedBackend == GraphicsBackend.Auto
             && _renderHost is AndroidVulkanRenderHost)
@@ -280,6 +292,10 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
             try
             {
                 _renderHost.CreateSurface(surface);
+                Log.Info(
+                    LogTag,
+                    "Android graphics backend selected: requested=Auto; resolved=OpenGL ES; " +
+                    "fallbackReason=Vulkan initialization failed.");
             }
             catch (Exception fallbackException)
             {
@@ -305,4 +321,27 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         => requestedBackend == GraphicsBackend.OpenGL
             ? new AndroidEglRenderHost()
             : new AndroidVulkanRenderHost();
+
+    private static void LogBackendRequest(
+        GameProject? project,
+        GraphicsBackend requestedBackend)
+    {
+        if (project is null)
+        {
+            return;
+        }
+
+        string configured = string.IsNullOrWhiteSpace(project.Runtime.GraphicsBackend)
+            ? "Auto"
+            : project.Runtime.GraphicsBackend.Trim();
+        Log.Info(
+            LogTag,
+            $"Android graphics backend request: configured={configured}; " +
+            $"requested={requestedBackend.ToSettingValue()}; " +
+            $"initial={(requestedBackend == GraphicsBackend.OpenGL ? "OpenGL ES" : "Vulkan")}" +
+            (requestedBackend == GraphicsBackend.Auto ? "; fallback=OpenGL ES." : "."));
+    }
+
+    private static string DescribeBackend(IAndroidRenderHost renderHost)
+        => renderHost is AndroidVulkanRenderHost ? "Vulkan" : "OpenGL ES";
 }

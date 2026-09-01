@@ -1,7 +1,11 @@
 namespace Zhengyan.DigitalWife.GameProjects;
 
 /// <summary>Stable globals contract used by Android C# published assemblies.</summary>
-public abstract class AndroidScriptGlobalsContract
+// This contract is also used as Roslyn's globals type by the editor when it
+// emits Android script DLLs. It must be concrete so the script submission
+// factory can be emitted; the Android runtime still derives its richer
+// AndroidScriptGlobals implementation from this base class.
+public class AndroidScriptGlobalsContract
 {
     public dynamic? Scene { get; protected set; }
     public dynamic? Entity { get; protected set; }

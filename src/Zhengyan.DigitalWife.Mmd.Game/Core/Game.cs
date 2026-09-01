@@ -208,6 +208,24 @@ public abstract class Game : IDisposable
         RenderFrame(deltaSeconds);
     }
 
+    public void RenderHostedWithoutPresent(double deltaSeconds)
+    {
+        if (_window is not null)
+        {
+            throw new InvalidOperationException("Hosted rendering is only valid for an externally hosted game.");
+        }
+        RenderFrame(deltaSeconds, present: false);
+    }
+
+    public void PresentHosted()
+    {
+        if (_window is not null)
+        {
+            throw new InvalidOperationException("Hosted presentation is only valid for an externally hosted game.");
+        }
+        _renderer.Present();
+    }
+
     public T AddComponent<T>(T component) where T : GameComponent
     {
         _components.Add(component);
@@ -343,7 +361,7 @@ public abstract class Game : IDisposable
     private void OnRender(double deltaSeconds)
         => RenderFrame(deltaSeconds);
 
-    private void RenderFrame(double deltaSeconds)
+    private void RenderFrame(double deltaSeconds, bool present = true)
     {
         if (!_initialized)
         {
@@ -363,7 +381,10 @@ public abstract class Game : IDisposable
             }
         }
 
-        _renderer.Present();
+        if (present)
+        {
+            _renderer.Present();
+        }
     }
 
     private void OnClosing()
