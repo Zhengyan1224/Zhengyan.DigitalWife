@@ -179,7 +179,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         {
             _diagnosticFrameCount = 0;
             string models = string.Join(", ", _models.Values.Select(model =>
-                $"{model.ModelPath is null ? "<unloaded>" : Path.GetFileNameWithoutExtension(model.ModelPath)}:" +
+                $"{(model.ModelPath is null ? "<unloaded>" : Path.GetFileNameWithoutExtension(model.ModelPath))}:" +
                 $"visible={model.Visible},enabled={model.Enabled},opaque={model.LastOpaqueMeshDrawCount},edge={model.LastEdgeMeshDrawCount}"));
             global::Android.Util.Log.Info("ZhengyanGamePlayer", $"Android Vulkan PMX draw diagnostic: {models}");
         }
