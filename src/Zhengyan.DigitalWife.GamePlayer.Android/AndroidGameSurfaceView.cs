@@ -27,8 +27,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         : base(context)
     {
         // Keep the game surface in the media-overlay layer so the Android Canvas
-        // GUI remains composited above it without exposing the window clear color
-        // while a Vulkan FIFO present is waiting.
+        // GUI remains composited above it.
         SetZOrderMediaOverlay(true);
         _gestureDetector = new GestureDetector(context, new LongPressListener(this));
         _requestedBackend = GraphicsBackendNames.Parse(project?.Runtime.GraphicsBackend);

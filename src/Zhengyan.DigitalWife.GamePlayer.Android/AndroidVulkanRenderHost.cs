@@ -315,12 +315,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return;
         }
 
-            VulkanRenderer renderer = new();
-            // Android's FIFO swapchain can signal presentation before the Mali
-            // queue has finished reading dynamic PMX vertex/uniform buffers.
-            // Serialize submissions to avoid intermittent whole-model drops.
-            renderer.WaitForIdleAfterPresent = true;
-            AndroidVulkanGame? game = null;
+        VulkanRenderer renderer = new()
+        {
+            WaitForIdleAfterPresent = true
+        };
+        AndroidVulkanGame? game = null;
         try
         {
 #pragma warning disable CS0618
@@ -343,6 +342,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 $"renderer: {_game.GraphicsDevice.RendererName}; " +
                 $"MSAA requested={_game.GraphicsDevice.RequestedAntiAliasingSamples}x, " +
                 $"actual={_game.GraphicsDevice.AntiAliasingSamples}x; " +
+                $"skinning=CPU compatibility; " +
                 $"projectMsaa={_project.Window.AntiAliasingSamples}x; " +
                 $"qualityProfile={_project.AndroidQuality.Profile}; " +
                 $"shadow={_project.AndroidQuality.MaxShadowMapSize}px; " +
