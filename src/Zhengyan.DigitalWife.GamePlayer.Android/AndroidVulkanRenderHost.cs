@@ -342,7 +342,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 $"renderer: {_game.GraphicsDevice.RendererName}; " +
                 $"MSAA requested={_game.GraphicsDevice.RequestedAntiAliasingSamples}x, " +
                 $"actual={_game.GraphicsDevice.AntiAliasingSamples}x; " +
-                $"skinning=CPU compatibility; " +
+                $"skinning={(_project.Runtime.UseVulkanCompute ? "Vulkan Compute" : "CPU compatibility")}; " +
                 $"projectMsaa={_project.Window.AntiAliasingSamples}x; " +
                 $"qualityProfile={_project.AndroidQuality.Profile}; " +
                 $"shadow={_project.AndroidQuality.MaxShadowMapSize}px; " +

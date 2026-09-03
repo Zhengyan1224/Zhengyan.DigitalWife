@@ -504,11 +504,15 @@ public sealed class VulkanRenderer : IRenderer
         {
             device.SubmitCommands(commands);
         }
-        device.SwapBuffers();
         if (WaitForIdleAfterPresent)
         {
+            // A few Android Mali FIFO implementations can expose the swapchain
+            // image to the compositor before all writes from the submitted
+            // command list are visible. Complete rendering before presenting
+            // so the compositor never samples a partially rendered frame.
             device.WaitForIdle();
         }
+        device.SwapBuffers();
         _frameOpen = false;
     }
 
