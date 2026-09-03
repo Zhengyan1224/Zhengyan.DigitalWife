@@ -237,7 +237,9 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 $"renderer: {_game.GraphicsDevice.RendererName}; " +
                 $"MSAA requested={_game.GraphicsDevice.RequestedAntiAliasingSamples}x, " +
                 $"actual={_game.GraphicsDevice.AntiAliasingSamples}x; " +
-                $"skinning={(_project.Runtime.UseVulkanCompute ? "Vulkan Compute" : "CPU compatibility")}; " +
+                $"openCL=disabled; " +
+                $"vulkanCompute=requested={_project.Runtime.UseVulkanCompute}; " +
+                $"skinning={(_project.Runtime.UseVulkanCompute ? "Vulkan Compute (or CPU fallback)" : "CPU compatibility")}; " +
                 $"projectMsaa={_project.Window.AntiAliasingSamples}x; " +
                 $"qualityProfile={_project.AndroidQuality.Profile}; " +
                 $"shadow={_project.AndroidQuality.MaxShadowMapSize}px; " +

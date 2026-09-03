@@ -170,7 +170,8 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         Log.Info(
             LogTag,
             $"Android graphics backend: OpenGL; renderer: OpenGL ES {_openGlEsVersion}; " +
-            $"MSAA requested={_requestedMsaaSamples}x, actual={_actualMsaaSamples}x");
+            $"MSAA requested={_requestedMsaaSamples}x, actual={_actualMsaaSamples}x; " +
+            "openCL=disabled; vulkanCompute=disabled");
         ReloadScene();
         _ = EGL14.EglSwapInterval(_display, 1);
         ResetFrameClock();
