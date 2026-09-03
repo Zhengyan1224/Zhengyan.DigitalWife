@@ -60,7 +60,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private readonly Dictionary<string, RenderTextureState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _renderingRenderTexture;
     private bool _sceneRenderedThisFrame;
-    private int _diagnosticFrameCount;
     internal DrawProfile LastDrawProfile { get; private set; }
 
     public AndroidVulkanGame(
@@ -172,17 +171,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             renderTextureEnd - reflectionEnd,
             underwaterEnd - renderTextureEnd);
 
-        // Keep a low-rate diagnostic of the two PMX instances.  This is useful on
-        // Android where a compositor/swapchain problem can look like a model was
-        // skipped even though the CPU submitted both draw lists.
-        if (++_diagnosticFrameCount >= 120)
-        {
-            _diagnosticFrameCount = 0;
-            string models = string.Join(", ", _models.Values.Select(model =>
-                $"{(model.ModelPath is null ? "<unloaded>" : Path.GetFileNameWithoutExtension(model.ModelPath))}:" +
-                $"visible={model.Visible},enabled={model.Enabled},opaque={model.LastOpaqueMeshDrawCount},edge={model.LastEdgeMeshDrawCount}"));
-            global::Android.Util.Log.Info("ZhengyanGamePlayer", $"Android Vulkan PMX draw diagnostic: {models}");
-        }
     }
 
     protected override void UnloadContent()

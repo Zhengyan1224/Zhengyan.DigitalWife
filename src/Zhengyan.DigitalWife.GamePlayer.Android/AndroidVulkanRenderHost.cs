@@ -14,7 +14,6 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 {
     private const string LogTag = "ZhengyanGamePlayer";
-    private const int ProfileFrameWindow = 10;
 
     private AndroidVulkanGame? _game;
     private RuntimeSceneManager? _sceneManager;
@@ -29,20 +28,6 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private bool _disposed;
     private Surface? _surface;
     private readonly object _lifecycleLock = new();
-    private int _profileFrameCount;
-    private long _profileTotalTicks;
-    private long _profileSceneTicks;
-    private long _profileScriptTicks;
-    private long _profileGameUpdateTicks;
-    private long _profileDrawTicks;
-    private long _profilePresentTicks;
-    private long _profileDirectionalShadowTicks;
-    private long _profileLocalShadowTicks;
-    private long _profileReflectionTicks;
-    private long _profileRenderTextureTicks;
-    private long _profileUnderwaterTicks;
-    private long _profileComponentDrawTicks;
-    private long _profileAllocatedBytes;
 
     public GameProject? Project => _project;
 
@@ -131,8 +116,6 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 return;
             }
 
-            long frameStart = Stopwatch.GetTimestamp();
-            long allocatedStart = GC.GetAllocatedBytesForCurrentThread();
             double deltaSeconds = 0.0;
             if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
             {
@@ -143,34 +126,17 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             RuntimeScene? inputScene = _sceneManager?.Current;
             if (inputScene is not null) DispatchTouchEvents(inputScene, input);
             _sceneManager?.Update((float)deltaSeconds, ToCameraInput(input));
-            long sceneEnd = Stopwatch.GetTimestamp();
-
             RuntimeScene? scene = _sceneManager?.Current;
             if (scene is not null)
             {
                 _scriptHost?.Update(scene, (float)deltaSeconds, input);
                 _project!.Scene = scene.Definition;
             }
-            long scriptEnd = Stopwatch.GetTimestamp();
-
             try
             {
                 _game.UpdateHosted(deltaSeconds);
-                long gameUpdateEnd = Stopwatch.GetTimestamp();
                 _game.RenderHostedWithoutPresent(deltaSeconds);
-                long drawEnd = Stopwatch.GetTimestamp();
-                AndroidVulkanGame.DrawProfile drawProfile = _game.LastDrawProfile;
                 _game.PresentHosted();
-                long renderEnd = Stopwatch.GetTimestamp();
-                RecordFrameProfile(
-                    frameStart,
-                    sceneEnd,
-                    scriptEnd,
-                    gameUpdateEnd,
-                    drawEnd,
-                    renderEnd,
-                    drawProfile,
-                    GC.GetAllocatedBytesForCurrentThread() - allocatedStart);
             }
             catch (Exception ex)
             {
@@ -188,77 +154,6 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         }
     }
 
-    private void RecordFrameProfile(
-        long frameStart,
-        long sceneEnd,
-        long scriptEnd,
-        long gameUpdateEnd,
-        long drawEnd,
-        long renderEnd,
-        AndroidVulkanGame.DrawProfile drawProfile,
-        long allocatedBytes)
-    {
-        _profileFrameCount++;
-        _profileTotalTicks += renderEnd - frameStart;
-        _profileSceneTicks += sceneEnd - frameStart;
-        _profileScriptTicks += scriptEnd - sceneEnd;
-        _profileGameUpdateTicks += gameUpdateEnd - scriptEnd;
-        _profileDrawTicks += drawEnd - gameUpdateEnd;
-        _profilePresentTicks += renderEnd - drawEnd;
-        _profileDirectionalShadowTicks += drawProfile.DirectionalShadowTicks;
-        _profileLocalShadowTicks += drawProfile.LocalShadowTicks;
-        _profileReflectionTicks += drawProfile.ReflectionTicks;
-        _profileRenderTextureTicks += drawProfile.RenderTextureTicks;
-        _profileUnderwaterTicks += drawProfile.UnderwaterTicks;
-        _profileComponentDrawTicks += Math.Max((drawEnd - gameUpdateEnd) - drawProfile.AccountedTicks, 0);
-        _profileAllocatedBytes += Math.Max(allocatedBytes, 0);
-        if (_profileFrameCount < ProfileFrameWindow)
-        {
-            return;
-        }
-
-        double tickToMilliseconds = 1000.0 / Stopwatch.Frequency / _profileFrameCount;
-        double averageTotal = _profileTotalTicks * tickToMilliseconds;
-        double frameBudget = Math.Max(_project?.AndroidQuality.DynamicFrameBudgetMs ?? 16.67f, 4.0f);
-        if (averageTotal > frameBudget * 1.10)
-        {
-            Log.Warn(
-                LogTag,
-                $"Android Vulkan slow-frame profile ({_profileFrameCount} frames): " +
-                $"total={averageTotal:F2}ms, scene={_profileSceneTicks * tickToMilliseconds:F2}ms, " +
-                $"scripts={_profileScriptTicks * tickToMilliseconds:F2}ms, " +
-                $"gameUpdate={_profileGameUpdateTicks * tickToMilliseconds:F2}ms, " +
-                $"draw={_profileDrawTicks * tickToMilliseconds:F2}ms, " +
-                $"present={_profilePresentTicks * tickToMilliseconds:F2}ms, " +
-                $"shadow={_profileDirectionalShadowTicks * tickToMilliseconds:F2}ms, " +
-                $"localShadow={_profileLocalShadowTicks * tickToMilliseconds:F2}ms, " +
-                $"reflection={_profileReflectionTicks * tickToMilliseconds:F2}ms, " +
-                $"renderTexture={_profileRenderTextureTicks * tickToMilliseconds:F2}ms, " +
-                $"underwater={_profileUnderwaterTicks * tickToMilliseconds:F2}ms, " +
-                $"components={_profileComponentDrawTicks * tickToMilliseconds:F2}ms, " +
-                $"managedAlloc={_profileAllocatedBytes / (double)_profileFrameCount / 1024.0:F1}KiB/frame.");
-        }
-
-        ResetFrameProfile();
-    }
-
-    private void ResetFrameProfile()
-    {
-        _profileFrameCount = 0;
-        _profileTotalTicks = 0;
-        _profileSceneTicks = 0;
-        _profileScriptTicks = 0;
-        _profileGameUpdateTicks = 0;
-        _profileDrawTicks = 0;
-        _profilePresentTicks = 0;
-        _profileDirectionalShadowTicks = 0;
-        _profileLocalShadowTicks = 0;
-        _profileReflectionTicks = 0;
-        _profileRenderTextureTicks = 0;
-        _profileUnderwaterTicks = 0;
-        _profileComponentDrawTicks = 0;
-        _profileAllocatedBytes = 0;
-    }
 
     public void Pause() => ResetFrameClock();
 
@@ -475,6 +370,5 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private void ResetFrameClock()
     {
         _lastFrameTimeNanos = 0;
-        ResetFrameProfile();
     }
 }

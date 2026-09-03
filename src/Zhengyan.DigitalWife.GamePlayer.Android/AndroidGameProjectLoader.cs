@@ -4,6 +4,7 @@ using Android.Provider;
 using AndroidUri = Android.Net.Uri;
 using Android.Util;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd.Game;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -55,6 +56,7 @@ internal static class AndroidGameProjectLoader
         try
         {
             AndroidBundledResourceStore.EnsureExtracted(activity);
+            BundledAssetPathResolver.RegisterSearchRoot(AndroidBundledResourceStore.RootDirectory);
 
             string? inputPath = ResolveInputPath(activity, intent);
             if (string.IsNullOrWhiteSpace(inputPath))

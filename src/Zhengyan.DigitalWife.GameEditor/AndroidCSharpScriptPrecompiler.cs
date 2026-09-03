@@ -98,13 +98,15 @@ internal static class AndroidCSharpScriptPrecompiler
 
     private static byte[] Compile(string path)
     {
+        string scriptSource = File.ReadAllText(path);
+        string compilationBody = string.IsNullOrWhiteSpace(scriptSource) ? "return null;" : scriptSource;
         string source = "using System;\n"
             + "using System.Numerics;\n"
             + "using System.Threading;\n"
             + "using System.Threading.Tasks;\n"
             + "using Zhengyan.DigitalWife.GameProjects;\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n\n"
-            + File.ReadAllText(path);
+            + compilationBody;
         SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
             source,
             new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script),
