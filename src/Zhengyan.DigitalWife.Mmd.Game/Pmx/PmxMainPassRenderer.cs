@@ -609,10 +609,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             receiveShadow ? localShadowSampler : null);
 
         int drawCount = 0;
-        // Draw opaque PMX materials before transparent materials so the shared
-        // depth buffer cannot be polluted by alpha surfaces.
-        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes.OrderBy(mesh =>
-            IsTransparentMaterial(mesh.Material, materials)))
+        foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
         {
             Zhengyan.DigitalWife.Mmd.MMDMaterial material = mesh.Material;
             if (!materials.TryGetValue(material, out MaterialTextures? textures) || material.Alpha <= 0.0f || textures.DescriptorSet is null)
@@ -641,10 +638,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             };
 
             commands.UpdateBuffer(RequireDeviceBuffer(resources.MaterialUniformBuffer), 0, materialData);
-            bool transparent = IsTransparentMaterial(material, materials);
-            commands.SetPipeline(material.BothFace
-                ? (transparent ? pipelines.DoubleSidedTransparent : pipelines.DoubleSided)
-                : (transparent ? pipelines.CulledTransparent : pipelines.Culled));
+            commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
             commands.SetGraphicsResourceSet(0, frameSet);
             commands.SetGraphicsResourceSet(1, GetMaterialSet(resources, textures.DescriptorSet, overrideTexture));
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
@@ -652,16 +646,6 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         }
 
         return drawCount;
-    }
-
-    private static bool IsTransparentMaterial(
-        Zhengyan.DigitalWife.Mmd.MMDMaterial material,
-        IReadOnlyDictionary<Zhengyan.DigitalWife.Mmd.MMDMaterial, MaterialTextures> materials)
-    {
-        return material.Alpha < 0.999f
-            || (materials.TryGetValue(material, out MaterialTextures? textures)
-                && textures.Texture is not null
-                && GetTextureMode(textures.Texture) > 1.5f);
     }
 
     public void Dispose()
@@ -686,8 +670,6 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         {
             bundle.Culled.Dispose();
             bundle.DoubleSided.Dispose();
-            bundle.CulledTransparent.Dispose();
-            bundle.DoubleSidedTransparent.Dispose();
         }
 
         _pipelineBundles.Clear();
@@ -778,13 +760,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         PipelineBundle created = new(
             outputDescription,
             _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
-                _shaderSet, layouts, outputDescription, cullBack: true, depthWrite: true)),
+                _shaderSet, layouts, outputDescription, cullBack: true)),
             _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
-                _shaderSet, layouts, outputDescription, cullBack: false, depthWrite: true)),
-            _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
-                _shaderSet, layouts, outputDescription, cullBack: true, depthWrite: false)),
-            _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
-                _shaderSet, layouts, outputDescription, cullBack: false, depthWrite: false)));
+                _shaderSet, layouts, outputDescription, cullBack: false)));
         _pipelineBundles.Add(created);
         return created;
     }
@@ -793,14 +771,13 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         ShaderSetDescription shaderSet,
         ResourceLayout[] layouts,
         OutputDescription outputDescription,
-        bool cullBack,
-        bool depthWrite)
+        bool cullBack)
     {
         return new GraphicsPipelineDescription(
             BlendStateDescription.SingleAlphaBlend,
             new DepthStencilStateDescription(
                 depthTestEnabled: true,
-                depthWriteEnabled: depthWrite,
+                depthWriteEnabled: true,
                 comparisonKind: ComparisonKind.LessEqual),
             new RasterizerStateDescription(
                 cullBack ? FaceCullMode.Back : FaceCullMode.None,
@@ -872,12 +849,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             ?? throw new InvalidOperationException("PMX Vulkan pass requires a Veldrid sampler.");
     }
 
-    private sealed record PipelineBundle(
-        OutputDescription OutputDescription,
-        Pipeline Culled,
-        Pipeline DoubleSided,
-        Pipeline CulledTransparent,
-        Pipeline DoubleSidedTransparent);
+    private sealed record PipelineBundle(OutputDescription OutputDescription, Pipeline Culled, Pipeline DoubleSided);
 
     private readonly record struct MaterialSetKey(PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
     private readonly record struct FrameSetKey(
