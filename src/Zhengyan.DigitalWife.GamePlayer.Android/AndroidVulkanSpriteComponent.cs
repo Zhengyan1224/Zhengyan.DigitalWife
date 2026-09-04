@@ -20,6 +20,12 @@ internal sealed class AndroidVulkanSpriteComponent(
     }
 
     public override void Draw(GameTime gameTime)
+        => DrawSprites(gameTime, foreground: true);
+
+    public void DrawBackground(GameTime gameTime)
+        => DrawSprites(gameTime, foreground: false);
+
+    private void DrawSprites(GameTime gameTime, bool foreground)
     {
         _ = gameTime;
         if (_renderer is null || Game is null || scene.Sprites.Count == 0) return;
@@ -28,7 +34,8 @@ internal sealed class AndroidVulkanSpriteComponent(
         int height = Math.Max(Game.GraphicsDevice.BackBufferSize.Y, 1);
         List<ScreenSpriteDrawCommand> commands = [];
         foreach (SpriteSettings sprite in scene.Sprites
-            .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path))
+            .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path)
+                && (foreground ? sprite.DrawOrder >= 0 : sprite.DrawOrder < 0))
             .OrderBy(sprite => sprite.DrawOrder))
         {
             ITexture2D? texture = GetTexture(sprite.Path);

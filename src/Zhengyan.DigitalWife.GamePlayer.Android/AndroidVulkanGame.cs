@@ -59,7 +59,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private AndroidVulkanRuntimeDebugDrawComponent? _debugDrawComponent;
     private readonly Dictionary<string, RenderTextureState> _renderTextures = new(StringComparer.OrdinalIgnoreCase);
     private bool _renderingRenderTexture;
-    private bool _sceneRenderedThisFrame;
     internal DrawProfile LastDrawProfile { get; private set; }
 
     public AndroidVulkanGame(
@@ -104,7 +103,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     protected override void Draw(GameTime gameTime)
     {
         LastDrawProfile = default;
-        _sceneRenderedThisFrame = false;
         if (_shadowRenderer is null || _localLightShadowRenderer is null)
         {
             return;
@@ -159,10 +157,35 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         RenderSceneTextures(gameTime);
         long renderTextureEnd = Stopwatch.GetTimestamp();
 
-        if (TryDrawUnderwater(gameTime))
+        // Vulkan must render every configured camera into its viewport. The
+        // base Game loop would otherwise draw each component once using only
+        // the main camera.
+        if (!TryDrawUnderwater(gameTime))
         {
-            _sceneRenderedThisFrame = true;
+            int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+            int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+            bool mainViewport = true;
+            foreach (RuntimeCamera runtimeCamera in _scene.RenderCameras)
+            {
+                RuntimeViewport viewport = runtimeCamera.ResolveViewport(width, height,
+                    Math.Max(_windowSettings.Width, 1), Math.Max(_windowSettings.Height, 1));
+                GraphicsDevice.SetViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+                GraphicsDevice.SetScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height, enabled: true);
+                GraphicsDevice.ClearViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height,
+                    lighting.ClearColor.ToVector4());
+                if (mainViewport)
+                {
+                    _spriteComponent?.DrawBackground(gameTime);
+                    mainViewport = false;
+                }
+                OrbitCamera camera = new();
+                ApplyCameraSettings(camera, runtimeCamera.Settings, viewport.Width, viewport.Height);
+                DrawSceneComponentsWithCamera(gameTime, camera);
+            }
+            GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
+            _spriteComponent?.Draw(gameTime);
         }
+
         long underwaterEnd = Stopwatch.GetTimestamp();
         LastDrawProfile = new DrawProfile(
             directionalShadowEnd - phaseStart,
@@ -172,6 +195,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             underwaterEnd - renderTextureEnd);
 
     }
+
 
     protected override void UnloadContent()
     {
@@ -966,15 +990,11 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 
     public override bool ShouldDrawComponent(DrawableGameComponent component)
     {
-        if (!_sceneRenderedThisFrame)
-        {
-            return true;
-        }
-
-        // The underwater path renders world components into a capture target
-        // and then composites it to the swapchain. Keep screen-space sprites on
-        // top of that composite while suppressing the second world draw.
-        return ReferenceEquals(component, _spriteComponent);
+        // World and screen components are rendered explicitly above so that
+        // each configured camera receives its own viewport.
+        return component is not (PmxModelComponent or TexturedPlaneComponent
+            or ParticleSystemComponent or WaterSurfaceComponent or SkyboxComponent
+            or AndroidVulkanSpriteComponent or AndroidVulkanRuntimeDebugDrawComponent);
     }
 
     private static GameOptions CreateOptions(GameProject project, Vector2D<int> size)

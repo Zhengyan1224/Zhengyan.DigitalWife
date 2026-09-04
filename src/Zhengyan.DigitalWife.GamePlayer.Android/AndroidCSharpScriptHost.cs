@@ -34,6 +34,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<ScriptExecutionKey, AndroidScriptExecutionContext> _executionContexts = [];
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
+    private double _fps;
     private bool _disposed;
 
     public AndroidCSharpScriptHost(
@@ -83,6 +84,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     public void Update(RuntimeScene scene, float deltaSeconds, AndroidInputSnapshot? input = null)
     {
+        if (deltaSeconds > 0.0001f)
+        {
+            double instant = 1.0 / deltaSeconds;
+            _fps = _fps <= 0.0 ? instant : _fps + (instant - _fps) * 0.1;
+        }
         foreach (RuntimeEntity entity in scene.Entities)
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
@@ -128,7 +134,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _listRenderTextures);
         AndroidScriptInput scriptInput = new(input);
         AndroidScriptGlobals globals = new(
-            new AndroidScriptScene(scene, _projectDirectory),
+            new AndroidScriptScene(scene, _projectDirectory, _requestSceneChange, () => _fps),
             new AndroidScriptEntity(
                 entity,
                 path => _applyMotion(scene, entity, path),
@@ -613,18 +619,35 @@ public sealed record AndroidQualityBudgetInfo(
 public sealed class AndroidScriptScene
 {
     private readonly RuntimeScene _scene;
+    private readonly Action<string> _requestSceneChange;
+    private readonly Func<double> _getFps;
 
-    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory)
+    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory, Action<string> requestSceneChange, Func<double> getFps)
     {
         _scene = scene;
+        _requestSceneChange = requestSceneChange;
+        _getFps = getFps;
         Camera = new AndroidScriptCamera(scene, projectDirectory);
     }
 
     public string Name => _scene.Name;
+    public double Fps => _getFps();
+    public double RawFps => Fps;
+    public double DeltaSeconds => 0.0;
     public AndroidScriptCamera Camera { get; }
     public RuntimeScenePhysics Physics => _scene.Physics;
     public RuntimeSceneNavigation Navigation => _scene.Navigation;
     public RuntimeDebug Debug => _scene.Debug;
+    public IEnumerable<RuntimeGuiControl> GuiControls => _scene.Definition.GuiControls.Select(control => new RuntimeGuiControl(control));
+    public RuntimeGuiControl? GetGuiControl(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName)) return null;
+        GuiControlSettings? control = _scene.Definition.GuiControls.FirstOrDefault(item =>
+            string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+        return control is null ? null : new RuntimeGuiControl(control);
+    }
+    public void LoadScene(string scenePath) => _requestSceneChange(scenePath);
     public RuntimeEntity? GetEntity(string idOrName) => _scene.GetEntity(idOrName);
     public IEnumerable<AndroidScriptSprite> Sprites => _scene.Definition.Sprites.Select(sprite => new AndroidScriptSprite(sprite));
     public AndroidScriptSprite? GetSprite(string idOrName)
@@ -635,6 +658,30 @@ public sealed class AndroidScriptScene
             || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
         return sprite is null ? null : new AndroidScriptSprite(sprite);
     }
+}
+
+public sealed class RuntimeGuiControl
+{
+    private readonly GuiControlSettings _control;
+    internal RuntimeGuiControl(GuiControlSettings control) => _control = control;
+    public string Id => _control.Id;
+    public string Name { get => _control.Name; set => _control.Name = value ?? string.Empty; }
+    public string Type { get => _control.Type; set => _control.Type = value ?? string.Empty; }
+    public string Text { get => _control.Text; set => _control.Text = value ?? string.Empty; }
+    public string Value { get => Text; set => Text = value; }
+    public bool Visible { get => _control.Visible; set => _control.Visible = value; }
+    public float X { get => _control.X; set => _control.X = Math.Max(0, value); }
+    public float Y { get => _control.Y; set => _control.Y = Math.Max(0, value); }
+    public float Width { get => _control.Width; set => _control.Width = Math.Max(1, value); }
+    public float Height { get => _control.Height; set => _control.Height = Math.Max(1, value); }
+    public float Progress { get => _control.Progress; set => _control.Progress = Math.Clamp(value, 0, 1); }
+    public bool Checked { get => _control.Checked; set => _control.Checked = value; }
+    public void SetValue(string value) => Text = value;
+    public void SetText(string value) => Text = value;
+    public void SetPosition(float x, float y) { X = x; Y = y; }
+    public void SetSize(float width, float height) { Width = width; Height = height; }
+    public void Show() => Visible = true;
+    public void Hide() => Visible = false;
 }
 
 public sealed class AndroidScriptSprite
@@ -934,6 +981,7 @@ public sealed class AndroidScriptEntity
 public sealed class AndroidScriptInput
 {
     private AndroidInputSnapshot _snapshot;
+    private bool _cursorVisible = true;
 
     internal AndroidScriptInput(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
 
@@ -952,6 +1000,7 @@ public sealed class AndroidScriptInput
     public float MouseDeltaY => _snapshot.DeviceInput.MouseDelta.Y;
     public float ScrollX => _snapshot.DeviceInput.ScrollDelta.X;
     public float ScrollY => _snapshot.DeviceInput.ScrollDelta.Y;
+    public bool CursorVisible { get => _cursorVisible; set => _cursorVisible = value; }
     public bool IsMouseButtonDown(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.IsMouseButtonDown(value);
     public bool IsMouseButtonPressed(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.PressedMouseButtons.Contains(value);
     public bool IsMouseButtonReleased(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.ReleasedMouseButtons.Contains(value);
@@ -1094,6 +1143,27 @@ public sealed class AndroidScriptCamera
     {
         _scene.MainCamera.Settings.ControlMode = "editor";
     }
+
+    public RuntimeRay ScreenPointToRay(float screenX, float screenY)
+    {
+        CameraSettings settings = _scene.MainCamera.Settings;
+        float width = Math.Max(_scene.MainCamera.Definition.Viewport.Width, 1.0f);
+        float height = Math.Max(_scene.MainCamera.Definition.Viewport.Height, 1.0f);
+        Vector3 position = settings.Position.ToVector3();
+        Vector3 target = settings.Target.ToVector3();
+        if (Vector3.DistanceSquared(position, target) < 1e-8f) target = position - Vector3.UnitZ;
+        Vector3 forward = Vector3.Normalize(target - position);
+        Vector3 right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
+        Vector3 up = Vector3.Normalize(Vector3.Cross(right, forward));
+        float aspect = width / height;
+        float tan = MathF.Tan(Math.Clamp(settings.Fov, 1, 179) * MathF.PI / 360.0f);
+        float nx = (screenX / width * 2.0f - 1.0f) * aspect * tan;
+        float ny = (1.0f - screenY / height * 2.0f) * tan;
+        return new RuntimeRay(position, Vector3.Normalize(forward + right * nx + up * ny));
+    }
+
+    public bool RaycastEntity(RuntimeRay ray, out RuntimeRaycastHit hit, float fallbackRadius = 0.5f)
+        => _scene.Physics.Raycast(ray, out hit, float.MaxValue);
 
     private RuntimeCamera? Find(string idOrName) => _scene.Cameras.FirstOrDefault(camera =>
         string.Equals(camera.Id, idOrName, StringComparison.OrdinalIgnoreCase)

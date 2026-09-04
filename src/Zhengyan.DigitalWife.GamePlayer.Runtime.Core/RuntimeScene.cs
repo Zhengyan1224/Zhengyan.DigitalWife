@@ -65,7 +65,15 @@ public sealed class RuntimeScene : IDisposable
         get
         {
             RuntimeCamera[] viewportCameras = Cameras.Where(camera => camera.Enabled && camera.Definition.Viewport.Enabled).ToArray();
-            return viewportCameras.Length == 0 ? [MainCamera] : viewportCameras;
+            RuntimeCamera main = MainCamera;
+            if (viewportCameras.Length == 0)
+            {
+                return [main];
+            }
+
+            List<RuntimeCamera> result = [main];
+            result.AddRange(viewportCameras.Where(camera => !ReferenceEquals(camera, main)));
+            return result;
         }
     }
 
