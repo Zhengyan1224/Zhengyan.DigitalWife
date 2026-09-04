@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Reflection.Metadata;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.GamePlayer;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
@@ -634,6 +635,7 @@ public sealed class AndroidScriptScene
     public double Fps => _getFps();
     public double RawFps => Fps;
     public double DeltaSeconds => 0.0;
+    public long FrameCount => 0;
     public AndroidScriptCamera Camera { get; }
     public RuntimeScenePhysics Physics => _scene.Physics;
     public RuntimeSceneNavigation Navigation => _scene.Navigation;
@@ -815,6 +817,18 @@ public sealed class AndroidScriptEntity
 
     public void SetPosition(float x, float y, float z) => Position = new Vector3(x, y, z);
     public void SetPosition(Vector3 position) => Position = position;
+    public void SetScale(float x, float y, float z) => Scale = new Vector3(x, y, z);
+    public void LookAt(float targetX, float targetY, float targetZ) => LookAt(new Vector3(targetX, targetY, targetZ));
+    public void LookAt(Vector3 target)
+    {
+        Vector3 direction = target - Position;
+        if (direction.LengthSquared() < 1e-8f) return;
+        direction = Vector3.Normalize(direction);
+        RotationDegrees = new Vector3(
+            MathF.Atan2(direction.Y, MathF.Sqrt(direction.X * direction.X + direction.Z * direction.Z)) * 180.0f / MathF.PI,
+            MathF.Atan2(direction.X, -direction.Z) * 180.0f / MathF.PI,
+            0.0f);
+    }
     public void ApplyMotion(string motionPath)
     {
         if (Pmx is { } model)
@@ -968,6 +982,9 @@ public sealed class AndroidScriptEntity
     public void Speak(string text, Action? onCompleted = null) => onCompleted?.Invoke();
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => onCompleted?.Invoke();
+    public void SpeakWithCallback(string text, string callbackName) { }
+    public void SpeakWithCallback(string text, int speakerId, float speed, float volume, string callbackName) { }
+    public void StopSpeaking() { }
 
     private PmxModelComponent? Pmx => _resolvePmxModel();
     private PmxModelComponent RequirePmx() => Pmx ?? throw new InvalidOperationException("Entity is not a PMX model or its renderer does not expose PMX controls.");
@@ -1236,11 +1253,59 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new bool IsEvent => Event is not null;
     public new bool IsGuiEvent => string.Equals(Event?.Type, "gui", StringComparison.OrdinalIgnoreCase);
     public new bool IsSpriteEvent => string.Equals(Event?.Type, "sprite", StringComparison.OrdinalIgnoreCase);
+    public bool IsTrayMenuEvent => string.Equals(Event?.Type, "tray", StringComparison.OrdinalIgnoreCase);
+    public bool IsLoadingEvent => string.Equals(Event?.Type, "loading", StringComparison.OrdinalIgnoreCase);
     public new bool IsSpeechEvent => string.Equals(Event?.Type, "speech", StringComparison.OrdinalIgnoreCase);
+    public bool IsLlmEvent => string.Equals(Event?.Type, "llm", StringComparison.OrdinalIgnoreCase);
+    public bool IsAsrEvent => string.Equals(Event?.Type, "asr", StringComparison.OrdinalIgnoreCase);
+    public bool IsRealtimeVoiceEvent => string.Equals(Event?.Type, "realtime_voice", StringComparison.OrdinalIgnoreCase);
+    public dynamic? LlmEvent => null;
+    public dynamic? AsrEvent => null;
+    public dynamic? RealtimeVoiceEvent => null;
+    public string LlmRequestId => string.Empty;
+    public string LlmEventName => string.Empty;
+    public string LlmDelta => string.Empty;
+    public string LlmText => string.Empty;
+    public bool LlmIsFinal => false;
+    public string LlmError => string.Empty;
+    public string LlmCallbackName => string.Empty;
+    public dynamic? LlmToolCall => null;
+    public string LlmToolCallId => string.Empty;
+    public string LlmToolName => string.Empty;
+    public string LlmToolArgumentsJson => string.Empty;
+    public string LlmToolResult => string.Empty;
+    public string AsrRequestId => string.Empty;
+    public string AsrEventName => string.Empty;
+    public string AsrText => string.Empty;
+    public bool AsrIsFinal => false;
+    public string AsrError => string.Empty;
+    public string AsrCallbackName => string.Empty;
+    public double AsrOffsetSeconds => 0.0;
+    public string AsrWakeWord => string.Empty;
+    public string AsrRecognizedText => string.Empty;
+    public string RealtimeVoiceRequestId => string.Empty;
+    public string RealtimeVoiceEventName => string.Empty;
+    public string RealtimeVoiceText => string.Empty;
+    public string RealtimeVoiceDelta => string.Empty;
+    public string RealtimeVoiceAccumulatedText => string.Empty;
+    public bool RealtimeVoiceIsFinal => false;
+    public string RealtimeVoiceError => string.Empty;
+    public string RealtimeVoiceCallbackName => string.Empty;
+    public string RealtimeVoiceWakeWord => string.Empty;
+    public string RealtimeVoiceRecognizedText => string.Empty;
     public new string GuiControlId => IsGuiEvent ? Event!.Id : string.Empty;
     public new string GuiControlName => IsGuiEvent ? Event!.Text : string.Empty;
     public new string GuiEventName => IsGuiEvent ? Event!.EventName : string.Empty;
     public new string SpeechCallbackName => IsSpeechEvent ? Event!.EventName : string.Empty;
+    public string LoadingEventName => IsLoadingEvent ? Event!.EventName : string.Empty;
+    public float LoadingProgress => 0.0f;
+    public string LoadingMessage => string.Empty;
+    public string SpriteId => IsSpriteEvent ? Event!.Id : string.Empty;
+    public string SpriteName => IsSpriteEvent ? Event!.Text : string.Empty;
+    public string SpriteEventName => IsSpriteEvent ? Event!.EventName : string.Empty;
+    public string TrayMenuItemId => IsTrayMenuEvent ? Event!.Id : string.Empty;
+    public string TrayMenuItemText => IsTrayMenuEvent ? Event!.Text : string.Empty;
+    public string TrayMenuEventName => IsTrayMenuEvent ? Event!.EventName : string.Empty;
 
     public new AndroidScriptServices Services { get; }
 
