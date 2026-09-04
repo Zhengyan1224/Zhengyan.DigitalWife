@@ -454,6 +454,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             typeof(object).Assembly,
             typeof(Console).Assembly,
             typeof(Task).Assembly,
+            typeof(System.Runtime.CompilerServices.DefaultInterpolatedStringHandler).Assembly,
             typeof(System.Linq.Enumerable).Assembly,
             typeof(Vector3).Assembly,
             typeof(AndroidScriptGlobals).Assembly,
