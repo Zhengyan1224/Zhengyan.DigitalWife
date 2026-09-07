@@ -172,8 +172,14 @@ public sealed class RuntimeScene : IDisposable
         ThrowIfDisposed();
         _animations.Update(Definition, Math.Max(deltaSeconds, 0.0f));
         Debug.Update(Math.Max(deltaSeconds, 0.0f));
+        RuntimeCamera mainCamera = MainCamera;
         foreach (RuntimeCamera camera in Cameras.Where(camera => camera.Enabled))
-            camera.UpdateControl(this, deltaSeconds, input);
+        {
+            // Input belongs to the active/main camera. Viewport cameras are
+            // render-only unless a script explicitly changes their settings.
+            camera.UpdateControl(this, deltaSeconds,
+                ReferenceEquals(camera, mainCamera) ? input : RuntimeCameraInput.None);
+        }
         Definition.Camera = MainCamera.Settings;
         Definition.MainCamera = MainCamera.Name;
     }

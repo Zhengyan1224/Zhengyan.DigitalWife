@@ -2193,9 +2193,23 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         }
         foreach (PmxGpuModel model in _models)
         {
-            if (model.RelationEnabled
-                && models.TryGetValue(model.RelationEntity, out PmxGpuModel? relation)
-                && !ReferenceEquals(model, relation))
+            PmxGpuModel? relation = null;
+            string relationEntity = model.RelationEntity;
+            if (model.RelationEnabled && string.IsNullOrWhiteSpace(relationEntity))
+            {
+                // Match the desktop runtime: an enabled relation with no
+                // explicit target binds to the only other PMX model.
+                PmxGpuModel[] candidates = _models
+                    .Where(candidate => !ReferenceEquals(candidate, model))
+                    .ToArray();
+                if (candidates.Length == 1) relation = candidates[0];
+            }
+            else if (model.RelationEnabled)
+            {
+                models.TryGetValue(relationEntity, out relation);
+            }
+
+            if (model.RelationEnabled && relation is not null && !ReferenceEquals(model, relation))
             {
                 model.RelationTarget = relation;
                 Log.Info(LogTag, $"Android PMX relation bound: '{model.EntityName}' -> '{relation.EntityName}'.");
@@ -2206,7 +2220,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
             else if (model.RelationEnabled)
             {
-                Log.Warn(LogTag, $"Android PMX relation target was not found for '{model.EntityName}': '{model.RelationEntity}'.");
+                Log.Warn(LogTag, $"Android PMX relation target was not found for '{model.EntityName}': '{relationEntity}'.");
             }
         }
 

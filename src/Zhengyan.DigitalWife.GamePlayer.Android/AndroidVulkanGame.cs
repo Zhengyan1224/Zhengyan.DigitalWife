@@ -167,20 +167,22 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             bool mainViewport = true;
             foreach (RuntimeCamera runtimeCamera in _scene.RenderCameras)
             {
-                RuntimeViewport viewport = runtimeCamera.ResolveViewport(width, height,
-                    Math.Max(_windowSettings.Width, 1), Math.Max(_windowSettings.Height, 1));
+                RuntimeViewport viewport = ResolveVulkanViewport(runtimeCamera, width, height);
                 GraphicsDevice.SetViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
                 GraphicsDevice.SetScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height, enabled: true);
                 GraphicsDevice.ClearViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height,
                     lighting.ClearColor.ToVector4());
                 if (mainViewport)
                 {
+                    // Sprite draw order < 0 is between the skybox and the 3D
+                    // scene, matching the desktop render pipeline.
+                    DrawSkyboxOnly(gameTime);
                     _spriteComponent?.DrawBackground(gameTime);
                     mainViewport = false;
                 }
                 OrbitCamera camera = new();
                 ApplyCameraSettings(camera, runtimeCamera.Settings, viewport.Width, viewport.Height);
-                DrawSceneComponentsWithCamera(gameTime, camera);
+                DrawSceneComponentsWithCamera(gameTime, camera, includeSkybox: false);
             }
             GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
             _spriteComponent?.Draw(gameTime);
@@ -589,7 +591,29 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         }
     }
 
-    private void DrawSceneComponentsWithCamera(GameTime gameTime, OrbitCamera camera)
+    private RuntimeViewport ResolveVulkanViewport(RuntimeCamera runtimeCamera, int width, int height)
+    {
+        SceneCameraSettings definition = runtimeCamera.Definition;
+        if (!definition.Viewport.Enabled)
+            return new RuntimeViewport(0, 0, width, height);
+        LayoutRect rect = LayoutResolver.Resolve(definition.Viewport.LayoutMode,
+            definition.Viewport.X, definition.Viewport.Y,
+            definition.Viewport.Width, definition.Viewport.Height,
+            width, height, Math.Max(_windowSettings.Width, 1), Math.Max(_windowSettings.Height, 1));
+        int x = Math.Clamp((int)MathF.Round(rect.X), 0, Math.Max(width - 1, 0));
+        int y = Math.Clamp((int)MathF.Round(rect.Y), 0, Math.Max(height - 1, 0));
+        int viewportWidth = Math.Clamp((int)MathF.Round(rect.Width), 1, Math.Max(width - x, 1));
+        int viewportHeight = Math.Clamp((int)MathF.Round(rect.Height), 1, Math.Max(height - y, 1));
+        return new RuntimeViewport(x, y, viewportWidth, viewportHeight);
+    }
+
+    private void DrawSkyboxOnly(GameTime gameTime)
+    {
+        if (_skybox is not null && _skybox.Visible)
+            _skybox.Draw(gameTime);
+    }
+
+    private void DrawSceneComponentsWithCamera(GameTime gameTime, OrbitCamera camera, bool includeSkybox = true)
     {
         OrbitCamera? previousSkybox = _skybox?.Camera;
         OrbitCamera?[] previousModels = _models.Values.Select(model => model.Camera).ToArray();
@@ -601,7 +625,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             ApplyCameraToComponents(camera);
 
             List<DrawableGameComponent> drawables = [];
-            if (_skybox is not null) drawables.Add(_skybox);
+            if (includeSkybox && _skybox is not null) drawables.Add(_skybox);
             drawables.AddRange(_models.Values);
             drawables.AddRange(_planes.Values);
             drawables.AddRange(_waters.Values);
