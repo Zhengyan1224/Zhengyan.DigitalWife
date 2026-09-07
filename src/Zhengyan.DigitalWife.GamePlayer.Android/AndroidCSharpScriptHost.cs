@@ -459,6 +459,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             typeof(System.Linq.Expressions.Expression).Assembly,
             typeof(System.Dynamic.DynamicObject).Assembly,
             typeof(System.Runtime.CompilerServices.DynamicAttribute).Assembly,
+            typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly,
             typeof(System.Linq.Enumerable).Assembly,
             typeof(Vector3).Assembly,
             typeof(AndroidScriptGlobals).Assembly,

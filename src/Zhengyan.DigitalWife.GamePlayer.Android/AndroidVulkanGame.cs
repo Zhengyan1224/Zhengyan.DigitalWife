@@ -172,16 +172,17 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
                 GraphicsDevice.SetScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height, enabled: true);
                 GraphicsDevice.ClearViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height,
                     lighting.ClearColor.ToVector4());
+                OrbitCamera camera = new();
+                ApplyCameraSettings(camera, runtimeCamera.Settings, viewport.Width, viewport.Height);
                 if (mainViewport)
                 {
                     // Sprite draw order < 0 is between the skybox and the 3D
                     // scene, matching the desktop render pipeline.
+                    ApplyCameraToComponents(camera);
                     DrawSkyboxOnly(gameTime);
                     _spriteComponent?.DrawBackground(gameTime);
                     mainViewport = false;
                 }
-                OrbitCamera camera = new();
-                ApplyCameraSettings(camera, runtimeCamera.Settings, viewport.Width, viewport.Height);
                 DrawSceneComponentsWithCamera(gameTime, camera, includeSkybox: false);
             }
             GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
