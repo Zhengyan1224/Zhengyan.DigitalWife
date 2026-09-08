@@ -270,10 +270,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 
             """ + scriptSource;
-        SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
-            source,
-            new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script),
-            path);
+        CSharpParseOptions parseOptions = new(LanguageVersion.Latest, kind: SourceCodeKind.Script);
+        SyntaxTree parsedTree = CSharpSyntaxTree.ParseText(source, parseOptions, path);
+        SyntaxNode portableRoot = new PortableInterpolatedStringRewriter().Visit(parsedTree.GetRoot())!;
+        SyntaxTree syntaxTree = CSharpSyntaxTree.Create(
+            (CSharpSyntaxNode)portableRoot, parseOptions, path, parsedTree.Encoding);
         ScriptExecutionPhases phases = AnalyzeScriptPhases(scriptSource);
         CSharpCompilation compilation = CSharpCompilation.CreateScriptCompilation(
             "AndroidScript_" + Guid.NewGuid().ToString("N"),
@@ -303,6 +304,62 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
         Assembly assembly = Assembly.Load(image.ToArray());
         return CreateCompiledScript(assembly, phases);
+    }
+
+    /// <summary>
+    /// Android runtime packs can expose an interpolated-string-handler API
+    /// shape that differs from the Roslyn compiler package bundled with the
+    /// player. Lower interpolated strings to the long-standing String.Format
+    /// contract before compilation. This is syntax based and applies equally
+    /// to every script, expression and format string.
+    /// </summary>
+    private sealed class PortableInterpolatedStringRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitInterpolatedStringExpression(InterpolatedStringExpressionSyntax node)
+        {
+            List<ExpressionSyntax> values = [];
+            System.Text.StringBuilder format = new();
+            foreach (InterpolatedStringContentSyntax content in node.Contents)
+            {
+                if (content is InterpolatedStringTextSyntax text)
+                {
+                    format.Append(text.TextToken.ValueText.Replace("{", "{{", StringComparison.Ordinal)
+                        .Replace("}", "}}", StringComparison.Ordinal));
+                    continue;
+                }
+
+                InterpolationSyntax interpolation = (InterpolationSyntax)content;
+                int index = values.Count;
+                values.Add((ExpressionSyntax)Visit(interpolation.Expression)!);
+                format.Append('{').Append(index);
+                if (interpolation.AlignmentClause is not null)
+                    format.Append(',').Append(interpolation.AlignmentClause.Value.ToString());
+                if (interpolation.FormatClause is not null)
+                    format.Append(':').Append(interpolation.FormatClause.FormatStringToken.ValueText);
+                format.Append('}');
+            }
+
+            ExpressionSyntax provider = SyntaxFactory.ParseExpression(
+                "global::System.Globalization.CultureInfo.CurrentCulture");
+            ExpressionSyntax method = SyntaxFactory.ParseExpression("global::System.String.Format");
+            ArrayCreationExpressionSyntax arguments = SyntaxFactory.ArrayCreationExpression(
+                SyntaxFactory.ArrayType(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)))
+                    .WithRankSpecifiers(SyntaxFactory.SingletonList(
+                        SyntaxFactory.ArrayRankSpecifier(
+                            SyntaxFactory.SingletonSeparatedList<ExpressionSyntax>(
+                                SyntaxFactory.OmittedArraySizeExpression())))))
+                .WithInitializer(SyntaxFactory.InitializerExpression(
+                    SyntaxKind.ArrayInitializerExpression,
+                    SyntaxFactory.SeparatedList(values)));
+            return SyntaxFactory.InvocationExpression(method)
+                .WithArgumentList(SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList([
+                    SyntaxFactory.Argument(provider),
+                    SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                        SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(format.ToString()))),
+                    SyntaxFactory.Argument(arguments)
+                ])))
+                .WithTriviaFrom(node);
+        }
     }
 
     private AndroidCompiledScript? TryLoadPrecompiled(string sourcePath)

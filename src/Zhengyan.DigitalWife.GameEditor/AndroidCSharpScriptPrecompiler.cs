@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Emit;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -107,10 +108,11 @@ internal static class AndroidCSharpScriptPrecompiler
             + "using Zhengyan.DigitalWife.GameProjects;\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n\n"
             + compilationBody;
-        SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(
-            source,
-            new CSharpParseOptions(LanguageVersion.Latest, kind: SourceCodeKind.Script),
-            path);
+        CSharpParseOptions parseOptions = new(LanguageVersion.Latest, kind: SourceCodeKind.Script);
+        SyntaxTree parsedTree = CSharpSyntaxTree.ParseText(source, parseOptions, path);
+        SyntaxNode portableRoot = new PortableInterpolatedStringRewriter().Visit(parsedTree.GetRoot())!;
+        SyntaxTree syntaxTree = CSharpSyntaxTree.Create(
+            (CSharpSyntaxNode)portableRoot, parseOptions, path, parsedTree.Encoding);
         CSharpCompilation compilation = CSharpCompilation.CreateScriptCompilation(
             "AndroidScript_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).Substring(0, 16),
             syntaxTree,
@@ -146,6 +148,55 @@ internal static class AndroidCSharpScriptPrecompiler
         }
 
         return image.ToArray();
+    }
+
+    private sealed class PortableInterpolatedStringRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitInterpolatedStringExpression(InterpolatedStringExpressionSyntax node)
+        {
+            List<ExpressionSyntax> values = [];
+            StringBuilder format = new();
+            foreach (InterpolatedStringContentSyntax content in node.Contents)
+            {
+                if (content is InterpolatedStringTextSyntax text)
+                {
+                    format.Append(text.TextToken.ValueText.Replace("{", "{{", StringComparison.Ordinal)
+                        .Replace("}", "}}", StringComparison.Ordinal));
+                    continue;
+                }
+
+                InterpolationSyntax interpolation = (InterpolationSyntax)content;
+                int index = values.Count;
+                values.Add((ExpressionSyntax)Visit(interpolation.Expression)!);
+                format.Append('{').Append(index);
+                if (interpolation.AlignmentClause is not null)
+                    format.Append(',').Append(interpolation.AlignmentClause.Value.ToString());
+                if (interpolation.FormatClause is not null)
+                    format.Append(':').Append(interpolation.FormatClause.FormatStringToken.ValueText);
+                format.Append('}');
+            }
+
+            ExpressionSyntax provider = SyntaxFactory.ParseExpression(
+                "global::System.Globalization.CultureInfo.CurrentCulture");
+            ExpressionSyntax method = SyntaxFactory.ParseExpression("global::System.String.Format");
+            ArrayCreationExpressionSyntax arguments = SyntaxFactory.ArrayCreationExpression(
+                SyntaxFactory.ArrayType(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)))
+                    .WithRankSpecifiers(SyntaxFactory.SingletonList(
+                        SyntaxFactory.ArrayRankSpecifier(
+                            SyntaxFactory.SingletonSeparatedList<ExpressionSyntax>(
+                                SyntaxFactory.OmittedArraySizeExpression())))))
+                .WithInitializer(SyntaxFactory.InitializerExpression(
+                    SyntaxKind.ArrayInitializerExpression,
+                    SyntaxFactory.SeparatedList(values)));
+            return SyntaxFactory.InvocationExpression(method)
+                .WithArgumentList(SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList([
+                    SyntaxFactory.Argument(provider),
+                    SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
+                        SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(format.ToString()))),
+                    SyntaxFactory.Argument(arguments)
+                ])))
+                .WithTriviaFrom(node);
+        }
     }
 
     private static IEnumerable<MetadataReference> GetMetadataReferences()

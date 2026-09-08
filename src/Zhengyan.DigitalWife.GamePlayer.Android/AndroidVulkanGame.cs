@@ -7,6 +7,7 @@ using Zhengyan.DigitalWife.Mmd.Game;
 using Zhengyan.DigitalWife.Mmd.Game.Components;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
+using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -43,6 +44,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private readonly Dictionary<string, ParticleSystemComponent> _particles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WaterSurfaceComponent> _waters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TexturedPlaneComponent> _planes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RelationTransformUpdater> _relationUpdaters = new(StringComparer.OrdinalIgnoreCase);
     private PmxModelComponent[] _modelSnapshot = [];
     private ParticleSystemComponent[] _particleSnapshot = [];
     private WaterSurfaceComponent[] _waterSnapshot = [];
@@ -320,6 +322,8 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             });
         }
 
+        BindPmxRelations();
+
         RefreshComponentSnapshots();
         _loadedEntityRevision = _scene.EntityRevision;
     }
@@ -385,6 +389,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         if (_loadedEntityRevision != _scene.EntityRevision)
         {
             ReconcileSceneComponents();
+            BindPmxRelations();
             RefreshComponentSnapshots();
             _loadedEntityRevision = _scene.EntityRevision;
         }
@@ -409,6 +414,29 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             model.ShadowColor = lighting.ShadowColor.ToVector4();
             model.PointLights = _pointLights;
             model.SpotLights = _spotLights;
+        }
+    }
+
+    private void BindPmxRelations()
+    {
+        foreach ((string targetId, RelationTransformUpdater updater) in _relationUpdaters)
+            if (_models.TryGetValue(targetId, out PmxModelComponent? target)) target.RemoveTransformUpdater(updater);
+        _relationUpdaters.Clear();
+
+        foreach (RuntimeEntity entity in _scene.PmxModels)
+        {
+            if (!entity.Definition.Relation.Enabled || string.IsNullOrWhiteSpace(entity.Definition.Relation.RelationEntity)
+                || !_models.TryGetValue(entity.Id, out PmxModelComponent? target)
+                || !_models.TryGetValue(entity.Definition.Relation.RelationEntity, out PmxModelComponent? relation)
+                || ReferenceEquals(target, relation))
+            {
+                continue;
+            }
+
+            RelationTransformUpdater updater = target.CreateRelationTransformUpdater(
+                relation, entity.Definition.Relation.BindComponentTransform);
+            updater.BindLighting = entity.Definition.Relation.BindLighting;
+            _relationUpdaters[entity.Id] = updater;
         }
     }
 
