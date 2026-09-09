@@ -103,6 +103,7 @@ internal static class AndroidCSharpScriptPrecompiler
         string compilationBody = string.IsNullOrWhiteSpace(scriptSource) ? "return null;" : scriptSource;
         string source = "using System;\n"
             + "using System.Numerics;\n"
+            + "using System.Text.RegularExpressions;\n"
             + "using System.Threading;\n"
             + "using System.Threading.Tasks;\n"
             + "using Zhengyan.DigitalWife.GameProjects;\n"

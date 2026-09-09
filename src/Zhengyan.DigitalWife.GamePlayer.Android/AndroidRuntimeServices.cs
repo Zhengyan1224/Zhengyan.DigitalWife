@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using Android.App;
@@ -9,6 +10,7 @@ using Android.OS;
 using Java.Util;
 using System.Net.WebSockets;
 using System.Threading.Channels;
+using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -50,7 +52,51 @@ public sealed class AndroidScriptSaveStore
 public sealed class AndroidScriptLlm
 {
     private readonly AndroidScriptNetwork _network;
-    internal AndroidScriptLlm(AndroidScriptNetwork network) => _network = network;
+    private readonly Action<AndroidRuntimeEvent> _dispatchEvent;
+    private readonly GameProjectLlmSettings _settings;
+    private readonly string _projectDirectory;
+    private readonly Dictionary<string, CancellationTokenSource> _requests = new(StringComparer.OrdinalIgnoreCase);
+    internal AndroidScriptLlm(AndroidScriptNetwork network, Action<AndroidRuntimeEvent> dispatchEvent, GameProjectLlmSettings settings, string projectDirectory)
+    { _network = network; _dispatchEvent = dispatchEvent; _settings = settings; _projectDirectory = projectDirectory; }
+    public bool SkillsEnabled => _settings.Enabled && _settings.EnableSkills;
+    public string SkillsDirectory => Path.Combine(_projectDirectory, "skills");
+    public string MemoryDirectory => Path.Combine(_projectDirectory, "memory");
+    public string GetCharacterMemoryPath(AndroidScriptEntity entity) => Path.Combine(MemoryDirectory, Sanitize(entity.Name) + ".md");
+    public string StartChatWithTools(AndroidScriptEntity entity, IEnumerable<RuntimeLlmChatMessage> messages, IEnumerable<RuntimeLlmTool> tools, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "", string onToolCallCallback = "", string onToolResultCallback = "", int maxToolRounds = 16)
+    {
+        string requestId = Guid.NewGuid().ToString("N");
+        RuntimeLlmTool[] toolList = tools?.ToArray() ?? [];
+        if (toolList.Length > 0)
+        {
+            if (!string.IsNullOrWhiteSpace(onErrorCallback)) _dispatchEvent(new AndroidRuntimeEvent("llm", requestId, onErrorCallback, Vector2.Zero, "Android LLM tool callbacks are not implemented.", entity.Id));
+            return requestId;
+        }
+        CancellationTokenSource cts = new();
+        _requests[requestId] = cts;
+        _ = RunChatAsync(requestId, entity, messages?.ToArray() ?? [], onDeltaCallback, onCompletedCallback, onErrorCallback, cts.Token);
+        return requestId;
+    }
+    private async Task RunChatAsync(string id, AndroidScriptEntity entity, RuntimeLlmChatMessage[] messages, string delta, string completed, string error, CancellationToken token)
+    {
+        try
+        {
+            if (!_settings.Enabled) throw new InvalidOperationException("Project LLM is disabled.");
+            string apiKey = string.IsNullOrWhiteSpace(_settings.ApiKey) ? global::System.Environment.GetEnvironmentVariable(_settings.ApiKeyEnvironmentVariable) ?? string.Empty : _settings.ApiKey;
+            string url = _settings.BaseUrl.TrimEnd('/') + (string.IsNullOrWhiteSpace(_settings.ChatCompletionsPath) ? "/v1/chat/completions" : "/" + _settings.ChatCompletionsPath.TrimStart('/'));
+            object payload = new { model = _settings.Model, messages, stream = false, temperature = _settings.DefaultTemperature };
+            Dictionary<string, string> headers = string.IsNullOrWhiteSpace(apiKey) ? [] : new(StringComparer.OrdinalIgnoreCase) { ["Authorization"] = "Bearer " + apiKey };
+            AndroidHttpResponse response = await _network.PostJsonAsync(url, payload, _settings.TimeoutSeconds, headers).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) throw new HttpRequestException($"LLM request failed ({response.StatusCode}): {response.Body}");
+            using JsonDocument json = JsonDocument.Parse(response.Body);
+            string text = json.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(delta)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, delta, Vector2.Zero, text, entity.Id));
+            if (!string.IsNullOrWhiteSpace(completed)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, completed, Vector2.Zero, text, entity.Id));
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        { if (!string.IsNullOrWhiteSpace(error)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, error, Vector2.Zero, ex.Message, entity.Id)); }
+        finally { if (_requests.Remove(id, out CancellationTokenSource? source)) source.Dispose(); }
+    }
+    private static string Sanitize(string value) => string.IsNullOrWhiteSpace(value) ? "character" : string.Concat(value.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_'));
     public async Task<string> ChatAsync(string baseUrl, string model, string prompt, string apiKey = "", float? temperature = null, int timeoutSeconds = 60)
     {
         string url = baseUrl.TrimEnd('/') + "/v1/chat/completions";
@@ -326,6 +372,9 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     private bool _listening;
     private AndroidScriptAsr() { }
     public static AndroidScriptAsr Shared => LazyShared.Value;
+    public bool Enabled => IsAvailable;
+    public string StartStreamingRecognition(AndroidScriptEntity entity, string onPartialCallback = "", string onCompletedCallback = "", string onErrorCallback = "") => Start() ? Guid.NewGuid().ToString("N") : string.Empty;
+    public void StopStreamingRecognition(string requestId) => Stop();
     public bool IsAvailable => SpeechRecognizer.IsRecognitionAvailable(Application.Context);
     public bool IsListening => _listening;
     public string LastText { get; private set; } = string.Empty;
@@ -359,4 +408,27 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     public void OnRmsChanged(float rmsdB) { }
     public new void Dispose() { _recognizer?.Destroy(); _recognizer = null; }
     private static string Extract(Bundle? bundle) => bundle?.GetStringArrayList(SpeechRecognizer.ResultsRecognition)?.FirstOrDefault() ?? string.Empty;
+}
+
+public sealed class AndroidScriptRealtimeVoice
+{
+    public bool WakeWordEnabled => false;
+    public string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "", string onErrorCallback = "") => string.Empty;
+    public void StopWakeWordMonitoring() { }
+    public string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds = 30, string onCompletedCallback = "", string onTimeoutCallback = "", string onErrorCallback = "") => string.Empty;
+    public void CancelRequest(string requestId) { }
+    public string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "") => string.Empty;
+    public string StartSpeakText(AndroidScriptEntity entity, string text, float speed = 1, string onCompletedCallback = "", string onErrorCallback = "") => string.Empty;
+    public Task ResetConversationAsync() => Task.CompletedTask;
+}
+
+public sealed class AndroidScriptBubbleManager
+{
+    private readonly Dictionary<string, RuntimeDialogueBubble> _bubbles = new(StringComparer.OrdinalIgnoreCase);
+    public RuntimeDialogueBubble GetOrCreate(string name)
+    {
+        if (!_bubbles.TryGetValue(name, out RuntimeDialogueBubble? bubble))
+            _bubbles[name] = bubble = new RuntimeDialogueBubble(name);
+        return bubble;
+    }
 }

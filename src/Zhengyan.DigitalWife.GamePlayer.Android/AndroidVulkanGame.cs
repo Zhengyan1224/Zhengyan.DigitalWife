@@ -45,6 +45,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private readonly Dictionary<string, WaterSurfaceComponent> _waters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TexturedPlaneComponent> _planes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RelationTransformUpdater> _relationUpdaters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private PmxModelComponent[] _modelSnapshot = [];
     private ParticleSystemComponent[] _particleSnapshot = [];
     private WaterSurfaceComponent[] _waterSnapshot = [];
@@ -97,9 +98,76 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 
     protected override void Update(GameTime gameTime)
     {
-        _ = gameTime;
         SyncCamera();
         SyncSceneComponents();
+        UpdateWaterInteractions(gameTime.TotalSeconds);
+    }
+
+    private void UpdateWaterInteractions(double now)
+    {
+        if (_waters.Count == 0)
+            return;
+
+        foreach ((string waterId, WaterSurfaceComponent water) in _waters)
+        {
+            RuntimeEntity? waterEntity = _scene.GetEntity(waterId);
+            if (waterEntity is null || !waterEntity.Definition.Water.EnableInteraction)
+                continue;
+
+            float radius = Math.Max(waterEntity.Definition.Water.InteractionRadius, 0.05f);
+            float strength = Math.Max(waterEntity.Definition.Water.InteractionStrength, 0.0f);
+            float halfSize = Math.Max(waterEntity.Definition.Water.Size, 0.1f)
+                * MathF.Max(MathF.Abs(waterEntity.Definition.Transform.Scale.X), MathF.Abs(waterEntity.Definition.Transform.Scale.Z));
+
+            foreach (RuntimeEntity entity in _scene.Entities)
+            {
+                if (string.Equals(entity.Id, waterEntity.Id, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.Equals(entity.Type, "particle_system", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                foreach (RuntimeCollider collider in RuntimePhysics.CreateColliders(entity))
+                {
+                    if (collider.Shape == "mesh")
+                        continue;
+                    Vector3 center = collider.Shape == "box" ? collider.Box.Center : collider.Capsule.Center;
+                    float colliderRadius = collider.Shape == "box"
+                        ? collider.Box.HalfExtents.Length()
+                        : collider.Capsule.Radius + Vector3.Distance(collider.Capsule.Start, collider.Capsule.End) * 0.5f;
+                    if (!water.TryGetSurfaceHeight(center, out float surfaceY)
+                        || MathF.Abs(center.Y - surfaceY) > colliderRadius)
+                        continue;
+                    Vector3 local = center - waterEntity.Position;
+                    if (MathF.Abs(local.X) > halfSize || MathF.Abs(local.Z) > halfSize)
+                        continue;
+                    string key = $"{waterEntity.Id}:{entity.Id}:{collider.Id}";
+                    if (!_waterRippleTimes.TryGetValue(key, out double last) || now - last >= 0.35)
+                    {
+                        _waterRippleTimes[key] = now;
+                        water.AddRipple(new Vector3(center.X, surfaceY, center.Z), radius, strength);
+                    }
+                }
+            }
+
+            foreach (ParticleSystemComponent particles in _particleSnapshot)
+            {
+                foreach (ParticleCollisionSample sample in particles.GetCollisionSamples())
+                {
+                    Vector3 local = sample.Position - waterEntity.Position;
+                    if (MathF.Abs(local.Y) > radius + sample.Radius ||
+                        local.X * local.X + local.Z * local.Z > waterEntity.Definition.Water.Size * waterEntity.Definition.Water.Size * 0.25f)
+                        continue;
+                    string key = $"{waterEntity.Id}:particle:{sample.Index}";
+                    double minInterval = Math.Max(0.0f, waterEntity.Definition.Water.ParticleRippleMinIntervalSeconds);
+                    if (!_waterRippleTimes.TryGetValue(key, out double last) || now - last >= minInterval)
+                    {
+                        _waterRippleTimes[key] = now;
+                        water.AddRipple(sample.Position, radius, strength,
+                            waterEntity.Definition.Water.ParticleRippleMergeDistance);
+                    }
+                }
+            }
+        }
     }
 
     protected override void Draw(GameTime gameTime)

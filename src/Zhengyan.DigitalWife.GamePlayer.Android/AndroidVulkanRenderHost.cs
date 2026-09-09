@@ -71,7 +71,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 entity => _game?.GetPmxModel(entity.Id),
                 (name, volume) => _audioHost?.SetVolume(name, volume) == true,
                 (name, loop) => _audioHost?.SetLoop(name, loop) == true,
-                name => _audioHost?.IsPlaying(name) == true);
+                name => _audioHost?.IsPlaying(name) == true,
+                llmSettings: project.Llm);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");

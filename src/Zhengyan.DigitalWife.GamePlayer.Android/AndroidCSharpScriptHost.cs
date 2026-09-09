@@ -7,6 +7,8 @@ using Microsoft.CodeAnalysis.Emit;
 using System.Numerics;
 using System.Reflection;
 using System.Reflection.Metadata;
+using System.Threading;
+using System.Text.RegularExpressions;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
@@ -31,6 +33,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, float, bool> _setAudioVolume;
     private readonly Func<string, bool, bool> _setAudioLoop;
     private readonly Func<string, bool> _isAudioPlaying;
+    private readonly GameProjectLlmSettings _llmSettings;
     private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<ScriptExecutionKey, AndroidScriptExecutionContext> _executionContexts = [];
@@ -53,7 +56,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         Func<RuntimeEntity, PmxModelComponent?>? resolvePmxModel = null,
         Func<string, float, bool>? setAudioVolume = null,
         Func<string, bool, bool>? setAudioLoop = null,
-        Func<string, bool>? isAudioPlaying = null)
+        Func<string, bool>? isAudioPlaying = null,
+        GameProjectLlmSettings? llmSettings = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -70,6 +74,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _setAudioVolume = setAudioVolume ?? ((_, _) => false);
         _setAudioLoop = setAudioLoop ?? ((_, _) => false);
         _isAudioPlaying = isAudioPlaying ?? (_ => false);
+        _llmSettings = llmSettings ?? new GameProjectLlmSettings();
     }
 
     public void Start(RuntimeScene scene)
@@ -132,10 +137,12 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _refreshRenderTexture,
             _configureRenderTexture,
             _getRenderTexture,
-            _listRenderTextures);
+            _listRenderTextures,
+            runtimeEvent => DispatchEvent(scene, runtimeEvent),
+            _llmSettings);
         AndroidScriptInput scriptInput = new(input);
         AndroidScriptGlobals globals = new(
-            new AndroidScriptScene(scene, _projectDirectory, _requestSceneChange, () => _fps),
+            new AndroidScriptScene(scene, _projectDirectory, _requestSceneChange, () => _fps, services),
             new AndroidScriptEntity(
                 entity,
                 path => _applyMotion(scene, entity, path),
@@ -263,7 +270,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
         string source = """
             using System;
+            using System.Collections.Generic;
+            using System.Linq;
             using System.Numerics;
+            using System.Text.RegularExpressions;
             using Zhengyan.DigitalWife.GameProjects;
             using Zhengyan.DigitalWife.GamePlayer.Runtime;
             using Zhengyan.DigitalWife.GamePlayer.Android;
@@ -686,11 +696,12 @@ public sealed class AndroidScriptScene
     private readonly Action<string> _requestSceneChange;
     private readonly Func<double> _getFps;
 
-    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory, Action<string> requestSceneChange, Func<double> getFps)
+    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory, Action<string> requestSceneChange, Func<double> getFps, AndroidScriptServices services)
     {
         _scene = scene;
         _requestSceneChange = requestSceneChange;
         _getFps = getFps;
+        Services = services;
         Camera = new AndroidScriptCamera(scene, projectDirectory);
     }
 
@@ -700,6 +711,11 @@ public sealed class AndroidScriptScene
     public double DeltaSeconds => 0.0;
     public long FrameCount => 0;
     public AndroidScriptCamera Camera { get; }
+    internal AndroidScriptServices Services { get; }
+    public AndroidScriptLlm Llm => Services.Llm;
+    public AndroidScriptAsr Asr => Services.Asr;
+    public AndroidScriptRealtimeVoice RealtimeVoice => Services.RealtimeVoice;
+    public AndroidScriptBubbleManager Bubble => Services.Bubble;
     public RuntimeScenePhysics Physics => _scene.Physics;
     public RuntimeSceneNavigation Navigation => _scene.Navigation;
     public RuntimeDebug Debug => _scene.Debug;
@@ -1325,35 +1341,35 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public dynamic? LlmEvent => null;
     public dynamic? AsrEvent => null;
     public dynamic? RealtimeVoiceEvent => null;
-    public string LlmRequestId => string.Empty;
-    public string LlmEventName => string.Empty;
-    public string LlmDelta => string.Empty;
-    public string LlmText => string.Empty;
-    public bool LlmIsFinal => false;
+    public string LlmRequestId => IsLlmEvent ? Event!.Id : string.Empty;
+    public string LlmEventName => IsLlmEvent ? Event!.EventName : string.Empty;
+    public string LlmDelta => IsLlmEvent ? Event!.Text : string.Empty;
+    public string LlmText => LlmDelta;
+    public bool LlmIsFinal => IsLlmEvent && string.Equals(Event!.EventName, "completed", StringComparison.OrdinalIgnoreCase);
     public string LlmError => string.Empty;
-    public string LlmCallbackName => string.Empty;
+    public string LlmCallbackName => LlmEventName;
     public dynamic? LlmToolCall => null;
     public string LlmToolCallId => string.Empty;
     public string LlmToolName => string.Empty;
     public string LlmToolArgumentsJson => string.Empty;
     public string LlmToolResult => string.Empty;
-    public string AsrRequestId => string.Empty;
-    public string AsrEventName => string.Empty;
-    public string AsrText => string.Empty;
-    public bool AsrIsFinal => false;
+    public string AsrRequestId => IsAsrEvent ? Event!.Id : string.Empty;
+    public string AsrEventName => IsAsrEvent ? Event!.EventName : string.Empty;
+    public string AsrText => IsAsrEvent ? Event!.Text : string.Empty;
+    public bool AsrIsFinal => IsAsrEvent && string.Equals(Event!.EventName, "completed", StringComparison.OrdinalIgnoreCase);
     public string AsrError => string.Empty;
-    public string AsrCallbackName => string.Empty;
+    public string AsrCallbackName => AsrEventName;
     public double AsrOffsetSeconds => 0.0;
     public string AsrWakeWord => string.Empty;
     public string AsrRecognizedText => string.Empty;
-    public string RealtimeVoiceRequestId => string.Empty;
-    public string RealtimeVoiceEventName => string.Empty;
-    public string RealtimeVoiceText => string.Empty;
-    public string RealtimeVoiceDelta => string.Empty;
-    public string RealtimeVoiceAccumulatedText => string.Empty;
-    public bool RealtimeVoiceIsFinal => false;
+    public string RealtimeVoiceRequestId => IsRealtimeVoiceEvent ? Event!.Id : string.Empty;
+    public string RealtimeVoiceEventName => IsRealtimeVoiceEvent ? Event!.EventName : string.Empty;
+    public string RealtimeVoiceText => IsRealtimeVoiceEvent ? Event!.Text : string.Empty;
+    public string RealtimeVoiceDelta => RealtimeVoiceText;
+    public string RealtimeVoiceAccumulatedText => RealtimeVoiceText;
+    public bool RealtimeVoiceIsFinal => IsRealtimeVoiceEvent && (RealtimeVoiceEventName is "voice_done" or "voice_transcribed");
     public string RealtimeVoiceError => string.Empty;
-    public string RealtimeVoiceCallbackName => string.Empty;
+    public string RealtimeVoiceCallbackName => RealtimeVoiceEventName;
     public string RealtimeVoiceWakeWord => string.Empty;
     public string RealtimeVoiceRecognizedText => string.Empty;
     public new string GuiControlId => IsGuiEvent ? Event!.Id : string.Empty;
@@ -1409,6 +1425,8 @@ public sealed class AndroidScriptServices
     public AndroidScriptTts Tts { get; }
     public AndroidScriptRealtime Realtime { get; }
     public AndroidScriptAsr Asr { get; }
+    public AndroidScriptRealtimeVoice RealtimeVoice { get; }
+    public AndroidScriptBubbleManager Bubble { get; }
 
     internal AndroidScriptServices(
         RuntimeScene scene,
@@ -1420,7 +1438,9 @@ public sealed class AndroidScriptServices
         Func<string, bool> refreshRenderTexture,
         Func<string, string, float, bool> configureRenderTexture,
         Func<string, AndroidRenderTextureInfo?> getRenderTexture,
-        Func<IReadOnlyList<AndroidRenderTextureInfo>> listRenderTextures)
+        Func<IReadOnlyList<AndroidRenderTextureInfo>> listRenderTextures,
+        Action<AndroidRuntimeEvent> dispatchEvent,
+        GameProjectLlmSettings llmSettings)
     {
         _scene = scene;
         _requestSceneChange = requestSceneChange;
@@ -1435,9 +1455,11 @@ public sealed class AndroidScriptServices
         string saveRoot = global::Android.App.Application.Context.FilesDir?.AbsolutePath
             ?? Path.Combine(projectDirectory, "saves");
         Save = new AndroidScriptSaveStore(Path.Combine(saveRoot, "saves"));
-        Llm = new AndroidScriptLlm(Network);
+        Llm = new AndroidScriptLlm(Network, dispatchEvent, llmSettings, projectDirectory);
         Tts = AndroidScriptTts.Shared;
         Realtime = AndroidScriptRealtime.Shared;
+        RealtimeVoice = new AndroidScriptRealtimeVoice();
+        Bubble = new AndroidScriptBubbleManager();
         Asr = AndroidScriptAsr.Shared;
     }
 
