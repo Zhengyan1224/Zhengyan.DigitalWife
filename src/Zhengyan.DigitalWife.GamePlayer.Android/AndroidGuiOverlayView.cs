@@ -78,9 +78,33 @@ internal sealed class AndroidGuiOverlayView : View
             float baseline = rect.Y + (rect.Height - metrics.Bottom - metrics.Top) * 0.5f;
             canvas.DrawText(text, x, baseline, _paint);
         }
+
+        foreach (RuntimeDialogueBubble bubble in AndroidScriptBubbleManager.Shared.VisibleBubbles)
+        {
+            float width = Math.Clamp(bubble.Width, 160.0f, Width * 0.9f);
+            float left = (Width - width) * 0.5f;
+            float top = Height * 0.56f;
+            float height = Math.Clamp((bubble.Text.Length / 28 + 2) * Math.Max(bubble.FontSize, 16.0f) + 48.0f, 80.0f, Height * 0.35f);
+            using Paint panel = new() { AntiAlias = true, Color = ToColor(bubble.BackgroundColor) };
+            panel.SetStyle(Paint.Style.Fill);
+            canvas.DrawRoundRect(left, top, left + width, top + height, 12, 12, panel);
+            panel.Color = ToColor(bubble.BorderColor); panel.SetStyle(Paint.Style.Stroke); panel.StrokeWidth = 2;
+            canvas.DrawRoundRect(left, top, left + width, top + height, 12, 12, panel);
+            _paint.Color = ToColor(bubble.TextColor); _paint.TextSize = Math.Max(bubble.FontSize, 16.0f);
+            canvas.DrawText(bubble.HeaderText, left + 14, top + 26, _paint);
+            canvas.DrawText(bubble.Text, left + 14, top + 26 + _paint.TextSize + 6, _paint);
+            _paint.TextSize = Math.Max(bubble.FooterFontSize, 12.0f);
+            canvas.DrawText(bubble.FooterText, left + 14, top + height - 14, _paint);
+        }
     }
 
     private static Color ToColor(Vector4Dto value) => Color.Argb(
+        (int)(Math.Clamp(value.W, 0, 1) * 255),
+        (int)(Math.Clamp(value.X, 0, 1) * 255),
+        (int)(Math.Clamp(value.Y, 0, 1) * 255),
+        (int)(Math.Clamp(value.Z, 0, 1) * 255));
+
+    private static Color ToColor(System.Numerics.Vector4 value) => Color.Argb(
         (int)(Math.Clamp(value.W, 0, 1) * 255),
         (int)(Math.Clamp(value.X, 0, 1) * 255),
         (int)(Math.Clamp(value.Y, 0, 1) * 255),

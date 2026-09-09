@@ -248,11 +248,11 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
                 {
                     // Sprite draw order < 0 is between the skybox and the 3D
                     // scene, matching the desktop render pipeline.
-                    ApplyCameraToComponents(camera);
-                    DrawSkyboxOnly(gameTime);
-                    _spriteComponent?.DrawBackground(gameTime);
                     mainViewport = false;
                 }
+                ApplyCameraToComponents(camera);
+                DrawSkyboxOnly(gameTime);
+                _spriteComponent?.DrawBackground(gameTime);
                 DrawSceneComponentsWithCamera(gameTime, camera, includeSkybox: false);
             }
             GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
@@ -616,6 +616,15 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
 
     public bool TryGetTexture(string textureReference, out uint textureId)
     {
+        string name = NormalizeRenderTextureName(textureReference);
+        if (!string.IsNullOrWhiteSpace(name)
+            && _renderTextures.TryGetValue(name, out RenderTextureState? state)
+            && state.Target.LegacyColorTextureId != 0)
+        {
+            textureId = state.Target.LegacyColorTextureId;
+            return true;
+        }
+
         textureId = 0;
         return false;
     }

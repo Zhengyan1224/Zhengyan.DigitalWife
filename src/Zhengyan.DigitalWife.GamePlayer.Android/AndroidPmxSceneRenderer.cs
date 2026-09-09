@@ -742,6 +742,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
             GLES30.GlDisable(0x0B44); // GL_CULL_FACE
             DrawSkybox(scene, camera, view, projection);
+            DrawOverlay(scene, referenceWidth, referenceHeight, width, height, foreground: false);
             GLES30.GlUseProgram(_program);
             ApplyLighting(scene);
             GLES30.GlUniformMatrix4fv(_lightViewProjectionLocation, 1, false, ToGlArray(_lightViewProjection), 0);
@@ -852,7 +853,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             renderTarget?.MarkRendered(timeSeconds);
         }
 
-        DrawOverlay(scene, referenceWidth, referenceHeight, width, height);
+        DrawOverlay(scene, referenceWidth, referenceHeight, width, height, foreground: true);
 
         GLES30.GlDisable(GLES30.GlScissorTest);
         GLES30.GlViewport(0, 0, Math.Max(width, 1), Math.Max(height, 1));
@@ -1037,7 +1038,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return (arrays[0], buffers[0]);
     }
 
-    private void DrawOverlay(RuntimeScene scene, int referenceWidth, int referenceHeight, int width, int height)
+    private void DrawOverlay(RuntimeScene scene, int referenceWidth, int referenceHeight, int width, int height, bool foreground = true)
     {
         if (scene.Definition.Sprites.Count == 0 && scene.Definition.GuiControls.Count == 0)
         {
@@ -1052,7 +1053,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
         GLES30.GlUniform1i(_overlayTextureLocation, 0);
 
-        foreach (SpriteSettings sprite in scene.Definition.Sprites.Where(sprite => sprite.Visible).OrderBy(sprite => sprite.DrawOrder))
+        foreach (SpriteSettings sprite in scene.Definition.Sprites.Where(sprite => sprite.Visible && (foreground ? sprite.DrawOrder >= 0 : sprite.DrawOrder < 0)).OrderBy(sprite => sprite.DrawOrder))
         {
             int texture = ResolveSceneTexture(sprite.Path, _projectDirectory ?? string.Empty);
             if (texture == 0) continue;

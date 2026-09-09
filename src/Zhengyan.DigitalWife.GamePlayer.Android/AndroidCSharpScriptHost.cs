@@ -148,7 +148,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 path => _applyMotion(scene, entity, path),
                 (frame, playing) => _setMotionState(entity, frame, playing),
                 () => _resolvePmxModel(entity),
-                ResolveScriptAssetPath),
+                ResolveScriptAssetPath,
+                (text, callback) => { ServicesTtsSpeak(text); if (!string.IsNullOrWhiteSpace(callback)) DispatchEvent(scene, new AndroidRuntimeEvent("speech", Guid.NewGuid().ToString("N"), callback, Vector2.Zero, text, entity.Id)); },
+                () => AndroidScriptTts.Shared.Stop()),
             scriptInput,
             new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying),
             0.0f,
@@ -158,6 +160,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             services);
         return new AndroidScriptExecutionContext(globals, scriptInput);
     }
+
+    private static void ServicesTtsSpeak(string text) => AndroidScriptTts.Shared.Speak(text);
 
     private void Execute(
         ScriptBinding binding,
@@ -807,19 +811,25 @@ public sealed class AndroidScriptEntity
     private readonly Action<float?, bool?> _setMotionState;
     private readonly Func<PmxModelComponent?> _resolvePmxModel;
     private readonly Func<string, string> _resolveAssetPath;
+    private readonly Action<string, string> _speakWithCallback;
+    private readonly Action _stopSpeaking;
 
     internal AndroidScriptEntity(
         RuntimeEntity entity,
         Action<string> applyMotion,
         Action<float?, bool?> setMotionState,
         Func<PmxModelComponent?> resolvePmxModel,
-        Func<string, string>? resolveAssetPath = null)
+        Func<string, string>? resolveAssetPath = null,
+        Action<string, string>? speakWithCallback = null,
+        Action? stopSpeaking = null)
     {
         _entity = entity;
         _applyMotion = applyMotion;
         _setMotionState = setMotionState;
         _resolvePmxModel = resolvePmxModel;
         _resolveAssetPath = resolveAssetPath ?? (path => path);
+        _speakWithCallback = speakWithCallback ?? ((_, _) => { });
+        _stopSpeaking = stopSpeaking ?? (() => { });
     }
 
     public string Id => _entity.Id;
@@ -1061,9 +1071,9 @@ public sealed class AndroidScriptEntity
     public void Speak(string text, Action? onCompleted = null) => onCompleted?.Invoke();
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => onCompleted?.Invoke();
-    public void SpeakWithCallback(string text, string callbackName) { }
-    public void SpeakWithCallback(string text, int speakerId, float speed, float volume, string callbackName) { }
-    public void StopSpeaking() { }
+    public void SpeakWithCallback(string text, string callbackName) => _speakWithCallback(text, callbackName);
+    public void SpeakWithCallback(string text, int speakerId, float speed, float volume, string callbackName) => _speakWithCallback(text, callbackName);
+    public void StopSpeaking() => _stopSpeaking();
 
     private PmxModelComponent? Pmx => _resolvePmxModel();
     private PmxModelComponent RequirePmx() => Pmx ?? throw new InvalidOperationException("Entity is not a PMX model or its renderer does not expose PMX controls.");
@@ -1338,9 +1348,9 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public bool IsLlmEvent => string.Equals(Event?.Type, "llm", StringComparison.OrdinalIgnoreCase);
     public bool IsAsrEvent => string.Equals(Event?.Type, "asr", StringComparison.OrdinalIgnoreCase);
     public bool IsRealtimeVoiceEvent => string.Equals(Event?.Type, "realtime_voice", StringComparison.OrdinalIgnoreCase);
-    public dynamic? LlmEvent => null;
-    public dynamic? AsrEvent => null;
-    public dynamic? RealtimeVoiceEvent => null;
+    public dynamic? LlmEvent => IsLlmEvent ? Event : null;
+    public dynamic? AsrEvent => IsAsrEvent ? Event : null;
+    public dynamic? RealtimeVoiceEvent => IsRealtimeVoiceEvent ? Event : null;
     public string LlmRequestId => IsLlmEvent ? Event!.Id : string.Empty;
     public string LlmEventName => IsLlmEvent ? Event!.EventName : string.Empty;
     public string LlmDelta => IsLlmEvent ? Event!.Text : string.Empty;
@@ -1458,9 +1468,10 @@ public sealed class AndroidScriptServices
         Llm = new AndroidScriptLlm(Network, dispatchEvent, llmSettings, projectDirectory);
         Tts = AndroidScriptTts.Shared;
         Realtime = AndroidScriptRealtime.Shared;
-        RealtimeVoice = new AndroidScriptRealtimeVoice();
-        Bubble = new AndroidScriptBubbleManager();
+        RealtimeVoice = new AndroidScriptRealtimeVoice(dispatchEvent);
+        Bubble = AndroidScriptBubbleManager.Shared;
         Asr = AndroidScriptAsr.Shared;
+        Asr.ConfigureCallbacks(dispatchEvent);
     }
 
     public RuntimeEntity? FindEntity(string idOrName) => _scene.GetEntity(idOrName);

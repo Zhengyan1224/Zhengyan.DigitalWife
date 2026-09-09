@@ -370,10 +370,22 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     private static readonly Lazy<AndroidScriptAsr> LazyShared = new(() => new AndroidScriptAsr());
     private SpeechRecognizer? _recognizer;
     private bool _listening;
+    private Action<AndroidRuntimeEvent>? _dispatchEvent;
+    private string _requestId = string.Empty;
+    private string _entityId = string.Empty;
+    private string _partialCallback = string.Empty;
+    private string _completedCallback = string.Empty;
+    private string _errorCallback = string.Empty;
+    private string _eventType = "asr";
     private AndroidScriptAsr() { }
     public static AndroidScriptAsr Shared => LazyShared.Value;
     public bool Enabled => IsAvailable;
-    public string StartStreamingRecognition(AndroidScriptEntity entity, string onPartialCallback = "", string onCompletedCallback = "", string onErrorCallback = "") => Start() ? Guid.NewGuid().ToString("N") : string.Empty;
+    public void ConfigureCallbacks(Action<AndroidRuntimeEvent> dispatchEvent) => _dispatchEvent = dispatchEvent;
+    public string StartStreamingRecognition(AndroidScriptEntity entity, string onPartialCallback = "", string onCompletedCallback = "", string onErrorCallback = "", string eventType = "asr")
+    {
+        _requestId = Guid.NewGuid().ToString("N"); _entityId = entity.Id; _partialCallback = onPartialCallback; _completedCallback = onCompletedCallback; _errorCallback = onErrorCallback; _eventType = string.IsNullOrWhiteSpace(eventType) ? "asr" : eventType;
+        return Start() ? _requestId : string.Empty;
+    }
     public void StopStreamingRecognition(string requestId) => Stop();
     public bool IsAvailable => SpeechRecognizer.IsRecognitionAvailable(Application.Context);
     public bool IsListening => _listening;
@@ -397,9 +409,9 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     }
     public void Stop() { new Handler(Looper.MainLooper!).Post(() => { _recognizer?.StopListening(); _listening = false; }); }
     public void Cancel() { new Handler(Looper.MainLooper!).Post(() => { _recognizer?.Cancel(); _listening = false; }); }
-    public void OnResults(Bundle? results) { _listening = false; LastText = Extract(results); Result?.Invoke(LastText); }
-    public void OnPartialResults(Bundle? partialResults) { string text = Extract(partialResults); if (text.Length > 0) { LastText = text; PartialResult?.Invoke(text); } }
-    public void OnError(SpeechRecognizerError error) { _listening = false; Error?.Invoke((int)error); }
+    public void OnResults(Bundle? results) { _listening = false; LastText = Extract(results); Result?.Invoke(LastText); if (!string.IsNullOrWhiteSpace(_completedCallback)) _dispatchEvent?.Invoke(new AndroidRuntimeEvent(_eventType, _requestId, _completedCallback, Vector2.Zero, LastText, _entityId)); }
+    public void OnPartialResults(Bundle? partialResults) { string text = Extract(partialResults); if (text.Length > 0) { LastText = text; PartialResult?.Invoke(text); if (!string.IsNullOrWhiteSpace(_partialCallback)) _dispatchEvent?.Invoke(new AndroidRuntimeEvent(_eventType, _requestId, _partialCallback, Vector2.Zero, text, _entityId)); } }
+    public void OnError(SpeechRecognizerError error) { _listening = false; Error?.Invoke((int)error); if (!string.IsNullOrWhiteSpace(_errorCallback)) _dispatchEvent?.Invoke(new AndroidRuntimeEvent(_eventType, _requestId, _errorCallback, Vector2.Zero, error.ToString(), _entityId)); }
     public void OnBeginningOfSpeech() { }
     public void OnBufferReceived(byte[]? buffer) { }
     public void OnEndOfSpeech() { }
@@ -412,18 +424,28 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
 
 public sealed class AndroidScriptRealtimeVoice
 {
-    public bool WakeWordEnabled => false;
-    public string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "", string onErrorCallback = "") => string.Empty;
-    public void StopWakeWordMonitoring() { }
-    public string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds = 30, string onCompletedCallback = "", string onTimeoutCallback = "", string onErrorCallback = "") => string.Empty;
-    public void CancelRequest(string requestId) { }
-    public string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "") => string.Empty;
-    public string StartSpeakText(AndroidScriptEntity entity, string text, float speed = 1, string onCompletedCallback = "", string onErrorCallback = "") => string.Empty;
-    public Task ResetConversationAsync() => Task.CompletedTask;
+    private readonly Action<AndroidRuntimeEvent>? _dispatch;
+    private readonly AndroidScriptAsr _asr;
+    internal AndroidScriptRealtimeVoice(Action<AndroidRuntimeEvent>? dispatch = null) { _dispatch = dispatch; _asr = AndroidScriptAsr.Shared; }
+    public bool WakeWordEnabled => _asr.IsAvailable;
+    public string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "", string onErrorCallback = "") => _asr.StartStreamingRecognition(entity, onCompletedCallback: onDetectedCallback, onErrorCallback: onErrorCallback, eventType: "realtime_voice");
+    public void StopWakeWordMonitoring() => _asr.Stop();
+    public string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds = 30, string onCompletedCallback = "", string onTimeoutCallback = "", string onErrorCallback = "") => _asr.StartStreamingRecognition(entity, onCompletedCallback: onCompletedCallback, onErrorCallback: onErrorCallback, eventType: "realtime_voice");
+    public void CancelRequest(string requestId) => _asr.StopStreamingRecognition(requestId);
+    public string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "") => StartSpeakText(entity, text, 1.0f, onCompletedCallback, onErrorCallback);
+    public string StartSpeakText(AndroidScriptEntity entity, string text, float speed = 1, string onCompletedCallback = "", string onErrorCallback = "")
+    {
+        string id = Guid.NewGuid().ToString("N");
+        AndroidScriptTts.Shared.Speak(text);
+        if (!string.IsNullOrWhiteSpace(onCompletedCallback)) _dispatch?.Invoke(new AndroidRuntimeEvent("realtime_voice", id, onCompletedCallback, Vector2.Zero, text, entity.Id));
+        return id;
+    }
+    public Task ResetConversationAsync() { _asr.Cancel(); AndroidScriptTts.Shared.Stop(); return Task.CompletedTask; }
 }
 
 public sealed class AndroidScriptBubbleManager
 {
+    public static AndroidScriptBubbleManager Shared { get; } = new();
     private readonly Dictionary<string, RuntimeDialogueBubble> _bubbles = new(StringComparer.OrdinalIgnoreCase);
     public RuntimeDialogueBubble GetOrCreate(string name)
     {
@@ -431,4 +453,5 @@ public sealed class AndroidScriptBubbleManager
             _bubbles[name] = bubble = new RuntimeDialogueBubble(name);
         return bubble;
     }
+    public IEnumerable<RuntimeDialogueBubble> VisibleBubbles => _bubbles.Values.Where(b => b.Visible && (!string.IsNullOrWhiteSpace(b.Text) || !string.IsNullOrWhiteSpace(b.HeaderText) || !string.IsNullOrWhiteSpace(b.FooterText)));
 }
