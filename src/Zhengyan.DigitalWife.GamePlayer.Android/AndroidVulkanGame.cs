@@ -1061,10 +1061,41 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
             && !string.IsNullOrWhiteSpace(AndroidBundledResourceStore.RootDirectory))
         {
             string relative = normalized["app:".Length..].TrimStart('/', '\\');
-            string bundledPath = Path.Combine(AndroidBundledResourceStore.RootDirectory, relative);
+            string bundledPath = ResolveCaseInsensitivePath(Path.Combine(AndroidBundledResourceStore.RootDirectory, relative));
             if (File.Exists(bundledPath)) return bundledPath;
         }
-        return GameProjectPath.ToAbsolute(_projectDirectory, normalized);
+
+        string projectPath = GameProjectPath.ToAbsolute(_projectDirectory, normalized);
+        if (File.Exists(projectPath)) return projectPath;
+
+        // Particle presets and other engine-owned assets are commonly stored as
+        // short names (for example "Sakura.png"). Match the desktop loader and
+        // Android GLES path by resolving them from the extracted Resources tree
+        // before allowing the component to fall back to a generated texture.
+        string fileName = Path.GetFileName(normalized);
+        if (!string.IsNullOrWhiteSpace(fileName))
+        {
+            string? bundled = BundledAssetPathResolver.TryResolveFile("Resources", "Particles", fileName)
+                ?? BundledAssetPathResolver.TryResolveFile(fileName);
+            if (bundled is not null) return bundled;
+        }
+
+        return projectPath;
+    }
+
+    private static string ResolveCaseInsensitivePath(string path)
+    {
+        if (File.Exists(path)) return path;
+        string? directory = Path.GetDirectoryName(path);
+        string fileName = Path.GetFileName(path);
+        if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileName) || !Directory.Exists(directory))
+        {
+            return path;
+        }
+
+        string? match = Directory.EnumerateFiles(directory)
+            .FirstOrDefault(candidate => string.Equals(Path.GetFileName(candidate), fileName, StringComparison.OrdinalIgnoreCase));
+        return match ?? path;
     }
 
     private static Quaternion ToQuaternion(Vector3 degrees)
