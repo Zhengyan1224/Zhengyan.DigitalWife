@@ -8,6 +8,14 @@ using System.Numerics;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Threading;
+using System.Threading.Tasks;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer;
@@ -275,9 +283,18 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         string source = """
             using System;
             using System.Collections.Generic;
+            using System.Globalization;
+            using System.IO;
             using System.Linq;
+            using System.Net;
+            using System.Net.Http;
+            using System.Net.Sockets;
             using System.Numerics;
+            using System.Text;
+            using System.Text.Json;
             using System.Text.RegularExpressions;
+            using System.Threading;
+            using System.Threading.Tasks;
             using Zhengyan.DigitalWife.GameProjects;
             using Zhengyan.DigitalWife.GamePlayer.Runtime;
             using Zhengyan.DigitalWife.GamePlayer.Android;
@@ -525,6 +542,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             typeof(object).Assembly,
             typeof(Console).Assembly,
             typeof(Task).Assembly,
+            typeof(DateTimeOffset).Assembly,
+            typeof(System.Runtime.GCSettings).Assembly,
             typeof(System.Runtime.CompilerServices.DefaultInterpolatedStringHandler).Assembly,
             typeof(System.Runtime.CompilerServices.CallSite).Assembly,
             typeof(System.Linq.Expressions.Expression).Assembly,
@@ -535,21 +554,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             typeof(Vector3).Assembly,
             typeof(AndroidScriptGlobals).Assembly,
             typeof(RuntimeScene).Assembly,
-            typeof(GameProject).Assembly
+            typeof(GameProject).Assembly,
+            typeof(PmxModelComponent).Assembly
         ];
-
-        // System.Runtime is a facade on some .NET runtimes and is not
-        // necessarily loaded by the game host. Roslyn needs its async-builder
-        // contract when emitting the script submission factory.
-        try
-        {
-            requiredAssemblies.Add(Assembly.Load(new AssemblyName("System.Runtime")));
-        }
-        catch (Exception)
-        {
-            // The concrete core library reference above is still usable on
-            // runtimes that do not expose a separate System.Runtime facade.
-        }
 
         foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
         {

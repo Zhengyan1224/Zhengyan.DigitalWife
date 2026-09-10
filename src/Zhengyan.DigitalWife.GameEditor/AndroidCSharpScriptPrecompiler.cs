@@ -102,7 +102,16 @@ internal static class AndroidCSharpScriptPrecompiler
         string scriptSource = File.ReadAllText(path);
         string compilationBody = string.IsNullOrWhiteSpace(scriptSource) ? "return null;" : scriptSource;
         string source = "using System;\n"
+            + "using System.Collections.Generic;\n"
+            + "using System.Globalization;\n"
+            + "using System.IO;\n"
+            + "using System.Linq;\n"
+            + "using System.Net;\n"
+            + "using System.Net.Http;\n"
+            + "using System.Net.Sockets;\n"
             + "using System.Numerics;\n"
+            + "using System.Text;\n"
+            + "using System.Text.Json;\n"
             + "using System.Text.RegularExpressions;\n"
             + "using System.Threading;\n"
             + "using System.Threading.Tasks;\n"
@@ -208,6 +217,8 @@ internal static class AndroidCSharpScriptPrecompiler
             typeof(object).Assembly,
             typeof(Console).Assembly,
             typeof(Task).Assembly,
+            typeof(DateTimeOffset).Assembly,
+            typeof(System.Runtime.GCSettings).Assembly,
             typeof(System.Runtime.CompilerServices.CallSite).Assembly,
             typeof(System.Linq.Expressions.Expression).Assembly,
             typeof(System.Dynamic.DynamicObject).Assembly,
