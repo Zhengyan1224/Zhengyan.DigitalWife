@@ -45,9 +45,9 @@ public sealed class VulkanRenderer : IRenderer
     public int AntiAliasingSamples => (int)_sampleCount;
 
     /// <summary>
-    /// Forces completion of the submitted command buffer before the next frame
-    /// can update dynamic PMX buffers. Android Mali drivers may return from
-    /// FIFO presentation while those buffers are still in use.
+    /// Waits for the previous submitted command buffer before the next frame
+    /// updates shared dynamic resources. This avoids Android Mali buffer races
+    /// without idling the entire Vulkan device after presentation.
     /// </summary>
     public bool WaitForIdleAfterPresent { get; set; }
 
@@ -506,10 +506,6 @@ public sealed class VulkanRenderer : IRenderer
         }
         if (WaitForIdleAfterPresent)
         {
-            // A few Android Mali FIFO implementations can expose the swapchain
-            // image to the compositor before all writes from the submitted
-            // command list are visible. Complete rendering before presenting
-            // so the compositor never samples a partially rendered frame.
             device.WaitForIdle();
         }
         device.SwapBuffers();

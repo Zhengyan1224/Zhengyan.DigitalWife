@@ -543,6 +543,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             typeof(Console).Assembly,
             typeof(Task).Assembly,
             typeof(DateTimeOffset).Assembly,
+            typeof(System.Net.Sockets.Socket).Assembly,
             typeof(System.Runtime.GCSettings).Assembly,
             typeof(System.Runtime.CompilerServices.DefaultInterpolatedStringHandler).Assembly,
             typeof(System.Runtime.CompilerServices.CallSite).Assembly,

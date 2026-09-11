@@ -218,6 +218,7 @@ internal static class AndroidCSharpScriptPrecompiler
             typeof(Console).Assembly,
             typeof(Task).Assembly,
             typeof(DateTimeOffset).Assembly,
+            typeof(System.Net.Sockets.Socket).Assembly,
             typeof(System.Runtime.GCSettings).Assembly,
             typeof(System.Runtime.CompilerServices.CallSite).Assembly,
             typeof(System.Linq.Expressions.Expression).Assembly,
