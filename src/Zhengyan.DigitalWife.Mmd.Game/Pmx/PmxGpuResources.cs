@@ -90,6 +90,17 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         }
     }
 
+    public void UploadPoseAllSlots(Zhengyan.DigitalWife.Mmd.MMDModel model)
+    {
+        int vertexCount = model.GetVertexCount();
+        ReadOnlySpan<Vector3> positions = new(model.GetUpdatePositions(), vertexCount);
+        ReadOnlySpan<Vector3> normals = new(model.GetUpdateNormals(), vertexCount);
+        ReadOnlySpan<Vector2> uvs = new(model.GetUpdateUVs(), vertexCount);
+        if (PositionBuffer is VeldridGpuBuffer positionRing) positionRing.UpdateAllSlots(positions); else PositionBuffer.Update(positions);
+        if (NormalBuffer is VeldridGpuBuffer normalRing) normalRing.UpdateAllSlots(normals); else NormalBuffer.Update(normals);
+        if (UvBuffer is VeldridGpuBuffer uvRing) uvRing.UpdateAllSlots(uvs); else UvBuffer.Update(uvs);
+    }
+
     public void UploadUv(Zhengyan.DigitalWife.Mmd.MMDModel model)
     {
         int vertexCount = model.GetVertexCount();

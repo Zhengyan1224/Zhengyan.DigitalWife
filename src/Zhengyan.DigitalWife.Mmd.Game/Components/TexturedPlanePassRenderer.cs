@@ -138,11 +138,11 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
     }
 
     private ResourceSet GetResourceSet(
+        int slot,
         TextureView baseTexture,
         VeldridSampler baseSampler,
         TextureView shadowTexture,
         VeldridSampler shadowSampler,
-        int slot,
         TextureView reflectionTexture,
         VeldridSampler reflectionSampler)
     {
@@ -257,7 +257,12 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
 
     private static DeviceBuffer RequireDeviceBuffer(IGpuBuffer buffer, int? slot = null)
     {
-        return buffer is VeldridGpuBuffer ring && slot.HasValue ? ring.GetBufferForSlot(slot.Value) : buffer.NativeResource as DeviceBuffer
+        return buffer switch
+        {
+            VeldridGpuBuffer ring when slot.HasValue => ring.GetBufferForSlot(slot.Value),
+            VeldridGpuBufferAdapter adapter when slot.HasValue => adapter.GetBufferForSlot(slot.Value),
+            _ => buffer.NativeResource as DeviceBuffer
+        }
             ?? throw new InvalidOperationException("Vulkan textured plane requires a Veldrid device buffer.");
     }
 
@@ -295,7 +300,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
 
         public VeldridGpuBufferAdapter(VulkanRenderer renderer, int size)
         {
-            _buffer = new VeldridGpuBuffer(renderer.ResourceFactory, new GpuBufferDescription((uint)size, GpuBufferKind.Uniform, Dynamic: true));
+            _buffer = new VeldridGpuBuffer(renderer, new GpuBufferDescription((uint)size, GpuBufferKind.Uniform, Dynamic: true));
         }
 
         public EngineGraphicsBackend Backend => EngineGraphicsBackend.Vulkan;
@@ -303,6 +308,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         public uint SizeInBytes => _buffer.SizeInBytes;
         public uint LegacyBufferId => 0;
         public object NativeResource => _buffer.NativeResource;
+        public DeviceBuffer GetBufferForSlot(int slot) => _buffer.GetBufferForSlot(slot);
         public void Update<T>(ReadOnlySpan<T> data, uint offsetInBytes = 0) where T : unmanaged => throw new NotSupportedException();
         public void Dispose() => _buffer.Dispose();
     }

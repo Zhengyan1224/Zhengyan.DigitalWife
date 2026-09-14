@@ -43,7 +43,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     private bool _staticInputsInitialized;
     private bool _hasMorphSnapshot;
     private bool _hasTransformSnapshot;
-    private bool _gpuOutputValid;
+    private readonly bool[] _gpuOutputValid = new bool[VulkanRenderer.FrameSlotCount];
     private int _validatedDispatchCount;
     private float _maxValidationPositionError;
     private float _maxValidationNormalError;
@@ -202,14 +202,14 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
         _gpuPositionOutputs = positions;
         _gpuNormalOutputs = normals;
         _gpuUvOutputs = uvs;
-        _gpuOutputValid = false;
+        Array.Fill(_gpuOutputValid, false);
         return true;
     }
 
     public void InvalidateGpuOutput()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _gpuOutputValid = false;
+        Array.Fill(_gpuOutputValid, false);
     }
 
     public bool ExecuteGpu(
@@ -236,7 +236,8 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             long previousMorphRevision = _morphRevision;
             long previousTransformRevision = _transformRevision;
             PopulateDynamicInputs(vertexCount, boneCount, morphPositions, morphUVs, updateTransforms, globalTransforms);
-            if (_gpuOutputValid
+            int outputSlot = _renderer.CurrentFrameSlot;
+            if (_gpuOutputValid[outputSlot]
                 && previousMorphRevision == _morphRevision
                 && previousTransformRevision == _transformRevision)
             {
@@ -252,7 +253,6 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.Commands.SetPipeline(_pipeline);
             slot.Commands.SetComputeResourceSet(0, slot.ResourceSet);
             slot.Commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
-            int outputSlot = _renderer.CurrentFrameSlot;
             slot.Commands.CopyBuffer(slot.PositionOutputs, 0, _gpuPositionOutputs![outputSlot], 0, slot.PositionOutputs.SizeInBytes);
             slot.Commands.CopyBuffer(slot.NormalOutputs, 0, _gpuNormalOutputs![outputSlot], 0, slot.NormalOutputs.SizeInBytes);
             slot.Commands.CopyBuffer(slot.UvOutputs, 0, _gpuUvOutputs![outputSlot], 0, slot.UvOutputs.SizeInBytes);
@@ -290,7 +290,11 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
                 return false;
             }
 
-            _gpuOutputValid = true;
+            if (previousMorphRevision != _morphRevision || previousTransformRevision != _transformRevision)
+            {
+                Array.Fill(_gpuOutputValid, false);
+            }
+            _gpuOutputValid[outputSlot] = true;
             return true;
         }
         catch (Exception ex)

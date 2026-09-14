@@ -156,6 +156,21 @@ internal sealed class VeldridGpuBuffer : IGpuBuffer
         _renderer.Device.UpdateBuffer(CurrentBuffer, offsetInBytes, data);
     }
 
+    internal void UpdateAllSlots<T>(ReadOnlySpan<T> data, uint offsetInBytes = 0) where T : unmanaged
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        uint byteCount = checked((uint)(data.Length * Marshal.SizeOf<T>()));
+        if (offsetInBytes > SizeInBytes || byteCount > SizeInBytes - offsetInBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(data), "The update does not fit inside the GPU buffer.");
+        }
+
+        foreach (DeviceBuffer buffer in _buffers)
+        {
+            _renderer.Device.UpdateBuffer(buffer, offsetInBytes, data);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
