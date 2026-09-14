@@ -7,28 +7,35 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 internal sealed class VeldridWaterRenderer : IWaterPassRenderer
 {
+    private const int FrameSlotCount = 3;
     private const int MaxRipples = 48;
     private readonly VulkanRenderer _renderer;
-    private readonly DeviceBuffer _vertices;
+    private readonly DeviceBuffer[] _vertices;
     private readonly DeviceBuffer _indices;
-    private readonly DeviceBuffer _uniforms;
-    private readonly DeviceBuffer _ripples;
+    private readonly DeviceBuffer[] _uniforms;
+    private readonly DeviceBuffer[] _ripples;
     private readonly ResourceLayout _layout;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
-    private readonly Dictionary<TextureKey, ResourceSet> _sets = [];
+    private readonly Dictionary<(int Slot, TextureKey Texture), ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
 
     public VeldridWaterRenderer(VulkanRenderer renderer, uint vertexBytes, ReadOnlySpan<uint> indices)
     {
         _renderer = renderer;
         ResourceFactory factory = renderer.ResourceFactory;
-        _vertices = factory.CreateBuffer(new BufferDescription(vertexBytes, BufferUsage.VertexBuffer | BufferUsage.Dynamic));
+        _vertices = Enumerable.Range(0, FrameSlotCount)
+            .Select(_ => factory.CreateBuffer(new BufferDescription(vertexBytes, BufferUsage.VertexBuffer | BufferUsage.Dynamic)))
+            .ToArray();
         _indices = factory.CreateBuffer(new BufferDescription(checked((uint)(indices.Length * sizeof(uint))), BufferUsage.IndexBuffer));
         renderer.Device.UpdateBuffer(_indices, 0, indices);
-        _uniforms = factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
-        _ripples = factory.CreateBuffer(new BufferDescription((uint)((MaxRipples * 2 + 1) * Marshal.SizeOf<Vector4>()), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _uniforms = Enumerable.Range(0, FrameSlotCount)
+            .Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic)))
+            .ToArray();
+        _ripples = Enumerable.Range(0, FrameSlotCount)
+            .Select(_ => factory.CreateBuffer(new BufferDescription((uint)((MaxRipples * 2 + 1) * Marshal.SizeOf<Vector4>()), BufferUsage.UniformBuffer | BufferUsage.Dynamic)))
+            .ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Linear);
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("WaterFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment),
@@ -62,11 +69,12 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
             || sky.NativeResource is not TextureView skyView) return;
         TextureView reflectionView = reflection?.NativeResource as TextureView ?? skyView;
         TextureKey key = new(a, b, skyView, reflectionView);
-        if (!_sets.TryGetValue(key, out ResourceSet? set))
+        var setKey = (_renderer.CurrentFrameSlot, key);
+        if (!_sets.TryGetValue(setKey, out ResourceSet? set))
         {
             set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
-                _layout, _uniforms, a, _sampler, b, _sampler, skyView, _sampler, reflectionView, _sampler, _ripples));
-            _sets.Add(key, set);
+                _layout, _uniforms[_renderer.CurrentFrameSlot], a, _sampler, b, _sampler, skyView, _sampler, reflectionView, _sampler, _ripples[_renderer.CurrentFrameSlot]));
+            _sets.Add(setKey, set);
         }
         bool planar = reflection?.NativeResource is TextureView;
         UniformData data = new()
@@ -80,11 +88,12 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
             Parameters = new Vector4(textureLerp, normalTiling, mirrorEnabled ? 1 : 0, planar && mirrorEnabled ? 1 : 0)
         };
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_vertices, 0, vertices);
-        commands.UpdateBuffer(_uniforms, 0, data);
-        commands.UpdateBuffer(_ripples, 0, ripples);
+        DeviceBuffer verticesBuffer = _vertices[_renderer.CurrentFrameSlot];
+        commands.UpdateBuffer(verticesBuffer, 0, vertices);
+        commands.UpdateBuffer(_uniforms[_renderer.CurrentFrameSlot], 0, data);
+        commands.UpdateBuffer(_ripples[_renderer.CurrentFrameSlot], 0, ripples);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
-        commands.SetVertexBuffer(0, _vertices);
+        commands.SetVertexBuffer(0, verticesBuffer);
         commands.SetIndexBuffer(_indices, IndexFormat.UInt32);
         commands.SetGraphicsResourceSet(0, set);
         commands.DrawIndexed(indexCount);
@@ -95,7 +104,11 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
         foreach (ResourceSet set in _sets.Values) set.Dispose();
         foreach ((_, Pipeline pipeline) in _pipelines) pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
-        _layout.Dispose(); _sampler.Dispose(); _ripples.Dispose(); _uniforms.Dispose(); _indices.Dispose(); _vertices.Dispose();
+        _layout.Dispose(); _sampler.Dispose();
+        foreach (DeviceBuffer buffer in _ripples) buffer.Dispose();
+        foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose();
+        foreach (DeviceBuffer buffer in _vertices) buffer.Dispose();
+        _indices.Dispose();
     }
 
     private Pipeline GetPipeline(OutputDescription output)

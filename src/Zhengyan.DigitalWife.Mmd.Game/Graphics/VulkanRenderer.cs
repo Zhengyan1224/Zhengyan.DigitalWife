@@ -13,6 +13,7 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 /// </summary>
 public sealed class VulkanRenderer : IRenderer
 {
+    internal const int FrameSlotCount = 3;
     private const int ReadbackSlotCount = 3;
 
     private VeldridDevice? _device;
@@ -29,6 +30,8 @@ public sealed class VulkanRenderer : IRenderer
     private TextureSampleCount _sampleCount = TextureSampleCount.Count1;
     private bool _mainColorResolved;
     private bool _frameOpen;
+    private Fence[]? _frameFences;
+    private int _frameSlot;
     private readonly IRenderBackendServices _services;
 
     public VulkanRenderer()
@@ -64,6 +67,14 @@ public sealed class VulkanRenderer : IRenderer
         ?? throw new InvalidOperationException("The Vulkan command list has not been initialized.");
 
     internal bool IsFrameOpen => _frameOpen;
+    internal int CurrentFrameSlot => _frameSlot;
+
+    public void BeginFrameSlot()
+    {
+        if (_device is null || _frameOpen || _frameFences is null) return;
+        Fence fence = _frameFences[_frameSlot];
+        if (!fence.Signaled) _device.WaitForFence(fence);
+    }
 
     internal FrontFace RasterizerFrontFace
         => Device.IsClipSpaceYInverted ? FrontFace.Clockwise : FrontFace.CounterClockwise;
@@ -416,6 +427,9 @@ public sealed class VulkanRenderer : IRenderer
                 $"UvOriginTopLeft={_device.IsUvOriginTopLeft}";
             Console.WriteLine(deviceInfo);
             _commandList = _device.ResourceFactory.CreateCommandList();
+            _frameFences = Enumerable.Range(0, FrameSlotCount)
+                .Select(_ => _device.ResourceFactory.CreateFence(true))
+                .ToArray();
             Resize(backBufferSize);
         }
         catch
@@ -502,7 +516,13 @@ public sealed class VulkanRenderer : IRenderer
         }
         else
         {
-            device.SubmitCommands(commands);
+            if (_frameFences is not null)
+            {
+                Fence fence = _frameFences[_frameSlot];
+                device.ResetFence(fence);
+                device.SubmitCommands(commands, fence);
+            }
+            else device.SubmitCommands(commands);
         }
         if (WaitForIdleAfterPresent)
         {
@@ -510,6 +530,7 @@ public sealed class VulkanRenderer : IRenderer
         }
         device.SwapBuffers();
         _frameOpen = false;
+        if (_frameFences is not null) _frameSlot = (_frameSlot + 1) % FrameSlotCount;
     }
 
     public void WaitForIdle()
@@ -557,6 +578,11 @@ public sealed class VulkanRenderer : IRenderer
             _multisampleColor = null;
             foreach (ReadbackSlot slot in _readbackSlots) slot.Dispose();
             _readbackSlots.Clear();
+            if (_frameFences is not null)
+            {
+                foreach (Fence fence in _frameFences) fence.Dispose();
+                _frameFences = null;
+            }
             _device.Dispose();
             _commandList = null;
             _pendingReadbackSlot = null;

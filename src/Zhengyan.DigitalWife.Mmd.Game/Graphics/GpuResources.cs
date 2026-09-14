@@ -108,7 +108,9 @@ internal sealed unsafe class OpenGlGpuBuffer : IGpuBuffer
 
 internal sealed class VeldridGpuBuffer : IGpuBuffer
 {
+    private const int FrameSlotCount = 3;
     private readonly VulkanRenderer _renderer;
+    private readonly DeviceBuffer[] _buffers;
     private bool _disposed;
 
     public VeldridGpuBuffer(VulkanRenderer renderer, GpuBufferDescription description)
@@ -127,15 +129,20 @@ internal sealed class VeldridGpuBuffer : IGpuBuffer
             usage |= BufferUsage.Dynamic;
         }
 
-        NativeBuffer = renderer.ResourceFactory.CreateBuffer(new BufferDescription(SizeInBytes, usage));
+        int count = description.Dynamic ? FrameSlotCount : 1;
+        _buffers = Enumerable.Range(0, count)
+            .Select(_ => renderer.ResourceFactory.CreateBuffer(new BufferDescription(SizeInBytes, usage)))
+            .ToArray();
     }
 
     public GraphicsBackend Backend => GraphicsBackend.Vulkan;
     public GpuBufferKind Kind { get; }
     public uint SizeInBytes { get; }
     public uint LegacyBufferId => 0;
-    public object NativeResource => NativeBuffer;
-    internal DeviceBuffer NativeBuffer { get; }
+    public object NativeResource => CurrentBuffer;
+    internal DeviceBuffer NativeBuffer => CurrentBuffer;
+    internal DeviceBuffer GetBufferForSlot(int slot) => _buffers[Math.Clamp(slot, 0, _buffers.Length - 1)];
+    private DeviceBuffer CurrentBuffer => _buffers[Math.Min(_renderer.CurrentFrameSlot, _buffers.Length - 1)];
 
     public void Update<T>(ReadOnlySpan<T> data, uint offsetInBytes = 0) where T : unmanaged
     {
@@ -146,14 +153,14 @@ internal sealed class VeldridGpuBuffer : IGpuBuffer
             throw new ArgumentOutOfRangeException(nameof(data), "The update does not fit inside the GPU buffer.");
         }
 
-        _renderer.Device.UpdateBuffer(NativeBuffer, offsetInBytes, data);
+        _renderer.Device.UpdateBuffer(CurrentBuffer, offsetInBytes, data);
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        NativeBuffer.Dispose();
+        foreach (DeviceBuffer buffer in _buffers) buffer.Dispose();
         GC.SuppressFinalize(this);
     }
 }

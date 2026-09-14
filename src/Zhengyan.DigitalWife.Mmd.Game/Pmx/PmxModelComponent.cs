@@ -2988,9 +2988,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         if (_model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel)
         {
             bool gpuOutputBound = pmxModel.TryBindGpuSkinningOutput(
-                _gpuResources.PositionBuffer.NativeResource!,
-                _gpuResources.NormalBuffer.NativeResource!,
-                _gpuResources.UvBuffer.NativeResource!);
+                _gpuResources.PositionBuffer,
+                _gpuResources.NormalBuffer,
+                _gpuResources.UvBuffer);
             if (gpuOutputBound)
             {
                 // A model without motion may never become pose-dirty after setup.

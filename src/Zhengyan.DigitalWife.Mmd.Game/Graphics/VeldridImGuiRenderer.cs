@@ -18,17 +18,17 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
     private readonly nint _context;
     private readonly ResourceLayout _mainLayout;
     private readonly ResourceLayout _textureLayout;
-    private readonly DeviceBuffer _frameBuffer;
+    private readonly DeviceBuffer[] _frameBuffers;
     private readonly Sampler _sampler;
-    private readonly ResourceSet _mainSet;
+    private readonly ResourceSet[] _mainSets;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
     private readonly Dictionary<TextureView, nint> _viewBindings = [];
     private readonly Dictionary<nint, ResourceSet> _textureSets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
     private readonly List<DeviceBuffer> _retiredBuffers = [];
-    private DeviceBuffer _vertexBuffer;
-    private DeviceBuffer _indexBuffer;
+    private DeviceBuffer[] _vertexBuffers;
+    private DeviceBuffer[] _indexBuffers;
     private Texture? _fontTexture;
     private TextureView? _fontView;
     private uint _vertexBufferSize = InitialVertexBufferSize;
@@ -48,16 +48,16 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         configureFonts?.Invoke();
 
         ResourceFactory factory = renderer.ResourceFactory;
-        _vertexBuffer = factory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic));
-        _indexBuffer = factory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic));
-        _frameBuffer = factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _vertexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
+        _indexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic))).ToArray();
+        _frameBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Point);
         _mainLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("ImGuiFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex)));
         _textureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("ImGuiTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("ImGuiSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
-        _mainSet = factory.CreateResourceSet(new ResourceSetDescription(_mainLayout, _frameBuffer));
+        _mainSets = _frameBuffers.Select(buffer => factory.CreateResourceSet(new ResourceSetDescription(_mainLayout, buffer))).ToArray();
         _shaders = factory.CreateFromSpirv(
             VulkanShaderCompiler.CompileSource("imgui.vert", VertexSource, ShaderStages.Vertex),
             VulkanShaderCompiler.CompileSource("imgui.frag", FragmentSource, ShaderStages.Fragment));
@@ -137,13 +137,13 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         foreach (Shader shader in _shaders) shader.Dispose();
         _fontView?.Dispose();
         _fontTexture?.Dispose();
-        _mainSet.Dispose();
+        foreach (ResourceSet set in _mainSets) set.Dispose();
         _textureLayout.Dispose();
         _mainLayout.Dispose();
         _sampler.Dispose();
-        _frameBuffer.Dispose();
-        _indexBuffer.Dispose();
-        _vertexBuffer.Dispose();
+        foreach (DeviceBuffer buffer in _frameBuffers) buffer.Dispose();
+        foreach (DeviceBuffer buffer in _indexBuffers) buffer.Dispose();
+        foreach (DeviceBuffer buffer in _vertexBuffers) buffer.Dispose();
         foreach (DeviceBuffer buffer in _retiredBuffers) buffer.Dispose();
         ImGui.DestroyContext(_context);
     }
@@ -170,6 +170,10 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         if (drawData.CmdListsCount == 0 || drawData.TotalVtxCount == 0) return;
         EnsureBufferCapacity(drawData.TotalVtxCount, drawData.TotalIdxCount);
 
+        int slot = _renderer.CurrentFrameSlot;
+        DeviceBuffer vertexBuffer = _vertexBuffers[slot];
+        DeviceBuffer indexBuffer = _indexBuffers[slot];
+        DeviceBuffer frameBuffer = _frameBuffers[slot];
         CommandList commands = _renderer.NativeCommandList;
         uint vertexOffsetBytes = 0;
         uint indexOffsetBytes = 0;
@@ -178,8 +182,8 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
             ImDrawListPtr drawList = drawData.CmdLists[i];
             uint vertexBytes = checked((uint)(drawList.VtxBuffer.Size * sizeof(ImDrawVert)));
             uint indexBytes = checked((uint)(drawList.IdxBuffer.Size * sizeof(ushort)));
-            commands.UpdateBuffer(_vertexBuffer, vertexOffsetBytes, (nint)drawList.VtxBuffer.Data, vertexBytes);
-            commands.UpdateBuffer(_indexBuffer, indexOffsetBytes, (nint)drawList.IdxBuffer.Data, indexBytes);
+            commands.UpdateBuffer(vertexBuffer, vertexOffsetBytes, (nint)drawList.VtxBuffer.Data, vertexBytes);
+            commands.UpdateBuffer(indexBuffer, indexOffsetBytes, (nint)drawList.IdxBuffer.Data, indexBytes);
             vertexOffsetBytes += vertexBytes;
             indexOffsetBytes += indexBytes;
         }
@@ -191,11 +195,11 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
                 -1f - drawData.DisplayPos.X * (2f / drawData.DisplaySize.X),
                 -1f - drawData.DisplayPos.Y * (2f / drawData.DisplaySize.Y))
         };
-        _renderer.NativeDevice.UpdateBuffer(_frameBuffer, 0, frame);
+        _renderer.NativeDevice.UpdateBuffer(frameBuffer, 0, frame);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
-        commands.SetVertexBuffer(0, _vertexBuffer);
-        commands.SetIndexBuffer(_indexBuffer, IndexFormat.UInt16);
-        commands.SetGraphicsResourceSet(0, _mainSet);
+        commands.SetVertexBuffer(0, vertexBuffer);
+        commands.SetIndexBuffer(indexBuffer, IndexFormat.UInt16);
+        commands.SetGraphicsResourceSet(0, _mainSets[slot]);
 
         Vector2 clipOffset = drawData.DisplayPos;
         Vector2 clipScale = drawData.FramebufferScale;
@@ -252,17 +256,15 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         uint requiredIndices = checked((uint)(indexCount * sizeof(ushort)));
         if (requiredVertices > _vertexBufferSize)
         {
-            _retiredBuffers.Add(_vertexBuffer);
             _vertexBufferSize = Math.Max(requiredVertices * 3 / 2, InitialVertexBufferSize);
-            _vertexBuffer = _renderer.ResourceFactory.CreateBuffer(
-                new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic));
+            foreach (DeviceBuffer buffer in _vertexBuffers) buffer.Dispose();
+            _vertexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
         }
         if (requiredIndices > _indexBufferSize)
         {
-            _retiredBuffers.Add(_indexBuffer);
             _indexBufferSize = Math.Max(requiredIndices * 3 / 2, InitialIndexBufferSize);
-            _indexBuffer = _renderer.ResourceFactory.CreateBuffer(
-                new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic));
+            foreach (DeviceBuffer buffer in _indexBuffers) buffer.Dispose();
+            _indexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic))).ToArray();
         }
     }
 

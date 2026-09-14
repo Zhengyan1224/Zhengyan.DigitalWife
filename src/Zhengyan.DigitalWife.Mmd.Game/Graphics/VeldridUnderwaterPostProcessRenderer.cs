@@ -17,13 +17,13 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
 
         public TextureView? DepthView { get; set; }
 
-        public ResourceSet? ResourceSet { get; set; }
+        public ResourceSet?[] ResourceSets { get; } = new ResourceSet?[VulkanRenderer.FrameSlotCount];
     }
 
     private readonly Dictionary<(int Width, int Height), CaptureState> _captures = [];
     private CaptureState? _activeCapture;
     private readonly DeviceBuffer _vertices;
-    private readonly DeviceBuffer _uniforms;
+    private readonly DeviceBuffer[] _uniforms;
     private readonly ResourceLayout _layout;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
@@ -38,7 +38,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
         float[] vertices = { -1,-1,0,0, 1,-1,1,0, -1,1,0,1, -1,1,0,1, 1,-1,1,0, 1,1,1,1 };
         _vertices = factory.CreateBuffer(new BufferDescription((uint)(vertices.Length * sizeof(float)), BufferUsage.VertexBuffer));
         renderer.Device.UpdateBuffer(_vertices, 0, vertices);
-        _uniforms = factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _uniforms = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Linear);
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("PostFrame", ResourceKind.UniformBuffer, ShaderStages.Fragment),
@@ -88,9 +88,8 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
             || capture.Target.NativeDepthResource is not TextureView depthView) return;
         if (!ReferenceEquals(view, capture.ColorView) || !ReferenceEquals(depthView, capture.DepthView))
         {
-            capture.ResourceSet?.Dispose();
-            capture.ResourceSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
-                _layout, _uniforms, view, _sampler, depthView, _sampler));
+            foreach (ResourceSet? set in capture.ResourceSets) set?.Dispose();
+            Array.Clear(capture.ResourceSets);
             capture.ColorView = view;
             capture.DepthView = depthView;
         }
@@ -109,11 +108,16 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
                 camera.ProjectionMode == CameraProjectionMode.Orthographic ? 1 : 0,
                 Math.Max(settings.VisibilityDistance, .001f))
         };
+        int slot = _renderer.CurrentFrameSlot;
+        if (capture.ResourceSets[slot] is null)
+        {
+            capture.ResourceSets[slot] = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[slot], view, _sampler, depthView, _sampler));
+        }
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_uniforms, 0, data);
+        commands.UpdateBuffer(_uniforms[slot], 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices);
-        commands.SetGraphicsResourceSet(0, capture.ResourceSet!);
+        commands.SetGraphicsResourceSet(0, capture.ResourceSets[slot]!);
         commands.Draw(6);
     }
 
@@ -121,7 +125,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
     {
         foreach (CaptureState capture in _captures.Values)
         {
-            capture.ResourceSet?.Dispose();
+            foreach (ResourceSet? set in capture.ResourceSets) set?.Dispose();
             capture.Target.Dispose();
         }
 
@@ -129,7 +133,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
         _activeCapture = null;
         foreach ((_, Pipeline pipeline) in _pipelines) pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
-        _layout.Dispose(); _sampler.Dispose(); _uniforms.Dispose(); _vertices.Dispose();
+        _layout.Dispose(); _sampler.Dispose(); foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose(); _vertices.Dispose();
     }
 
     private Pipeline GetPipeline(OutputDescription output)

@@ -468,7 +468,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             new ResourceLayoutElementDescription("PmxToonSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
         VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
-        _fallbackFrameSetKey = new FrameSetKey(fallbackTexture, fallbackSampler, fallbackTexture, fallbackSampler);
+        _fallbackFrameSetKey = new FrameSetKey(0, fallbackTexture, fallbackSampler, fallbackTexture, fallbackSampler);
         _frameSets[_fallbackFrameSetKey] = factory.CreateResourceSet(new ResourceSetDescription(
             _frameLayout,
             RequireDeviceBuffer(resources.FrameUniformBuffer),
@@ -686,7 +686,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         PmxMaterialDescriptorSet descriptorSet,
         TextureView? overrideTexture)
     {
-        MaterialSetKey key = new(descriptorSet, overrideTexture);
+        MaterialSetKey key = new(_renderer.CurrentFrameSlot, descriptorSet, overrideTexture);
         if (_materialSets.TryGetValue(key, out ResourceSet? resourceSet))
         {
             return resourceSet;
@@ -718,6 +718,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
         VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
         FrameSetKey key = new(
+            _renderer.CurrentFrameSlot,
             shadowTexture ?? fallbackTexture,
             shadowSampler ?? fallbackSampler,
             localShadowTexture ?? fallbackTexture,
@@ -851,8 +852,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
     private sealed record PipelineBundle(OutputDescription OutputDescription, Pipeline Culled, Pipeline DoubleSided);
 
-    private readonly record struct MaterialSetKey(PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
+    private readonly record struct MaterialSetKey(int Slot, PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
     private readonly record struct FrameSetKey(
+        int Slot,
         TextureView Texture,
         VeldridSampler Sampler,
         TextureView LocalShadowTexture,

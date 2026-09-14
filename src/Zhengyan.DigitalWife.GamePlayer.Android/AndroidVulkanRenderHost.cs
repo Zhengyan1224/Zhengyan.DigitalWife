@@ -117,6 +117,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 return;
             }
 
+            if (_game.GraphicsDevice.Renderer is VulkanRenderer renderer)
+            {
+                renderer.BeginFrameSlot();
+            }
+
             double deltaSeconds = 0.0;
             if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
             {

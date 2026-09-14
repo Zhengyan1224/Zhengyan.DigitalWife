@@ -20,7 +20,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
     private VeldridShader[] _shaders = [];
     private ShaderSetDescription _shaderSet;
     private readonly List<PipelineBundle> _pipelines = [];
-    private readonly Dictionary<TextureSetKey, ResourceSet> _resourceSets = [];
+    private readonly Dictionary<(int Slot, TextureSetKey Key), ResourceSet> _resourceSets = [];
     private readonly TextureView _fallbackTexture;
     private readonly VeldridSampler _fallbackSampler;
     private bool _disposed;
@@ -46,8 +46,8 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             new ResourceLayoutElementDescription("PlaneReflectionTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PlaneReflectionSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
 
-        _fallbackSet = CreateResourceSet(_fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler);
-        _resourceSets[new TextureSetKey(_fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler)] = _fallbackSet;
+        _fallbackSet = CreateResourceSet(0, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler);
+        _resourceSets[(0, new TextureSetKey(_fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler, _fallbackTexture, _fallbackSampler))] = _fallbackSet;
 
         SetShaderProgram(null, null);
     }
@@ -83,7 +83,8 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         VeldridSampler shadowSampler = shadowMap?.NativeSampler as VeldridSampler ?? _fallbackSampler;
         TextureView reflectionView = reflectionTexture?.NativeResource as TextureView ?? _fallbackTexture;
         VeldridSampler reflectionSampler = _fallbackSampler;
-        ResourceSet resources = GetResourceSet(baseView, baseSampler, shadowView, shadowSampler, reflectionView, reflectionSampler);
+        int slot = _renderer.CurrentFrameSlot;
+        ResourceSet resources = GetResourceSet(slot, baseView, baseSampler, shadowView, shadowSampler, reflectionView, reflectionSampler);
 
         bool shadowEnabled = receiveShadow
             && shadowMap?.NativeTexture is TextureView
@@ -115,7 +116,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         };
 
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(RequireDeviceBuffer(_uniformBuffer), 0, data);
+        commands.UpdateBuffer(RequireDeviceBuffer(_uniformBuffer, slot), 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, RequireDeviceBuffer(_vertexBuffer));
         commands.SetGraphicsResourceSet(0, resources);
@@ -141,17 +142,20 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         VeldridSampler baseSampler,
         TextureView shadowTexture,
         VeldridSampler shadowSampler,
+        int slot,
         TextureView reflectionTexture,
         VeldridSampler reflectionSampler)
     {
         TextureSetKey key = new(baseTexture, baseSampler, shadowTexture, shadowSampler, reflectionTexture, reflectionSampler);
-        if (_resourceSets.TryGetValue(key, out ResourceSet? resourceSet)) return resourceSet;
-        resourceSet = CreateResourceSet(baseTexture, baseSampler, shadowTexture, shadowSampler, reflectionTexture, reflectionSampler);
-        _resourceSets[key] = resourceSet;
+        var slotKey = (slot, key);
+        if (_resourceSets.TryGetValue(slotKey, out ResourceSet? resourceSet)) return resourceSet;
+        resourceSet = CreateResourceSet(slot, baseTexture, baseSampler, shadowTexture, shadowSampler, reflectionTexture, reflectionSampler);
+        _resourceSets[slotKey] = resourceSet;
         return resourceSet;
     }
 
     private ResourceSet CreateResourceSet(
+        int slot,
         TextureView baseTexture,
         VeldridSampler baseSampler,
         TextureView shadowTexture,
@@ -161,7 +165,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
     {
         return _factory.CreateResourceSet(new ResourceSetDescription(
             _layout,
-            RequireDeviceBuffer(_uniformBuffer),
+            RequireDeviceBuffer(_uniformBuffer, slot),
             baseTexture,
             baseSampler,
             shadowTexture,
@@ -251,9 +255,9 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         return runtimeTexture?.NativeResource as TextureView ?? texture.NativeResource as TextureView;
     }
 
-    private static DeviceBuffer RequireDeviceBuffer(IGpuBuffer buffer)
+    private static DeviceBuffer RequireDeviceBuffer(IGpuBuffer buffer, int? slot = null)
     {
-        return buffer.NativeResource as DeviceBuffer
+        return buffer is VeldridGpuBuffer ring && slot.HasValue ? ring.GetBufferForSlot(slot.Value) : buffer.NativeResource as DeviceBuffer
             ?? throw new InvalidOperationException("Vulkan textured plane requires a Veldrid device buffer.");
     }
 
@@ -287,18 +291,18 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
 
     private sealed class VeldridGpuBufferAdapter : IGpuBuffer
     {
-        private readonly DeviceBuffer _buffer;
+        private readonly VeldridGpuBuffer _buffer;
 
         public VeldridGpuBufferAdapter(VulkanRenderer renderer, int size)
         {
-            _buffer = renderer.ResourceFactory.CreateBuffer(new BufferDescription((uint)size, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+            _buffer = new VeldridGpuBuffer(renderer.ResourceFactory, new GpuBufferDescription((uint)size, GpuBufferKind.Uniform, Dynamic: true));
         }
 
         public EngineGraphicsBackend Backend => EngineGraphicsBackend.Vulkan;
         public GpuBufferKind Kind => GpuBufferKind.Uniform;
-        public uint SizeInBytes => (uint)_buffer.SizeInBytes;
+        public uint SizeInBytes => _buffer.SizeInBytes;
         public uint LegacyBufferId => 0;
-        public object NativeResource => _buffer;
+        public object NativeResource => _buffer.NativeResource;
         public void Update<T>(ReadOnlySpan<T> data, uint offsetInBytes = 0) where T : unmanaged => throw new NotSupportedException();
         public void Dispose() => _buffer.Dispose();
     }

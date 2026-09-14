@@ -8,22 +8,22 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 public sealed class VeldridLoadingScreenRenderer : ILoadingScreenPassRenderer
 {
     private readonly VulkanRenderer _renderer;
-    private readonly DeviceBuffer _vertices;
-    private readonly DeviceBuffer _uniforms;
+    private readonly DeviceBuffer[] _vertices;
+    private readonly DeviceBuffer[] _uniforms;
     private readonly ResourceLayout _layout;
     private readonly Sampler _sampler;
     private readonly ITexture2D _fallbackTexture;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
-    private readonly Dictionary<TextureView, ResourceSet> _sets = [];
+    private readonly Dictionary<(int Slot, TextureView View), ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
 
     public VeldridLoadingScreenRenderer(VulkanRenderer renderer)
     {
         _renderer = renderer;
         ResourceFactory factory = renderer.ResourceFactory;
-        _vertices = factory.CreateBuffer(new BufferDescription(24u * sizeof(float), BufferUsage.VertexBuffer | BufferUsage.Dynamic));
-        _uniforms = factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _vertices = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(24u * sizeof(float), BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
+        _uniforms = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Linear);
         _fallbackTexture = renderer.CreateTexture2D();
         _fallbackTexture.Fill(255, 255, 255, 255);
@@ -44,10 +44,11 @@ public sealed class VeldridLoadingScreenRenderer : ILoadingScreenPassRenderer
     {
         if (!_renderer.IsFrameOpen) return;
         TextureView view = (texture?.NativeResource as TextureView) ?? (_fallbackTexture.NativeResource as TextureView)!;
-        if (!_sets.TryGetValue(view, out ResourceSet? set))
+        int slot = _renderer.CurrentFrameSlot;
+        if (!_sets.TryGetValue((slot, view), out ResourceSet? set))
         {
-            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms, view, _sampler));
-            _sets.Add(view, set);
+            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[slot], view, _sampler));
+            _sets.Add((slot, view), set);
         }
         float[] vertices =
         [
@@ -56,10 +57,10 @@ public sealed class VeldridLoadingScreenRenderer : ILoadingScreenPassRenderer
         ];
         UniformData data = new() { Color = new Vector4(color.X, color.Y, color.Z, color.W * Math.Clamp(opacity, 0, 1)), UseTexture = texture is null ? 0 : 1 };
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_vertices, 0, vertices);
-        commands.UpdateBuffer(_uniforms, 0, data);
+        commands.UpdateBuffer(_vertices[slot], 0, vertices);
+        commands.UpdateBuffer(_uniforms[slot], 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
-        commands.SetVertexBuffer(0, _vertices);
+        commands.SetVertexBuffer(0, _vertices[slot]);
         commands.SetGraphicsResourceSet(0, set);
         commands.Draw(6);
     }
@@ -69,7 +70,7 @@ public sealed class VeldridLoadingScreenRenderer : ILoadingScreenPassRenderer
         foreach (ResourceSet set in _sets.Values) set.Dispose();
         foreach ((_, Pipeline pipeline) in _pipelines) pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
-        _layout.Dispose(); _sampler.Dispose(); _uniforms.Dispose(); _vertices.Dispose(); _fallbackTexture.Dispose();
+        _layout.Dispose(); _sampler.Dispose(); foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose(); foreach (DeviceBuffer buffer in _vertices) buffer.Dispose(); _fallbackTexture.Dispose();
     }
 
     private Pipeline GetPipeline(OutputDescription output)

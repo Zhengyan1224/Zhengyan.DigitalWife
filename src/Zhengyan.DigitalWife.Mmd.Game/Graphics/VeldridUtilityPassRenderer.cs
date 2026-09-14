@@ -9,9 +9,9 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 internal sealed class VeldridUtilityPassRenderer : IDisposable
 {
     private readonly VulkanRenderer _renderer;
-    private readonly DeviceBuffer _uniformBuffer;
+    private readonly DeviceBuffer[] _uniformBuffers;
     private readonly ResourceLayout _layout;
-    private readonly ResourceSet _resourceSet;
+    private readonly ResourceSet[] _resourceSets;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
     private readonly List<PipelineBundle> _pipelines = [];
@@ -21,11 +21,10 @@ internal sealed class VeldridUtilityPassRenderer : IDisposable
     {
         _renderer = renderer;
         ResourceFactory factory = renderer.ResourceFactory;
-        _uniformBuffer = factory.CreateBuffer(new BufferDescription(
-            (uint)Marshal.SizeOf<UtilityUniforms>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _uniformBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UtilityUniforms>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("UtilityFrame", ResourceKind.UniformBuffer, ShaderStages.Fragment)));
-        _resourceSet = factory.CreateResourceSet(new ResourceSetDescription(_layout, _uniformBuffer));
+        _resourceSets = _uniformBuffers.Select(buffer => factory.CreateResourceSet(new ResourceSetDescription(_layout, buffer))).ToArray();
         _shaders = factory.CreateFromSpirv(
             VulkanShaderCompiler.CompileSource("utility.vert", VertexSource, ShaderStages.Vertex),
             VulkanShaderCompiler.CompileSource("utility.frag", FragmentSource, ShaderStages.Fragment));
@@ -38,12 +37,13 @@ internal sealed class VeldridUtilityPassRenderer : IDisposable
         if (!_renderer.IsFrameOpen) return;
 
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_uniformBuffer, 0, new UtilityUniforms { Color = color });
+        int slot = _renderer.CurrentFrameSlot;
+        commands.UpdateBuffer(_uniformBuffers[slot], 0, new UtilityUniforms { Color = color });
         commands.SetViewport(0, new Viewport(x, y, Math.Max(width, 1), Math.Max(height, 1), 0, 1));
         commands.SetScissorRect(0, (uint)Math.Max(x, 0), (uint)Math.Max(y, 0),
             (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, UtilityPassKind.Clear));
-        commands.SetGraphicsResourceSet(0, _resourceSet);
+        commands.SetGraphicsResourceSet(0, _resourceSets[slot]);
         commands.Draw(3);
     }
 
@@ -54,11 +54,12 @@ internal sealed class VeldridUtilityPassRenderer : IDisposable
 
         target.ResumePass();
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_uniformBuffer, 0, new UtilityUniforms { Color = Vector4.One });
+        int slot = _renderer.CurrentFrameSlot;
+        commands.UpdateBuffer(_uniformBuffers[slot], 0, new UtilityUniforms { Color = Vector4.One });
         commands.SetFullViewports();
         commands.SetFullScissorRects();
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, UtilityPassKind.OpaqueAlpha));
-        commands.SetGraphicsResourceSet(0, _resourceSet);
+        commands.SetGraphicsResourceSet(0, _resourceSets[slot]);
         commands.Draw(3);
     }
 
@@ -68,9 +69,9 @@ internal sealed class VeldridUtilityPassRenderer : IDisposable
         _disposed = true;
         foreach (PipelineBundle bundle in _pipelines) bundle.Pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
-        _resourceSet.Dispose();
+        foreach (ResourceSet set in _resourceSets) set.Dispose();
         _layout.Dispose();
-        _uniformBuffer.Dispose();
+        foreach (DeviceBuffer buffer in _uniformBuffers) buffer.Dispose();
     }
 
     private Pipeline GetPipeline(OutputDescription output, UtilityPassKind kind)

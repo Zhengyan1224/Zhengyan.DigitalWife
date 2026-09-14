@@ -251,9 +251,9 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
     private readonly ResourceLayout _edgeLayout;
     private readonly ResourceLayout _groundLayout;
     private readonly ResourceLayout _depthLayout;
-    private readonly ResourceSet _edgeSet;
-    private readonly ResourceSet _groundSet;
-    private readonly ResourceSet _depthSet;
+    private readonly ResourceSet[] _edgeSets;
+    private readonly ResourceSet[] _groundSets;
+    private readonly ResourceSet[] _depthSets;
     private readonly VeldridShader[] _edgeShaders;
     private readonly VeldridShader[] _groundShaders;
     private readonly VeldridShader[] _depthShaders;
@@ -272,9 +272,9 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         _edgeLayout = CreateUniformLayout(factory, "PmxEdge", ShaderStages.Vertex | ShaderStages.Fragment);
         _groundLayout = CreateUniformLayout(factory, "PmxGroundShadow", ShaderStages.Vertex | ShaderStages.Fragment);
         _depthLayout = CreateUniformLayout(factory, "PmxShadowDepth", ShaderStages.Vertex);
-        _edgeSet = factory.CreateResourceSet(new ResourceSetDescription(_edgeLayout, RequireDeviceBuffer(resources.EdgeUniformBuffer)));
-        _groundSet = factory.CreateResourceSet(new ResourceSetDescription(_groundLayout, RequireDeviceBuffer(resources.GroundShadowUniformBuffer)));
-        _depthSet = factory.CreateResourceSet(new ResourceSetDescription(_depthLayout, RequireDeviceBuffer(resources.ShadowDepthUniformBuffer)));
+        _edgeSets = CreateSlotSets(factory, _edgeLayout, resources.EdgeUniformBuffer);
+        _groundSets = CreateSlotSets(factory, _groundLayout, resources.GroundShadowUniformBuffer);
+        _depthSets = CreateSlotSets(factory, _depthLayout, resources.ShadowDepthUniformBuffer);
 
         _edgeShaders = CreateShaders(factory, "pmx_edge", EdgeVertexShaderSource, EdgeFragmentShaderSource);
         _groundShaders = CreateShaders(factory, "pmx_ground_shadow", GroundVertexShaderSource, GroundFragmentShaderSource);
@@ -310,7 +310,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         commands.SetVertexBuffer(0, RequireDeviceBuffer(resources.PositionBuffer));
         commands.SetVertexBuffer(1, RequireDeviceBuffer(resources.NormalBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        commands.SetGraphicsResourceSet(0, _edgeSet);
+        commands.SetGraphicsResourceSet(0, _edgeSets[_renderer.CurrentFrameSlot]);
 
         int count = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -345,7 +345,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
         commands.SetPipeline(shadowColor.W < 1.0f ? pipelines.Alpha : pipelines.Opaque);
         commands.SetVertexBuffer(0, RequireDeviceBuffer(resources.PositionBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        commands.SetGraphicsResourceSet(0, _groundSet);
+        commands.SetGraphicsResourceSet(0, _groundSets[_renderer.CurrentFrameSlot]);
         PmxGpuResources.PmxGroundShadowUniformData data = new()
         {
             WorldViewProjection = worldViewProjection,
@@ -390,7 +390,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
             Zhengyan.DigitalWife.Mmd.MMDMaterial material = mesh.Material;
             if (!material.ShadowCaster || material.Alpha <= 0.01f) continue;
             commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
-            commands.SetGraphicsResourceSet(0, _depthSet);
+            commands.SetGraphicsResourceSet(0, _depthSets[_renderer.CurrentFrameSlot]);
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
             count++;
         }
@@ -413,9 +413,9 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
             bundle.Culled.Dispose();
             bundle.DoubleSided.Dispose();
         }
-        _edgeSet.Dispose();
-        _groundSet.Dispose();
-        _depthSet.Dispose();
+        foreach (ResourceSet set in _edgeSets) set.Dispose();
+        foreach (ResourceSet set in _groundSets) set.Dispose();
+        foreach (ResourceSet set in _depthSets) set.Dispose();
         _edgeLayout.Dispose();
         _groundLayout.Dispose();
         _depthLayout.Dispose();
@@ -524,6 +524,14 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
     {
         return buffer.NativeResource as DeviceBuffer
             ?? throw new InvalidOperationException("PMX Vulkan auxiliary pass requires a Veldrid device buffer.");
+    }
+
+    private static ResourceSet[] CreateSlotSets(ResourceFactory factory, ResourceLayout layout, IGpuBuffer buffer)
+    {
+        DeviceBuffer[] native = Enumerable.Range(0, 3)
+            .Select(slot => ((VeldridGpuBuffer)buffer).GetBufferForSlot(slot))
+            .ToArray();
+        return native.Select(item => factory.CreateResourceSet(new ResourceSetDescription(layout, item))).ToArray();
     }
 
     private static void DisposeShaders(IEnumerable<VeldridShader> shaders)

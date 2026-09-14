@@ -9,12 +9,12 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
 {
     private readonly VulkanRenderer _renderer;
     private readonly DeviceBuffer _vertices;
-    private readonly DeviceBuffer _uniforms;
+    private readonly DeviceBuffer[] _uniforms;
     private readonly ResourceLayout _layout;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
-    private readonly Dictionary<TextureView, ResourceSet> _sets = [];
+    private readonly Dictionary<(int Slot, TextureView View), ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
 
     public VeldridSkyboxRenderer(VulkanRenderer renderer)
@@ -23,7 +23,7 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
         ResourceFactory factory = renderer.ResourceFactory;
         _vertices = factory.CreateBuffer(new BufferDescription(12u * sizeof(float), BufferUsage.VertexBuffer));
         renderer.Device.UpdateBuffer(_vertices, 0, new float[] { -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1 });
-        _uniforms = factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _uniforms = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _sampler = factory.CreateSampler(new SamplerDescription(
             SamplerAddressMode.Wrap, SamplerAddressMode.Clamp, SamplerAddressMode.Clamp,
             SamplerFilter.MinLinear_MagLinear_MipLinear, null, 0, 0, uint.MaxValue, 0, SamplerBorderColor.TransparentBlack));
@@ -42,10 +42,11 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
     public void Draw(ITexture2D texture, Matrix4x4 inverseViewProjection, Vector3 tint, float exposure)
     {
         if (!_renderer.IsFrameOpen || texture.NativeResource is not TextureView view) return;
-        if (!_sets.TryGetValue(view, out ResourceSet? set))
+        int slot = _renderer.CurrentFrameSlot;
+        if (!_sets.TryGetValue((slot, view), out ResourceSet? set))
         {
-            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms, view, _sampler));
-            _sets.Add(view, set);
+            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[slot], view, _sampler));
+            _sets.Add((slot, view), set);
         }
 
         UniformData data = new()
@@ -54,7 +55,7 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
             TintExposure = new Vector4(tint, Math.Max(0, exposure))
         };
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_uniforms, 0, data);
+        commands.UpdateBuffer(_uniforms[slot], 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices);
         commands.SetGraphicsResourceSet(0, set);
@@ -68,7 +69,7 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
         foreach (Shader shader in _shaders) shader.Dispose();
         _layout.Dispose();
         _sampler.Dispose();
-        _uniforms.Dispose();
+        foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose();
         _vertices.Dispose();
     }
 

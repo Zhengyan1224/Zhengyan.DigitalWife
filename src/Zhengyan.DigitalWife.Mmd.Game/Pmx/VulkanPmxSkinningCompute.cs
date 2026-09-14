@@ -48,9 +48,9 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     private float _maxValidationPositionError;
     private float _maxValidationNormalError;
     private float _maxValidationUvError;
-    private DeviceBuffer? _gpuPositionOutput;
-    private DeviceBuffer? _gpuNormalOutput;
-    private DeviceBuffer? _gpuUvOutput;
+    private DeviceBuffer[]? _gpuPositionOutputs;
+    private DeviceBuffer[]? _gpuNormalOutputs;
+    private DeviceBuffer[]? _gpuUvOutputs;
     private bool _disposed;
 
     public VulkanPmxSkinningCompute(VulkanRenderer renderer, int vertexCount, int boneCount)
@@ -104,7 +104,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     public string BackendName => "Vulkan Compute";
 
     public bool IsGpuOutputBound
-        => _gpuPositionOutput is not null && _gpuNormalOutput is not null && _gpuUvOutput is not null;
+        => _gpuPositionOutputs is not null && _gpuNormalOutputs is not null && _gpuUvOutputs is not null;
 
     public bool Execute(
         int vertexCount,
@@ -172,16 +172,19 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
     public bool TryBindGpuOutput(object positionBuffer, object normalBuffer, object uvBuffer)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (positionBuffer is not DeviceBuffer positions
-            || normalBuffer is not DeviceBuffer normals
-            || uvBuffer is not DeviceBuffer uvs)
+        if (positionBuffer is not VeldridGpuBuffer positionRing
+            || normalBuffer is not VeldridGpuBuffer normalRing
+            || uvBuffer is not VeldridGpuBuffer uvRing)
         {
             return false;
         }
+        DeviceBuffer[] positions = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(positionRing.GetBufferForSlot).ToArray();
+        DeviceBuffer[] normals = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(normalRing.GetBufferForSlot).ToArray();
+        DeviceBuffer[] uvs = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(uvRing.GetBufferForSlot).ToArray();
 
         uint positionBytes = checked((uint)(_vertexCount * 3 * sizeof(float)));
         uint uvBytes = checked((uint)(_vertexCount * 2 * sizeof(float)));
-        if (positions.SizeInBytes < positionBytes || normals.SizeInBytes < positionBytes || uvs.SizeInBytes < uvBytes)
+        if (positions.Any(buffer => buffer.SizeInBytes < positionBytes) || normals.Any(buffer => buffer.SizeInBytes < positionBytes) || uvs.Any(buffer => buffer.SizeInBytes < uvBytes))
         {
             return false;
         }
@@ -196,9 +199,9 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.InFlight = false;
         }
 
-        _gpuPositionOutput = positions;
-        _gpuNormalOutput = normals;
-        _gpuUvOutput = uvs;
+        _gpuPositionOutputs = positions;
+        _gpuNormalOutputs = normals;
+        _gpuUvOutputs = uvs;
         _gpuOutputValid = false;
         return true;
     }
@@ -249,9 +252,10 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.Commands.SetPipeline(_pipeline);
             slot.Commands.SetComputeResourceSet(0, slot.ResourceSet);
             slot.Commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
-            slot.Commands.CopyBuffer(slot.PositionOutputs, 0, _gpuPositionOutput!, 0, slot.PositionOutputs.SizeInBytes);
-            slot.Commands.CopyBuffer(slot.NormalOutputs, 0, _gpuNormalOutput!, 0, slot.NormalOutputs.SizeInBytes);
-            slot.Commands.CopyBuffer(slot.UvOutputs, 0, _gpuUvOutput!, 0, slot.UvOutputs.SizeInBytes);
+            int outputSlot = _renderer.CurrentFrameSlot;
+            slot.Commands.CopyBuffer(slot.PositionOutputs, 0, _gpuPositionOutputs![outputSlot], 0, slot.PositionOutputs.SizeInBytes);
+            slot.Commands.CopyBuffer(slot.NormalOutputs, 0, _gpuNormalOutputs![outputSlot], 0, slot.NormalOutputs.SizeInBytes);
+            slot.Commands.CopyBuffer(slot.UvOutputs, 0, _gpuUvOutputs![outputSlot], 0, slot.UvOutputs.SizeInBytes);
             if (validateOutput)
             {
                 slot.Commands.CopyBuffer(slot.PositionOutputs, 0, slot.PositionStaging, 0, slot.PositionStaging.SizeInBytes);

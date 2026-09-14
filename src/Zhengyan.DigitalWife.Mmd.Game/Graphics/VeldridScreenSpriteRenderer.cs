@@ -14,11 +14,11 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
     private const int MaxVerticesPerSprite = 6;
 
     private readonly VulkanRenderer _renderer;
-    private readonly DeviceBuffer _vertexBuffer;
-    private readonly DeviceBuffer _parametersBuffer;
+    private readonly DeviceBuffer[] _vertexBuffers;
+    private readonly DeviceBuffer[] _parametersBuffers;
     private readonly ResourceLayout _parametersLayout;
     private readonly ResourceLayout _textureLayout;
-    private readonly ResourceSet _parametersSet;
+    private readonly ResourceSet[] _parametersSets;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
@@ -32,17 +32,15 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
         ResourceFactory factory = renderer.ResourceFactory;
 
-        _vertexBuffer = factory.CreateBuffer(new BufferDescription(
-            (uint)(_vertices.Length * sizeof(float)), BufferUsage.VertexBuffer | BufferUsage.Dynamic));
-        _parametersBuffer = factory.CreateBuffer(new BufferDescription(
-            (uint)Marshal.SizeOf<SpriteParameters>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+        _vertexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)(_vertices.Length * sizeof(float)), BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
+        _parametersBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<SpriteParameters>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
 
         _parametersLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("SpriteParameters", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment)));
         _textureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("SpriteTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("SpriteSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
-        _parametersSet = factory.CreateResourceSet(new ResourceSetDescription(_parametersLayout, _parametersBuffer));
+        _parametersSets = _parametersBuffers.Select(buffer => factory.CreateResourceSet(new ResourceSetDescription(_parametersLayout, buffer))).ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Linear);
 
         ShaderDescription vertexDescription = VulkanShaderCompiler.CompileSource(
@@ -67,8 +65,11 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
 
         CommandList commandList = _renderer.CommandList;
         commandList.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
-        commandList.SetVertexBuffer(0, _vertexBuffer);
-        commandList.SetGraphicsResourceSet(0, _parametersSet);
+        int slot = _renderer.CurrentFrameSlot;
+        DeviceBuffer vertexBuffer = _vertexBuffers[slot];
+        DeviceBuffer parametersBuffer = _parametersBuffers[slot];
+        commandList.SetVertexBuffer(0, vertexBuffer);
+        commandList.SetGraphicsResourceSet(0, _parametersSets[slot]);
 
         foreach (ScreenSpriteDrawCommand command in commands)
         {
@@ -78,8 +79,8 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
             }
 
             FillVertices(command, targetWidth, targetHeight, _vertices);
-            commandList.UpdateBuffer(_vertexBuffer, 0, _vertices);
-            commandList.UpdateBuffer(_parametersBuffer, 0, new SpriteParameters(
+            commandList.UpdateBuffer(vertexBuffer, 0, _vertices);
+            commandList.UpdateBuffer(parametersBuffer, 0, new SpriteParameters(
                 Math.Max(targetWidth, 1), Math.Max(targetHeight, 1), Math.Clamp(command.Opacity, 0.0f, 1.0f), 0.0f));
             commandList.SetGraphicsResourceSet(1, GetTextureSet(textureView));
             commandList.Draw(MaxVerticesPerSprite);
@@ -102,11 +103,11 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
         }
 
         _pipelines.Clear();
-        _parametersSet.Dispose();
+        foreach (ResourceSet set in _parametersSets) set.Dispose();
         _parametersLayout.Dispose();
         _textureLayout.Dispose();
-        _parametersBuffer.Dispose();
-        _vertexBuffer.Dispose();
+        foreach (DeviceBuffer buffer in _parametersBuffers) buffer.Dispose();
+        foreach (DeviceBuffer buffer in _vertexBuffers) buffer.Dispose();
         _sampler.Dispose();
         foreach (Shader shader in _shaders)
         {
