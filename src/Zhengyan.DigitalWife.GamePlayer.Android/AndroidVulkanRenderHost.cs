@@ -216,11 +216,12 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return;
         }
 
-        // Dynamic PMX, skinning, particle, UI, sprite, shadow and post-process
-        // resources are isolated per frame slot; renderer fences protect reuse.
+        // Keep the full-device wait until every Vulkan submission path, including
+        // auxiliary/readback/render-target command lists, is covered by the same
+        // frame fence. Mali devices otherwise can show missing geometry or flashing frames.
         VulkanRenderer renderer = new VulkanRenderer
         {
-            WaitForIdleAfterPresent = false
+            WaitForIdleAfterPresent = true
         };
         AndroidVulkanGame? game = null;
         try
