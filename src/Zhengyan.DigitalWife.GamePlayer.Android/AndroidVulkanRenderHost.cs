@@ -216,12 +216,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return;
         }
 
-        // PMX, skinning compute, particles and shadow passes currently share
-        // dynamic buffers. Keep the full-device wait until those resources are
-        // moved to independent in-flight frame slots.
+        // Dynamic PMX, skinning, particle, UI, sprite, shadow and post-process
+        // resources are isolated per frame slot; renderer fences protect reuse.
         VulkanRenderer renderer = new VulkanRenderer
         {
-            WaitForIdleAfterPresent = true
+            WaitForIdleAfterPresent = false
         };
         AndroidVulkanGame? game = null;
         try

@@ -257,13 +257,13 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         if (requiredVertices > _vertexBufferSize)
         {
             _vertexBufferSize = Math.Max(requiredVertices * 3 / 2, InitialVertexBufferSize);
-            foreach (DeviceBuffer buffer in _vertexBuffers) buffer.Dispose();
+            _retiredBuffers.AddRange(_vertexBuffers);
             _vertexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
         }
         if (requiredIndices > _indexBufferSize)
         {
             _indexBufferSize = Math.Max(requiredIndices * 3 / 2, InitialIndexBufferSize);
-            foreach (DeviceBuffer buffer in _indexBuffers) buffer.Dispose();
+            _retiredBuffers.AddRange(_indexBuffers);
             _indexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic))).ToArray();
         }
     }
