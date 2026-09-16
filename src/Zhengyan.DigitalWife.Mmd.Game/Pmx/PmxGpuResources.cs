@@ -15,11 +15,11 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         int vertexCount = model.GetVertexCount();
         int indexCount = model.GetIndexCount();
         PositionBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
-            checked((uint)(sizeof(Vector3) * vertexCount)), GpuBufferKind.Vertex, Dynamic: true));
+            checked((uint)(sizeof(Vector3) * vertexCount)), GpuBufferKind.Vertex));
         NormalBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
-            checked((uint)(sizeof(Vector3) * vertexCount)), GpuBufferKind.Vertex, Dynamic: true));
+            checked((uint)(sizeof(Vector3) * vertexCount)), GpuBufferKind.Vertex));
         UvBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
-            checked((uint)(sizeof(Vector2) * vertexCount)), GpuBufferKind.Vertex, Dynamic: true));
+            checked((uint)(sizeof(Vector2) * vertexCount)), GpuBufferKind.Vertex));
         IndexBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
             checked((uint)(sizeof(uint) * indexCount)), GpuBufferKind.Index));
         FrameUniformBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
@@ -90,16 +90,6 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         }
     }
 
-    public void UploadPoseAllSlots(Zhengyan.DigitalWife.Mmd.MMDModel model)
-    {
-        int vertexCount = model.GetVertexCount();
-        ReadOnlySpan<Vector3> positions = new(model.GetUpdatePositions(), vertexCount);
-        ReadOnlySpan<Vector3> normals = new(model.GetUpdateNormals(), vertexCount);
-        ReadOnlySpan<Vector2> uvs = new(model.GetUpdateUVs(), vertexCount);
-        if (PositionBuffer is VeldridGpuBuffer positionRing) positionRing.UpdateAllSlots(positions); else PositionBuffer.Update(positions);
-        if (NormalBuffer is VeldridGpuBuffer normalRing) normalRing.UpdateAllSlots(normals); else NormalBuffer.Update(normals);
-        if (UvBuffer is VeldridGpuBuffer uvRing) uvRing.UpdateAllSlots(uvs); else UvBuffer.Update(uvs);
-    }
 
     public void UploadUv(Zhengyan.DigitalWife.Mmd.MMDModel model)
     {

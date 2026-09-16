@@ -216,9 +216,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return;
         }
 
-        // Keep the full-device wait until every Vulkan submission path, including
-        // auxiliary/readback/render-target command lists, is covered by the same
-        // frame fence. Mali devices otherwise can show missing geometry or flashing frames.
+        // Keep the full-device wait until the Vulkan backend has explicit
+        // semaphore/barrier support for Compute-to-vertex visibility.
         VulkanRenderer renderer = new VulkanRenderer
         {
             WaitForIdleAfterPresent = true

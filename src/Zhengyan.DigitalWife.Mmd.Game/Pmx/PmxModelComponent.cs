@@ -2984,13 +2984,13 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         // Seed the buffers from the CPU pose before Vulkan Compute takes
         // ownership of subsequent vertex updates.
-        _gpuResources.UploadPoseAllSlots(_model);
+        _gpuResources.UploadPose(_model, uploadUv: true);
         if (_model is Zhengyan.DigitalWife.Mmd.PmxModel pmxModel)
         {
             bool gpuOutputBound = pmxModel.TryBindGpuSkinningOutput(
-                _gpuResources.PositionBuffer,
-                _gpuResources.NormalBuffer,
-                _gpuResources.UvBuffer);
+                _gpuResources.PositionBuffer.NativeResource!,
+                _gpuResources.NormalBuffer.NativeResource!,
+                _gpuResources.UvBuffer.NativeResource!);
             if (gpuOutputBound)
             {
                 // A model without motion may never become pose-dirty after setup.
