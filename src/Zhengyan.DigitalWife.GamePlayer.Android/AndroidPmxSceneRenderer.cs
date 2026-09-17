@@ -1040,7 +1040,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private void DrawOverlay(RuntimeScene scene, int referenceWidth, int referenceHeight, int width, int height, bool foreground = true)
     {
-        if (scene.Definition.Sprites.Count == 0 && scene.Definition.GuiControls.Count == 0)
+        SpriteSettings[] sprites = scene.Definition.Sprites
+            .Where(sprite => sprite.Visible && (foreground ? sprite.DrawOrder >= 0 : sprite.DrawOrder < 0))
+            .OrderBy(sprite => sprite.DrawOrder)
+            .ToArray();
+        if (sprites.Length == 0)
         {
             return;
         }
@@ -1053,7 +1057,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
         GLES30.GlUniform1i(_overlayTextureLocation, 0);
 
-        foreach (SpriteSettings sprite in scene.Definition.Sprites.Where(sprite => sprite.Visible && (foreground ? sprite.DrawOrder >= 0 : sprite.DrawOrder < 0)).OrderBy(sprite => sprite.DrawOrder))
+        foreach (SpriteSettings sprite in sprites)
         {
             int texture = ResolveSceneTexture(sprite.Path, _projectDirectory ?? string.Empty);
             if (texture == 0) continue;
@@ -1064,7 +1068,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
         GLES30.GlBindVertexArray(0);
         GLES30.GlDepthMask(true);
-        GLES30.GlDisable(GLES30.GlBlend);
+        // Background overlays run between the skybox and the 3D scene. Restore
+        // the scene baseline so sprite rendering cannot leak disabled depth
+        // testing or blending into PMX materials.
+        GLES30.GlEnable(GLES30.GlDepthTest);
+        GLES30.GlEnable(GLES30.GlBlend);
+        GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
     }
 
 
