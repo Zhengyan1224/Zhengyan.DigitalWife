@@ -710,41 +710,47 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         RenderPointShadow(scene);
         RenderSpotShadow(scene);
         EnsureReflectionTargetAspect(width, height);
-        RenderWaterReflection(scene, timeSeconds);
-
         foreach (RuntimeCamera camera in scene.RenderCameras)
         {
-            RenderTargetGpu? renderTarget = FindRenderTarget(scene, camera);
-            if (renderTarget is not null && !renderTarget.ShouldRefresh(timeSeconds))
+            List<RenderTargetGpu?> renderPasses = FindRenderTargets(scene, camera)
+                .Where(target => target.ShouldRefresh(timeSeconds))
+                .Cast<RenderTargetGpu?>()
+                .ToList();
+            // A RenderTexture is an additional camera output. It must not
+            // replace the camera's configured on-screen viewport.
+            renderPasses.Add(null);
+            foreach (RenderTargetGpu? renderTarget in renderPasses)
             {
-                continue;
-            }
-            RuntimeViewport viewport = renderTarget is null
-                ? camera.ResolveViewport(width, height, referenceWidth, referenceHeight)
-                : new RuntimeViewport(0, 0, renderTarget.Width, renderTarget.Height);
-            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, renderTarget?.Framebuffer ?? 0);
-            GLES30.GlViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
-            GLES30.GlScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height);
-            GLES30.GlEnable(GLES30.GlScissorTest);
-            GLES30.GlClearColor(
-                renderTarget?.ClearColor.X ?? scene.Definition.Lighting.ClearColor.X,
-                renderTarget?.ClearColor.Y ?? scene.Definition.Lighting.ClearColor.Y,
-                renderTarget?.ClearColor.Z ?? scene.Definition.Lighting.ClearColor.Z,
-                renderTarget?.ClearColor.W ?? scene.Definition.Lighting.ClearColor.W);
-            GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
+                RuntimeViewport viewport = renderTarget is null
+                    ? camera.ResolveViewport(width, height, referenceWidth, referenceHeight)
+                    : new RuntimeViewport(0, 0, renderTarget.Width, renderTarget.Height);
+                int outputWidth = renderTarget?.Width ?? width;
+                int outputHeight = renderTarget?.Height ?? height;
+                float outputAspect = viewport.Width / (float)Math.Max(viewport.Height, 1);
+                RenderWaterReflection(scene, camera, timeSeconds, outputAspect);
+                GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, renderTarget?.Framebuffer ?? 0);
+                GLES30.GlViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+                GLES30.GlScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+                GLES30.GlEnable(GLES30.GlScissorTest);
+                GLES30.GlClearColor(
+                    renderTarget?.ClearColor.X ?? scene.Definition.Lighting.ClearColor.X,
+                    renderTarget?.ClearColor.Y ?? scene.Definition.Lighting.ClearColor.Y,
+                    renderTarget?.ClearColor.Z ?? scene.Definition.Lighting.ClearColor.Z,
+                    renderTarget?.ClearColor.W ?? scene.Definition.Lighting.ClearColor.W);
+                GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
 
-            Matrix4x4 view = camera.CreateView();
-            Matrix4x4 projection = CreateProjection(camera.Settings, viewport.Width / (float)Math.Max(viewport.Height, 1));
-            Vector3 position = camera.Settings.Position.ToVector3();
-            GLES30.GlEnable(GLES30.GlDepthTest);
-            GLES30.GlDepthFunc(GLES30.GlLequal);
-            GLES30.GlEnable(GLES30.GlBlend);
-            GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
-            GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-            DrawSkybox(scene, camera, view, projection);
-            DrawOverlay(scene, referenceWidth, referenceHeight, width, height, foreground: false);
-            GLES30.GlUseProgram(_program);
-            ApplyLighting(scene);
+                Matrix4x4 view = camera.CreateView();
+                Matrix4x4 projection = CreateProjection(camera.Settings, viewport.Width / (float)Math.Max(viewport.Height, 1));
+                Vector3 position = camera.Settings.Position.ToVector3();
+                GLES30.GlEnable(GLES30.GlDepthTest);
+                GLES30.GlDepthFunc(GLES30.GlLequal);
+                GLES30.GlEnable(GLES30.GlBlend);
+                GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
+                GLES30.GlDisable(0x0B44); // GL_CULL_FACE
+                DrawSkybox(scene, camera, view, projection);
+                DrawOverlay(scene, referenceWidth, referenceHeight, outputWidth, outputHeight, foreground: false);
+                GLES30.GlUseProgram(_program);
+                ApplyLighting(scene);
             GLES30.GlUniformMatrix4fv(_lightViewProjectionLocation, 1, false, ToGlArray(_lightViewProjection), 0);
             // Sample the color attachment rather than a depth texture.  A number
             // of GLES3 mobile drivers expose depth textures for framebuffer
@@ -849,8 +855,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
 
             DrawUnderwaterOverlay(scene, camera, timeSeconds);
-            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
-            renderTarget?.MarkRendered(timeSeconds);
+                GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+                renderTarget?.MarkRendered(timeSeconds);
+            }
         }
 
         DrawOverlay(scene, referenceWidth, referenceHeight, width, height, foreground: true);
@@ -1452,13 +1459,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlRgba, GLES30.GlUnsignedByte, null);
     }
 
-    private void RenderWaterReflection(RuntimeScene scene, double timeSeconds)
+    private void RenderWaterReflection(RuntimeScene scene, RuntimeCamera camera, double timeSeconds, float outputAspect)
     {
         if (!_adaptiveReflections || _reflectionTargets.Count == 0)
         {
             return;
         }
-        RuntimeCamera camera = scene.MainCamera;
         foreach ((string surfaceId, RenderTargetGpu target) in _reflectionTargets)
         {
             WaterGpu? water = _waters.FirstOrDefault(candidate => string.Equals(candidate.RuntimeEntity.Id, surfaceId, StringComparison.OrdinalIgnoreCase));
@@ -1480,7 +1486,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 planePoint = Vector3.Transform(Vector3.Zero, planeWorld);
                 planeNormal = NormalizeOrDefault(Vector3.TransformNormal(Vector3.UnitZ, planeWorld), Vector3.UnitZ);
             }
-            RenderSingleReflection(scene, camera, timeSeconds, surfaceId, target, planePoint, planeNormal);
+            RenderSingleReflection(scene, camera, timeSeconds, surfaceId, target, planePoint, planeNormal, outputAspect);
         }
         _reflectionSurfaceId = null;
     }
@@ -1547,7 +1553,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         string surfaceId,
         RenderTargetGpu target,
         Vector3 planePoint,
-        Vector3 planeNormal)
+        Vector3 planeNormal,
+        float outputAspect)
     {
         Vector3 sourcePosition = camera.Settings.Position.ToVector3();
         Vector3 sourceTarget = camera.Settings.Target.ToVector3();
@@ -1576,7 +1583,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 : Vector3.UnitY;
         }
         Matrix4x4 view = Matrix4x4.CreateLookAt(reflectedPosition, reflectedTarget, reflectedUp);
-        Matrix4x4 projection = CreateProjection(camera.Settings, target.Width / (float)Math.Max(target.Height, 1));
+        Matrix4x4 projection = CreateProjection(camera.Settings, Math.Max(outputAspect, 0.001f));
         _reflectionMatrices[surfaceId] = view * projection;
 
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, target.Framebuffer);
@@ -1627,7 +1634,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform4f(_pointShadow2LightLocation, _pointShadow2LightPositionRange.X, _pointShadow2LightPositionRange.Y, _pointShadow2LightPositionRange.Z, _pointShadow2LightPositionRange.W);
         GLES30.GlUniformMatrix4fv(_planarReflectionMatrixLocation, 1, false, ToGlArray(Matrix4x4.Identity), 0);
         GLES30.GlActiveTexture(GLES30.GlTexture7);
-        GLES30.GlBindTexture(GLES30.GlTexture2d, target.ColorTexture);
+        // Never bind the active color attachment as a sampled texture. Some
+        // GLES drivers treat that feedback loop as undefined even when the
+        // shader branch guarded by uHasPlanarReflection is disabled.
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
         GLES30.GlUniform1i(_planarReflectionTextureLocation, 7);
         GLES30.GlUniform1i(_hasPlanarReflectionLocation, 0);
         GLES30.GlUniform1i(_unlitSurfaceLocation, 0);
@@ -1699,18 +1709,20 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return false;
     }
 
-    private RenderTargetGpu? FindRenderTarget(RuntimeScene scene, RuntimeCamera camera)
+    private IEnumerable<RenderTargetGpu> FindRenderTargets(RuntimeScene scene, RuntimeCamera camera)
     {
         SceneCameraSettings definition = camera.Definition;
-        RenderTextureSettings? settings = scene.Definition.RenderTextures.FirstOrDefault(candidate =>
-            candidate.Enabled
-            && (string.Equals(candidate.Camera, definition.Id, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(candidate.Camera, definition.Name, StringComparison.OrdinalIgnoreCase)));
-        if (settings is null || !_renderTargets.TryGetValue(settings.Id, out RenderTargetGpu? target))
+        HashSet<RenderTargetGpu> yielded = [];
+        foreach (RenderTextureSettings settings in scene.Definition.RenderTextures.Where(candidate =>
+                     candidate.Enabled
+                     && (string.Equals(candidate.Camera, definition.Id, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(candidate.Camera, definition.Name, StringComparison.OrdinalIgnoreCase))))
         {
-            return null;
+            if (_renderTargets.TryGetValue(settings.Id, out RenderTargetGpu? target) && yielded.Add(target))
+            {
+                yield return target;
+            }
         }
-        return target;
     }
 
     private void DrawPlane(PlaneGpu plane, RuntimeCamera camera, Matrix4x4 view, Matrix4x4 projection)
