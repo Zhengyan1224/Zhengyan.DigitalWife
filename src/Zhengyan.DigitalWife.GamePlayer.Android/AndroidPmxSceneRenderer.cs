@@ -189,16 +189,26 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _waterRippleFrequencyLocation;
     private readonly int _postProgram;
     private readonly int _postTintLocation;
-    private readonly int _postAlphaLocation;
+    private readonly int _postFogColorLocation;
+    private readonly int _postFogDensityLocation;
+    private readonly int _postVisibilityDistanceLocation;
     private readonly int _postTimeLocation;
     private readonly int _postCausticsLocation;
     private readonly int _postDistortionLocation;
+    private readonly int _postBubbleStrengthLocation;
+    private readonly int _postSurfaceDepthLocation;
     private readonly int _postSceneColorLocation;
+    private readonly int _postSceneDepthLocation;
+    private readonly int _postNearLocation;
+    private readonly int _postFarLocation;
+    private readonly int _postOrthographicLocation;
     private readonly int _postSceneColorSizeLocation;
     private readonly int _postVertexArrayObject;
-    private int _postSceneColorTexture;
-    private int _postSceneColorWidth;
-    private int _postSceneColorHeight;
+    private int _underwaterFramebuffer;
+    private int _underwaterColorTexture;
+    private int _underwaterDepthTexture;
+    private int _underwaterWidth;
+    private int _underwaterHeight;
     private readonly int[] _waterNormalTextures = new int[4];
     private int _waterSkyTexture;
     private readonly int _overlayProgram;
@@ -356,11 +366,19 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         _postProgram = CreateProgram(PostVertexShaderSource, PostFragmentShaderSource);
         _postTintLocation = GLES30.GlGetUniformLocation(_postProgram, "uTint");
-        _postAlphaLocation = GLES30.GlGetUniformLocation(_postProgram, "uAlpha");
+        _postFogColorLocation = GLES30.GlGetUniformLocation(_postProgram, "uFogColor");
+        _postFogDensityLocation = GLES30.GlGetUniformLocation(_postProgram, "uFogDensity");
+        _postVisibilityDistanceLocation = GLES30.GlGetUniformLocation(_postProgram, "uVisibilityDistance");
         _postTimeLocation = GLES30.GlGetUniformLocation(_postProgram, "uTime");
         _postCausticsLocation = GLES30.GlGetUniformLocation(_postProgram, "uCausticsStrength");
         _postDistortionLocation = GLES30.GlGetUniformLocation(_postProgram, "uDistortionStrength");
+        _postBubbleStrengthLocation = GLES30.GlGetUniformLocation(_postProgram, "uBubbleStrength");
+        _postSurfaceDepthLocation = GLES30.GlGetUniformLocation(_postProgram, "uSurfaceDepth");
         _postSceneColorLocation = GLES30.GlGetUniformLocation(_postProgram, "uSceneColor");
+        _postSceneDepthLocation = GLES30.GlGetUniformLocation(_postProgram, "uSceneDepth");
+        _postNearLocation = GLES30.GlGetUniformLocation(_postProgram, "uNear");
+        _postFarLocation = GLES30.GlGetUniformLocation(_postProgram, "uFar");
+        _postOrthographicLocation = GLES30.GlGetUniformLocation(_postProgram, "uIsOrthographic");
         _postSceneColorSizeLocation = GLES30.GlGetUniformLocation(_postProgram, "uSceneColorSize");
         int[] postArrays = new int[1];
         GLES30.GlGenVertexArrays(1, postArrays, 0);
@@ -745,18 +763,44 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     : new RuntimeViewport(0, 0, renderTarget.Width, renderTarget.Height);
                 int outputWidth = renderTarget?.Width ?? width;
                 int outputHeight = renderTarget?.Height ?? height;
+                bool isMainCamera = camera.IsMain || ReferenceEquals(camera, scene.MainCamera);
+                WaterGpu? underwaterWater = null;
+                float underwaterDepth = 0.0f;
+                bool underwaterPass = renderTarget is null
+                    && isMainCamera
+                    && TryGetUnderwaterState(camera, timeSeconds, out underwaterWater, out underwaterDepth);
+                int framebuffer = renderTarget?.Framebuffer ?? 0;
+                if (underwaterPass && !EnsureUnderwaterCapture(viewport.Width, viewport.Height))
+                {
+                    underwaterPass = false;
+                }
+                if (underwaterPass)
+                {
+                    framebuffer = _underwaterFramebuffer;
+                }
                 float outputAspect = viewport.Width / (float)Math.Max(viewport.Height, 1);
                 RenderWaterReflection(scene, camera, timeSeconds, outputAspect);
-                GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, renderTarget?.Framebuffer ?? 0);
-                GLES30.GlViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
-                GLES30.GlScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+                GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, framebuffer);
+                int passX = underwaterPass ? 0 : viewport.X;
+                int passY = underwaterPass ? 0 : viewport.Y;
+                GLES30.GlViewport(passX, passY, viewport.Width, viewport.Height);
+                GLES30.GlScissor(passX, passY, viewport.Width, viewport.Height);
                 GLES30.GlEnable(GLES30.GlScissorTest);
                 GLES30.GlClearColor(
                     renderTarget?.ClearColor.X ?? scene.Definition.Lighting.ClearColor.X,
                     renderTarget?.ClearColor.Y ?? scene.Definition.Lighting.ClearColor.Y,
                     renderTarget?.ClearColor.Z ?? scene.Definition.Lighting.ClearColor.Z,
                     renderTarget?.ClearColor.W ?? scene.Definition.Lighting.ClearColor.W);
-                GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
+                int clearMask = GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit;
+                if (!underwaterPass)
+                {
+                    clearMask |= GLES30.GlStencilBufferBit;
+                }
+                if (underwaterPass)
+                {
+                    GLES30.GlClearDepthf(1.0f);
+                }
+                GLES30.GlClear(clearMask);
 
                 Matrix4x4 view = camera.CreateView();
                 Matrix4x4 projection = CreateProjection(camera.Settings, viewport.Width / (float)Math.Max(viewport.Height, 1));
@@ -873,7 +917,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 model.DrawEdges(_edgeUseGpuSkinningLocation, _edgeBonesLocation, _edgeSizeLocation, _edgeColorLocation);
             }
 
-            DrawUnderwaterOverlay(scene, camera, timeSeconds);
+            if (underwaterPass)
+            {
+                DrawUnderwaterPostProcess(camera, underwaterWater!, underwaterDepth, viewport, timeSeconds);
+            }
                 GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
                 renderTarget?.MarkRendered(timeSeconds);
             }
@@ -931,9 +978,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDeleteProgram(_particleShadowProgram);
         GLES30.GlDeleteProgram(_waterProgram);
         GLES30.GlDeleteProgram(_postProgram);
-        if (_postSceneColorTexture != 0)
+        if (_underwaterFramebuffer != 0)
         {
-            GLES30.GlDeleteTextures(1, [_postSceneColorTexture], 0);
+            GLES30.GlDeleteFramebuffers(1, [_underwaterFramebuffer], 0);
+        }
+        if (_underwaterColorTexture != 0)
+        {
+            GLES30.GlDeleteTextures(2, [_underwaterColorTexture, _underwaterDepthTexture], 0);
         }
         GLES30.GlDeleteProgram(_overlayProgram);
         GLES30.GlDeleteVertexArrays(1, [_postVertexArrayObject], 0);
@@ -1453,98 +1504,131 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return nearest;
     }
 
-    private void DrawUnderwaterOverlay(RuntimeScene scene, RuntimeCamera camera, double timeSeconds)
+    private bool TryGetUnderwaterState(RuntimeCamera camera, double timeSeconds, out WaterGpu? water, out float depth)
     {
         Vector3 cameraPosition = camera.Settings.Position.ToVector3();
-        WaterGpu? water = null;
+        water = null;
+        depth = 0.0f;
         float nearestDepth = float.MaxValue;
         foreach (WaterGpu candidate in _waters)
         {
-            if (!candidate.UnderwaterEffectEnabled
-                || !candidate.TryGetSurfaceHeight(cameraPosition, timeSeconds, out float candidateSurfaceHeight)
-                || cameraPosition.Y >= candidateSurfaceHeight + 0.03f)
+            if (!candidate.Enabled
+                || !candidate.UnderwaterEffectEnabled
+                || !candidate.TryGetSurfaceHeight(cameraPosition, timeSeconds, out float surfaceHeight)
+                || cameraPosition.Y >= surfaceHeight + 0.03f)
             {
                 continue;
             }
 
-            float candidateDepth = candidateSurfaceHeight - cameraPosition.Y;
+            float candidateDepth = Math.Max(surfaceHeight - cameraPosition.Y, 0.001f);
             if (candidateDepth < nearestDepth)
             {
                 nearestDepth = candidateDepth;
                 water = candidate;
+                depth = candidateDepth;
             }
         }
-        if (water is null)
-        {
-            return;
-        }
 
-        water.TryGetSurfaceHeight(cameraPosition, timeSeconds, out float surfaceHeight);
-        float depth = Math.Max(surfaceHeight - cameraPosition.Y, 0.0f);
-        float visibility = Math.Max(water.UnderwaterVisibilityDistance, 0.001f);
-        float density = Math.Max(water.UnderwaterFogDensity, 0.0f);
-        float entry = Math.Clamp(depth / 0.45f, 0.0f, 1.0f);
-        entry = entry * entry * (3.0f - 2.0f * entry);
-        float fog = 1.0f - MathF.Exp(-density * Math.Max(depth, 0.25f) / visibility);
-        // The GLES post pass has no scene-depth attachment yet, so use the
-        // camera's surface depth for the entry/fog term instead of reducing the
-        // effect to an almost invisible alpha on shallow water.
-        float alpha = Math.Clamp(entry * (0.18f + fog * 0.82f), 0.0f, 0.82f);
-        Vector3 tint = Vector3.Lerp(
-            Vector3.Max(water.UnderwaterTint, Vector3.Zero),
-            Vector3.Max(water.UnderwaterFogColor, Vector3.Zero),
-            Math.Clamp(fog * 1.5f, 0.0f, 1.0f));
-        GLES30.GlUseProgram(_postProgram);
-        GLES30.GlBindVertexArray(_postVertexArrayObject);
-        GLES30.GlUniform3f(_postTintLocation, tint.X, tint.Y, tint.Z);
-        GLES30.GlUniform1f(_postAlphaLocation, alpha);
-        GLES30.GlUniform1f(_postTimeLocation, (float)Math.Max(timeSeconds, 0.0));
-        GLES30.GlUniform1f(_postCausticsLocation, Math.Clamp(water.UnderwaterCausticsStrength, 0.0f, 1.0f));
-        GLES30.GlUniform1f(_postDistortionLocation, Math.Clamp(water.UnderwaterDistortionStrength, 0.0f, 0.2f));
-        int[] currentViewport = new int[4];
-        GLES30.GlGetIntegerv(0x0BA2, currentViewport, 0); // GL_VIEWPORT
-        int captureWidth = Math.Max(currentViewport[2], 1);
-        int captureHeight = Math.Max(currentViewport[3], 1);
-        EnsurePostSceneColorTexture(captureWidth, captureHeight);
-        GLES30.GlActiveTexture(GLES30.GlTexture8);
-        GLES30.GlBindTexture(GLES30.GlTexture2d, _postSceneColorTexture);
-        GLES30.GlCopyTexSubImage2D(GLES30.GlTexture2d, 0, 0, 0, currentViewport[0], currentViewport[1], captureWidth, captureHeight);
-        GLES30.GlUniform1i(_postSceneColorLocation, 8);
-        GLES30.GlUniform2f(_postSceneColorSizeLocation, _postSceneColorWidth, _postSceneColorHeight);
-        GLES30.GlDisable(GLES30.GlDepthTest);
-        GLES30.GlDepthMask(false);
-        GLES30.GlEnable(GLES30.GlBlend);
-        GLES30.GlBlendFunc(GLES30.GlSrcAlpha, GLES30.GlOneMinusSrcAlpha);
-        GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 3);
-        GLES30.GlDepthMask(true);
-        GLES30.GlDisable(GLES30.GlBlend);
-        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
-        GLES30.GlActiveTexture(GLES30.GlTexture0);
+        return water is not null;
     }
 
-    private void EnsurePostSceneColorTexture(int width, int height)
+    private bool EnsureUnderwaterCapture(int width, int height)
     {
-        if (_postSceneColorTexture == 0)
+        width = Math.Max(width, 1);
+        height = Math.Max(height, 1);
+        if (_underwaterFramebuffer == 0)
         {
-            int[] textures = new int[1];
-            GLES30.GlGenTextures(1, textures, 0);
-            _postSceneColorTexture = textures[0];
+            int[] framebuffers = new int[1];
+            int[] textures = new int[2];
+            GLES30.GlGenFramebuffers(1, framebuffers, 0);
+            GLES30.GlGenTextures(2, textures, 0);
+            _underwaterFramebuffer = framebuffers[0];
+            _underwaterColorTexture = textures[0];
+            _underwaterDepthTexture = textures[1];
         }
 
-        if (_postSceneColorWidth == width && _postSceneColorHeight == height)
+        if (_underwaterWidth != width || _underwaterHeight != height)
         {
-            return;
+            _underwaterWidth = width;
+            _underwaterHeight = height;
+            GLES30.GlBindTexture(GLES30.GlTexture2d, _underwaterColorTexture);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMinFilter, GLES30.GlLinear);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlLinear);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlClampToEdge);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlClampToEdge);
+            GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, GLES30.GlRgba, width, height, 0,
+                GLES30.GlRgba, GLES30.GlUnsignedByte, null);
+
+            GLES30.GlBindTexture(GLES30.GlTexture2d, _underwaterDepthTexture);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMinFilter, GLES30.GlNearest);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlNearest);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlClampToEdge);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlClampToEdge);
+            GLES30.GlTexParameteri(GLES30.GlTexture2d, 0x884C, 0); // GL_TEXTURE_COMPARE_MODE = GL_NONE
+            GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, 0x81A6, width, height, 0,
+                0x1902, GLES30.GlUnsignedInt, null); // GL_DEPTH_COMPONENT24
+            GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
+
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _underwaterFramebuffer);
+            GLES30.GlFramebufferTexture2D(GLES30.GlFramebuffer, 0x8CE0, GLES30.GlTexture2d, _underwaterColorTexture, 0);
+            GLES30.GlFramebufferTexture2D(GLES30.GlFramebuffer, 0x8D00, GLES30.GlTexture2d, _underwaterDepthTexture, 0);
+            bool complete = GLES30.GlCheckFramebufferStatus(GLES30.GlFramebuffer) == GLES30.GlFramebufferComplete;
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+            if (!complete)
+            {
+                _underwaterWidth = 0;
+                _underwaterHeight = 0;
+                Log.Warn(LogTag, "Android GLES underwater capture framebuffer is unavailable; underwater post-process is disabled.");
+                return false;
+            }
         }
 
-        _postSceneColorWidth = Math.Max(width, 1);
-        _postSceneColorHeight = Math.Max(height, 1);
-        GLES30.GlBindTexture(GLES30.GlTexture2d, _postSceneColorTexture);
-        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMinFilter, GLES30.GlLinear);
-        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlLinear);
-        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlClampToEdge);
-        GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlClampToEdge);
-        GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, GLES30.GlRgba, _postSceneColorWidth, _postSceneColorHeight, 0,
-            GLES30.GlRgba, GLES30.GlUnsignedByte, null);
+        return true;
+    }
+
+    private void DrawUnderwaterPostProcess(RuntimeCamera camera, WaterGpu water, float surfaceDepth, RuntimeViewport viewport, double timeSeconds)
+    {
+        GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+        GLES30.GlViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+        GLES30.GlScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height);
+        GLES30.GlEnable(GLES30.GlScissorTest);
+        GLES30.GlUseProgram(_postProgram);
+        GLES30.GlBindVertexArray(_postVertexArrayObject);
+        Vector3 tint = Vector3.Clamp(water.UnderwaterTint, Vector3.Zero, Vector3.One * 2.0f);
+        GLES30.GlUniform3f(_postTintLocation, tint.X, tint.Y, tint.Z);
+        Vector3 fogColor = Vector3.Clamp(water.UnderwaterFogColor, Vector3.Zero, Vector3.One * 2.0f);
+        GLES30.GlUniform3f(_postFogColorLocation, fogColor.X, fogColor.Y, fogColor.Z);
+        GLES30.GlUniform1f(_postFogDensityLocation, Math.Clamp(water.UnderwaterFogDensity, 0.0f, 8.0f));
+        GLES30.GlUniform1f(_postVisibilityDistanceLocation, Math.Max(water.UnderwaterVisibilityDistance, 0.001f));
+        GLES30.GlUniform1f(_postSurfaceDepthLocation, Math.Max(surfaceDepth, 0.0f));
+        GLES30.GlUniform1f(_postTimeLocation, (float)Math.Max(timeSeconds, 0.0));
+        GLES30.GlUniform1f(_postCausticsLocation, Math.Clamp(water.UnderwaterCausticsStrength, 0.0f, 2.0f));
+        GLES30.GlUniform1f(_postDistortionLocation, Math.Clamp(water.UnderwaterDistortionStrength, 0.0f, 0.12f));
+        GLES30.GlUniform1f(_postBubbleStrengthLocation, Math.Clamp(water.UnderwaterBubbleStrength, 0.0f, 2.0f));
+        GLES30.GlUniform1f(_postNearLocation, Math.Max(camera.Settings.NearClipPlane, 0.0001f));
+        GLES30.GlUniform1f(_postFarLocation, Math.Max(camera.Settings.FarClipPlane, camera.Settings.NearClipPlane + 0.001f));
+        GLES30.GlUniform1f(_postOrthographicLocation,
+            string.Equals(camera.Settings.ProjectionMode, "orthographic", StringComparison.OrdinalIgnoreCase) ? 1.0f : 0.0f);
+        GLES30.GlUniform1i(_postSceneColorLocation, 8);
+        GLES30.GlUniform1i(_postSceneDepthLocation, 13);
+        GLES30.GlUniform2f(_postSceneColorSizeLocation, _underwaterWidth, _underwaterHeight);
+
+        GLES30.GlActiveTexture(GLES30.GlTexture8);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, _underwaterColorTexture);
+        GLES30.GlActiveTexture(GLES30.GlTexture13);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, _underwaterDepthTexture);
+        GLES30.GlDisable(GLES30.GlDepthTest);
+        GLES30.GlDepthMask(false);
+        GLES30.GlDisable(GLES30.GlBlend);
+        GLES30.GlDrawArrays(GLES30.GlTriangles, 0, 3);
+        GLES30.GlDepthMask(true);
+        GLES30.GlEnable(GLES30.GlDepthTest);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
+        GLES30.GlActiveTexture(GLES30.GlTexture8);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, 0);
+        GLES30.GlActiveTexture(GLES30.GlTexture0);
+        GLES30.GlBindVertexArray(0);
+        GLES30.GlUseProgram(0);
     }
 
     private void RenderWaterReflection(RuntimeScene scene, RuntimeCamera camera, double timeSeconds, float outputAspect)
@@ -2985,11 +3069,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public bool MirrorReflectionEnabled => _settings.MirrorReflectionEnabled;
         public float ReflectionStrength => Math.Clamp(_settings.SkyReflectionStrength, 0.0f, 1.0f);
         public float SurfaceY => _runtimeEntity.Position.Y;
+        public bool Enabled => _runtimeEntity.Definition.IsPlaying;
         public bool UnderwaterEffectEnabled => _settings.UnderwaterEffectEnabled;
         public float UnderwaterFogDensity => _settings.UnderwaterFogDensity;
         public float UnderwaterVisibilityDistance => _settings.UnderwaterVisibilityDistance;
         public Vector3 UnderwaterFogColor => _settings.UnderwaterFogColor.ToVector3();
         public Vector3 UnderwaterTint => _settings.UnderwaterTint.ToVector3();
+        public float UnderwaterBubbleStrength => _settings.UnderwaterBubbleStrength;
         public bool EnableInteraction => _settings.EnableInteraction;
         public float InteractionRadius => _settings.InteractionRadius;
         public float InteractionStrength => _settings.InteractionStrength;
@@ -4845,27 +4931,124 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     private const string PostFragmentShaderSource = """
         #version 300 es
-        precision mediump float;
+        precision highp float;
         in vec2 vTexCoord;
         uniform sampler2D uSceneColor;
+        uniform sampler2D uSceneDepth;
         uniform vec2 uSceneColorSize;
         uniform vec3 uTint;
-        uniform float uAlpha;
+        uniform vec3 uFogColor;
+        uniform float uFogDensity;
+        uniform float uVisibilityDistance;
         uniform float uTime;
         uniform float uCausticsStrength;
         uniform float uDistortionStrength;
+        uniform float uBubbleStrength;
+        uniform float uSurfaceDepth;
+        uniform float uNear;
+        uniform float uFar;
+        uniform float uIsOrthographic;
         out vec4 outColor;
+
+        float hash(vec2 p)
+        {
+            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+        }
+
+        float noise(vec2 p)
+        {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(
+                mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+                u.y);
+        }
+
+        float linearDepth(float depth)
+        {
+            float projectionDepth = clamp(depth * 2.0 - 1.0, 0.0, 1.0);
+            if (uIsOrthographic > 0.5)
+            {
+                return mix(uNear, uFar, projectionDepth);
+            }
+            return (uNear * uFar) / max(uFar - projectionDepth * (uFar - uNear), 0.0001);
+        }
+
+        float caustics(vec2 uv, float time)
+        {
+            vec2 p = uv * vec2(18.0, 13.0);
+            float a = sin(p.x + sin(p.y * 1.7 + time * 0.85) + time * 0.65);
+            float b = sin((p.x * 1.35 - p.y * 0.75) + time * 1.15);
+            float c = sin(length(p - vec2(9.0, 6.0)) * 1.35 - time * 1.8);
+            return smoothstep(0.73, 1.0, (a + b + c) * 0.333 + 0.5);
+        }
+
+        float bubbleLayer(vec2 uv, float time, float scale, float speed, float seed)
+        {
+            vec2 p = uv * scale;
+            p.y -= time * speed;
+            vec2 cell = floor(p);
+            vec2 f = fract(p);
+            float rnd = hash(cell + seed);
+            vec2 center = vec2(hash(cell + seed + 17.0), hash(cell + seed + 31.0));
+            center.y = fract(center.y + time * speed * 0.13);
+            float radius = mix(0.035, 0.085, hash(cell + seed + 47.0));
+            float d = length((f - center) * vec2(1.0, 1.25));
+            float outer = 1.0 - smoothstep(radius * 0.72, radius, d);
+            float inner = smoothstep(radius * 0.35, radius * 0.58, d);
+            return outer * inner * smoothstep(0.78, 0.98, rnd);
+        }
+
+        float bubbles(vec2 uv, float time)
+        {
+            return clamp(
+                bubbleLayer(uv + vec2(0.03, 0.01), time, 8.0, 0.10, 3.0)
+                + bubbleLayer(uv + vec2(0.41, 0.22), time, 13.0, 0.16, 19.0)
+                + bubbleLayer(uv + vec2(0.77, 0.37), time, 21.0, 0.22, 41.0),
+                0.0, 1.0);
+        }
+
         void main()
         {
             vec2 uv = clamp(vTexCoord, vec2(0.0), vec2(1.0));
+            float rawDepth = texture(uSceneDepth, uv).r;
+            float skyMask = smoothstep(0.9985, 1.0, rawDepth);
+            float sceneDistance = linearDepth(rawDepth);
+            float skyDistance = min(uFar * 0.32, max(uVisibilityDistance, uNear));
+            float depthForWater = mix(sceneDistance, skyDistance, skyMask);
+            float entryStrength = smoothstep(0.0, 0.45, uSurfaceDepth);
             vec2 waveUv = uv * max(uSceneColorSize / 64.0, vec2(1.0));
-            float waveA = sin(waveUv.x * 0.35 + uTime * 1.7) * cos(waveUv.y * 0.30 - uTime * 1.2);
-            float waveB = sin((waveUv.x + waveUv.y) * 0.42 - uTime * 2.3);
-            float caustics = 1.0 + uCausticsStrength * 0.18 * (waveA + waveB);
-            vec2 distortionOffset = vec2(waveA, waveB) * uDistortionStrength * 0.025;
-            vec3 sceneColor = texture(uSceneColor, clamp(uv + distortionOffset, vec2(0.001), vec2(0.999))).rgb;
-            vec3 tinted = mix(sceneColor, sceneColor * uTint * caustics, clamp(uAlpha, 0.0, 1.0));
-            outColor = vec4(max(tinted, vec3(0.0)), 1.0);
+            vec2 wave = vec2(
+                sin(uv.y * 32.0 + uTime * 0.9) + sin((uv.x + uv.y) * 22.0 - uTime * 1.35),
+                cos(uv.x * 28.0 - uTime * 0.75) + sin((uv.x - uv.y) * 18.0 + uTime * 1.1));
+            float shimmer = noise(uv * 14.0 + vec2(uTime * 0.05, -uTime * 0.08));
+            vec2 distortion = wave * (0.5 + shimmer * 0.5) * uDistortionStrength * entryStrength;
+            distortion *= mix(1.0, 0.35, skyMask);
+            vec4 source = texture(uSceneColor, clamp(uv + distortion, vec2(0.001), vec2(0.999)));
+            vec3 color = source.rgb;
+            float distanceFog = max(depthForWater - uNear, 0.0) / max(uVisibilityDistance, 0.001);
+            float fog = 1.0 - exp(-distanceFog * max(uFogDensity, 0.0));
+            fog = clamp(fog + clamp(uSurfaceDepth * 0.045, 0.0, 0.38), 0.0, 0.96) * entryStrength;
+            vec3 absorption = vec3(
+                exp(-depthForWater * 0.018 * max(uFogDensity, 0.0)),
+                exp(-depthForWater * 0.007 * max(uFogDensity, 0.0)),
+                exp(-depthForWater * 0.0035 * max(uFogDensity, 0.0)));
+            color *= mix(vec3(1.0), absorption, 0.55 * entryStrength);
+            color *= mix(vec3(1.0), uTint, 0.34 * entryStrength);
+            vec3 fogged = mix(color, uFogColor, fog);
+            float nearSurface = (1.0 - fog) * (1.0 - skyMask);
+            fogged += vec3(0.16, 0.26, 0.23)
+                * caustics(uv + distortion * 4.0, uTime)
+                * nearSurface * uCausticsStrength * entryStrength;
+            float bubble = bubbles(uv, uTime) * uBubbleStrength * entryStrength;
+            fogged = mix(fogged, vec3(0.72, 0.92, 0.95), bubble * 0.35);
+            float vignette = 1.0 - smoothstep(0.18, 0.82, distance(uv, vec2(0.5)));
+            fogged *= mix(0.72, 1.0, vignette * entryStrength + (1.0 - entryStrength));
+            outColor = vec4(clamp(fogged, 0.0, 1.0), source.a);
         }
         """;
 
