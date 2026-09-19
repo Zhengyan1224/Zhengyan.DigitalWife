@@ -15,9 +15,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private const int VertexFloatCount = 21;
     private const int VertexStride = VertexFloatCount * sizeof(float);
     private const int MaxGpuBones = 96;
-    private const int MaxPointLights = 8;
-    private const int MaxSpotLights = 8;
+    // Keep the mobile material contract aligned with the desktop PMX pass.
+    // GLES3 fragment uniform limits are high enough for these packed arrays;
+    // invalid lights are filtered before they reach the shader.
+    private const int MaxPointLights = 16;
+    private const int MaxSpotLights = 16;
     private const int MaxShadowedLocalLights = 2;
+    private const int MaxShadowedSpotLights = 4;
+    private const int MaxWaterRipples = 48;
     private const int ShadowMapSize = 1024;
     private const int LocalShadowMapSize = 512;
 
@@ -36,6 +41,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly Dictionary<int, (int Width, int Height)> _textureDimensions = [];
     private readonly Queue<AndroidRuntimeEvent> _waterEvents = new();
     private readonly HashSet<string> _activeWaterContacts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _program;
     private readonly int _mvpLocation;
     private readonly int _modelLocation;
@@ -101,21 +107,26 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _shadowPointModeLocation;
     private readonly int _shadowLightPositionLocation;
     private readonly int _shadowFarLocation;
-    private readonly int _shadowFramebuffer;
-    private readonly int _shadowDepthTexture;
-    private readonly int _shadowColorTexture;
+    private int _shadowFramebuffer;
+    private int _shadowDepthTexture;
+    private int _shadowColorTexture;
+    private int _shadowMapSize = ShadowMapSize;
+    private int _localShadowMapSize = LocalShadowMapSize;
+    private readonly int _shadowTexelSizeLocation;
     private readonly int _spotShadowMatrixLocation;
     private readonly int _spotShadowMapLocation;
     private readonly int _hasSpotShadowLocation;
-    private readonly int _spotShadowFramebuffer;
-    private readonly int _spotShadowDepthTexture;
-    private readonly int _spotShadowColorTexture;
+    private int _spotShadowFramebuffer;
+    private int _spotShadowDepthTexture;
+    private int _spotShadowColorTexture;
     private readonly int _spotShadow2MatrixLocation;
     private readonly int _spotShadow2MapLocation;
     private readonly int _hasSpotShadow2Location;
-    private readonly int _spotShadow2Framebuffer;
-    private readonly int _spotShadow2DepthTexture;
-    private readonly int _spotShadow2ColorTexture;
+    private int _spotShadow2Framebuffer;
+    private int _spotShadow2DepthTexture;
+    private int _spotShadow2ColorTexture;
+    private readonly int _spotShadowTexelSizeLocation;
+    private readonly int _spotShadow2TexelSizeLocation;
     private bool _spotShadowAvailable;
     private bool _spotShadowRendered;
     private Matrix4x4 _spotShadowMatrix = Matrix4x4.Identity;
@@ -125,15 +136,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _pointShadowMapLocation;
     private readonly int _hasPointShadowLocation;
     private readonly int _pointShadowLightLocation;
-    private readonly int _pointShadowFramebuffer;
-    private readonly int _pointShadowDepthTexture;
-    private readonly int _pointShadowColorTexture;
+    private int _pointShadowFramebuffer;
+    private int _pointShadowDepthTexture;
+    private int _pointShadowColorTexture;
     private readonly int _pointShadow2MapLocation;
     private readonly int _hasPointShadow2Location;
     private readonly int _pointShadow2LightLocation;
-    private readonly int _pointShadow2Framebuffer;
-    private readonly int _pointShadow2DepthTexture;
-    private readonly int _pointShadow2ColorTexture;
+    private int _pointShadow2Framebuffer;
+    private int _pointShadow2DepthTexture;
+    private int _pointShadow2ColorTexture;
     private bool _pointShadowAvailable;
     private bool _pointShadowRendered;
     private Vector4 _pointShadowLightPositionRange;
@@ -183,10 +194,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _waterHasNormalTexturesLocation;
     private readonly int _waterTimeLocation;
     private readonly int _waterTextureLerpLocation;
-    private readonly int _waterRippleCenterLocation;
-    private readonly int _waterRippleStrengthLocation;
-    private readonly int _waterRippleTimeLocation;
-    private readonly int _waterRippleFrequencyLocation;
+    private readonly int _waterRippleCenterAgeLocation;
+    private readonly int _waterRippleRadiusStrengthLocation;
+    private readonly int _waterRippleSettingsLocation;
     private readonly int _postProgram;
     private readonly int _postTintLocation;
     private readonly int _postFogColorLocation;
@@ -216,6 +226,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private readonly int _overlayHasTextureLocation;
     private readonly int _overlayVao;
     private readonly int _overlayVbo;
+    private readonly int _groundShadowProgram;
+    private readonly int _groundShadowMvpLocation;
+    private readonly int _groundShadowColorLocation;
+    private readonly int _groundShadowUseGpuSkinningLocation;
+    private readonly int _groundShadowBonesLocation;
+    private readonly int _debugProgram;
+    private readonly int _debugViewProjectionLocation;
+    private readonly int _debugVertexArrayObject;
+    private readonly int _debugVertexBuffer;
     private bool _shadowAvailable;
     private string? _reflectionSurfaceId;
     private AndroidQualitySettings _quality = new();
@@ -359,10 +378,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _waterHasNormalTexturesLocation = GLES30.GlGetUniformLocation(_waterProgram, "uHasNormalTextures");
         _waterTimeLocation = GLES30.GlGetUniformLocation(_waterProgram, "uTime");
         _waterTextureLerpLocation = GLES30.GlGetUniformLocation(_waterProgram, "uTextureLerp");
-        _waterRippleCenterLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleCenter");
-        _waterRippleStrengthLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleStrength");
-        _waterRippleTimeLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleTime");
-        _waterRippleFrequencyLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleFrequency");
+        _waterRippleCenterAgeLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleCenterAge[0]");
+        _waterRippleRadiusStrengthLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleRadiusStrength[0]");
+        _waterRippleSettingsLocation = GLES30.GlGetUniformLocation(_waterProgram, "uRippleSettings");
 
         _postProgram = CreateProgram(PostVertexShaderSource, PostFragmentShaderSource);
         _postTintLocation = GLES30.GlGetUniformLocation(_postProgram, "uTint");
@@ -743,6 +761,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             model.SyncTransform();
         }
         PrepareParticleGeometry(scene, timeSeconds);
+        UpdateWaterInteractions(scene, timeSeconds);
         RenderDirectionalShadow(scene);
         RenderPointShadow(scene);
         RenderSpotShadow(scene);
@@ -933,19 +952,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBindVertexArray(0);
         GLES30.GlUseProgram(0);
         frameTimer.Stop();
+        // This is total CPU wall time for animation, shadows, reflections and
+        // every camera pass. It is not a particle GPU measurement, so changing
+        // the visible particle count from it causes abrupt population drops.
         _lastFrameGpuEstimateMs = frameTimer.Elapsed.TotalMilliseconds;
-        if (_quality.DynamicDegradation)
-        {
-            double budget = Math.Max(_quality.DynamicFrameBudgetMs, 4.0f);
-            if (_lastFrameGpuEstimateMs > budget * 1.15)
-            {
-                _adaptiveParticleLimit = Math.Max(32, (int)(_adaptiveParticleLimit * 0.85f));
-            }
-            else if (_lastFrameGpuEstimateMs < budget * 0.70 && _adaptiveParticleLimit < _quality.MaxParticleCount)
-            {
-                _adaptiveParticleLimit = Math.Min(_quality.MaxParticleCount, _adaptiveParticleLimit + 32);
-            }
-        }
     }
 
     public IReadOnlyList<AndroidRuntimeEvent> DrainRuntimeEvents()
@@ -1237,13 +1247,18 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform3f(_particleCameraRightLocation, right.X, right.Y, right.Z);
         GLES30.GlUniform3f(_particleCameraUpLocation, up.X, up.Y, up.Z);
         GLES30.GlUniform1i(_particleTextureLocation, 0);
+        GLES30.GlDisable(GLES30.GlStencilTest);
+        GLES30.GlDisable(0x8037); // GL_POLYGON_OFFSET_FILL
+        GLES30.GlDisable(GLES30.GlSampleAlphaToCoverage);
+        GLES30.GlColorMask(true, true, true, true);
         GLES30.GlEnable(GLES30.GlBlend);
         GLES30.GlDisable(0x0B44); // GL_CULL_FACE
         GLES30.GlEnable(GLES30.GlDepthTest);
+        GLES30.GlDepthFunc(GLES30.GlLequal);
         GLES30.GlDepthMask(false);
         GLES30.GlBlendEquationSeparate(GLES30.GlFuncAdd, GLES30.GlFuncAdd);
 
-        foreach (ParticleGpu particle in _particles)
+        foreach (ParticleGpu particle in _particles.Where(particle => particle.Enabled))
         {
             GLES30.GlBlendFuncSeparate(
                 GLES30.GlSrcAlpha,
@@ -1290,13 +1305,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         IReadOnlyList<ColliderGeometry> colliders = BuildParticleColliders(cameraScene);
         foreach (ParticleGpu particle in _particles)
         {
-            particle.UpdateGeometry(timeSeconds, right, up, colliders, _adaptiveParticleLimit);
+            particle.UpdateGeometry(timeSeconds, right, up, forward, colliders, _adaptiveParticleLimit);
         }
     }
 
     private void DrawParticleShadow(Matrix4x4 viewProjection, bool pointShadow, Vector3 lightPosition, float shadowFar)
     {
-        if (_particles.Count == 0 || !_particles.Any(particle => particle.CastsShadows))
+        if (_particles.Count == 0 || !_particles.Any(particle => particle.Enabled && particle.CastsShadows))
         {
             return;
         }
@@ -1308,7 +1323,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform3f(_particleShadowLightPositionLocation, lightPosition.X, lightPosition.Y, lightPosition.Z);
         GLES30.GlUniform1f(_particleShadowFarLocation, Math.Max(shadowFar, 0.001f));
         GLES30.GlActiveTexture(GLES30.GlTexture0);
-        foreach (ParticleGpu particle in _particles.Where(particle => particle.CastsShadows))
+        foreach (ParticleGpu particle in _particles.Where(particle => particle.Enabled && particle.CastsShadows))
         {
             GLES30.GlBindTexture(GLES30.GlTexture2d, particle.TextureId);
             GLES30.GlUniform1f(_particleShadowOpacityLocation, Math.Clamp(particle.Opacity, 0.0f, 1.0f));
@@ -1388,32 +1403,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlUniform1f(_waterReflectionStrengthLocation, water.ReflectionStrength);
             GLES30.GlUniform1f(_waterTimeLocation, waterClock * water.AnimationSpeed);
             GLES30.GlUniform1f(_waterTextureLerpLocation, normalLerp);
-            Vector3 rippleCenter = Vector3.Zero;
-            float rippleStrength = 0.0f;
-            if (_reflectionSurfaceId is null && water.EnableInteraction)
-            {
-                (RuntimeEntity Entity, Vector3 Point, float Radius)? contact = FindWaterColliderContact(scene, water);
-                if (contact is not null)
-                {
-                    rippleCenter = contact.Value.Point;
-                    rippleStrength = Math.Clamp(water.InteractionStrength, 0.0f, 2.0f);
-                    string key = water.RuntimeEntity.Id + ":" + contact.Value.Entity.Id;
-                    if (_activeWaterContacts.Add(key))
-                    {
-                        _waterEvents.Enqueue(new AndroidRuntimeEvent(
-                            "water", water.RuntimeEntity.Id, "water_enter",
-                            new Vector2(rippleCenter.X, rippleCenter.Z), contact.Value.Entity.Name, contact.Value.Entity.Id));
-                    }
-                    _waterEvents.Enqueue(new AndroidRuntimeEvent(
-                        "water", water.RuntimeEntity.Id, "water_ripple",
-                        new Vector2(rippleCenter.X, rippleCenter.Z), contact.Value.Entity.Name, contact.Value.Entity.Id));
-                }
-            }
-            water.SetRipple(rippleCenter, rippleStrength, timeSeconds);
-            GLES30.GlUniform3f(_waterRippleCenterLocation, water.RippleCenter.X, water.RippleCenter.Y, water.RippleCenter.Z);
-            GLES30.GlUniform1f(_waterRippleStrengthLocation, water.RippleStrength);
-            GLES30.GlUniform1f(_waterRippleTimeLocation, water.RippleTime);
-            GLES30.GlUniform1f(_waterRippleFrequencyLocation, water.RippleFrequency);
+            water.FillRippleUniforms(timeSeconds);
+            GLES30.GlUniform4fv(_waterRippleCenterAgeLocation, MaxWaterRipples, water.RippleCenterAge, 0);
+            GLES30.GlUniform4fv(_waterRippleRadiusStrengthLocation, MaxWaterRipples, water.RippleRadiusStrength, 0);
+            GLES30.GlUniform4f(
+                _waterRippleSettingsLocation,
+                water.RippleLifetime,
+                water.RippleWaveSpeed,
+                water.RippleFrequency,
+                water.RippleNormalStrength);
             water.Draw(timeSeconds);
         }
         GLES30.GlBindVertexArray(0);
@@ -1431,77 +1429,184 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlDisable(GLES30.GlBlend);
     }
 
-    private (RuntimeEntity Entity, Vector3 Point, float Radius)? FindWaterColliderContact(RuntimeScene scene, WaterGpu water)
+    private void UpdateWaterInteractions(RuntimeScene scene, double timeSeconds)
     {
-        float halfSize = water.Size * Math.Max(
-            MathF.Abs(water.RuntimeEntity.Scale.X),
-            MathF.Abs(water.RuntimeEntity.Scale.Z));
-        (RuntimeEntity Entity, Vector3 Point, float Radius)? nearest = null;
-        float nearestDistance = float.MaxValue;
-        HashSet<string> current = new(StringComparer.OrdinalIgnoreCase);
-        foreach (RuntimeEntity entity in scene.Entities)
-        {
-            foreach (ColliderSettings collider in entity.Definition.Colliders.Where(collider => collider.Enabled))
-            {
-                Vector3 center = Vector3.Transform(collider.Position.ToVector3(), entity.TransformMatrix);
-                float radius = string.Equals(collider.Shape, "box", StringComparison.OrdinalIgnoreCase)
-                    ? collider.Size.ToVector3().Length() * 0.5f
-                    : Math.Max(collider.Radius, 0.01f);
-                if (MathF.Abs(center.X - water.RuntimeEntity.Position.X) > halfSize + radius
-                    || MathF.Abs(center.Z - water.RuntimeEntity.Position.Z) > halfSize + radius
-                    || MathF.Abs(center.Y - water.SurfaceY) > radius + Math.Max(water.InteractionRadius, 0.01f))
-                {
-                    continue;
-                }
+        Dictionary<string, (WaterGpu Water, RuntimeEntity Entity, Vector3 Point)> currentContacts =
+            new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> queuedRippleEvents = new(StringComparer.OrdinalIgnoreCase);
 
-                string key = water.RuntimeEntity.Id + ":" + entity.Id;
-                current.Add(key);
-                float distance = MathF.Abs(center.Y - water.SurfaceY);
-                if (distance < nearestDistance)
-                {
-                    nearestDistance = distance;
-                    nearest = (entity, new Vector3(center.X, water.SurfaceY, center.Z), radius);
-                }
-            }
-        }
-
-        // Bullet-backed PMX rigid bodies are exposed by the pose evaluator as
-        // world-space probes, so water interaction also follows animated physics.
-        foreach (PmxGpuModel model in _models)
+        foreach (WaterGpu water in _waters)
         {
-            RuntimeEntity? entity = scene.GetEntity(model.EntityId);
-            if (entity is null || model.PhysicsColliderPoints.Count == 0)
+            if (!water.Enabled || !water.EnableInteraction)
             {
                 continue;
             }
-            foreach (Vector3 bodyPoint in model.PhysicsColliderPoints)
+
+            float rippleRadius = Math.Max(water.InteractionRadius, 0.05f);
+            float rippleStrength = Math.Max(water.InteractionStrength, 0.0f);
+            foreach (RuntimeEntity entity in scene.Entities)
             {
-                Vector3 center = Vector3.Transform(bodyPoint, model.Transform);
-                float radius = Math.Max(water.InteractionRadius * 0.5f, 0.05f);
-                if (MathF.Abs(center.X - water.RuntimeEntity.Position.X) > halfSize + radius
-                    || MathF.Abs(center.Z - water.RuntimeEntity.Position.Z) > halfSize + radius
-                    || MathF.Abs(center.Y - water.SurfaceY) > radius + Math.Max(water.InteractionRadius, 0.01f))
+                if (string.Equals(entity.Id, water.RuntimeEntity.Id, StringComparison.OrdinalIgnoreCase)
+                    || entity.IsParticleSystem)
                 {
                     continue;
                 }
-                string key = water.RuntimeEntity.Id + ":" + entity.Id;
-                current.Add(key);
-                float distance = MathF.Abs(center.Y - water.SurfaceY);
-                if (distance < nearestDistance)
+
+                foreach (RuntimeCollider collider in RuntimePhysics.CreateColliders(entity))
                 {
-                    nearestDistance = distance;
-                    nearest = (entity, new Vector3(center.X, water.SurfaceY, center.Z), radius);
+                    if (collider.Shape == "mesh")
+                    {
+                        continue;
+                    }
+
+                    Vector3 center = collider.Shape == "box" ? collider.Box.Center : collider.Capsule.Center;
+                    float colliderRadius = collider.Shape == "box"
+                        ? collider.Box.HalfExtents.Length()
+                        : collider.Capsule.Radius + Vector3.Distance(collider.Capsule.Start, collider.Capsule.End) * 0.5f;
+                    if (!water.TryGetSurfaceHeight(center, timeSeconds, out float surfaceY)
+                        || MathF.Abs(center.Y - surfaceY) > colliderRadius)
+                    {
+                        continue;
+                    }
+
+                    Vector3 point = new(center.X, surfaceY, center.Z);
+                    RegisterWaterContact(currentContacts, water, entity, point);
+                    string rippleKey = $"{water.RuntimeEntity.Id}:{entity.Id}:{collider.Id}";
+                    if (ShouldCreateWaterRipple(rippleKey, timeSeconds, 0.35))
+                    {
+                        water.AddRipple(point, rippleRadius, rippleStrength, -1.0f, timeSeconds);
+                        QueueWaterRipple(queuedRippleEvents, water, entity, point);
+                    }
+                }
+            }
+
+            // PMX Bullet bodies are model-local probes. Transform them with the
+            // same model matrix used by the render pass before testing water.
+            foreach (PmxGpuModel model in _models)
+            {
+                RuntimeEntity? entity = scene.GetEntity(model.EntityId);
+                if (entity is null)
+                {
+                    continue;
+                }
+
+                IReadOnlyList<Vector3> bodyPoints = model.PhysicsColliderPoints;
+                for (int bodyIndex = 0; bodyIndex < bodyPoints.Count; bodyIndex++)
+                {
+                    Vector3 center = Vector3.Transform(bodyPoints[bodyIndex], model.Transform);
+                    float bodyRadius = Math.Max(rippleRadius * 0.5f, 0.05f);
+                    if (!water.TryGetSurfaceHeight(center, timeSeconds, out float surfaceY)
+                        || MathF.Abs(center.Y - surfaceY) > bodyRadius + rippleRadius)
+                    {
+                        continue;
+                    }
+
+                    Vector3 point = new(center.X, surfaceY, center.Z);
+                    RegisterWaterContact(currentContacts, water, entity, point);
+                    string rippleKey = $"{water.RuntimeEntity.Id}:{entity.Id}:body:{bodyIndex}";
+                    if (ShouldCreateWaterRipple(rippleKey, timeSeconds, 0.35))
+                    {
+                        water.AddRipple(point, rippleRadius, rippleStrength, -1.0f, timeSeconds);
+                        QueueWaterRipple(queuedRippleEvents, water, entity, point);
+                    }
+                }
+            }
+
+            foreach (ParticleGpu particle in _particles.Where(candidate => candidate.EnableWaterInteraction))
+            {
+                foreach (ParticleWaterSample sample in particle.GetCollisionSamples())
+                {
+                    if (!water.TryGetSurfaceHeight(sample.Position, timeSeconds, out float surfaceY)
+                        || sample.Position.Y - surfaceY > sample.Radius)
+                    {
+                        continue;
+                    }
+
+                    Vector3 point = new(sample.Position.X, surfaceY, sample.Position.Z);
+                    float mergeDistance = Math.Max(water.ParticleRippleMergeDistance, 0.0f);
+                    string rippleKey = BuildParticleRippleKey(water, particle, sample, mergeDistance);
+                    if (ShouldCreateWaterRipple(rippleKey, timeSeconds, Math.Max(water.ParticleRippleMinInterval, 0.0f)))
+                    {
+                        water.AddRipple(point, rippleRadius, rippleStrength, mergeDistance, timeSeconds);
+                    }
+
+                    if (particle.KillOnWaterContact)
+                    {
+                        particle.KillParticle(sample.Index);
+                    }
                 }
             }
         }
 
-        foreach (string key in _activeWaterContacts.Where(key => key.StartsWith(water.RuntimeEntity.Id + ":", StringComparison.OrdinalIgnoreCase) && !current.Contains(key)).ToArray())
+        foreach ((string key, (WaterGpu water, RuntimeEntity entity, Vector3 point)) in currentContacts)
+        {
+            if (_activeWaterContacts.Add(key))
+            {
+                _waterEvents.Enqueue(new AndroidRuntimeEvent(
+                    "water", water.RuntimeEntity.Id, "water_enter",
+                    new Vector2(point.X, point.Z), entity.Name, entity.Id));
+            }
+        }
+
+        foreach (string key in _activeWaterContacts.Where(key => !currentContacts.ContainsKey(key)).ToArray())
         {
             _activeWaterContacts.Remove(key);
-            string entityId = key[(key.IndexOf(':') + 1)..];
-            _waterEvents.Enqueue(new AndroidRuntimeEvent("water", water.RuntimeEntity.Id, "water_exit", Vector2.Zero, string.Empty, entityId));
+            string[] parts = key.Split('|', 2);
+            string waterId = parts[0];
+            string entityId = parts.Length > 1 ? parts[1] : string.Empty;
+            RuntimeEntity? entity = scene.GetEntity(entityId);
+            _waterEvents.Enqueue(new AndroidRuntimeEvent(
+                "water", waterId, "water_exit", Vector2.Zero,
+                entity?.Name ?? string.Empty, entityId));
         }
-        return nearest;
+    }
+
+    private static void RegisterWaterContact(
+        IDictionary<string, (WaterGpu Water, RuntimeEntity Entity, Vector3 Point)> contacts,
+        WaterGpu water,
+        RuntimeEntity entity,
+        Vector3 point)
+    {
+        contacts[$"{water.RuntimeEntity.Id}|{entity.Id}"] = (water, entity, point);
+    }
+
+    private bool ShouldCreateWaterRipple(string key, double timeSeconds, double minimumInterval)
+    {
+        if (_waterRippleTimes.TryGetValue(key, out double lastTime)
+            && timeSeconds - lastTime < minimumInterval)
+        {
+            return false;
+        }
+
+        _waterRippleTimes[key] = timeSeconds;
+        return true;
+    }
+
+    private static string BuildParticleRippleKey(
+        WaterGpu water,
+        ParticleGpu particle,
+        ParticleWaterSample sample,
+        float mergeDistance)
+    {
+        if (mergeDistance <= 0.0001f)
+        {
+            return $"{water.RuntimeEntity.Id}:{particle.RuntimeEntity.Id}:particle:{sample.Index}";
+        }
+
+        int cellX = (int)MathF.Floor(sample.Position.X / mergeDistance);
+        int cellZ = (int)MathF.Floor(sample.Position.Z / mergeDistance);
+        return $"{water.RuntimeEntity.Id}:{particle.RuntimeEntity.Id}:particle:{cellX}:{cellZ}";
+    }
+
+    private void QueueWaterRipple(ISet<string> queuedEvents, WaterGpu water, RuntimeEntity entity, Vector3 point)
+    {
+        if (!queuedEvents.Add($"{water.RuntimeEntity.Id}|{entity.Id}"))
+        {
+            return;
+        }
+        _waterEvents.Enqueue(new AndroidRuntimeEvent(
+            "water", water.RuntimeEntity.Id, "water_ripple",
+            new Vector2(point.X, point.Z), entity.Name, entity.Id));
     }
 
     private bool TryGetUnderwaterState(RuntimeCamera camera, double timeSeconds, out WaterGpu? water, out float depth)
@@ -2365,6 +2470,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _reflectionMatrices.Clear();
         _renderTextureSettings.Clear();
         _reflectionSurfaceId = null;
+        _activeWaterContacts.Clear();
+        _waterRippleTimes.Clear();
+        _waterEvents.Clear();
         _skyboxTexture = 0;
         _updateOrder.Clear();
         if (_textures.Count > 0)
@@ -2654,24 +2762,52 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return existing;
         }
 
-        const int size = 32;
+        const int size = 96;
         byte[] pixels = new byte[size * size * 4];
+        float halfSize = size * 0.5f;
+        float circleRadius = size * 0.48f;
+        float streakSigma = MathF.Max(halfSize * 0.22f, 1.0f);
+        float streakTwoSigmaSquared = 2.0f * streakSigma * streakSigma;
         for (int y = 0; y < size; y++)
         {
+            float yT = y / (float)(size - 1);
             for (int x = 0; x < size; x++)
             {
-                float nx = (x + 0.5f) / size * 2.0f - 1.0f;
-                float ny = (y + 0.5f) / size * 2.0f - 1.0f;
-                float radius = MathF.Sqrt(nx * nx + ny * ny);
-                float alpha = normalized is "streak"
-                    ? Math.Clamp(1.0f - MathF.Abs(nx) * 1.35f, 0.0f, 1.0f) * Math.Clamp(1.0f - radius * 0.65f, 0.0f, 1.0f)
-                    : normalized is "flame"
-                        ? Math.Clamp(1.0f - radius, 0.0f, 1.0f) * Math.Clamp(1.0f - ny * 0.35f, 0.0f, 1.0f)
-                        : Math.Clamp(1.0f - radius, 0.0f, 1.0f);
+                float alpha;
+                byte red = 255;
+                byte green = 255;
+                byte blue = 255;
+                if (normalized == "streak")
+                {
+                    float verticalFade = MathF.Pow(1.0f - MathF.Abs(yT * 2.0f - 1.0f), 0.35f);
+                    float dx = x - halfSize;
+                    float gaussian = MathF.Exp(-(dx * dx) / streakTwoSigmaSquared);
+                    alpha = Math.Clamp(gaussian * verticalFade, 0.0f, 1.0f);
+                }
+                else if (normalized == "flame")
+                {
+                    float coneWidth = 0.08f + (0.48f - 0.08f) * (1.0f - yT);
+                    float feather = 0.05f + (0.24f - 0.05f) * (1.0f - yT);
+                    float centerGlow = MathF.Pow(1.0f - yT, 1.25f);
+                    float xNorm = (x - halfSize) / halfSize;
+                    float distance = MathF.Abs(xNorm) - coneWidth;
+                    float edge = 1.0f - Math.Clamp(distance / MathF.Max(feather, 0.0001f), 0.0f, 1.0f);
+                    alpha = MathF.Pow(Math.Clamp(edge * centerGlow, 0.0f, 1.0f), 1.15f);
+                    green = (byte)Math.Clamp(200.0f + 55.0f * (1.0f - yT), 0.0f, 255.0f);
+                    blue = (byte)Math.Clamp(110.0f + 60.0f * (1.0f - yT), 0.0f, 255.0f);
+                }
+                else
+                {
+                    float dx = (x + 0.5f) - halfSize;
+                    float dy = (y + 0.5f) - halfSize;
+                    float distance = MathF.Sqrt(dx * dx + dy * dy) / circleRadius;
+                    alpha = Math.Clamp(1.0f - distance, 0.0f, 1.0f);
+                    alpha *= alpha;
+                }
                 int offset = (y * size + x) * 4;
-                pixels[offset] = 255;
-                pixels[offset + 1] = 255;
-                pixels[offset + 2] = 255;
+                pixels[offset] = red;
+                pixels[offset + 1] = green;
+                pixels[offset + 2] = blue;
                 pixels[offset + 3] = (byte)Math.Clamp(alpha * 255.0f, 0.0f, 255.0f);
             }
         }
@@ -2909,6 +3045,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         return shader;
     }
 
+    private readonly record struct ParticleWaterSample(int Index, Vector3 Position, float Radius);
+
     private sealed class RenderTargetGpu : IDisposable
     {
         private bool _disposed;
@@ -3041,10 +3179,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         private readonly float[] _vertices;
         private readonly ByteBuffer _vertexBytes;
         private readonly FloatBuffer _vertexData;
+        private readonly RippleState[] _ripples = new RippleState[MaxWaterRipples];
+        private readonly float[] _rippleCenterAge = new float[MaxWaterRipples * 4];
+        private readonly float[] _rippleRadiusStrength = new float[MaxWaterRipples * 4];
         private bool _disposed;
-        public Vector3 RippleCenter { get; private set; }
-        public float RippleStrength { get; private set; }
-        public float RippleTime { get; private set; }
 
         private WaterGpu(RuntimeEntity runtimeEntity, int vao, int vbo, int resolution, ByteBuffer bytes, FloatBuffer data)
         {
@@ -3079,7 +3217,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public bool EnableInteraction => _settings.EnableInteraction;
         public float InteractionRadius => _settings.InteractionRadius;
         public float InteractionStrength => _settings.InteractionStrength;
-        public float RippleFrequency => _settings.RippleFrequency;
+        public float ParticleRippleMinInterval => _settings.ParticleRippleMinIntervalSeconds;
+        public float ParticleRippleMergeDistance => _settings.ParticleRippleMergeDistance;
+        public float RippleLifetime => Math.Max(_settings.RippleLifetimeSeconds, 0.05f);
+        public float RippleWaveSpeed => _settings.RippleWaveSpeed;
+        public float RippleFrequency => Math.Max(_settings.RippleFrequency, 0.0f);
+        public float RippleNormalStrength => Math.Max(_settings.RippleNormalStrength, 0.0f);
+        public float[] RippleCenterAge => _rippleCenterAge;
+        public float[] RippleRadiusStrength => _rippleRadiusStrength;
 
         public bool TryGetSurfaceHeight(Vector3 worldPosition, double timeSeconds, out float surfaceHeight)
         {
@@ -3108,11 +3253,97 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return true;
         }
 
-        public void SetRipple(Vector3 center, float strength, double timeSeconds)
+        public void AddRipple(Vector3 center, float radius, float strength, float mergeDistance, double timeSeconds)
         {
-            RippleCenter = center;
-            RippleStrength = strength;
-            RippleTime = (float)Math.Max(timeSeconds, 0.0);
+            radius = Math.Max(radius, 0.001f);
+            strength = Math.Clamp(strength, 0.0f, 4.0f);
+            float effectiveMergeDistance = mergeDistance < 0.0f
+                ? MathF.Max(radius * 1.25f, 0.45f)
+                : mergeDistance;
+
+            if (effectiveMergeDistance > 0.0001f)
+            {
+                int nearestIndex = -1;
+                float nearestDistanceSquared = float.MaxValue;
+                for (int i = 0; i < _ripples.Length; i++)
+                {
+                    RippleState ripple = _ripples[i];
+                    if (!ripple.Active || timeSeconds - ripple.StartTime > RippleLifetime)
+                    {
+                        continue;
+                    }
+
+                    float distanceSquared = Vector3.DistanceSquared(ripple.Center, center);
+                    if (distanceSquared <= effectiveMergeDistance * effectiveMergeDistance
+                        && distanceSquared < nearestDistanceSquared)
+                    {
+                        nearestIndex = i;
+                        nearestDistanceSquared = distanceSquared;
+                    }
+                }
+
+                if (nearestIndex >= 0)
+                {
+                    ref RippleState ripple = ref _ripples[nearestIndex];
+                    ripple.Center = Vector3.Lerp(ripple.Center, center, 0.5f);
+                    ripple.StartTime = timeSeconds;
+                    ripple.Radius = MathF.Max(ripple.Radius, radius);
+                    ripple.Strength = Math.Clamp(MathF.Max(ripple.Strength * 0.8f, strength), 0.0f, 4.0f);
+                    return;
+                }
+            }
+
+            int targetIndex = 0;
+            double oldestStart = double.MaxValue;
+            for (int i = 0; i < _ripples.Length; i++)
+            {
+                RippleState ripple = _ripples[i];
+                if (!ripple.Active || timeSeconds - ripple.StartTime > RippleLifetime)
+                {
+                    targetIndex = i;
+                    oldestStart = double.MinValue;
+                    break;
+                }
+                if (ripple.StartTime < oldestStart)
+                {
+                    oldestStart = ripple.StartTime;
+                    targetIndex = i;
+                }
+            }
+
+            _ripples[targetIndex] = new RippleState
+            {
+                Active = true,
+                Center = center,
+                StartTime = timeSeconds,
+                Radius = radius,
+                Strength = strength
+            };
+        }
+
+        public void FillRippleUniforms(double timeSeconds)
+        {
+            Array.Clear(_rippleCenterAge);
+            Array.Clear(_rippleRadiusStrength);
+            for (int i = 0; i < _ripples.Length; i++)
+            {
+                ref RippleState ripple = ref _ripples[i];
+                float age = ripple.Active ? (float)Math.Max(timeSeconds - ripple.StartTime, 0.0) : 999.0f;
+                if (!ripple.Active || age > RippleLifetime)
+                {
+                    ripple.Active = false;
+                    _rippleCenterAge[i * 4 + 2] = 999.0f;
+                    continue;
+                }
+
+                int offset = i * 4;
+                _rippleCenterAge[offset] = ripple.Center.X;
+                _rippleCenterAge[offset + 1] = ripple.Center.Z;
+                _rippleCenterAge[offset + 2] = age;
+                _rippleCenterAge[offset + 3] = ripple.Radius;
+                _rippleRadiusStrength[offset] = ripple.Radius;
+                _rippleRadiusStrength[offset + 1] = ripple.Strength;
+            }
         }
 
         public static WaterGpu Create(RuntimeEntity runtimeEntity)
@@ -3228,6 +3459,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             }
         }
 
+        private struct RippleState
+        {
+            public bool Active;
+            public Vector3 Center;
+            public double StartTime;
+            public float Radius;
+            public float Strength;
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -3248,8 +3488,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         private readonly int _vao;
         private readonly int _vbo;
         private readonly float[] _vertices;
+        private readonly Vector3[] _collisionPositions;
+        private readonly float[] _collisionRadii;
+        private readonly bool[] _collisionActive;
+        private readonly long[] _currentCycles;
+        private readonly long[] _killedCycles;
         private readonly ByteBuffer _vertexBytes;
         private readonly FloatBuffer _vertexData;
+        private double _lastUpdateTimeSeconds = double.NaN;
+        private double _simulationTimeSeconds;
         private bool _disposed;
 
         private ParticleGpu(RuntimeEntity runtimeEntity, int textureId, int vao, int vbo, int count, ByteBuffer bytes, FloatBuffer data)
@@ -3261,6 +3508,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             _vbo = vbo;
             Count = count;
             _vertices = new float[count * 6 * VertexFloatCount];
+            _collisionPositions = new Vector3[count];
+            _collisionRadii = new float[count];
+            _collisionActive = new bool[count];
+            _currentCycles = new long[count];
+            _killedCycles = Enumerable.Repeat(long.MinValue, count).ToArray();
             _vertexBytes = bytes;
             _vertexData = data;
         }
@@ -3270,8 +3522,13 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public RuntimeEntity RuntimeEntity => _runtimeEntity;
         public bool CastsShadows => _settings.CastShadows;
         public bool Additive => string.Equals(_settings.BlendMode, "additive", StringComparison.OrdinalIgnoreCase);
+        public bool IsVelocityAligned => string.Equals(_settings.OrientationMode, "velocityAligned", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_settings.OrientationMode, "velocity_aligned", StringComparison.OrdinalIgnoreCase);
         public bool PreventDarkening => _settings.PreventDarkening;
         public bool UseTextureColor => _settings.UseTextureColor;
+        public bool EnableWaterInteraction => _settings.EnableWaterInteraction;
+        public bool KillOnWaterContact => _settings.KillOnWaterContact;
+        public bool Enabled => _runtimeEntity.Definition.IsPlaying;
         public float Opacity => _settings.Opacity;
         public int RenderLimit { get; private set; }
 
@@ -3299,9 +3556,25 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return new ParticleGpu(runtimeEntity, textureId, arrays[0], buffers[0], count, bytes, data);
         }
 
-        public void UpdateGeometry(double timeSeconds, Vector3 right, Vector3 up, IReadOnlyList<ColliderGeometry> colliders, int renderLimit)
+        public void UpdateGeometry(
+            double timeSeconds,
+            Vector3 cameraRight,
+            Vector3 cameraUp,
+            Vector3 cameraForward,
+            IReadOnlyList<ColliderGeometry> colliders,
+            int renderLimit)
         {
             float speed = Math.Max(_settings.SimulationSpeed, 0.0f);
+            if (double.IsNaN(_lastUpdateTimeSeconds))
+            {
+                _lastUpdateTimeSeconds = timeSeconds;
+            }
+            double deltaSeconds = Math.Max(timeSeconds - _lastUpdateTimeSeconds, 0.0);
+            _lastUpdateTimeSeconds = timeSeconds;
+            if (Enabled)
+            {
+                _simulationTimeSeconds += deltaSeconds * speed;
+            }
             Matrix4x4 transform = _runtimeEntity.TransformMatrix;
             Vector3 spawnExtents = Vector3.Max(_settings.SpawnBoxHalfExtents.ToVector3(), Vector3.Zero);
             Vector3 baseVelocity = _settings.BaseVelocity.ToVector3();
@@ -3311,32 +3584,43 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             Vector4 endColor = _settings.EndColor.ToVector4();
             int offset = 0;
             RenderLimit = Math.Clamp(renderLimit, 1, Count);
-            float time = (float)Math.Max(timeSeconds, 0.0) * speed;
+            double time = _simulationTimeSeconds;
+            Array.Clear(_collisionActive);
             for (int i = 0; i < Count; i++)
             {
                 float r0 = Random01(i, 11);
-                float r1 = Random01(i, 23);
-                float r2 = Random01(i, 37);
-                float r3 = Random01(i, 53);
+                float initialAgeRandom = Random01(i, 23);
                 float lifetime = Lerp(Math.Max(_settings.MinLifetime, 0.05f), Math.Max(_settings.MaxLifetime, 0.05f), r0);
-                float age = (time + (r1 * lifetime)) % lifetime;
+                double initialAge = _settings.RandomizeInitialAge ? initialAgeRandom * lifetime : 0.0;
+                double cycleTime = time + initialAge;
+                long cycle = (long)Math.Floor(cycleTime / lifetime);
+                _currentCycles[i] = cycle;
+                float age = (float)(cycleTime - cycle * lifetime);
                 float normalizedAge = Math.Clamp(age / lifetime, 0.0f, 1.0f);
+                float spawnX = Random01(i, 23, cycle);
+                float spawnY = Random01(i, 37, cycle);
+                float spawnZ = Random01(i, 53, cycle);
                 Vector3 spawn = new(
-                    (r1 * 2.0f - 1.0f) * spawnExtents.X,
-                    (r2 * 2.0f - 1.0f) * spawnExtents.Y,
-                    (r3 * 2.0f - 1.0f) * spawnExtents.Z);
+                    (spawnX * 2.0f - 1.0f) * spawnExtents.X,
+                    (spawnY * 2.0f - 1.0f) * spawnExtents.Y,
+                    (spawnZ * 2.0f - 1.0f) * spawnExtents.Z);
                 Vector3 velocity = baseVelocity + new Vector3(
-                    (Random01(i, 67) * 2.0f - 1.0f) * velocityJitter.X,
-                    (Random01(i, 71) * 2.0f - 1.0f) * velocityJitter.Y,
-                    (Random01(i, 79) * 2.0f - 1.0f) * velocityJitter.Z);
+                    (Random01(i, 67, cycle) * 2.0f - 1.0f) * velocityJitter.X,
+                    (Random01(i, 71, cycle) * 2.0f - 1.0f) * velocityJitter.Y,
+                    (Random01(i, 79, cycle) * 2.0f - 1.0f) * velocityJitter.Z);
                 Vector3 localPosition = spawn + velocity * age + acceleration * (0.5f * age * age);
                 Vector3 worldPosition = Vector3.Transform(localPosition, transform);
-                float size = Lerp(Math.Max(_settings.MinSize, 0.001f) * _settings.StartSizeScale,
-                    Math.Max(_settings.MaxSize, 0.001f) * _settings.EndSizeScale, normalizedAge);
+                Vector3 worldVelocity = Vector3.TransformNormal(velocity + acceleration * age, transform);
+                float baseSize = Lerp(
+                    Math.Max(_settings.MinSize, 0.001f),
+                    Math.Max(_settings.MaxSize, 0.001f),
+                    Random01(i, 97, cycle));
+                float size = baseSize * Lerp(_settings.StartSizeScale, _settings.EndSizeScale, normalizedAge);
                 float width = size * Math.Max(_settings.WidthScale, 0.001f);
                 float height = size * Math.Max(_settings.HeightScale, 0.001f);
                 Vector4 color = Vector4.Lerp(startColor, endColor, normalizedAge);
-                if (i >= RenderLimit)
+                bool active = Enabled && i < RenderLimit && _killedCycles[i] != cycle;
+                if (!active)
                 {
                     color.W = 0.0f;
                 }
@@ -3347,23 +3631,57 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     if (_settings.KillOnColliderContact)
                     {
                         color.W = 0.0f;
+                        active = false;
                     }
                     else
                     {
                         Vector3 reflected = Vector3.Reflect(velocity, collisionNormal);
                         velocity = reflected * Math.Clamp(_settings.CollisionBounce, 0.0f, 1.0f)
                             * Math.Clamp(_settings.CollisionDamping, 0.0f, 1.0f);
+                        worldVelocity = Vector3.TransformNormal(velocity, transform);
                     }
                 }
-                float rotation = (r2 * 2.0f - 1.0f) * MathF.PI + age * Lerp(_settings.MinRotationSpeedRadians, _settings.MaxRotationSpeedRadians, r3);
-                float cos = MathF.Cos(rotation);
-                float sin = MathF.Sin(rotation);
-                WriteVertex(ref offset, worldPosition + right * (-width * cos - -height * sin) + up * (-width * sin + -height * cos), 0.0f, 1.0f, color);
-                WriteVertex(ref offset, worldPosition + right * ( width * cos - -height * sin) + up * ( width * sin + -height * cos), 1.0f, 1.0f, color);
-                WriteVertex(ref offset, worldPosition + right * ( width * cos -  height * sin) + up * ( width * sin +  height * cos), 1.0f, 0.0f, color);
-                WriteVertex(ref offset, worldPosition + right * (-width * cos - -height * sin) + up * (-width * sin + -height * cos), 0.0f, 1.0f, color);
-                WriteVertex(ref offset, worldPosition + right * ( width * cos -  height * sin) + up * ( width * sin +  height * cos), 1.0f, 0.0f, color);
-                WriteVertex(ref offset, worldPosition + right * (-width * cos -  height * sin) + up * (-width * sin +  height * cos), 0.0f, 0.0f, color);
+                float collisionRadius = MathF.Max(MathF.Abs(width), MathF.Abs(height)) * 0.5f;
+                _collisionPositions[i] = worldPosition;
+                _collisionRadii[i] = collisionRadius;
+                _collisionActive[i] = active && color.W > 0.001f && collisionRadius > 0.0001f;
+                float rotation = (Random01(i, 101, cycle) * 2.0f - 1.0f) * MathF.PI
+                    + age * Lerp(
+                        _settings.MinRotationSpeedRadians,
+                        _settings.MaxRotationSpeedRadians,
+                        Random01(i, 103, cycle));
+                Vector3 particleRight = cameraRight;
+                Vector3 particleUp = cameraUp;
+                if (IsVelocityAligned && worldVelocity.LengthSquared() > 0.00001f)
+                {
+                    particleUp = Vector3.Normalize(worldVelocity);
+                    particleRight = Vector3.Cross(cameraForward, particleUp);
+                    particleRight = particleRight.LengthSquared() > 0.00001f
+                        ? Vector3.Normalize(particleRight)
+                        : cameraRight;
+                }
+                else if (MathF.Abs(rotation) > 0.0001f)
+                {
+                    float cos = MathF.Cos(rotation);
+                    float sin = MathF.Sin(rotation);
+                    Vector3 rotatedRight = particleRight * cos + particleUp * sin;
+                    Vector3 rotatedUp = -particleRight * sin + particleUp * cos;
+                    particleRight = rotatedRight;
+                    particleUp = rotatedUp;
+                }
+
+                Vector3 rightOffset = particleRight * (width * 0.5f);
+                Vector3 upOffset = particleUp * (height * 0.5f);
+                Vector3 bottomLeft = worldPosition - rightOffset - upOffset;
+                Vector3 bottomRight = worldPosition + rightOffset - upOffset;
+                Vector3 topLeft = worldPosition - rightOffset + upOffset;
+                Vector3 topRight = worldPosition + rightOffset + upOffset;
+                WriteVertex(ref offset, bottomLeft, 0.0f, 1.0f, color);
+                WriteVertex(ref offset, bottomRight, 1.0f, 1.0f, color);
+                WriteVertex(ref offset, topRight, 1.0f, 0.0f, color);
+                WriteVertex(ref offset, bottomLeft, 0.0f, 1.0f, color);
+                WriteVertex(ref offset, topRight, 1.0f, 0.0f, color);
+                WriteVertex(ref offset, topLeft, 0.0f, 0.0f, color);
             }
 
             _vertexData.Position(0);
@@ -3372,6 +3690,28 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlBindBuffer(GLES30.GlArrayBuffer, _vbo);
             GLES30.GlBufferSubData(GLES30.GlArrayBuffer, 0, _vertices.Length * sizeof(float), _vertexData);
             GLES30.GlBindBuffer(GLES30.GlArrayBuffer, 0);
+        }
+
+        public IEnumerable<ParticleWaterSample> GetCollisionSamples()
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if (_collisionActive[i])
+                {
+                    yield return new ParticleWaterSample(i, _collisionPositions[i], _collisionRadii[i]);
+                }
+            }
+        }
+
+        public void KillParticle(int index)
+        {
+            if ((uint)index >= (uint)Count)
+            {
+                return;
+            }
+
+            _killedCycles[index] = _currentCycles[index];
+            _collisionActive[index] = false;
         }
 
         public void DrawCurrent()
@@ -3446,6 +3786,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         private static float Random01(int index, int salt)
         {
             uint value = unchecked((uint)(index * 1103515245 + salt * 12345 + 0x13579BDF));
+            value ^= value >> 16;
+            value *= 2246822519u;
+            value ^= value >> 13;
+            return (value & 0x00FFFFFF) / 16777215.0f;
+        }
+
+        private static float Random01(int index, int salt, long cycle)
+        {
+            uint cycleBits = unchecked((uint)cycle * 747796405u + 2891336453u);
+            uint value = unchecked((uint)(index * 1103515245 + salt * 12345 + 0x13579BDF)) ^ cycleBits;
             value ^= value >> 16;
             value *= 2246822519u;
             value ^= value >> 13;
@@ -4820,10 +5170,6 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         layout(location = 2) in vec2 aTexCoord;
         uniform mat4 uViewProjection;
         uniform mat4 uReflectionMatrix;
-        uniform vec3 uRippleCenter;
-        uniform float uRippleStrength;
-        uniform float uRippleTime;
-        uniform float uRippleFrequency;
         out vec3 vNormal;
         out vec2 vTexCoord;
         out vec3 vWorldPosition;
@@ -4831,12 +5177,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         void main()
         {
             vec4 worldPosition = vec4(aPosition, 1.0);
-            vec2 rippleOffset = aPosition.xz - uRippleCenter.xz;
-            float rippleDistance = length(rippleOffset);
-            float ripple = uRippleStrength * exp(-rippleDistance * 2.0) * sin(rippleDistance * max(uRippleFrequency, 0.1) - uRippleTime * 5.0);
-            worldPosition.y += ripple * 0.08;
             gl_Position = uViewProjection * worldPosition;
-            vNormal = normalize(aNormal + vec3(0.0, ripple * 0.12, 0.0));
+            vNormal = normalize(aNormal);
             vTexCoord = aTexCoord;
             vWorldPosition = worldPosition.xyz;
             vReflectionPosition = uReflectionMatrix * worldPosition;
@@ -4861,6 +5203,10 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform int uHasNormalTextures;
         uniform float uTime;
         uniform float uTextureLerp;
+        #define MAX_RIPPLES 48
+        uniform vec4 uRippleCenterAge[MAX_RIPPLES];
+        uniform vec4 uRippleRadiusStrength[MAX_RIPPLES];
+        uniform vec4 uRippleSettings;
         in vec3 vNormal;
         in vec2 vTexCoord;
         in vec3 vWorldPosition;
@@ -4888,6 +5234,24 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 normal = normalize(normal + textureNormal * 0.55);
             }
 
+            float interactionRipple = 0.0;
+            float rippleHighlight = 0.0;
+            for (int i = 0; i < MAX_RIPPLES; i++)
+            {
+                vec4 centerAge = uRippleCenterAge[i];
+                vec4 radiusStrength = uRippleRadiusStrength[i];
+                float rippleDistance = distance(vWorldPosition.xz, centerAge.xy);
+                float wave = sin(rippleDistance * max(uRippleSettings.z, 0.1) - centerAge.z * uRippleSettings.y);
+                float envelope = exp(-(centerAge.z / max(uRippleSettings.x, 0.001)) * 2.4)
+                    * exp(-pow(rippleDistance / max(centerAge.w, 0.001), 2.0));
+                interactionRipple += wave * envelope * radiusStrength.y;
+                rippleHighlight += max(wave, 0.0) * envelope * radiusStrength.y;
+            }
+            normal = normalize(normal + vec3(
+                cos(vWorldPosition.x * 8.0 + uTime) * interactionRipple * uRippleSettings.w,
+                abs(interactionRipple) * uRippleSettings.w * 1.15,
+                sin(vWorldPosition.z * 8.0 + uTime) * interactionRipple * uRippleSettings.w));
+
             vec3 incident = normalize(vWorldPosition - uCameraPosition);
             vec3 reflected = normalize(reflect(incident, normal));
             float fresnel = pow(1.0 - max(dot(normalize(uCameraPosition - vWorldPosition), normal), 0.0), 5.0);
@@ -4913,8 +5277,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
             vec3 color = mix(uDeepColor, reflection, mix(0.18, 0.35 + fresnel * 0.65, mirrorEnabled));
             color = mix(color, mix(uDeepColor, uReflectionTint, 0.30), 0.42);
-            float ripple = 0.96 + 0.04 * sin(vTexCoord.x * 6.2831 + vTexCoord.y * 4.7123);
-            outColor = vec4(max(color * ripple, vec3(0.0)), clamp(uAlpha, 0.0, 1.0));
+            color += vec3(0.22, 0.25, 0.28) * clamp(rippleHighlight, 0.0, 1.0);
+            float surfaceRipple = 0.96 + 0.04 * sin(vTexCoord.x * 6.2831 + vTexCoord.y * 4.7123);
+            outColor = vec4(max(color * surfaceRipple, vec3(0.0)), clamp(uAlpha, 0.0, 1.0));
         }
         """;
 
