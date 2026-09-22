@@ -12,7 +12,7 @@ This document is the working parity matrix for `AndroidVulkanGame`,
 | PMX edge | Auxiliary edge pass | Vulkan auxiliary pass | GLES edge pass | Aligned |
 | Directional shadow | PCF directional map | Shared shadow renderer | RGBA-packed depth map, configurable quality size, 3x3 PCF | Aligned in behavior; storage format differs |
 | Point-light shadow | Local-light atlas, up to 2 shadowed point lights | Same atlas path | Two cube shadow maps, up to 2 shadowed point lights | Semantic parity for the supported budget |
-| Spot-light shadow | Local-light atlas, up to 4 shadowed spot lights | Same atlas path | Two independent spot maps, up to 2 shadowed spot lights | Known GLES budget difference |
+| Spot-light shadow | Local-light atlas, up to 4 shadowed spot lights | Same atlas path | Four independent spot maps, up to 4 shadowed spot lights (quality budget applies) | Aligned for the supported GLES texture-unit budget |
 | Ground shadow | PMX GroundShadow auxiliary pass | Shared auxiliary pass | GLES ground-shadow pass when directional map is unavailable | Aligned |
 | Skybox | Inverse view-projection equirectangular sampling | Fullscreen direction pass | Fullscreen direction pass, clamped vertical wrap | Aligned |
 | Water surface | Gerstner mesh, animated normals, sky/planar reflection, ripples | `VeldridWaterRenderer` | GLES water pass with the same 48-ripple contract | Aligned; texture/FBO implementation differs |
@@ -35,9 +35,10 @@ scene semantics:
    Vulkan may use compute skinning when enabled and available.
 2. GLES stores directional/spot shadow depth in RGBA8 and samples it manually;
    Vulkan samples a depth attachment or atlas view.
-3. GLES uses two cube maps for point shadows and two 2D maps for spot shadows.
-   The current Android quality budget therefore exposes fewer spot shadow slots
-   than the desktop/Vulkan atlas (2 instead of 4).
+3. GLES uses two cube maps for point shadows and four independent 2D maps for
+   spot shadows. The maps use texture units 5, 9, 14 and 15; water and
+   underwater passes use different units and are restored before the material
+   pass.
 4. GLES uses explicit GL state restoration after every auxiliary pass. Vulkan
    encodes the equivalent state in pipelines.
 
@@ -51,10 +52,7 @@ These items are not silently treated as parity-complete:
 2. Runtime PMX material texture overrides and custom shader uniforms are fully
    wired through the Vulkan component path but are not exposed by the GLES
    `PmxGpuModel` wrapper.
-3. GLES currently keeps two spot shadow maps. Moving to four would require two
-   additional FBOs, sampler units, vertex shadow matrices and fragment branches;
-   this should be implemented together with a measured texture-unit fallback.
-4. Full Android APK/device validation still requires JDK 21. The current host
+3. Full Android APK/device validation still requires JDK 21. The current host
    has JDK 26, so the static C# compile is the available verification step.
 
 ## Regression Checklist

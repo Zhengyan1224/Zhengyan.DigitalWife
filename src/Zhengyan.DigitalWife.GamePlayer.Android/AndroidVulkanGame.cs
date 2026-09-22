@@ -44,6 +44,7 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
     private readonly Dictionary<string, ParticleSystemComponent> _particles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WaterSurfaceComponent> _waters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TexturedPlaneComponent> _planes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, OrbitCamera> _screenCameras = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RelationTransformUpdater> _relationUpdaters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, double> _waterRippleTimes = new(StringComparer.OrdinalIgnoreCase);
     private PmxModelComponent[] _modelSnapshot = [];
@@ -208,20 +209,6 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         }
         foreach (TexturedPlaneComponent plane in _planes.Values) plane.ShadowMap = binding;
 
-        if (_quality.MaxReflectionSurfaces > 0 && (_waterSnapshot.Length != 0 || _planeSnapshot.Length != 0))
-        {
-            _planarReflectionRenderer?.RenderAll(
-                gameTime,
-                _camera,
-                _waterSnapshot,
-                _planeSnapshot,
-                _spriteComponent is null ? [] : [_spriteComponent],
-                ApplyCameraToComponents,
-                RestoreMainCameraOnComponents,
-                lighting.ClearColor.ToVector4(),
-                Math.Max(GraphicsDevice.BackBufferSize.X, 1),
-                Math.Max(GraphicsDevice.BackBufferSize.Y, 1));
-        }
         long reflectionEnd = Stopwatch.GetTimestamp();
 
         RenderSceneTextures(gameTime);
@@ -230,34 +217,48 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
         // Vulkan must render every configured camera into its viewport. The
         // base Game loop would otherwise draw each component once using only
         // the main camera.
-        if (!TryDrawUnderwater(gameTime))
+        int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        foreach (RuntimeCamera runtimeCamera in _scene.RenderCameras)
         {
-            int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
-            int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
-            bool mainViewport = true;
-            foreach (RuntimeCamera runtimeCamera in _scene.RenderCameras)
+            RuntimeViewport viewport = ResolveVulkanViewport(runtimeCamera, width, height);
+            OrbitCamera camera = ResolveScreenCamera(runtimeCamera, viewport.Width, viewport.Height);
+            if (TryDrawUnderwaterCamera(
+                gameTime,
+                camera,
+                viewport,
+                width,
+                height,
+                lighting.ClearColor.ToVector4()))
             {
-                RuntimeViewport viewport = ResolveVulkanViewport(runtimeCamera, width, height);
-                GraphicsDevice.SetViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
-                GraphicsDevice.SetScissor(viewport.X, viewport.Y, viewport.Width, viewport.Height, enabled: true);
-                GraphicsDevice.ClearViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height,
-                    lighting.ClearColor.ToVector4());
-                OrbitCamera camera = new();
-                ApplyCameraSettings(camera, runtimeCamera.Settings, viewport.Width, viewport.Height);
-                if (mainViewport)
-                {
-                    // Sprite draw order < 0 is between the skybox and the 3D
-                    // scene, matching the desktop render pipeline.
-                    mainViewport = false;
-                }
-                ApplyCameraToComponents(camera);
-                DrawSkyboxOnly(gameTime);
-                _spriteComponent?.DrawBackground(gameTime);
-                DrawSceneComponentsWithCamera(gameTime, camera, includeSkybox: false);
+                continue;
             }
-            GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
-            _spriteComponent?.Draw(gameTime);
+
+            Action restoreViewport = () => RestoreBackBufferViewport(viewport);
+            RenderPlanarReflections(gameTime, camera, viewport.Width, viewport.Height, restoreViewport);
+            restoreViewport();
+            GraphicsDevice.ClearViewport(
+                viewport.X,
+                viewport.Y,
+                viewport.Width,
+                viewport.Height,
+                lighting.ClearColor.ToVector4());
+            ApplyCameraToComponents(camera);
+            DrawSkyboxOnly(gameTime);
+            _spriteComponent?.DrawBackground(
+                gameTime,
+                width,
+                height,
+                viewport.X,
+                viewport.Y,
+                viewport.Width,
+                viewport.Height);
+            DrawSceneComponentsWithCamera(gameTime, camera, includeSkybox: false);
         }
+        GraphicsDevice.SetScissor(0, 0, width, height, enabled: false);
+        GraphicsDevice.SetViewport(0, 0, width, height);
+        ApplyCameraToComponents(_camera);
+        _spriteComponent?.Draw(gameTime);
 
         long underwaterEnd = Stopwatch.GetTimestamp();
         LastDrawProfile = new DrawProfile(
@@ -673,6 +674,12 @@ internal sealed class AndroidVulkanGame : Game, IRuntimeTextureProvider
                 state.Target.BeginPass(settings.ClearColor.ToVector4());
                 try
                 {
+                    RenderPlanarReflections(
+                        gameTime,
+                        state.Camera,
+                        state.Target.Width,
+                        state.Target.Height,
+                        state.Target.ResumePass);
                     DrawSceneComponentsWithCamera(gameTime, state.Camera);
                     state.LastRenderedSeconds = gameTime.TotalSeconds;
                     state.RefreshRequested = false;

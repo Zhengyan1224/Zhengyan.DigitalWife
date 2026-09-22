@@ -25,13 +25,41 @@ internal sealed class AndroidVulkanSpriteComponent(
     public void DrawBackground(GameTime gameTime)
         => DrawSprites(gameTime, foreground: false);
 
-    private void DrawSprites(GameTime gameTime, bool foreground)
+    public void DrawBackground(
+        GameTime gameTime,
+        int outputWidth,
+        int outputHeight,
+        int originX,
+        int originY,
+        int layoutWidth,
+        int layoutHeight)
+        => DrawSprites(
+            gameTime,
+            foreground: false,
+            outputWidth,
+            outputHeight,
+            originX,
+            originY,
+            layoutWidth,
+            layoutHeight);
+
+    private void DrawSprites(
+        GameTime gameTime,
+        bool foreground,
+        int? outputWidth = null,
+        int? outputHeight = null,
+        int originX = 0,
+        int originY = 0,
+        int? layoutWidth = null,
+        int? layoutHeight = null)
     {
         _ = gameTime;
         if (_renderer is null || Game is null || scene.Sprites.Count == 0) return;
 
-        int width = Math.Max(Game.GraphicsDevice.BackBufferSize.X, 1);
-        int height = Math.Max(Game.GraphicsDevice.BackBufferSize.Y, 1);
+        int width = Math.Max(outputWidth ?? Game.GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(outputHeight ?? Game.GraphicsDevice.BackBufferSize.Y, 1);
+        int resolvedLayoutWidth = Math.Max(layoutWidth ?? width, 1);
+        int resolvedLayoutHeight = Math.Max(layoutHeight ?? height, 1);
         List<ScreenSpriteDrawCommand> commands = [];
         foreach (SpriteSettings sprite in scene.Sprites
             .Where(sprite => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.Path)
@@ -40,7 +68,17 @@ internal sealed class AndroidVulkanSpriteComponent(
         {
             ITexture2D? texture = GetTexture(sprite.Path);
             if (texture is null) continue;
-            LayoutRect rect = SpriteLayoutResolver.Resolve(sprite, width, height, window.Width, window.Height);
+            LayoutRect localRect = SpriteLayoutResolver.Resolve(
+                sprite,
+                resolvedLayoutWidth,
+                resolvedLayoutHeight,
+                window.Width,
+                window.Height);
+            LayoutRect rect = new(
+                localRect.X + originX,
+                localRect.Y + originY,
+                localRect.Width,
+                localRect.Height);
             commands.Add(new ScreenSpriteDrawCommand(
                 new RuntimeTextureHandle(texture.Backend, texture.LegacyTextureId, texture.NativeResource),
                 new Vector2(rect.X, rect.Y),

@@ -131,6 +131,26 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private bool _spotShadow2Available;
     private bool _spotShadow2Rendered;
     private Matrix4x4 _spotShadow2Matrix = Matrix4x4.Identity;
+    private readonly int _spotShadow3MatrixLocation;
+    private readonly int _spotShadow3MapLocation;
+    private readonly int _hasSpotShadow3Location;
+    private readonly int _spotShadow3TexelSizeLocation;
+    private int _spotShadow3Framebuffer;
+    private int _spotShadow3DepthTexture;
+    private int _spotShadow3ColorTexture;
+    private bool _spotShadow3Available;
+    private bool _spotShadow3Rendered;
+    private Matrix4x4 _spotShadow3Matrix = Matrix4x4.Identity;
+    private readonly int _spotShadow4MatrixLocation;
+    private readonly int _spotShadow4MapLocation;
+    private readonly int _hasSpotShadow4Location;
+    private readonly int _spotShadow4TexelSizeLocation;
+    private int _spotShadow4Framebuffer;
+    private int _spotShadow4DepthTexture;
+    private int _spotShadow4ColorTexture;
+    private bool _spotShadow4Available;
+    private bool _spotShadow4Rendered;
+    private Matrix4x4 _spotShadow4Matrix = Matrix4x4.Identity;
     private readonly int _pointShadowMapLocation;
     private readonly int _hasPointShadowLocation;
     private readonly int _pointShadowLightLocation;
@@ -335,7 +355,17 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _hasSpotShadow2Location = GLES30.GlGetUniformLocation(_program, "uHasSpotShadow2");
         _spotShadowTexelSizeLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadowTexelSize");
         _spotShadow2TexelSizeLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadow2TexelSize");
+        _spotShadow3MatrixLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadowMatrix3");
+        _spotShadow3MapLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadowMap3");
+        _hasSpotShadow3Location = GLES30.GlGetUniformLocation(_program, "uHasSpotShadow3");
+        _spotShadow3TexelSizeLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadow3TexelSize");
+        _spotShadow4MatrixLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadowMatrix4");
+        _spotShadow4MapLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadowMap4");
+        _hasSpotShadow4Location = GLES30.GlGetUniformLocation(_program, "uHasSpotShadow4");
+        _spotShadow4TexelSizeLocation = GLES30.GlGetUniformLocation(_program, "uSpotShadow4TexelSize");
         (_spotShadow2Framebuffer, _spotShadow2DepthTexture, _spotShadow2ColorTexture, _spotShadow2Available) = CreateShadowMapResources(LocalShadowMapSize);
+        (_spotShadow3Framebuffer, _spotShadow3DepthTexture, _spotShadow3ColorTexture, _spotShadow3Available) = CreateShadowMapResources(LocalShadowMapSize);
+        (_spotShadow4Framebuffer, _spotShadow4DepthTexture, _spotShadow4ColorTexture, _spotShadow4Available) = CreateShadowMapResources(LocalShadowMapSize);
         _pointShadowMapLocation = GLES30.GlGetUniformLocation(_program, "uPointShadowMap");
         _hasPointShadowLocation = GLES30.GlGetUniformLocation(_program, "uHasPointShadow");
         _pointShadowLightLocation = GLES30.GlGetUniformLocation(_program, "uPointShadowLightPositionRange");
@@ -775,6 +805,16 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             CreateShadowMapResources(_localShadowMapSize);
         (_spotShadow2Framebuffer, _spotShadow2DepthTexture, _spotShadow2ColorTexture, _spotShadow2Available) =
             CreateShadowMapResources(_localShadowMapSize);
+        if (_quality.MaxSpotShadowMaps >= 3)
+        {
+            (_spotShadow3Framebuffer, _spotShadow3DepthTexture, _spotShadow3ColorTexture, _spotShadow3Available) =
+                CreateShadowMapResources(_localShadowMapSize);
+        }
+        if (_quality.MaxSpotShadowMaps >= 4)
+        {
+            (_spotShadow4Framebuffer, _spotShadow4DepthTexture, _spotShadow4ColorTexture, _spotShadow4Available) =
+                CreateShadowMapResources(_localShadowMapSize);
+        }
         (_pointShadowFramebuffer, _pointShadowDepthTexture, _pointShadowColorTexture, _pointShadowAvailable) =
             CreatePointShadowMapResources(_localShadowMapSize);
         (_pointShadow2Framebuffer, _pointShadow2DepthTexture, _pointShadow2ColorTexture, _pointShadow2Available) =
@@ -792,6 +832,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         if (_spotShadow2Framebuffer != 0) GLES30.GlDeleteFramebuffers(1, [_spotShadow2Framebuffer], 0);
         if (_spotShadow2DepthTexture != 0 || _spotShadow2ColorTexture != 0)
             GLES30.GlDeleteTextures(2, [_spotShadow2DepthTexture, _spotShadow2ColorTexture], 0);
+        if (_spotShadow3Framebuffer != 0) GLES30.GlDeleteFramebuffers(1, [_spotShadow3Framebuffer], 0);
+        if (_spotShadow3DepthTexture != 0 || _spotShadow3ColorTexture != 0)
+            GLES30.GlDeleteTextures(2, [_spotShadow3DepthTexture, _spotShadow3ColorTexture], 0);
+        if (_spotShadow4Framebuffer != 0) GLES30.GlDeleteFramebuffers(1, [_spotShadow4Framebuffer], 0);
+        if (_spotShadow4DepthTexture != 0 || _spotShadow4ColorTexture != 0)
+            GLES30.GlDeleteTextures(2, [_spotShadow4DepthTexture, _spotShadow4ColorTexture], 0);
         if (_pointShadowFramebuffer != 0) GLES30.GlDeleteFramebuffers(1, [_pointShadowFramebuffer], 0);
         if (_pointShadowDepthTexture != 0 || _pointShadowColorTexture != 0)
             GLES30.GlDeleteTextures(2, [_pointShadowDepthTexture, _pointShadowColorTexture], 0);
@@ -801,9 +847,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _shadowFramebuffer = _shadowDepthTexture = _shadowColorTexture = 0;
         _spotShadowFramebuffer = _spotShadowDepthTexture = _spotShadowColorTexture = 0;
         _spotShadow2Framebuffer = _spotShadow2DepthTexture = _spotShadow2ColorTexture = 0;
+        _spotShadow3Framebuffer = _spotShadow3DepthTexture = _spotShadow3ColorTexture = 0;
+        _spotShadow4Framebuffer = _spotShadow4DepthTexture = _spotShadow4ColorTexture = 0;
         _pointShadowFramebuffer = _pointShadowDepthTexture = _pointShadowColorTexture = 0;
         _pointShadow2Framebuffer = _pointShadow2DepthTexture = _pointShadow2ColorTexture = 0;
-        _shadowAvailable = _spotShadowAvailable = _spotShadow2Available = false;
+        _shadowAvailable = _spotShadowAvailable = _spotShadow2Available = _spotShadow3Available = _spotShadow4Available = false;
         _pointShadowAvailable = _pointShadow2Available = false;
     }
 
@@ -945,6 +993,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlUniform4f(_shadowColorLocation, shadowColor.X, shadowColor.Y, shadowColor.Z, shadowColor.W);
             GLES30.GlUniformMatrix4fv(_spotShadowMatrixLocation, 1, false, ToGlArray(_spotShadowMatrix), 0);
             GLES30.GlUniformMatrix4fv(_spotShadow2MatrixLocation, 1, false, ToGlArray(_spotShadow2Matrix), 0);
+            GLES30.GlUniformMatrix4fv(_spotShadow3MatrixLocation, 1, false, ToGlArray(_spotShadow3Matrix), 0);
+            GLES30.GlUniformMatrix4fv(_spotShadow4MatrixLocation, 1, false, ToGlArray(_spotShadow4Matrix), 0);
             GLES30.GlActiveTexture(GLES30.GlTexture5);
             GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadowColorTexture);
             GLES30.GlUniform1i(_spotShadowMapLocation, 5);
@@ -953,6 +1003,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadow2ColorTexture);
             GLES30.GlUniform1i(_spotShadow2MapLocation, 9);
             GLES30.GlUniform1i(_hasSpotShadow2Location, _spotShadow2Available && _spotShadow2Rendered ? 1 : 0);
+            GLES30.GlActiveTexture(GLES30.GlTexture14);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadow3ColorTexture);
+            GLES30.GlUniform1i(_spotShadow3MapLocation, 14);
+            GLES30.GlUniform1i(_hasSpotShadow3Location, _spotShadow3Available && _spotShadow3Rendered ? 1 : 0);
+            GLES30.GlActiveTexture(GLES30.GlTexture15);
+            GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadow4ColorTexture);
+            GLES30.GlUniform1i(_spotShadow4MapLocation, 15);
+            GLES30.GlUniform1i(_hasSpotShadow4Location, _spotShadow4Available && _spotShadow4Rendered ? 1 : 0);
             GLES30.GlActiveTexture(GLES30.GlTexture6);
             GLES30.GlBindTexture(0x8513, _pointShadowColorTexture); // GL_TEXTURE_CUBE_MAP
             GLES30.GlUniform1i(_pointShadowMapLocation, 6);
@@ -1189,6 +1247,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform1f(_shadowTexelSizeLocation, 1.0f / Math.Max(_shadowMapSize, 1));
         GLES30.GlUniform1f(_spotShadowTexelSizeLocation, 1.0f / Math.Max(_localShadowMapSize, 1));
         GLES30.GlUniform1f(_spotShadow2TexelSizeLocation, 1.0f / Math.Max(_localShadowMapSize, 1));
+        GLES30.GlUniform1f(_spotShadow3TexelSizeLocation, 1.0f / Math.Max(_localShadowMapSize, 1));
+        GLES30.GlUniform1f(_spotShadow4TexelSizeLocation, 1.0f / Math.Max(_localShadowMapSize, 1));
         GLES30.GlUniform1f(_pointShadowTexelSizeLocation, 1.0f / Math.Max(_localShadowMapSize, 1));
     }
 
@@ -2130,6 +2190,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlUniform4f(_shadowColorLocation, shadowColor.X, shadowColor.Y, shadowColor.Z, shadowColor.W);
         GLES30.GlUniformMatrix4fv(_spotShadowMatrixLocation, 1, false, ToGlArray(_spotShadowMatrix), 0);
         GLES30.GlUniformMatrix4fv(_spotShadow2MatrixLocation, 1, false, ToGlArray(_spotShadow2Matrix), 0);
+        GLES30.GlUniformMatrix4fv(_spotShadow3MatrixLocation, 1, false, ToGlArray(_spotShadow3Matrix), 0);
+        GLES30.GlUniformMatrix4fv(_spotShadow4MatrixLocation, 1, false, ToGlArray(_spotShadow4Matrix), 0);
         GLES30.GlActiveTexture(GLES30.GlTexture5);
         GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadowColorTexture);
         GLES30.GlUniform1i(_spotShadowMapLocation, 5);
@@ -2138,6 +2200,14 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadow2ColorTexture);
         GLES30.GlUniform1i(_spotShadow2MapLocation, 9);
         GLES30.GlUniform1i(_hasSpotShadow2Location, _spotShadow2Available && _spotShadow2Rendered ? 1 : 0);
+        GLES30.GlActiveTexture(GLES30.GlTexture14);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadow3ColorTexture);
+        GLES30.GlUniform1i(_spotShadow3MapLocation, 14);
+        GLES30.GlUniform1i(_hasSpotShadow3Location, _spotShadow3Available && _spotShadow3Rendered ? 1 : 0);
+        GLES30.GlActiveTexture(GLES30.GlTexture15);
+        GLES30.GlBindTexture(GLES30.GlTexture2d, _spotShadow4ColorTexture);
+        GLES30.GlUniform1i(_spotShadow4MapLocation, 15);
+        GLES30.GlUniform1i(_hasSpotShadow4Location, _spotShadow4Available && _spotShadow4Rendered ? 1 : 0);
         GLES30.GlActiveTexture(GLES30.GlTexture6);
         GLES30.GlBindTexture(0x8513, _pointShadowColorTexture); // GL_TEXTURE_CUBE_MAP
         GLES30.GlUniform1i(_pointShadowMapLocation, 6);
@@ -2360,7 +2430,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     private void RenderDirectionalShadow(RuntimeScene scene)
     {
         _shadowRendered = false;
-        if (!_shadowAvailable || _quality.MaxShadowMapSize <= 0)
+        if (!_shadowAvailable
+            || _quality.MaxShadowMapSize <= 0
+            || scene.Definition.Lighting.ShadowColor.W <= 0.001f)
         {
             _lightViewProjection = Matrix4x4.Identity;
             return;
@@ -2435,86 +2507,82 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
     {
         _spotShadowRendered = false;
         _spotShadow2Rendered = false;
+        _spotShadow3Rendered = false;
+        _spotShadow4Rendered = false;
+        _spotShadowMatrix = Matrix4x4.Identity;
         _spotShadow2Matrix = Matrix4x4.Identity;
-        if (!_spotShadowAvailable || _quality.MaxSpotShadowMaps <= 0)
+        _spotShadow3Matrix = Matrix4x4.Identity;
+        _spotShadow4Matrix = Matrix4x4.Identity;
+        if (_quality.MaxSpotShadowMaps <= 0
+            || scene.Definition.Lighting.ShadowColor.W <= 0.001f)
         {
-            _spotShadowMatrix = Matrix4x4.Identity;
             return;
         }
 
-        RuntimeEntity[] spotLights = GetGlesSpotLights(scene);
-        RuntimeEntity? light = spotLights.FirstOrDefault(entity => entity.CastsShadows);
-        if (light is null)
+        RuntimeEntity[] shadowLights = GetGlesSpotLights(scene)
+            .Where(entity => entity.CastsShadows)
+            .Take(Math.Clamp(_quality.MaxSpotShadowMaps, 0, 4))
+            .ToArray();
+        if (shadowLights.Length == 0)
         {
-            _spotShadowMatrix = Matrix4x4.Identity;
             return;
         }
 
-        Vector3 position = light.Position;
-        Vector3 direction = NormalizeOrDefault(light.SpotDirection, new Vector3(0.0f, -1.0f, 0.0f));
-        float range = Math.Max(light.LightRange, 0.1f);
-        Vector3 target = position + direction * range;
-        Vector3 up = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
-        Matrix4x4 lightView = Matrix4x4.CreateLookAt(position, target, up);
-        float fieldOfView = Math.Clamp(
-            light.SpotOuterConeAngleDegrees * 2.0f * MathF.PI / 180.0f,
-            MathF.PI / 180.0f,
-            MathF.PI - MathF.PI / 180.0f);
-        Matrix4x4 lightProjection = CreatePerspectiveProjection(fieldOfView, 1.0f, 0.05f, range);
-        _spotShadowMatrix = lightView * lightProjection;
+        (int Framebuffer, bool Available, Action<Matrix4x4> SetMatrix, Action<bool> SetRendered)[] slots =
+        [
+            (_spotShadowFramebuffer, _spotShadowAvailable, matrix => _spotShadowMatrix = matrix, rendered => _spotShadowRendered = rendered),
+            (_spotShadow2Framebuffer, _spotShadow2Available, matrix => _spotShadow2Matrix = matrix, rendered => _spotShadow2Rendered = rendered),
+            (_spotShadow3Framebuffer, _spotShadow3Available, matrix => _spotShadow3Matrix = matrix, rendered => _spotShadow3Rendered = rendered),
+            (_spotShadow4Framebuffer, _spotShadow4Available, matrix => _spotShadow4Matrix = matrix, rendered => _spotShadow4Rendered = rendered)
+        ];
 
-        GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _spotShadowFramebuffer);
-        GLES30.GlViewport(0, 0, _localShadowMapSize, _localShadowMapSize);
-        GLES30.GlColorMask(true, true, true, true);
-        GLES30.GlDepthMask(true);
-        GLES30.GlEnable(GLES30.GlDepthTest);
-        GLES30.GlDisable(GLES30.GlBlend);
-        GLES30.GlEnable(0x8037); // GL_POLYGON_OFFSET_FILL
-        GLES30.GlPolygonOffset(1.5f, 0.0f);
-        GLES30.GlClearDepthf(1.0f);
-        GLES30.GlClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit);
         GLES30.GlUseProgram(_shadowProgram);
-        GLES30.GlUniform1i(_shadowPointModeLocation, 0);
-        GLES30.GlUniform3f(_shadowLightPositionLocation, position.X, position.Y, position.Z);
-        GLES30.GlUniform1f(_shadowFarLocation, range);
-        GLES30.GlDisable(0x0B44); // GL_CULL_FACE
-        foreach (PmxGpuModel model in _models.Where(model => model.Enabled && model.CastsShadows))
+        for (int slot = 0; slot < shadowLights.Length && slot < slots.Length; slot++)
         {
-            model.BindSkinning(_shadowUseGpuSkinningLocation, _shadowBonesLocation);
-            GLES30.GlUniformMatrix4fv(_shadowModelLocation, 1, false, ToGlArray(model.Transform), 0);
-            GLES30.GlUniformMatrix4fv(_shadowMvpLocation, 1, false, ToGlArray(model.Transform * _spotShadowMatrix), 0);
-            model.DrawDepth();
-        }
-        DrawParticleShadow(_spotShadowMatrix, false, Vector3.Zero, 1.0f);
+            (int framebuffer, bool available, Action<Matrix4x4> setMatrix, Action<bool> setRendered) = slots[slot];
+            if (!available)
+            {
+                continue;
+            }
 
-        _spotShadowRendered = true;
-        RuntimeEntity? light2 = spotLights.Where(entity => entity.CastsShadows).Skip(1).FirstOrDefault();
-        if (_spotShadow2Available && light2 is not null)
-        {
-            Vector3 position2 = light2.Position;
-            Vector3 direction2 = NormalizeOrDefault(light2.SpotDirection, new Vector3(0.0f, -1.0f, 0.0f));
-            float range2 = Math.Max(light2.LightRange, 0.1f);
-            Vector3 target2 = position2 + direction2 * range2;
-            Vector3 up2 = MathF.Abs(Vector3.Dot(direction2, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
-            Matrix4x4 view2 = Matrix4x4.CreateLookAt(position2, target2, up2);
-            float fov2 = Math.Clamp(light2.SpotOuterConeAngleDegrees * 2.0f * MathF.PI / 180.0f, MathF.PI / 180.0f, MathF.PI - MathF.PI / 180.0f);
-            _spotShadow2Matrix = view2 * CreatePerspectiveProjection(fov2, 1.0f, 0.05f, range2);
-            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _spotShadow2Framebuffer);
+            RuntimeEntity light = shadowLights[slot];
+            Vector3 position = light.Position;
+            Vector3 direction = NormalizeOrDefault(light.SpotDirection, new Vector3(0.0f, -1.0f, 0.0f));
+            float range = Math.Max(light.LightRange, 0.1f);
+            Vector3 target = position + direction * range;
+            Vector3 up = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
+            Matrix4x4 lightView = Matrix4x4.CreateLookAt(position, target, up);
+            float fieldOfView = Math.Clamp(
+                light.SpotOuterConeAngleDegrees * 2.0f * MathF.PI / 180.0f,
+                MathF.PI / 180.0f,
+                MathF.PI - MathF.PI / 180.0f);
+            Matrix4x4 matrix = lightView * CreatePerspectiveProjection(fieldOfView, 1.0f, 0.05f, range);
+            setMatrix(matrix);
+
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, framebuffer);
             GLES30.GlViewport(0, 0, _localShadowMapSize, _localShadowMapSize);
+            GLES30.GlColorMask(true, true, true, true);
+            GLES30.GlDepthMask(true);
+            GLES30.GlEnable(GLES30.GlDepthTest);
+            GLES30.GlDisable(GLES30.GlBlend);
+            GLES30.GlEnable(0x8037); // GL_POLYGON_OFFSET_FILL
+            GLES30.GlPolygonOffset(1.5f, 0.0f);
+            GLES30.GlClearDepthf(1.0f);
             GLES30.GlClearColor(1.0f, 1.0f, 1.0f, 1.0f);
             GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit);
-            GLES30.GlUniform3f(_shadowLightPositionLocation, position2.X, position2.Y, position2.Z);
-            GLES30.GlUniform1f(_shadowFarLocation, range2);
+            GLES30.GlUniform1i(_shadowPointModeLocation, 0);
+            GLES30.GlUniform3f(_shadowLightPositionLocation, position.X, position.Y, position.Z);
+            GLES30.GlUniform1f(_shadowFarLocation, range);
+            GLES30.GlDisable(0x0B44); // GL_CULL_FACE
             foreach (PmxGpuModel model in _models.Where(model => model.Enabled && model.CastsShadows))
             {
                 model.BindSkinning(_shadowUseGpuSkinningLocation, _shadowBonesLocation);
                 GLES30.GlUniformMatrix4fv(_shadowModelLocation, 1, false, ToGlArray(model.Transform), 0);
-                GLES30.GlUniformMatrix4fv(_shadowMvpLocation, 1, false, ToGlArray(model.Transform * _spotShadow2Matrix), 0);
+                GLES30.GlUniformMatrix4fv(_shadowMvpLocation, 1, false, ToGlArray(model.Transform * matrix), 0);
                 model.DrawDepth();
             }
-            DrawParticleShadow(_spotShadow2Matrix, false, Vector3.Zero, 1.0f);
-            _spotShadow2Rendered = true;
+            DrawParticleShadow(matrix, false, Vector3.Zero, 1.0f);
+            setRendered(true);
         }
         GLES30.GlDisable(0x8037); // GL_POLYGON_OFFSET_FILL
         GLES30.GlColorMask(true, true, true, true);
@@ -2527,7 +2595,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _pointShadow2Rendered = false;
         _pointShadowLightPositionRange = Vector4.Zero;
         _pointShadow2LightPositionRange = Vector4.Zero;
-        if (!_pointShadowAvailable || _quality.MaxPointShadowMaps <= 0)
+        if (!_pointShadowAvailable
+            || _quality.MaxPointShadowMaps <= 0
+            || scene.Definition.Lighting.ShadowColor.W <= 0.001f)
         {
             return;
         }
@@ -5054,6 +5124,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform mat4 uLightViewProjection;
         uniform mat4 uSpotShadowMatrix;
         uniform mat4 uSpotShadowMatrix2;
+        uniform mat4 uSpotShadowMatrix3;
+        uniform mat4 uSpotShadowMatrix4;
         uniform mat4 uPlanarReflectionMatrix;
         uniform int uUseGpuSkinning;
         uniform mat4 uBones[96];
@@ -5065,6 +5137,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         out vec4 vShadowPosition;
         out vec4 vSpotShadowPosition;
         out vec4 vSpotShadowPosition2;
+        out vec4 vSpotShadowPosition3;
+        out vec4 vSpotShadowPosition4;
         out vec4 vPlanarReflectionPosition;
 
         void main()
@@ -5094,6 +5168,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             vShadowPosition = uLightViewProjection * vec4(vWorldPosition, 1.0);
             vSpotShadowPosition = uSpotShadowMatrix * vec4(vWorldPosition, 1.0);
             vSpotShadowPosition2 = uSpotShadowMatrix2 * vec4(vWorldPosition, 1.0);
+            vSpotShadowPosition3 = uSpotShadowMatrix3 * vec4(vWorldPosition, 1.0);
+            vSpotShadowPosition4 = uSpotShadowMatrix4 * vec4(vWorldPosition, 1.0);
             vPlanarReflectionPosition = uPlanarReflectionMatrix * vec4(vWorldPosition, 1.0);
         }
         """;
@@ -5109,6 +5185,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         in vec4 vShadowPosition;
         in vec4 vSpotShadowPosition;
         in vec4 vSpotShadowPosition2;
+        in vec4 vSpotShadowPosition3;
+        in vec4 vSpotShadowPosition4;
         in vec4 vPlanarReflectionPosition;
         uniform vec4 uDiffuse;
         uniform vec3 uMaterialAmbient;
@@ -5162,6 +5240,12 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         uniform sampler2D uSpotShadowMap2;
         uniform int uHasSpotShadow2;
         uniform float uSpotShadow2TexelSize;
+        uniform sampler2D uSpotShadowMap3;
+        uniform int uHasSpotShadow3;
+        uniform float uSpotShadow3TexelSize;
+        uniform sampler2D uSpotShadowMap4;
+        uniform int uHasSpotShadow4;
+        uniform float uSpotShadow4TexelSize;
         uniform sampler2D uPlanarReflectionTexture;
         uniform int uHasPlanarReflection;
         uniform float uPlanarReflectionStrength;
@@ -5405,6 +5489,34 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                         float lit = 0.0;
                         for (int y = -1; y <= 0; y++) for (int x = -1; x <= 0; x++)
                             lit += shadowCoord.z - 0.005 <= unpackDepth(texture(uSpotShadowMap2, shadowCoord.xy + vec2(x, y) * texel)) ? 1.0 : 0.0;
+                        spotShadowVisibility = lit * 0.25;
+                        if (uShadowMode != 0) spotShadowVisibility = spotShadowVisibility >= 0.5 ? 1.0 : 0.0;
+                    }
+                }
+                if (i == 2 && uHasSpotShadow3 != 0 && uReceiveShadow != 0 && vSpotShadowPosition3.w > 0.0)
+                {
+                    vec3 shadowCoord = vSpotShadowPosition3.xyz / vSpotShadowPosition3.w;
+                    shadowCoord = shadowCoord * 0.5 + 0.5;
+                    if (all(greaterThanEqual(shadowCoord.xy, vec2(0.0))) && all(lessThanEqual(shadowCoord.xy, vec2(1.0))) && shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
+                    {
+                        vec2 texel = vec2(uSpotShadow3TexelSize);
+                        float lit = 0.0;
+                        for (int y = -1; y <= 0; y++) for (int x = -1; x <= 0; x++)
+                            lit += shadowCoord.z - 0.005 <= unpackDepth(texture(uSpotShadowMap3, shadowCoord.xy + vec2(x, y) * texel)) ? 1.0 : 0.0;
+                        spotShadowVisibility = lit * 0.25;
+                        if (uShadowMode != 0) spotShadowVisibility = spotShadowVisibility >= 0.5 ? 1.0 : 0.0;
+                    }
+                }
+                if (i == 3 && uHasSpotShadow4 != 0 && uReceiveShadow != 0 && vSpotShadowPosition4.w > 0.0)
+                {
+                    vec3 shadowCoord = vSpotShadowPosition4.xyz / vSpotShadowPosition4.w;
+                    shadowCoord = shadowCoord * 0.5 + 0.5;
+                    if (all(greaterThanEqual(shadowCoord.xy, vec2(0.0))) && all(lessThanEqual(shadowCoord.xy, vec2(1.0))) && shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
+                    {
+                        vec2 texel = vec2(uSpotShadow4TexelSize);
+                        float lit = 0.0;
+                        for (int y = -1; y <= 0; y++) for (int x = -1; x <= 0; x++)
+                            lit += shadowCoord.z - 0.005 <= unpackDepth(texture(uSpotShadowMap4, shadowCoord.xy + vec2(x, y) * texel)) ? 1.0 : 0.0;
                         spotShadowVisibility = lit * 0.25;
                         if (uShadowMode != 0) spotShadowVisibility = spotShadowVisibility >= 0.5 ? 1.0 : 0.0;
                     }
@@ -5801,10 +5913,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
         float linearDepth(float depth)
         {
-            // GLES depth textures are sampled in the same normalized 0..1
-            // range as Vulkan's depth attachment.  Converting to -1..1 here
-            // doubles the apparent distance and makes underwater fog diverge.
-            float projectionDepth = clamp(depth, 0.0, 1.0);
+            float projectionDepth = clamp(depth * 2.0 - 1.0, 0.0, 1.0);
             if (uIsOrthographic > 0.5)
             {
                 return mix(uNear, uFar, projectionDepth);
