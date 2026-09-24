@@ -46,6 +46,12 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
     public GameProject? Project => _renderHost.Project;
 
+    public bool IsReady => _renderHost.IsReady;
+
+    public float LoadingProgress => _renderHost.LoadingProgress;
+
+    public string LoadingMessage => _renderHost.LoadingMessage;
+
     public void SurfaceCreated(ISurfaceHolder holder)
     {
         _hasSurface = true;
@@ -125,11 +131,12 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
         Input = _touchState.BeginFrame(Width, Height).WithDeviceInput(_deviceInputState.BeginFrame());
         _renderHost.Render(frameTimeNanos, Input);
+        LoadingStateChanged?.Invoke();
         // GUI controls can be changed by scripts every frame (for example progress bars).
         // Keep the overlay synchronized while the hardware Canvas layer avoids software
         // bitmap uploads on every invalidation.
         OverlayInvalidated?.Invoke();
-        if (!_firstFramePresented)
+        if (!_firstFramePresented && IsReady)
         {
             _firstFramePresented = true;
             FirstFramePresented?.Invoke();
@@ -138,6 +145,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     }
 
     public event Action? OverlayInvalidated;
+    public event Action? LoadingStateChanged;
     public event Action? FirstFramePresented;
     public event Action<string>? RenderInitializationFailed;
     public event Action<GuiControlSettings, LayoutRect>? TextInputRequested;

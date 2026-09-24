@@ -26,10 +26,19 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private long _lastFrameTimeNanos;
     private bool _surfaceAvailable;
     private bool _disposed;
+    private bool _loadingStarted;
+    private bool _scriptsStarted;
+    private float _lastLoadingProgress = -1.0f;
     private Surface? _surface;
     private readonly object _lifecycleLock = new();
 
     public GameProject? Project => _project;
+
+    public bool IsReady => _game?.IsReady == true;
+
+    public float LoadingProgress => _game?.LoadingProgress ?? 0.0f;
+
+    public string LoadingMessage => _game?.LoadingMessage ?? "Loading scene...";
 
     public void SetProject(GameProject? project, string? projectDirectory)
     {
@@ -141,6 +150,12 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             try
             {
                 _game.UpdateHosted(deltaSeconds);
+                ReportLoadingState(scene);
+                if (scene is not null && _game.IsReady && !_scriptsStarted)
+                {
+                    _scriptHost?.Start(scene);
+                    _scriptsStarted = true;
+                }
                 _game.RenderHostedWithoutPresent(deltaSeconds);
                 _game.PresentHosted();
                 if (scene is not null)
@@ -245,8 +260,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 _project, scene, _projectDirectory, renderer, new Vector2D<int>(_width, _height));
             game.InitializeHosted();
             _game = game;
+            _loadingStarted = true;
+            _scriptsStarted = false;
+            _lastLoadingProgress = -1.0f;
+            _scriptHost?.StartLoading(scene);
             _audioHost?.StartScene(scene);
-            _scriptHost?.Start(scene);
             Log.Info(LogTag,
                 $"Android graphics backend: {_game.GraphicsDevice.Backend}; " +
                 $"renderer: {_game.GraphicsDevice.RendererName}; " +
@@ -268,6 +286,16 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             else renderer.Dispose();
             throw;
         }
+    }
+
+    private void ReportLoadingState(RuntimeScene? scene)
+    {
+        if (!_loadingStarted || scene is null || _scriptHost is null || _game is null) return;
+        float progress = _game.LoadingProgress;
+        if (!_game.IsReady && Math.Abs(progress - _lastLoadingProgress) < 0.0001f) return;
+        _lastLoadingProgress = progress;
+        _scriptHost.UpdateLoading(scene, progress, _game.LoadingMessage, _game.IsReady);
+        if (_game.IsReady) _loadingStarted = false;
     }
 
     private void OnSceneChanged(RuntimeSceneChange change)

@@ -38,9 +38,18 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     private int _actualMsaaSamples = 1;
     private long _lastFrameTimeNanos;
     private bool _disposed;
+    private bool _loadingStarted;
+    private bool _scriptsStarted;
+    private float _lastLoadingProgress = -1.0f;
     private Vector4 _clearColor = new(0.025f, 0.035f, 0.055f, 1.0f);
 
     public GameProject? Project => _project;
+
+    public bool IsReady => _game?.IsReady == true;
+
+    public float LoadingProgress => _game?.LoadingProgress ?? 0.0f;
+
+    public string LoadingMessage => _game?.LoadingMessage ?? "Loading scene...";
 
     public void SetProject(GameProject? project, string? projectDirectory)
     {
@@ -229,6 +238,12 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         if (runtimeScene is not null && _game is not null)
         {
             _game.UpdateHosted(deltaSeconds);
+            ReportLoadingState(runtimeScene);
+            if (_game.IsReady && !_scriptsStarted)
+            {
+                _scriptHost?.Start(runtimeScene);
+                _scriptsStarted = true;
+            }
             _game.RenderHostedWithoutPresent(deltaSeconds);
             foreach (AndroidRuntimeEvent runtimeEvent in _game.DrainRuntimeEvents())
             {
@@ -396,8 +411,11 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             game = new AndroidSceneGame(_project, runtimeScene, _projectDirectory, renderer, size);
             game.InitializeHosted();
             _game = game;
+            _loadingStarted = true;
+            _scriptsStarted = false;
+            _lastLoadingProgress = -1.0f;
+            _scriptHost?.StartLoading(runtimeScene);
             _audioHost?.StartScene(runtimeScene);
-            _scriptHost?.Start(runtimeScene);
         }
         catch
         {
@@ -406,6 +424,16 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             else renderer.Dispose();
             throw;
         }
+    }
+
+    private void ReportLoadingState(RuntimeScene scene)
+    {
+        if (!_loadingStarted || _scriptHost is null || _game is null) return;
+        float progress = _game.LoadingProgress;
+        if (!_game.IsReady && Math.Abs(progress - _lastLoadingProgress) < 0.0001f) return;
+        _lastLoadingProgress = progress;
+        _scriptHost.UpdateLoading(scene, progress, _game.LoadingMessage, _game.IsReady);
+        if (_game.IsReady) _loadingStarted = false;
     }
 
     private static RuntimeCameraInput ToCameraInput(AndroidInputSnapshot input)

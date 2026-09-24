@@ -94,6 +94,7 @@ public sealed class MainActivity : Activity
         if (_gameView is not null)
         {
             _gameView.OverlayInvalidated -= OnOverlayInvalidated;
+            _gameView.LoadingStateChanged -= OnLoadingStateChanged;
             _gameView.FirstFramePresented -= OnFirstFramePresented;
             _gameView.RenderInitializationFailed -= OnRenderInitializationFailed;
             _gameView.TextInputRequested -= ShowTextEditor;
@@ -111,6 +112,13 @@ public sealed class MainActivity : Activity
     }
 
     private void OnOverlayInvalidated() => _guiOverlay?.Refresh();
+
+    private void OnLoadingStateChanged()
+    {
+        if (_gameView is null || _loadingOverlay is null) return;
+        _loadingOverlay.SetProgress(_gameView.LoadingProgress, _gameView.LoadingMessage);
+        if (_gameView.IsReady) _loadingOverlay.Visibility = ViewStates.Gone;
+    }
 
     private void ShowTextEditor(GuiControlSettings control, LayoutRect rect)
     {
@@ -335,11 +343,16 @@ public sealed class MainActivity : Activity
             _projectLoadResult?.Dispose();
             _projectLoadResult = result;
             Title = result.Project?.Name ?? GetString(Resource.String.app_name);
+            if (result.Project is not null && result.ProjectDirectory is not null)
+            {
+                _loadingOverlay?.Configure(result.Project.Scene.LoadingScreen, result.ProjectDirectory);
+            }
             if (_gameView is null)
             {
                 _gameView = new AndroidGameSurfaceView(this, result.Project, result.ProjectDirectory);
                 _guiOverlay = new AndroidGuiOverlayView(this, _gameView);
                 _gameView.OverlayInvalidated += OnOverlayInvalidated;
+                _gameView.LoadingStateChanged += OnLoadingStateChanged;
                 _gameView.FirstFramePresented += OnFirstFramePresented;
                 _gameView.RenderInitializationFailed += OnRenderInitializationFailed;
                 _gameView.TextInputRequested += ShowTextEditor;

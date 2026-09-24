@@ -7,6 +7,12 @@ internal interface IAndroidRenderHost : IDisposable
 {
     GameProject? Project { get; }
 
+    bool IsReady { get; }
+
+    float LoadingProgress { get; }
+
+    string LoadingMessage { get; }
+
     void SetProject(GameProject? project, string? projectDirectory);
 
     void CreateSurface(Surface surface);

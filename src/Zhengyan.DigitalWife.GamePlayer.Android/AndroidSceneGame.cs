@@ -68,7 +68,19 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     private string? _activeRenderTextureName;
     private long _reflectionTicks;
     private long _underwaterTicks;
+    private readonly Queue<(string Message, Action Action)> _loadingSteps = new();
+    private int _loadingTotalSteps;
+    private int _loadingCompletedSteps;
+    private bool _loading;
     internal DrawProfile LastDrawProfile { get; private set; }
+
+    public bool IsReady => !_loading;
+
+    public float LoadingProgress => _loadingTotalSteps == 0
+        ? 0.0f
+        : Math.Clamp((float)_loadingCompletedSteps / _loadingTotalSteps, 0.0f, 1.0f);
+
+    public string LoadingMessage { get; private set; } = "Loading scene...";
 
     public AndroidSceneGame(
         GameProject project,
@@ -88,30 +100,70 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     protected override void Initialize()
     {
         SyncCamera();
-        LoadSceneComponents();
-        _shadowRenderer = new ShadowMapRenderer(this)
+        _loading = true;
+        EnqueueLoadingStep("Loading scene components", () =>
         {
-            Resolution = _renderPolicy.ShadowMapSize
-        };
-        _localLightShadowRenderer = new LocalLightShadowRenderer(this)
-        {
-            Resolution = _renderPolicy.LocalShadowMapSize * 4
-        };
-        _planarReflectionRenderer = new PlanarReflectionRenderer(this);
-        _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
-            .CreateUnderwaterPostProcessRenderer("AndroidUnderwater");
-        _debugDrawComponent = AddComponent(new AndroidRuntimeDebugDrawComponent(this) { DrawOrder = 9000 });
-        SyncSceneComponents();
+            LoadSceneComponents();
+            _shadowRenderer = new ShadowMapRenderer(this) { Resolution = _renderPolicy.ShadowMapSize };
+            _localLightShadowRenderer = new LocalLightShadowRenderer(this) { Resolution = _renderPolicy.LocalShadowMapSize * 4 };
+            _planarReflectionRenderer = new PlanarReflectionRenderer(this);
+            _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
+                .CreateUnderwaterPostProcessRenderer("AndroidUnderwater");
+            _debugDrawComponent = AddComponent(new AndroidRuntimeDebugDrawComponent(this) { DrawOrder = 9000 });
+            SyncSceneComponents();
+        });
+    }
+
+    public void CompleteInitialization()
+    {
+        while (_loading) ProcessLoadingStep();
     }
 
     protected override void Update(GameTime gameTime)
     {
+        if (_loading)
+        {
+            ProcessLoadingStep();
+            return;
+        }
         SyncCamera();
         SyncSceneComponents();
     }
 
     protected override void LateUpdate(GameTime gameTime)
-        => UpdateWaterInteractions(gameTime.TotalSeconds);
+    {
+        if (!_loading) UpdateWaterInteractions(gameTime.TotalSeconds);
+    }
+
+    private void EnqueueLoadingStep(string message, Action action)
+    {
+        _loadingSteps.Enqueue((message, action));
+        _loadingTotalSteps++;
+        LoadingMessage = message;
+    }
+
+    private void ProcessLoadingStep()
+    {
+        if (_loadingSteps.TryDequeue(out (string Message, Action Action) step))
+        {
+            LoadingMessage = step.Message;
+            try
+            {
+                step.Action();
+                _loadingCompletedSteps++;
+            }
+            catch (Exception ex)
+            {
+                LoadingMessage = $"Load failed: {ex.Message}";
+                _loadingCompletedSteps = _loadingTotalSteps;
+                _loadingSteps.Clear();
+            }
+            return;
+        }
+
+        _loading = false;
+        LoadingMessage = "Loading complete";
+    }
 
     public IReadOnlyList<AndroidRuntimeEvent> DrainRuntimeEvents()
     {

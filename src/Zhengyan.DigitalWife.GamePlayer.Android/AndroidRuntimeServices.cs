@@ -55,46 +55,152 @@ public sealed class AndroidScriptLlm
     private readonly Action<AndroidRuntimeEvent> _dispatchEvent;
     private readonly GameProjectLlmSettings _settings;
     private readonly string _projectDirectory;
+    private readonly Func<AndroidScriptEntity, string, RuntimeLlmToolCall, Task<string?>> _invokeScriptTool;
     private readonly Dictionary<string, CancellationTokenSource> _requests = new(StringComparer.OrdinalIgnoreCase);
-    internal AndroidScriptLlm(AndroidScriptNetwork network, Action<AndroidRuntimeEvent> dispatchEvent, GameProjectLlmSettings settings, string projectDirectory)
-    { _network = network; _dispatchEvent = dispatchEvent; _settings = settings; _projectDirectory = projectDirectory; }
+    internal AndroidScriptLlm(AndroidScriptNetwork network, Action<AndroidRuntimeEvent> dispatchEvent, GameProjectLlmSettings settings, string projectDirectory, Func<AndroidScriptEntity, string, RuntimeLlmToolCall, Task<string?>> invokeScriptTool)
+    { _network = network; _dispatchEvent = dispatchEvent; _settings = settings; _projectDirectory = projectDirectory; _invokeScriptTool = invokeScriptTool; }
     public bool SkillsEnabled => _settings.Enabled && _settings.EnableSkills;
     public string SkillsDirectory => Path.Combine(_projectDirectory, "skills");
     public string MemoryDirectory => Path.Combine(_projectDirectory, "memory");
     public string GetCharacterMemoryPath(AndroidScriptEntity entity) => Path.Combine(MemoryDirectory, Sanitize(entity.Name) + ".md");
+    public string StartChat(AndroidScriptEntity entity, string userText, string systemPrompt = "", string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "")
+        => StartChatWithTools(entity, CreateMessages(userText, systemPrompt), [], onDeltaCallback, onCompletedCallback, onErrorCallback);
+
+    public string StartChatWithTools(AndroidScriptEntity entity, string userText, IEnumerable<RuntimeLlmTool> tools, string systemPrompt = "", string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "", string onToolCallCallback = "", string onToolResultCallback = "", int maxToolRounds = 16)
+        => StartChatWithTools(entity, CreateMessages(userText, systemPrompt), tools, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, maxToolRounds);
+
+    public void CancelRequest(string requestId)
+    {
+        if (_requests.Remove(requestId, out CancellationTokenSource? source))
+        {
+            source.Cancel();
+            source.Dispose();
+        }
+    }
+
+    public void CancelAllRequests()
+    {
+        foreach (string requestId in _requests.Keys.ToArray()) CancelRequest(requestId);
+    }
+
+    private static RuntimeLlmChatMessage[] CreateMessages(string userText, string systemPrompt)
+        => string.IsNullOrWhiteSpace(systemPrompt)
+            ? [new RuntimeLlmChatMessage("user", userText)]
+            : [new RuntimeLlmChatMessage("system", systemPrompt), new RuntimeLlmChatMessage("user", userText)];
+
     public string StartChatWithTools(AndroidScriptEntity entity, IEnumerable<RuntimeLlmChatMessage> messages, IEnumerable<RuntimeLlmTool> tools, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "", string onToolCallCallback = "", string onToolResultCallback = "", int maxToolRounds = 16)
     {
         string requestId = Guid.NewGuid().ToString("N");
         RuntimeLlmTool[] toolList = tools?.ToArray() ?? [];
-        if (toolList.Length > 0)
-        {
-            if (!string.IsNullOrWhiteSpace(onErrorCallback)) _dispatchEvent(new AndroidRuntimeEvent("llm", requestId, onErrorCallback, Vector2.Zero, "Android LLM tool callbacks are not implemented.", entity.Id));
-            return requestId;
-        }
         CancellationTokenSource cts = new();
         _requests[requestId] = cts;
-        _ = RunChatAsync(requestId, entity, messages?.ToArray() ?? [], onDeltaCallback, onCompletedCallback, onErrorCallback, cts.Token);
+        _ = RunChatAsync(requestId, entity, messages?.ToArray() ?? [], toolList, onDeltaCallback, onCompletedCallback, onErrorCallback, onToolCallCallback, onToolResultCallback, Math.Max(1, maxToolRounds), cts.Token);
         return requestId;
     }
-    private async Task RunChatAsync(string id, AndroidScriptEntity entity, RuntimeLlmChatMessage[] messages, string delta, string completed, string error, CancellationToken token)
+    private async Task RunChatAsync(string id, AndroidScriptEntity entity, RuntimeLlmChatMessage[] messages, RuntimeLlmTool[] tools, string delta, string completed, string error, string toolCallCallback, string toolResultCallback, int maxToolRounds, CancellationToken token)
     {
         try
         {
             if (!_settings.Enabled) throw new InvalidOperationException("Project LLM is disabled.");
             string apiKey = string.IsNullOrWhiteSpace(_settings.ApiKey) ? global::System.Environment.GetEnvironmentVariable(_settings.ApiKeyEnvironmentVariable) ?? string.Empty : _settings.ApiKey;
             string url = _settings.BaseUrl.TrimEnd('/') + (string.IsNullOrWhiteSpace(_settings.ChatCompletionsPath) ? "/v1/chat/completions" : "/" + _settings.ChatCompletionsPath.TrimStart('/'));
-            object payload = new { model = _settings.Model, messages, stream = false, temperature = _settings.DefaultTemperature };
             Dictionary<string, string> headers = string.IsNullOrWhiteSpace(apiKey) ? [] : new(StringComparer.OrdinalIgnoreCase) { ["Authorization"] = "Bearer " + apiKey };
-            AndroidHttpResponse response = await _network.PostJsonAsync(url, payload, _settings.TimeoutSeconds, headers).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) throw new HttpRequestException($"LLM request failed ({response.StatusCode}): {response.Body}");
-            using JsonDocument json = JsonDocument.Parse(response.Body);
-            string text = json.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(delta)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, delta, Vector2.Zero, text, entity.Id));
-            if (!string.IsNullOrWhiteSpace(completed)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, completed, Vector2.Zero, text, entity.Id));
+            List<RuntimeLlmChatMessage> conversation = messages.ToList();
+            if (_settings.EnableMemory || _settings.EnableSkills)
+            {
+                foreach (RuntimeLlmTool tool in AndroidSkillToolCatalog.Create(_projectDirectory, _settings).Where(tool => tools.All(item => !string.Equals(item.Name, tool.Name, StringComparison.OrdinalIgnoreCase))))
+                    tools = [.. tools, tool];
+            }
+            for (int round = 0; round <= maxToolRounds; round++)
+            {
+                object payload = new
+                {
+                    model = _settings.Model,
+                    messages = conversation.Select(ToProviderMessage).ToArray(),
+                    stream = false,
+                    temperature = _settings.DefaultTemperature,
+                    tools = tools.Length == 0 ? null : tools.Select(tool => new { type = "function", function = new { name = tool.Name, description = tool.Description, parameters = JsonSerializer.Deserialize<JsonElement>(tool.ParametersJsonSchema) } }).ToArray()
+                };
+                AndroidHttpResponse response = await _network.PostJsonAsync(url, payload, _settings.TimeoutSeconds, headers).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) throw new HttpRequestException($"LLM request failed ({response.StatusCode}): {response.Body}");
+                using JsonDocument json = JsonDocument.Parse(response.Body);
+                JsonElement message = json.RootElement.GetProperty("choices")[0].GetProperty("message");
+                string text = message.TryGetProperty("content", out JsonElement content) && content.ValueKind == JsonValueKind.String ? content.GetString() ?? string.Empty : string.Empty;
+                JsonElement calls = message.TryGetProperty("tool_calls", out JsonElement toolCalls) ? toolCalls : default;
+                if (calls.ValueKind != JsonValueKind.Array || calls.GetArrayLength() == 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(delta)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, delta, Vector2.Zero, text, entity.Id));
+                    if (!string.IsNullOrWhiteSpace(completed)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, completed, Vector2.Zero, text, entity.Id));
+                    return;
+                }
+                List<RuntimeLlmToolCall> parsedCalls = [];
+                foreach (JsonElement call in calls.EnumerateArray())
+                {
+                    string callId = call.GetProperty("id").GetString() ?? Guid.NewGuid().ToString("N");
+                    JsonElement function = call.GetProperty("function");
+                    parsedCalls.Add(new RuntimeLlmToolCall(callId, function.GetProperty("name").GetString() ?? string.Empty, function.GetProperty("arguments").GetString() ?? "{}"));
+                }
+                conversation.Add(new RuntimeLlmChatMessage("assistant", text) { ToolCalls = parsedCalls });
+                foreach (RuntimeLlmToolCall call in parsedCalls)
+                {
+                    DispatchToolEvent(entity, id, toolCallCallback, "tool_call", call, null);
+                    RuntimeLlmTool? tool = tools.FirstOrDefault(item => string.Equals(item.Name, call.Name, StringComparison.OrdinalIgnoreCase));
+                    string result = tool is null ? $"Tool '{call.Name}' is not registered." : await ExecuteToolAsync(entity, tool, call, token).ConfigureAwait(false);
+                    DispatchToolEvent(entity, id, toolResultCallback, "tool_result", call, result);
+                    conversation.Add(new RuntimeLlmChatMessage("tool", result) { ToolCallId = call.Id });
+                }
+            }
+            throw new InvalidOperationException($"LLM tool call loop exceeded maxToolRounds={maxToolRounds}.");
         }
         catch (Exception ex) when (!token.IsCancellationRequested)
         { if (!string.IsNullOrWhiteSpace(error)) _dispatchEvent(new AndroidRuntimeEvent("llm", id, error, Vector2.Zero, ex.Message, entity.Id)); }
         finally { if (_requests.Remove(id, out CancellationTokenSource? source)) source.Dispose(); }
+    }
+
+    private async Task<string> ExecuteToolAsync(AndroidScriptEntity entity, RuntimeLlmTool tool, RuntimeLlmToolCall call, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (tool.Handler is not null)
+            return await tool.Handler(call, token).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(tool.CallbackName))
+            return await _invokeScriptTool(entity, tool.CallbackName, call).ConfigureAwait(false) ?? "{}";
+        return await AndroidSkillToolCatalog.InvokeAsync(_projectDirectory, tool.Name, call.ArgumentsJson, token).ConfigureAwait(false);
+    }
+
+    private static object ToProviderMessage(RuntimeLlmChatMessage message)
+    {
+        if (message.ToolCalls.Count > 0)
+        {
+            return new
+            {
+                role = "assistant",
+                content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+                tool_calls = message.ToolCalls.Select(call => new
+                {
+                    id = call.Id,
+                    type = "function",
+                    function = new { name = call.Name, arguments = call.ArgumentsJson }
+                }).ToArray()
+            };
+        }
+
+        if (string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))
+        {
+            return new
+            {
+                role = "tool",
+                content = message.Content,
+                tool_call_id = message.ToolCallId
+            };
+        }
+
+        return new { role = message.Role, content = message.Content };
+    }
+
+    private void DispatchToolEvent(AndroidScriptEntity entity, string requestId, string callback, string eventName, RuntimeLlmToolCall call, string? result)
+    {
+        if (string.IsNullOrWhiteSpace(callback)) return;
+        _dispatchEvent(new AndroidRuntimeEvent("llm", requestId, callback, Vector2.Zero, string.Empty, entity.Id, call, result ?? string.Empty));
     }
     private static string Sanitize(string value) => string.IsNullOrWhiteSpace(value) ? "character" : string.Concat(value.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_'));
     public async Task<string> ChatAsync(string baseUrl, string model, string prompt, string apiKey = "", float? temperature = null, int timeoutSeconds = 60)

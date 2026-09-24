@@ -46,8 +46,30 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<ScriptExecutionKey, AndroidScriptExecutionContext> _executionContexts = [];
     private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
+    private RuntimeEntity? _loadingEntity;
+    private IReadOnlyList<ScriptBinding> _loadingBindings = [];
     private double _fps;
     private bool _disposed;
+
+    public AndroidScriptGlobals CreateLoadingGlobals(RuntimeScene scene, RuntimeEntity entity, AndroidInputSnapshot input)
+        => CreateExecutionContext(scene, entity, input).Globals;
+
+    public void DispatchLoadingEvent(
+        RuntimeScene scene,
+        RuntimeEntity entity,
+        IEnumerable<ScriptBinding> bindings,
+        string eventName,
+        float progress,
+        string message)
+    {
+        if (_disposed) return;
+        AndroidRuntimeEvent runtimeEvent = new(
+            "loading", Guid.NewGuid().ToString("N"), eventName, Vector2.Zero, message, entity.Id, Progress: progress);
+        foreach (ScriptBinding binding in bindings.Where(IsSupported))
+        {
+            Execute(binding, scene, entity, 0.0f, false, runtimeEvent, AndroidInputSnapshot.Empty);
+        }
+    }
 
     public AndroidCSharpScriptHost(
         string projectDirectory,
@@ -87,12 +109,37 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     public void Start(RuntimeScene scene)
     {
+        ArgumentNullException.ThrowIfNull(scene);
         foreach (RuntimeEntity entity in scene.Entities)
         {
             foreach (ScriptBinding binding in entity.Definition.Scripts.Where(IsSupported))
             {
                 Execute(binding, scene, entity, 0.0f, true, input: AndroidInputSnapshot.Empty);
             }
+        }
+    }
+
+    public void StartLoading(RuntimeScene scene)
+    {
+        _loadingEntity = new RuntimeEntity(new GameEntity
+        {
+            Id = "__scene_loading__",
+            Name = scene.Name,
+            Type = "scene"
+        });
+        _loadingBindings = scene.Definition.LoadingScripts.Where(IsSupported).ToArray();
+        DispatchLoadingEvent(scene, _loadingEntity, _loadingBindings, "loading_started", 0.0f, $"Loading scene: {scene.Name}");
+    }
+
+    public void UpdateLoading(RuntimeScene scene, float progress, string message, bool completed)
+    {
+        if (_loadingEntity is null) return;
+        DispatchLoadingEvent(scene, _loadingEntity, _loadingBindings,
+            completed ? "loading_completed" : "loading_progress", progress, message);
+        if (completed)
+        {
+            _loadingEntity = null;
+            _loadingBindings = [];
         }
     }
 
@@ -130,6 +177,52 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
     }
 
+    public Task<string?> InvokeLlmToolAsync(
+        RuntimeScene scene,
+        RuntimeEntity target,
+        string callbackName,
+        RuntimeLlmToolCall toolCall)
+    {
+        if (_disposed) return Task.FromResult<string?>(null);
+        AndroidRuntimeEvent runtimeEvent = new(
+            "llm",
+            Guid.NewGuid().ToString("N"),
+            "tool_execute",
+            Vector2.Zero,
+            string.Empty,
+            target.Id,
+            toolCall,
+            Error: string.Empty);
+        runtimeEvent = runtimeEvent with { EventName = callbackName };
+        foreach (ScriptBinding binding in target.Definition.Scripts.Where(IsSupported))
+        {
+            string path = GameProjectPath.ToAbsolute(_projectDirectory, binding.Path);
+            if (!_runners.TryGetValue(path, out AndroidCompiledScript? runner)) continue;
+            ScriptExecutionKey key = new(scene, target, path);
+            if (!_executionContexts.TryGetValue(key, out AndroidScriptExecutionContext? context))
+            {
+                context = CreateExecutionContext(scene, target, AndroidInputSnapshot.Empty);
+                _executionContexts[key] = context;
+            }
+            context.Update(0.0f, false, runtimeEvent, AndroidInputSnapshot.Empty);
+            try
+            {
+                object? result = runner.ExecuteResult(context.Globals, context.SubmissionArray);
+                return Task.FromResult<string?>(result switch
+                {
+                    null => null,
+                    string text => text,
+                    _ => JsonSerializer.Serialize(result)
+                });
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<string?>(JsonSerializer.Serialize(new { error = ex.Message }));
+            }
+        }
+        return Task.FromResult<string?>(null);
+    }
+
     private AndroidScriptExecutionContext CreateExecutionContext(
         RuntimeScene scene,
         RuntimeEntity entity,
@@ -147,6 +240,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _getRenderTexture,
             _listRenderTextures,
             runtimeEvent => DispatchEvent(scene, runtimeEvent),
+            (toolEntity, callbackName, toolCall) => toolEntity.InvokeLlmToolAsync(callbackName, toolCall),
             _llmSettings);
         AndroidScriptInput scriptInput = new(input);
         AndroidScriptGlobals globals = new(
@@ -158,7 +252,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 () => _resolvePmxModel(entity),
                 ResolveScriptAssetPath,
                 (text, callback) => { ServicesTtsSpeak(text); if (!string.IsNullOrWhiteSpace(callback)) DispatchEvent(scene, new AndroidRuntimeEvent("speech", Guid.NewGuid().ToString("N"), callback, Vector2.Zero, text, entity.Id)); },
-                () => AndroidScriptTts.Shared.Stop()),
+                () => AndroidScriptTts.Shared.Stop(),
+                (callbackName, toolCall) => InvokeLlmToolAsync(scene, entity, callbackName, toolCall)),
             scriptInput,
             new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying),
             0.0f,
@@ -469,7 +564,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 or nameof(AndroidScriptGlobals.IsEvent)
                 or nameof(AndroidScriptGlobals.IsGuiEvent)
                 or nameof(AndroidScriptGlobals.IsSpriteEvent)
-                or nameof(AndroidScriptGlobals.IsSpeechEvent))
+                or nameof(AndroidScriptGlobals.IsSpeechEvent)
+                or nameof(AndroidScriptGlobals.IsLoadingEvent)
+                or nameof(AndroidScriptGlobals.IsLlmEvent)
+                or nameof(AndroidScriptGlobals.IsAsrEvent)
+                or nameof(AndroidScriptGlobals.IsRealtimeVoiceEvent))
             .ToArray();
         if (phaseIdentifiers.Any(identifier => HasUnsafeConditionAncestor(identifier, condition)))
         {
@@ -486,7 +585,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             nameof(AndroidScriptGlobals.IsEvent),
             nameof(AndroidScriptGlobals.IsGuiEvent),
             nameof(AndroidScriptGlobals.IsSpriteEvent),
-            nameof(AndroidScriptGlobals.IsSpeechEvent)
+            nameof(AndroidScriptGlobals.IsSpeechEvent),
+            nameof(AndroidScriptGlobals.IsLoadingEvent),
+            nameof(AndroidScriptGlobals.IsLlmEvent),
+            nameof(AndroidScriptGlobals.IsAsrEvent),
+            nameof(AndroidScriptGlobals.IsRealtimeVoiceEvent)
         ]);
         int phaseCount = (start ? 1 : 0) + (update ? 1 : 0) + (runtimeEvent ? 1 : 0);
         if (phaseCount != 1)
@@ -615,17 +718,22 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         public bool IsNoOp => _factory is null;
         public ScriptExecutionPhases Phases { get; }
 
-        public void Execute(AndroidScriptGlobals globals, object?[] submissionArray)
+        public object? ExecuteResult(AndroidScriptGlobals globals, object?[] submissionArray)
         {
             if (_factory is null)
             {
-                return;
+                return null;
             }
 
             submissionArray[0] = globals;
             submissionArray[1] = null;
             Task<object?> task = _factory(submissionArray);
-            task.GetAwaiter().GetResult();
+            return task.GetAwaiter().GetResult();
+        }
+
+        public void Execute(AndroidScriptGlobals globals, object?[] submissionArray)
+        {
+            _ = ExecuteResult(globals, submissionArray);
         }
     }
 
@@ -659,6 +767,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         return binding.Enabled
             && (string.Equals(binding.Language, "csharp", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(binding.Language, "cs", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(binding.Language, "csx", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -666,6 +775,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _loadingEntity = null;
+        _loadingBindings = [];
         _runners.Clear();
         _failedScripts.Clear();
         _executionContexts.Clear();
@@ -679,7 +790,11 @@ public sealed record AndroidRuntimeEvent(
     string EventName,
     Vector2 Position,
     string Text = "",
-    string TargetEntity = "");
+    string TargetEntity = "",
+    RuntimeLlmToolCall? ToolCall = null,
+    string ToolResult = "",
+    string Error = "",
+    float Progress = 0.0f);
 
 public sealed record AndroidRenderTextureInfo(
     string Id,
@@ -821,6 +936,7 @@ public sealed class AndroidScriptEntity
     private readonly Func<string, string> _resolveAssetPath;
     private readonly Action<string, string> _speakWithCallback;
     private readonly Action _stopSpeaking;
+    private readonly Func<string, RuntimeLlmToolCall, Task<string?>> _invokeLlmTool;
 
     internal AndroidScriptEntity(
         RuntimeEntity entity,
@@ -829,7 +945,8 @@ public sealed class AndroidScriptEntity
         Func<PmxModelComponent?> resolvePmxModel,
         Func<string, string>? resolveAssetPath = null,
         Action<string, string>? speakWithCallback = null,
-        Action? stopSpeaking = null)
+        Action? stopSpeaking = null,
+        Func<string, RuntimeLlmToolCall, Task<string?>>? invokeLlmTool = null)
     {
         _entity = entity;
         _applyMotion = applyMotion;
@@ -838,6 +955,7 @@ public sealed class AndroidScriptEntity
         _resolveAssetPath = resolveAssetPath ?? (path => path);
         _speakWithCallback = speakWithCallback ?? ((_, _) => { });
         _stopSpeaking = stopSpeaking ?? (() => { });
+        _invokeLlmTool = invokeLlmTool ?? ((_, _) => Task.FromResult<string?>(null));
     }
 
     public string Id => _entity.Id;
@@ -1083,6 +1201,9 @@ public sealed class AndroidScriptEntity
     public void SpeakWithCallback(string text, int speakerId, float speed, float volume, string callbackName) => _speakWithCallback(text, callbackName);
     public void StopSpeaking() => _stopSpeaking();
 
+    internal Task<string?> InvokeLlmToolAsync(string callbackName, RuntimeLlmToolCall toolCall)
+        => _invokeLlmTool(callbackName, toolCall);
+
     private PmxModelComponent? Pmx => _resolvePmxModel();
     private PmxModelComponent RequirePmx() => Pmx ?? throw new InvalidOperationException("Entity is not a PMX model or its renderer does not expose PMX controls.");
     private string ResolveTextureReference(string value)
@@ -1323,7 +1444,48 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
         base.IsUpdate = isUpdate;
         base.IsGuiEvent = IsGuiEvent;
         base.IsSpriteEvent = IsSpriteEvent;
+        base.IsTrayMenuEvent = IsTrayMenuEvent;
+        base.IsLoadingEvent = IsLoadingEvent;
         base.IsSpeechEvent = IsSpeechEvent;
+        base.IsLlmEvent = IsLlmEvent;
+        base.IsAsrEvent = IsAsrEvent;
+        base.IsRealtimeVoiceEvent = IsRealtimeVoiceEvent;
+        base.LlmEvent = LlmEvent;
+        base.LlmRequestId = LlmRequestId;
+        base.LlmEventName = LlmEventName;
+        base.LlmDelta = LlmDelta;
+        base.LlmText = LlmText;
+        base.LlmIsFinal = LlmIsFinal;
+        base.LlmError = LlmError;
+        base.LlmCallbackName = LlmCallbackName;
+        base.LlmToolCall = LlmToolCall;
+        base.LlmToolCallId = LlmToolCallId;
+        base.LlmToolName = LlmToolName;
+        base.LlmToolArgumentsJson = LlmToolArgumentsJson;
+        base.LlmToolResult = LlmToolResult;
+        base.LoadingEventName = LoadingEventName;
+        base.LoadingProgress = LoadingProgress;
+        base.LoadingMessage = LoadingMessage;
+        base.AsrRequestId = AsrRequestId;
+        base.AsrEventName = AsrEventName;
+        base.AsrText = AsrText;
+        base.AsrIsFinal = AsrIsFinal;
+        base.AsrError = AsrError;
+        base.AsrCallbackName = AsrCallbackName;
+        base.RealtimeVoiceRequestId = RealtimeVoiceRequestId;
+        base.RealtimeVoiceEventName = RealtimeVoiceEventName;
+        base.RealtimeVoiceText = RealtimeVoiceText;
+        base.RealtimeVoiceDelta = RealtimeVoiceDelta;
+        base.RealtimeVoiceAccumulatedText = RealtimeVoiceAccumulatedText;
+        base.RealtimeVoiceIsFinal = RealtimeVoiceIsFinal;
+        base.RealtimeVoiceError = RealtimeVoiceError;
+        base.RealtimeVoiceCallbackName = RealtimeVoiceCallbackName;
+        base.SpriteId = SpriteId;
+        base.SpriteName = SpriteName;
+        base.SpriteEventName = SpriteEventName;
+        base.TrayMenuItemId = TrayMenuItemId;
+        base.TrayMenuItemText = TrayMenuItemText;
+        base.TrayMenuEventName = TrayMenuEventName;
         base.GuiControlId = GuiControlId;
         base.GuiControlName = GuiControlName;
         base.GuiEventName = GuiEventName;
@@ -1364,13 +1526,13 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public string LlmDelta => IsLlmEvent ? Event!.Text : string.Empty;
     public string LlmText => LlmDelta;
     public bool LlmIsFinal => IsLlmEvent && string.Equals(Event!.EventName, "completed", StringComparison.OrdinalIgnoreCase);
-    public string LlmError => string.Empty;
+    public string LlmError => IsLlmEvent ? Event!.Error : string.Empty;
     public string LlmCallbackName => LlmEventName;
-    public dynamic? LlmToolCall => null;
-    public string LlmToolCallId => string.Empty;
-    public string LlmToolName => string.Empty;
-    public string LlmToolArgumentsJson => string.Empty;
-    public string LlmToolResult => string.Empty;
+    public dynamic? LlmToolCall => IsLlmEvent ? Event!.ToolCall : null;
+    public string LlmToolCallId => Event?.ToolCall?.Id ?? string.Empty;
+    public string LlmToolName => Event?.ToolCall?.Name ?? string.Empty;
+    public string LlmToolArgumentsJson => Event?.ToolCall?.ArgumentsJson ?? string.Empty;
+    public string LlmToolResult => IsLlmEvent ? Event!.ToolResult : string.Empty;
     public string AsrRequestId => IsAsrEvent ? Event!.Id : string.Empty;
     public string AsrEventName => IsAsrEvent ? Event!.EventName : string.Empty;
     public string AsrText => IsAsrEvent ? Event!.Text : string.Empty;
@@ -1395,8 +1557,8 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new string GuiEventName => IsGuiEvent ? Event!.EventName : string.Empty;
     public new string SpeechCallbackName => IsSpeechEvent ? Event!.EventName : string.Empty;
     public string LoadingEventName => IsLoadingEvent ? Event!.EventName : string.Empty;
-    public float LoadingProgress => 0.0f;
-    public string LoadingMessage => string.Empty;
+    public float LoadingProgress => IsLoadingEvent ? Event!.Progress : 0.0f;
+    public string LoadingMessage => IsLoadingEvent ? Event!.Text : string.Empty;
     public string SpriteId => IsSpriteEvent ? Event!.Id : string.Empty;
     public string SpriteName => IsSpriteEvent ? Event!.Text : string.Empty;
     public string SpriteEventName => IsSpriteEvent ? Event!.EventName : string.Empty;
@@ -1423,6 +1585,47 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
         base.GuiControlName = GuiControlName;
         base.GuiEventName = GuiEventName;
         base.SpeechCallbackName = SpeechCallbackName;
+        base.IsTrayMenuEvent = IsTrayMenuEvent;
+        base.IsLoadingEvent = IsLoadingEvent;
+        base.IsLlmEvent = IsLlmEvent;
+        base.IsAsrEvent = IsAsrEvent;
+        base.IsRealtimeVoiceEvent = IsRealtimeVoiceEvent;
+        base.LlmEvent = LlmEvent;
+        base.LlmRequestId = LlmRequestId;
+        base.LlmEventName = LlmEventName;
+        base.LlmDelta = LlmDelta;
+        base.LlmText = LlmText;
+        base.LlmIsFinal = LlmIsFinal;
+        base.LlmError = LlmError;
+        base.LlmCallbackName = LlmCallbackName;
+        base.LlmToolCall = LlmToolCall;
+        base.LlmToolCallId = LlmToolCallId;
+        base.LlmToolName = LlmToolName;
+        base.LlmToolArgumentsJson = LlmToolArgumentsJson;
+        base.LlmToolResult = LlmToolResult;
+        base.LoadingEventName = LoadingEventName;
+        base.LoadingProgress = LoadingProgress;
+        base.LoadingMessage = LoadingMessage;
+        base.AsrRequestId = AsrRequestId;
+        base.AsrEventName = AsrEventName;
+        base.AsrText = AsrText;
+        base.AsrIsFinal = AsrIsFinal;
+        base.AsrError = AsrError;
+        base.AsrCallbackName = AsrCallbackName;
+        base.RealtimeVoiceRequestId = RealtimeVoiceRequestId;
+        base.RealtimeVoiceEventName = RealtimeVoiceEventName;
+        base.RealtimeVoiceText = RealtimeVoiceText;
+        base.RealtimeVoiceDelta = RealtimeVoiceDelta;
+        base.RealtimeVoiceAccumulatedText = RealtimeVoiceAccumulatedText;
+        base.RealtimeVoiceIsFinal = RealtimeVoiceIsFinal;
+        base.RealtimeVoiceError = RealtimeVoiceError;
+        base.RealtimeVoiceCallbackName = RealtimeVoiceCallbackName;
+        base.SpriteId = SpriteId;
+        base.SpriteName = SpriteName;
+        base.SpriteEventName = SpriteEventName;
+        base.TrayMenuItemId = TrayMenuItemId;
+        base.TrayMenuItemText = TrayMenuItemText;
+        base.TrayMenuEventName = TrayMenuEventName;
     }
 }
 
@@ -1458,6 +1661,7 @@ public sealed class AndroidScriptServices
         Func<string, AndroidRenderTextureInfo?> getRenderTexture,
         Func<IReadOnlyList<AndroidRenderTextureInfo>> listRenderTextures,
         Action<AndroidRuntimeEvent> dispatchEvent,
+        Func<AndroidScriptEntity, string, RuntimeLlmToolCall, Task<string?>> invokeScriptTool,
         GameProjectLlmSettings llmSettings)
     {
         _scene = scene;
@@ -1473,7 +1677,7 @@ public sealed class AndroidScriptServices
         string saveRoot = global::Android.App.Application.Context.FilesDir?.AbsolutePath
             ?? Path.Combine(projectDirectory, "saves");
         Save = new AndroidScriptSaveStore(Path.Combine(saveRoot, "saves"));
-        Llm = new AndroidScriptLlm(Network, dispatchEvent, llmSettings, projectDirectory);
+        Llm = new AndroidScriptLlm(Network, dispatchEvent, llmSettings, projectDirectory, invokeScriptTool);
         Tts = AndroidScriptTts.Shared;
         Realtime = AndroidScriptRealtime.Shared;
         RealtimeVoice = new AndroidScriptRealtimeVoice(dispatchEvent);

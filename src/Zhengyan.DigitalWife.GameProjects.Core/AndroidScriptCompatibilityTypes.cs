@@ -2,8 +2,41 @@ using System.Numerics;
 
 namespace Zhengyan.DigitalWife.GameProjects;
 
-public sealed record RuntimeLlmChatMessage(string Role, string Content);
-public sealed record RuntimeLlmTool(string Name, string Description = "", string ParametersJsonSchema = "{}");
+public sealed record RuntimeLlmChatMessage(string Role, string Content)
+{
+    public string? ToolCallId { get; init; }
+    public IReadOnlyList<RuntimeLlmToolCall> ToolCalls { get; init; } = [];
+}
+public sealed record RuntimeLlmToolCall(string Id, string Name, string ArgumentsJson);
+public sealed record RuntimeLlmTool(string Name, string Description = "", string ParametersJsonSchema = "{}")
+{
+    public string CallbackName { get; init; } = string.Empty;
+    public Func<RuntimeLlmToolCall, CancellationToken, Task<string>>? Handler { get; init; }
+
+    public RuntimeLlmTool(string name, string description, string parametersJsonSchema, Func<RuntimeLlmToolCall, CancellationToken, Task<string>> handler)
+        : this(name, description, parametersJsonSchema)
+    {
+        Handler = handler;
+    }
+
+    public RuntimeLlmTool(string name, string description, string parametersJsonSchema, Func<string, string> handler)
+        : this(name, description, parametersJsonSchema)
+    {
+        Handler = (call, _) => Task.FromResult(handler(call.ArgumentsJson));
+    }
+}
+
+public sealed record RuntimeLlmScriptTool(
+    string Name,
+    string Description,
+    string ParametersJsonSchema,
+    string CallbackName)
+{
+    public RuntimeLlmTool ToTool(object? entity = null, object? scene = null) => new(Name, Description, ParametersJsonSchema)
+    {
+        CallbackName = CallbackName
+    };
+}
 
 public sealed class RuntimeDialogueBubble
 {
