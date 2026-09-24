@@ -37,8 +37,23 @@ public sealed class OpenGlRenderer : IRenderer
             throw new InvalidOperationException("The OpenGL renderer is already initialized.");
         }
 
+        Initialize(window.CreateOpenGLES(), backBufferSize, requestedSamples);
+    }
+
+    /// <summary>
+    /// Attaches to a current GLES context owned by a platform host. The renderer
+    /// owns the GL bindings; the host retains the context and presents its surface.
+    /// </summary>
+    public void Initialize(GL gl, Vector2D<int> backBufferSize, int requestedSamples)
+    {
+        ArgumentNullException.ThrowIfNull(gl);
+        if (_gl is not null)
+        {
+            throw new InvalidOperationException("The OpenGL renderer is already initialized.");
+        }
+
         RequestedAntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
-        _gl = window.CreateOpenGLES();
+        _gl = gl;
         int actualSamples = 1;
         try
         {

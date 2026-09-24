@@ -2,8 +2,10 @@ using Android.Opengl;
 using Android.Util;
 using Android.Views;
 using System.Numerics;
+using Silk.NET.Maths;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
+using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using EGLConfig = Android.Opengl.EGLConfig;
 using EGLContext = Android.Opengl.EGLContext;
 using EGLDisplay = Android.Opengl.EGLDisplay;
@@ -23,7 +25,7 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     private EGLDisplay? _display;
     private EGLContext? _context;
     private EGLSurface? _surface;
-    private AndroidPmxSceneRenderer? _sceneRenderer;
+    private AndroidSceneGame? _game;
     private RuntimeSceneManager? _sceneManager;
     private AndroidCSharpScriptHost? _scriptHost;
     private AndroidAudioHost? _audioHost;
@@ -35,8 +37,6 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     private int _requestedMsaaSamples = 1;
     private int _actualMsaaSamples = 1;
     private long _lastFrameTimeNanos;
-    private double _elapsedSeconds;
-    private double _animationElapsedSeconds;
     private bool _disposed;
     private Vector4 _clearColor = new(0.025f, 0.035f, 0.055f, 1.0f);
 
@@ -44,6 +44,9 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
 
     public void SetProject(GameProject? project, string? projectDirectory)
     {
+        if (_game is not null) MakeCurrent();
+        _game?.Dispose();
+        _game = null;
         _sceneManager?.Dispose();
         _sceneManager = null;
         _scriptHost?.Dispose();
@@ -57,7 +60,9 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             _sceneManager = new RuntimeSceneManager(
                 project,
                 _projectDirectory,
-                idOrName => _sceneRenderer?.TryResetPhysics(idOrName) == true);
+                idOrName => _game?.TryResetPhysics(idOrName) == true,
+                (id, collider) => _game?.TryCreateMeshCollider(id, collider),
+                (id, node) => _game?.TryGetNodeWorld(id, node));
             _audioHost = new AndroidAudioHost(_projectDirectory);
             _scriptHost = new AndroidCSharpScriptHost(
                 _projectDirectory,
@@ -65,21 +70,21 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 (scene, name) => _audioHost?.Play(scene, name) == true,
                 name => _audioHost?.Pause(name) == true,
                 name => _audioHost?.Stop(name) == true,
-                name => _sceneRenderer?.RequestRenderTextureRefresh(name) == true,
-                (name, mode, interval) => _sceneRenderer?.ConfigureRenderTexture(name, mode, interval) == true,
-                name => _sceneRenderer?.GetRenderTexture(name),
-                () => _sceneRenderer?.GetRenderTextures() ?? [],
+                name => _game?.RequestRenderTextureRefresh(name) == true,
+                (name, mode, interval) => _game?.ConfigureRenderTexture(name, mode, interval) == true,
+                name => _game?.GetRenderTexture(name),
+                () => _game?.GetRenderTextures() ?? [],
                 ApplyMotion,
-                (entity, frame, playing) => _sceneRenderer?.TrySetMotionState(entity.Id, frame, playing),
-                resolvePmxModel: null,
+                (entity, frame, playing) => _game?.TrySetMotionState(entity.Id, frame, playing),
+                resolvePmxModel: entity => _game?.GetPmxModel(entity.Id),
                 setAudioVolume: (name, volume) => _audioHost?.SetVolume(name, volume) == true,
                 setAudioLoop: (name, loop) => _audioHost?.SetLoop(name, loop) == true,
                 isAudioPlaying: name => _audioHost?.IsPlaying(name) == true,
                 llmSettings: project.Llm);
-            _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
             _sceneManager.LoadInitial();
+            _sceneManager.SceneChanged += OnSceneChanged;
         }
         SetClearColor(_sceneManager?.Current?.Definition.Lighting.ClearColor ?? project?.Scene.Lighting.ClearColor);
         if (_display is not null && _context is not null && _surface is not null)
@@ -121,7 +126,7 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             throw CreateEglException("EGL initialization failed");
         }
 
-        _requestedMsaaSamples = NormalizeMsaa(_project?.Window.AntiAliasingSamples ?? 1);
+        _requestedMsaaSamples = _project is null ? 1 : AndroidSceneGame.ResolveAntiAliasingSamples(_project);
         EGLConfig? config = null;
         foreach (int samples in ResolveMsaaFallbacks(_requestedMsaaSamples))
         {
@@ -147,18 +152,20 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             }
             config = config
                 ?? throw CreateEglException("No compatible EGL window configuration was found");
-            _context = CreateContext(_display, config, 2);
-            _openGlEsVersion = 2;
-        }
-        else
-        {
-            _openGlEsVersion = 3;
+            // Some EGL implementations advertise the ES2 config bit for an
+            // ES3-capable context. Still require ES3; an ES2 clear-only surface
+            // cannot run the engine's shaders, VAOs and depth texture passes.
+            _context = CreateContext(_display, config, 3);
         }
 
         if (_context is null || _context == EGL14.EglNoContext)
         {
-            throw CreateEglException("OpenGL ES context creation failed");
+            throw CreateEglException("OpenGL ES 3.0 is required to render this project");
         }
+        _openGlEsVersion = 3;
+        int[] actualSamples = new int[1];
+        if (EGL14.EglGetConfigAttrib(_display, config, EglSamples, actualSamples, 0))
+            _actualMsaaSamples = Math.Max(actualSamples[0], 1);
 
         int[] surfaceAttributes = [EGL14.EglNone];
         _surface = EGL14.EglCreateWindowSurface(_display, config, surface, surfaceAttributes, 0);
@@ -182,6 +189,11 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     {
         _width = Math.Max(width, 1);
         _height = Math.Max(height, 1);
+        if (_game is not null)
+        {
+            MakeCurrent();
+            _game.ResizeHosted(new Vector2D<int>(_width, _height));
+        }
     }
 
     public void Render(long frameTimeNanos, AndroidInputSnapshot input)
@@ -196,15 +208,9 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
         {
             deltaSeconds = (frameTimeNanos - _lastFrameTimeNanos) / 1_000_000_000.0;
-            _elapsedSeconds += deltaSeconds;
-            _animationElapsedSeconds += GameProjectTiming.ResolveAnimationElapsedSeconds(
-                _project?.Window.TimingMode,
-                deltaSeconds);
         }
 
         _lastFrameTimeNanos = frameTimeNanos;
-        double seconds = _elapsedSeconds;
-        double animationSeconds = _animationElapsedSeconds;
         RuntimeScene? inputScene = _sceneManager?.Current;
         if (inputScene is not null)
         {
@@ -220,31 +226,20 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             SetClearColor(runtimeScene.Definition.Lighting.ClearColor);
         }
 
-        GLES30.GlViewport(0, 0, _width, _height);
-        GLES30.GlClearColor(
-            _clearColor.X,
-            _clearColor.Y,
-            _clearColor.Z,
-            _clearColor.W);
-        GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
-        if (runtimeScene is not null)
+        if (runtimeScene is not null && _game is not null)
         {
-            _sceneRenderer?.Draw(
-                runtimeScene,
-                _project!.Window.Width,
-                _project.Window.Height,
-                _width,
-                _height,
-                seconds,
-                animationSeconds,
-                (float)Math.Min(deltaSeconds, GameProjectTiming.MaximumPhysicsElapsedSeconds));
-            if (_sceneRenderer is not null)
+            _game.UpdateHosted(deltaSeconds);
+            _game.RenderHostedWithoutPresent(deltaSeconds);
+            foreach (AndroidRuntimeEvent runtimeEvent in _game.DrainRuntimeEvents())
             {
-                foreach (AndroidRuntimeEvent runtimeEvent in _sceneRenderer.DrainRuntimeEvents())
-                {
-                    _scriptHost?.DispatchEvent(runtimeScene, runtimeEvent);
-                }
+                _scriptHost?.DispatchEvent(runtimeScene, runtimeEvent);
             }
+        }
+        else
+        {
+            GLES30.GlViewport(0, 0, _width, _height);
+            GLES30.GlClearColor(_clearColor.X, _clearColor.Y, _clearColor.Z, _clearColor.W);
+            GLES30.GlClear(GLES30.GlColorBufferBit | GLES30.GlDepthBufferBit | GLES30.GlStencilBufferBit);
         }
 
         if (!EGL14.EglSwapBuffers(_display, _surface))
@@ -275,8 +270,8 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             _ = EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
         }
 
-        _sceneRenderer?.Dispose();
-        _sceneRenderer = null;
+        _game?.Dispose();
+        _game = null;
         _ = EGL14.EglMakeCurrent(_display, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext);
         if (_surface is not null && _surface != EGL14.EglNoSurface)
         {
@@ -383,25 +378,33 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
 
     private void ReloadScene()
     {
-        _sceneRenderer?.Dispose();
-        _sceneRenderer = null;
-        if (_project is null || string.IsNullOrWhiteSpace(_projectDirectory))
+        MakeCurrent();
+        _game?.Dispose();
+        _game = null;
+        if (_project is null || string.IsNullOrWhiteSpace(_projectDirectory)
+            || _sceneManager?.Current is not { } runtimeScene)
         {
             return;
         }
 
-        if (_openGlEsVersion < 3)
+        OpenGlRenderer renderer = new();
+        AndroidSceneGame? game = null;
+        try
         {
-            Log.Warn(LogTag, "This device only exposed OpenGL ES 2.0; PMX rendering currently requires OpenGL ES 3.0.");
-            return;
-        }
-
-        _sceneRenderer = new AndroidPmxSceneRenderer();
-        if (_sceneManager?.Current is { } runtimeScene)
-        {
-            _sceneRenderer.Load(runtimeScene, _projectDirectory, _project?.AndroidQuality);
+            Vector2D<int> size = new(_width, _height);
+            renderer.Initialize(AndroidGlesBindings.Create(), size, _requestedMsaaSamples);
+            game = new AndroidSceneGame(_project, runtimeScene, _projectDirectory, renderer, size);
+            game.InitializeHosted();
+            _game = game;
             _audioHost?.StartScene(runtimeScene);
             _scriptHost?.Start(runtimeScene);
+        }
+        catch
+        {
+            _game = null;
+            if (game is not null) game.Dispose();
+            else renderer.Dispose();
+            throw;
         }
     }
 
@@ -431,8 +434,6 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     private void ResetFrameClock()
     {
         _lastFrameTimeNanos = 0;
-        _elapsedSeconds = 0.0;
-        _animationElapsedSeconds = 0.0;
     }
 
     private static InvalidOperationException CreateEglException(string message)
@@ -457,13 +458,13 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         ];
         entity.Definition.IsPlaying = true;
         entity.Definition.PlaybackSpeed = Math.Max(entity.Definition.PlaybackSpeed, 0.0001f);
-        _sceneRenderer?.Load(scene, _projectDirectory, _project?.AndroidQuality);
+        _game?.ApplyMotion(entity, motionPath);
         Log.Info(LogTag, $"Android script applied motion '{motionPath}' to '{entity.Name}'.");
     }
 
     public bool RequestRenderTextureRefresh(string idOrName)
     {
-        return _sceneRenderer?.RequestRenderTextureRefresh(idOrName) == true;
+        return _game?.RequestRenderTextureRefresh(idOrName) == true;
     }
 
     public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)

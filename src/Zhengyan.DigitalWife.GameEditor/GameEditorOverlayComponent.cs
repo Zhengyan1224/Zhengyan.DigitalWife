@@ -30,6 +30,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private bool _packageIncludeSaves;
     private bool _packagePrecompileAndroid = true;
     private bool _packagePrecompileDesktop = true;
+    private string _androidCompatibilityResult = string.Empty;
     private int _selectedMotionAssetIndex;
     private string _particlePreset = "sakura";
     private bool _copyAssets = true;
@@ -792,7 +793,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         {
             try
             {
-                _ = _editorGame.CheckAndroidCompatibility();
+                _androidCompatibilityResult = _editorGame.CheckAndroidCompatibility().ToStatusMessage();
             }
             catch (Exception ex)
             {
@@ -801,6 +802,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         ImGui.TextWrapped("GamePlayer can load either the development project directory or the exported .dwgame package. Desktop and Android C# precompilation remove runtime Roslyn startup work; source scripts remain in the package as a compatibility fallback. Split packages are written as .dwgame.001, .dwgame.002, ... and GamePlayer can start from the .dwgame path or the first .001 part. Encryption prevents casual editing, but the password must still be provided at runtime. Android projects support C# scripts only; desktop sprite features are ignored.");
+        if (!string.IsNullOrWhiteSpace(_androidCompatibilityResult))
+        {
+            ImGui.Separator();
+            ImGui.TextWrapped(_androidCompatibilityResult);
+        }
+
         ImGui.PopID();
     }
 

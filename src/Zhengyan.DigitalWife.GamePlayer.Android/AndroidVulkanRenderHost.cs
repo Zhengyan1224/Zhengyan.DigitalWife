@@ -15,7 +15,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 {
     private const string LogTag = "ZhengyanGamePlayer";
 
-    private AndroidVulkanGame? _game;
+    private AndroidSceneGame? _game;
     private RuntimeSceneManager? _sceneManager;
     private AndroidCSharpScriptHost? _scriptHost;
     private AndroidAudioHost? _audioHost;
@@ -143,6 +143,13 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 _game.UpdateHosted(deltaSeconds);
                 _game.RenderHostedWithoutPresent(deltaSeconds);
                 _game.PresentHosted();
+                if (scene is not null)
+                {
+                    foreach (AndroidRuntimeEvent runtimeEvent in _game.DrainRuntimeEvents())
+                    {
+                        _scriptHost?.DispatchEvent(scene, runtimeEvent);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -222,19 +229,19 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         {
             WaitForIdleAfterPresent = true
         };
-        AndroidVulkanGame? game = null;
+        AndroidSceneGame? game = null;
         try
         {
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618
-            int requestedMsaa = AndroidVulkanGame.ResolveAntiAliasingSamples(_project);
+            int requestedMsaa = AndroidSceneGame.ResolveAntiAliasingSamples(_project);
             // Android Vulkan surfaces are required to use the driver's supported FIFO
             // present mode. Some Mali drivers terminate the process while creating an
             // immediate-mode swapchain, so keep FIFO presentation here; frame pacing
             // remains governed by the Android Choreographer callback.
             renderer.Initialize(source, new Vector2D<int>(_width, _height), requestedMsaa);
-            game = new AndroidVulkanGame(
+            game = new AndroidSceneGame(
                 _project, scene, _projectDirectory, renderer, new Vector2D<int>(_width, _height));
             game.InitializeHosted();
             _game = game;

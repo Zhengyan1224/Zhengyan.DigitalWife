@@ -72,6 +72,16 @@ internal static class AndroidCSharpScriptPrecompiler
             scripts = entries,
             errors
         }, new JsonSerializerOptions { WriteIndented = true }));
+
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Android C# precompile failed:" + Environment.NewLine
+                + string.Join(Environment.NewLine, errors)
+                + Environment.NewLine
+                + $"Diagnostics were written to '{manifestPath}'.");
+        }
+
         return new AndroidScriptPrecompileResult(entries)
         {
             ManifestPath = manifestPath,

@@ -5,10 +5,11 @@ using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal sealed class AndroidVulkanSpriteComponent(
+internal sealed class AndroidSpriteComponent(
     GameProjectScene scene,
     GameWindowSettings window,
-    Func<string, string> resolvePath) : DrawableGameComponent
+    Func<string, string> resolvePath,
+    IRuntimeTextureProvider? runtimeTextures = null) : DrawableGameComponent
 {
     private readonly Dictionary<string, ITexture2D> _textures = new(StringComparer.OrdinalIgnoreCase);
     private IScreenSpriteRenderer? _renderer;
@@ -16,7 +17,7 @@ internal sealed class AndroidVulkanSpriteComponent(
     protected override void Initialize()
     {
         _renderer = Game?.GraphicsDevice.CreateScreenSpriteRenderer()
-            ?? throw new InvalidOperationException("The Vulkan sprite renderer requires an attached game.");
+            ?? throw new InvalidOperationException("The sprite renderer requires an attached game.");
     }
 
     public override void Draw(GameTime gameTime)
@@ -66,8 +67,21 @@ internal sealed class AndroidVulkanSpriteComponent(
                 && (foreground ? sprite.DrawOrder >= 0 : sprite.DrawOrder < 0))
             .OrderBy(sprite => sprite.DrawOrder))
         {
-            ITexture2D? texture = GetTexture(sprite.Path);
-            if (texture is null) continue;
+            RuntimeTextureHandle handle;
+            Vector4 sourceUv;
+            bool runtimeTexture = sprite.Path.StartsWith("rt:", StringComparison.OrdinalIgnoreCase);
+            if (runtimeTexture)
+            {
+                if (runtimeTextures?.TryGetTextureHandle(sprite.Path, out handle) != true) continue;
+                sourceUv = new Vector4(0, 0, 1, 1);
+            }
+            else
+            {
+                ITexture2D? texture = GetTexture(sprite.Path);
+                if (texture is null) continue;
+                handle = new RuntimeTextureHandle(texture.Backend, texture.LegacyTextureId, texture.NativeResource);
+                sourceUv = sprite.GetSourceUv(texture.Width, texture.Height);
+            }
             LayoutRect localRect = SpriteLayoutResolver.Resolve(
                 sprite,
                 resolvedLayoutWidth,
@@ -80,12 +94,12 @@ internal sealed class AndroidVulkanSpriteComponent(
                 localRect.Width,
                 localRect.Height);
             commands.Add(new ScreenSpriteDrawCommand(
-                new RuntimeTextureHandle(texture.Backend, texture.LegacyTextureId, texture.NativeResource),
+                handle,
                 new Vector2(rect.X, rect.Y),
                 new Vector2(rect.X + Math.Max(rect.Width, 1.0f), rect.Y + Math.Max(rect.Height, 1.0f)),
                 sprite.RotationDegrees,
                 sprite.Opacity,
-                false) { SourceUv = sprite.GetSourceUv(texture.Width, texture.Height) });
+                runtimeTexture && handle.Backend == GraphicsBackend.OpenGL) { SourceUv = sourceUv });
         }
 
         _renderer.Draw(commands, width, height);

@@ -5,7 +5,7 @@ using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal sealed class AndroidVulkanRuntimeDebugDrawComponent(AndroidVulkanGame owner) : DrawableGameComponent
+internal sealed class AndroidRuntimeDebugDrawComponent(AndroidSceneGame owner) : DrawableGameComponent
 {
     private ILineRenderer? _renderer;
     protected override void Initialize()
@@ -14,6 +14,9 @@ internal sealed class AndroidVulkanRuntimeDebugDrawComponent(AndroidVulkanGame o
         _renderer = Game.GraphicsDevice.Renderer.Services.CreateLineRenderer();
     }
     public override void Draw(GameTime gameTime)
+        => Draw(gameTime, owner.Camera);
+
+    public void Draw(GameTime gameTime, OrbitCamera camera)
     {
         _ = gameTime;
         IReadOnlyList<RuntimeDebugLine> lines = owner.Scene.Debug.Snapshot();
@@ -23,7 +26,7 @@ internal sealed class AndroidVulkanRuntimeDebugDrawComponent(AndroidVulkanGame o
         {
             Write(vertices, index++, line.Start, line.Color); Write(vertices, index++, line.End, line.Color);
         }
-        _renderer.Draw(vertices, index, owner.Camera.View * owner.Camera.Projection);
+        _renderer.Draw(vertices, index, camera.View * camera.Projection);
     }
     public override void Dispose() { _renderer?.Dispose(); _renderer = null; base.Dispose(); }
     private static void Write(float[] data, int vertex, Vector3 position, Vector4 color)

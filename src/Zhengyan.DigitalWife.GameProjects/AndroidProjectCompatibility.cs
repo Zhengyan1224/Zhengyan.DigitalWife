@@ -82,7 +82,7 @@ public static class AndroidProjectCompatibility
         AnalyzeProjectSettings(project, issues);
 
         GameProjectStore.NormalizeScenes(project);
-        foreach (string scenePath in project.Scenes)
+        foreach (string scenePath in project.Scenes.Append(project.EditorScene).Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             GameProjectScene scene;
             try
