@@ -1,6 +1,13 @@
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 
+if (args is ["--sleep-child", string readyPath])
+{
+    File.WriteAllText(readyPath, Environment.ProcessId.ToString());
+    Thread.Sleep(TimeSpan.FromSeconds(30));
+    return 0;
+}
+
 if (args is ["--compile-project", string projectDirectory])
 {
     GameProject project = GameProjectStore.Load(projectDirectory);
@@ -31,4 +38,4 @@ if (args is ["--compile-project", string projectDirectory])
     return failures == 0 ? 0 : 1;
 }
 
-return AndroidRuntimeRegressionTests.Run();
+return AndroidRuntimeRegressionTests.Run(args is ["--test", string filter] ? filter : null);

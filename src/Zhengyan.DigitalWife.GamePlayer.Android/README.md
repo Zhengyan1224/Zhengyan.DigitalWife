@@ -2,6 +2,14 @@
 
 本项目是 Zhengyan DigitalWife 共享运行时的 Android 原生主机，目前提供以下能力：
 
+2026-09-28：GLES / Vulkan 已接入 PC 共用加载画面、C# 加载脚本，以及 LLM 流式工具调用、
+Skills / Memory。编辑器和 Android 现在引用同一套强类型脚本 API，导出时不再使用全 dynamic
+的替代接口。升级后请同时更新 Android 播放器并重新导出 `.dwgame`。
+详见 [当前能力与验证范围](../../docs/android-render-parity.md)。
+
+直接安装或分享 Debug APK 时，构建命令需要添加 `-p:EmbedAssembliesIntoApk=true`。
+否则默认快速部署产物依赖开发工具另行推送程序集，单独安装 APK 不完整。构建仍需 JDK 21。
+
 - 使用 Android `Activity` 管理创建、暂停、恢复和销毁生命周期；
 - 使用 `SurfaceView` 管理渲染表面重建，并通过 `Choreographer` 调度每一帧；
 - 建立 EGL/OpenGL ES 清屏、绘制和画面提交循环；

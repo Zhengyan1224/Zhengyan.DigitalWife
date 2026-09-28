@@ -16,7 +16,7 @@ using Zhengyan.DigitalWife.Llm.OpenAI;
 
 internal static class AndroidRuntimeRegressionTests
 {
-    public static int Run()
+    public static int Run(string? filter = null)
     {
         (string Name, Action Test)[] tests =
         [
@@ -27,9 +27,11 @@ internal static class AndroidRuntimeRegressionTests
             ("Tool round limit prevents extra execution", TestRoundLimit),
             ("HTTP cancellation and scene disposal", TestCancellation),
             ("Skills, memory paths and automatic registration", TestSkills),
+            ("Skill command cancellation stops the child process", TestCommandCancellation),
             ("Editor precompile and encrypted dwgame round trip", TestPackage),
             ("Desktop and Android exports in one process", TestDesktopIsolation)
         ];
+        if (filter is not null) tests = tests.Where(test => test.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToArray();
         int failures = 0;
         foreach (var (name, test) in tests)
         {
@@ -213,6 +215,30 @@ internal static class AndroidRuntimeRegressionTests
         fixture.Globals.Update(0, false, new("loading", "l", "loading_completed", Vector2.Zero, Progress: 1));
         factory([fixture.Globals, null]).GetAwaiter().GetResult();
         Check(fixture.Status == "loading_completed:1.00", "Extracted DLL could not execute against Android globals.");
+    }
+
+    private static void TestCommandCancellation()
+    {
+        using ScriptFixture fixture = new();
+        RuntimeLlmSkillTools catalog = new(fixture.Root, fixture.SaveRoot);
+        RuntimeLlmTool command = catalog.SkillTools.Single(t => t.Name.Contains("command", StringComparison.Ordinal));
+        string readyPath = Path.Combine(fixture.Root, "child-ready.txt");
+        string assemblyPath = typeof(AndroidRuntimeRegressionTests).Assembly.Location;
+        string arguments = JsonSerializer.Serialize(new { command = $"dotnet \"{assemblyPath}\" --sleep-child \"{readyPath}\"", timeoutSeconds = 30 });
+        using CancellationTokenSource cancellation = new();
+        Task<string> execution = command.InvokeAsync(new("child", command.Name, arguments), cancellation.Token);
+        PumpUntil(fixture.Dispatcher, () => execution.IsCompleted || (File.Exists(readyPath) && new FileInfo(readyPath).Length > 0));
+        if (execution.IsCompleted) throw new InvalidOperationException($"Child did not start: {execution.GetAwaiter().GetResult()}");
+        using Process child = Process.GetProcessById(int.Parse(File.ReadAllText(readyPath)));
+        _ = child.StartTime;
+        try
+        {
+            cancellation.Cancel();
+            try { execution.GetAwaiter().GetResult(); throw new Exception("Command ignored cancellation."); }
+            catch (OperationCanceledException) { }
+            Check(child.WaitForExit(2000), "Canceled skill left its child process running.");
+        }
+        finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
     }
 
     private static void TestDesktopIsolation()

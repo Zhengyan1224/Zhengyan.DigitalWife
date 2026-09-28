@@ -1,69 +1,77 @@
-# Android Rendering Parity
+# Android runtime and rendering parity
 
-This document is the working parity matrix for `AndroidVulkanGame`,
-`AndroidPmxSceneRenderer` (OpenGL ES), and the desktop GamePlayer passes.
+The active GLES and Vulkan hosts both use `AndroidSceneGame` and the shared
+`Mmd.Game` components. The older `AndroidPmxSceneRenderer` is not the basis for
+the current parity assessment. Shared code establishes implementation coverage;
+it does not establish identical output on every Android GPU.
 
-## Pass Matrix
+## Current implementation
 
-| Feature | PC | Android Vulkan | Android OpenGL ES | Current status |
-| --- | --- | --- | --- | --- |
-| PMX main material | Shared PMX pass, diffuse/sphere/toon, alpha modes, local lights | Shared Vulkan PMX pass | GLES PMX shader | Aligned for the fixed material contract |
-| PMX skinning | CPU/OpenGL/Vulkan compute paths | CPU or Vulkan compute | CPU or GLES uniform BDEF path, CPU fallback for SDEF/QDEF/morphs | Semantic parity; performance differs |
-| PMX edge | Auxiliary edge pass | Vulkan auxiliary pass | GLES edge pass | Aligned |
-| Directional shadow | PCF directional map | Shared shadow renderer | RGBA-packed depth map, configurable quality size, 3x3 PCF | Aligned in behavior; storage format differs |
-| Point-light shadow | Local-light atlas, up to 2 shadowed point lights | Same atlas path | Two cube shadow maps, up to 2 shadowed point lights | Semantic parity for the supported budget |
-| Spot-light shadow | Local-light atlas, up to 4 shadowed spot lights | Same atlas path | Four independent spot maps, up to 4 shadowed spot lights (quality budget applies) | Aligned for the supported GLES texture-unit budget |
-| Ground shadow | PMX GroundShadow auxiliary pass | Shared auxiliary pass | GLES ground-shadow pass when directional map is unavailable | Aligned |
-| Skybox | Inverse view-projection equirectangular sampling | Fullscreen direction pass | Fullscreen direction pass, clamped vertical wrap | Aligned |
-| Water surface | Gerstner mesh, animated normals, sky/planar reflection, ripples | `VeldridWaterRenderer` | GLES water pass with the same 48-ripple contract | Aligned; texture/FBO implementation differs |
-| Underwater post process | Color + depth capture, fog, absorption, caustics, bubbles, distortion | Vulkan post pass | GLES color + depth FBO and post shader | Aligned |
-| Particle simulation | CPU particle component, per-camera billboard, collision and water interaction | Shared particle component | Deterministic GLES simulation, per-camera geometry rebuild, collision and water interaction | Aligned behavior; implementation differs |
-| Particle shadow | Directional/local light shadow passes | Shared auxiliary passes | GLES particle shadow pass | Aligned |
-| Textured plane | Texture, billboard, shadow receive, mirror reflection | Vulkan plane pass | GLES plane pass, dynamic transform/size/tint | Aligned for fixed texture path |
-| Planar reflection | Per-surface target, one-level recursion | Vulkan render target | GLES FBO target, one-level recursion | Aligned |
-| RenderTexture | Every-frame/fixed-rate/on-demand | Shared render-target manager | GLES FBO manager with normalized refresh modes | Aligned |
-| Camera viewports | Local clear, camera aspect, overlay layout | Vulkan viewport loop | GLES viewport loop with local sprite layout | Aligned |
-| Runtime debug lines | Line renderer | Vulkan line renderer | GLES line renderer | Aligned |
-| Screen sprites | Backend screen-sprite renderer | Vulkan sprite renderer | GLES overlay quad renderer | Aligned for scene sprites |
+| Feature | Android GLES | Android Vulkan | Scope |
+| --- | --- | --- | --- |
+| PMX materials, edges, particles, water, planes, skybox | Shared components | Shared components | Driver output still needs device comparison |
+| Directional and local shadows, reflections, render textures | Shared pass abstractions | Shared pass abstractions | Android quality budgets still apply |
+| Custom PMX shaders, uniforms and material texture overrides | Wired through `PmxModelComponent` | Wired through `PmxModelComponent` | GLES shader source and Vulkan SPIR-V have different contracts; test each asset on both backends |
+| Scene loading screen | Shared desktop `LoadingScreenComponent` | Same component, Vulkan renderer | Background color/image/opacity and full progress-bar layout, border and padding |
+| C# loading scripts | Implemented | Implemented | `loading_started`, `loading_progress`, `loading_completed`; Android also reports `loading_failed` |
+| C# publication | Shared typed Android API and compiler | Same | Editor emits `compiled/android/manifest.json` and DLLs; player consumes the same globals type |
+| LLM streaming and tool calls | Shared desktop `RuntimeLlm` | Same | Multi-round calls, script tool callbacks, native-tool/text-protocol fallback, cancellation and round limits |
+| Skills and memory | Shared desktop `RuntimeLlmSkillTools` | Same | Controlled by `Project.Llm.EnableSkills` / `EnableMemory`; memory uses `Save.SaveDirectory/memory` |
+| Scene audio | Android `MediaPlayer` | Same | Preloaded during scene loading; play/pause/stop/loop/volume supported |
+| Spatial audio mixing | Deferred | Deferred | Desktop's OpenAL source/listener features need an Android native backend and shared scene/script configuration |
+| OpenCL | Not enabled | Not enabled | GLES uses CPU; Vulkan can use configured Vulkan Compute with CPU fallback |
+| Python, desktop window control, desktop sprite windows | Outside Android scope | Same | No implementation added |
 
-## Backend-Specific Differences
+## Loading and callbacks
 
-These are intentional or resource-budget differences rather than missing
-scene semantics:
+Loading displays initial frames before resource work, then advances one resource
+step per frame. Entity `Start` and `Update` are gated until resource loading and
+the loading-script completion event finish. A failed step remains failed and
+does not become a successful completion on the next frame. Scene changes and
+surface recreation reset the loading session and cancel old LLM requests.
 
-1. GLES uses CPU skinning when the model cannot fit the 96-bone uniform path.
-   Vulkan may use compute skinning when enabled and available.
-2. GLES stores directional/spot shadow depth in RGBA8 and samples it manually;
-   Vulkan samples a depth attachment or atlas view.
-3. GLES uses two cube maps for point shadows and four independent 2D maps for
-   spot shadows. The maps use texture units 5, 9, 14 and 15; water and
-   underwater passes use different units and are restored before the material
-   pass.
-4. GLES uses explicit GL state restoration after every auxiliary pass. Vulkan
-   encodes the equivalent state in pipelines.
+The native Activity overlay covers package extraction and initialization before
+the game can draw, and displays errors. Once a game frame is available, the
+shared renderer displays the scene's loading screen. Native game GUI is hidden
+until the scene is ready.
 
-## Remaining Functional Gaps
+LLM notifications retain separate event names and callback names. `LlmDelta` is
+the new text; `LlmText` is accumulated text. Named script tools execute through
+the render-thread dispatcher and return their result to the model with the
+original tool-call ID, following the existing desktop protocol. See the
+[OpenAI function calling guide](https://developers.openai.com/api/docs/guides/function-calling)
+for the underlying Chat Completions exchange.
 
-These items are not silently treated as parity-complete:
+Android Skills commands use `/system/bin/sh` and the app's filesystem permissions.
+Desktop executables and Python installations are not supplied. Android ASR uses
+the device speech recognizer: the exported wake-word API filters recognized text,
+but desktop capture chunk settings cannot be reproduced exactly by that service.
+TTS completion callbacks wait for the Android utterance completion notification.
 
-1. Android GLES does not yet run the desktop custom PMX/plane shader override
-   API. The Vulkan path accepts the portable SPIR-V contract; GLES still uses
-   the built-in Android shader programs.
-2. Runtime PMX material texture overrides and custom shader uniforms are fully
-   wired through the Vulkan component path but are not exposed by the GLES
-   `PmxGpuModel` wrapper.
-3. Full Android APK/device validation still requires JDK 21. The current host
-   has JDK 26, so the static C# compile is the available verification step.
+## Verification
 
-## Regression Checklist
+```powershell
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --compile-project <project-directory>
+dotnet run --project tests/Zhengyan.DigitalWife.PmxParity.Tests
+```
 
-- Skybox top/bottom orientation matches Vulkan.
-- Water reflection is not vertically inverted and remains visible when sky
-  reflection strength is zero but mirror reflection is enabled.
-- Underwater capture contains both color and depth before the post pass.
-- Particle counts remain stable until each particle's own lifetime expires.
-- Rain, Sakura and velocity-aligned particles are visible in both backends.
-- A second camera viewport receives its own sprite layout and particle
-  billboard orientation.
-- Runtime debug lines, ground shadows and disabled entities do not leak into
-  reflection or RenderTexture passes.
+For a standalone Debug APK, build the Android project with
+`-p:EmbedAssembliesIntoApk=true` and the appropriate JDK 21 / Android SDK paths.
+The default fast-deployment APK relies on assemblies supplied by development tools.
+
+The runtime regression suite covers published script execution, lambda callbacks,
+loading failures, streamed tool rounds, script-thread dispatch, protocol fallback,
+cancellation (including child processes launched by Skills), Skills/memory paths, encrypted package round trips, and consecutive
+desktop/Android exports in one process. LLM tests use an in-memory HTTP handler;
+no service credentials or paid requests are required.
+
+The DemoGame01 regression compiles all 11 bound C# scripts unchanged. GameEditor,
+PC GamePlayer, and the Android APK were built with .NET 10; Android requires JDK 21.
+The APK build reports existing native dependency warnings for 16 KB page alignment
+and duplicate SDL libraries. No Android device was connected for this validation.
+
+Device regression is still required for GLES/Vulkan loading screens, custom
+shaders, rendering output, native speech services, background/resume behavior,
+and Android 16 KB page devices. Re-export packages and update the Android player
+together when adopting the new typed scripting assembly.

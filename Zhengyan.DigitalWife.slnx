@@ -13,6 +13,7 @@
     <Project Path="src/Zhengyan.DigitalWife.Audio.PortAudio/Zhengyan.DigitalWife.Audio.PortAudio.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.GameEditor/Zhengyan.DigitalWife.GameEditor.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.GamePlayer/Zhengyan.DigitalWife.GamePlayer.csproj" />
+    <Project Path="src/Zhengyan.DigitalWife.GamePlayer.Android.Scripting/Zhengyan.DigitalWife.GamePlayer.Android.Scripting.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.GameProjects/Zhengyan.DigitalWife.GameProjects.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Llm.OpenAI/Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Mmd.Game/Zhengyan.DigitalWife.Mmd.Game.csproj" />
@@ -21,6 +22,9 @@
     <Project Path="src/Zhengyan.DigitalWife.RealtimeVoice.Client/Zhengyan.DigitalWife.RealtimeVoice.Client.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Speech.SherpaOnnx/Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
     <Project Path="src/Zhengyan.DigitalWife.Speech.WhisperNet/Zhengyan.DigitalWife.Speech.WhisperNet.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zhengyan.DigitalWife.AndroidRuntime.Tests/Zhengyan.DigitalWife.AndroidRuntime.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Zhengyan.DigitalWife.Tools.ApiInspector/Zhengyan.DigitalWife.Tools.ApiInspector.csproj" />

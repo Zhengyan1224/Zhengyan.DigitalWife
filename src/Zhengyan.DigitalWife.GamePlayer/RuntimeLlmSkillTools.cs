@@ -957,15 +957,17 @@ internal sealed class RuntimeLlmSkillTools
             if (OperatingSystem.IsWindows())
             {
                 startInfo.FileName = "cmd.exe";
-                startInfo.ArgumentList.Add("/c");
+                // cmd.exe parses quotes itself, unlike the C runtime quoting
+                // used by ArgumentList. Preserve quoted executable/file paths.
+                startInfo.Arguments = "/d /s /c \"" + parsed.Command + "\"";
             }
             else
             {
                 startInfo.FileName = OperatingSystem.IsAndroid() ? "/system/bin/sh" : "/bin/sh";
                 startInfo.ArgumentList.Add(OperatingSystem.IsAndroid() ? "-c" : "-lc");
+                startInfo.ArgumentList.Add(parsed.Command);
             }
 
-            startInfo.ArgumentList.Add(parsed.Command);
             using Process process = new() { StartInfo = startInfo };
             DateTimeOffset startedAt = DateTimeOffset.UtcNow;
             if (!process.Start())
@@ -982,18 +984,22 @@ internal sealed class RuntimeLlmSkillTools
             {
                 await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
-                timedOut = true;
+                timedOut = !cancellationToken.IsCancellationRequested;
                 try
                 {
                     process.Kill(entireProcessTree: true);
                 }
                 catch
                 {
+                    // Some Android environments cannot enumerate a process tree.
+                    // The process we launched must still be stopped on cancel.
+                    if (!process.HasExited) process.Kill();
                 }
 
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
             }
 
             cancellationToken.ThrowIfCancellationRequested();

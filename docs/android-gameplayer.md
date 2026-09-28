@@ -1,5 +1,9 @@
 # Android GamePlayer 差异清单与完整开发计划
 
+> 2026-09-28 更新：本文件保留早期审计和分阶段路线图。当前 GLES / Vulkan 共用
+> `AndroidSceneGame`；加载画面、C# 加载脚本、LLM 工具调用与 Skills 已接入。
+> 最新实现范围、限制与回归结果见 [Android 当前能力对照](android-render-parity.md)。
+
 > 审计日期：2026-08-17
 > 对照基准：当前仓库中的 PC `Zhengyan.DigitalWife.GamePlayer` 与 Android
 > `Zhengyan.DigitalWife.GamePlayer.Android`
@@ -68,7 +72,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | `.dwgame` 普通包 | 支持缓存和独立保存目录 | 部分（缓存已接入） | Android 使用应用私有 `files/PackageCache` 持久缓存，按包指纹自动失效；LRU 清理策略仍未完成 |
 | 加密/分包 `.dwgame` | 支持密码和多分包 | 已支持 | Android 提供密码重试 UI，并支持 `ACTION_SEND_MULTIPLE`/`ClipData` 导入 `.001/.002/...` 分片 |
 | 多场景和场景切换 | 支持加载界面和脚本事件 | 部分（阶段 3） | 已有同步队列、异步加载、卸载、进度和失败恢复；加载界面/脚本事件待后续阶段 |
-| 加载界面 | 背景图、进度条、加载脚本 | 部分 | 共享层有分阶段进度状态；Android 可视化加载界面和加载脚本待阶段 5/6 |
+| 加载界面 | 背景图、进度条、加载脚本 | 已接入 | GLES / Vulkan 共用 PC 加载组件，按资源逐帧推进，并执行 C# 加载事件 |
 | 运行时实体系统 | `RuntimeScene`/`RuntimeEntity` | 部分（阶段 3） | Android 已接入共享注册表、查询、添加、删除和更新；完整脚本对象待阶段 6 |
 | 空实体 | 支持 | 部分（阶段 3） | 已进入共享运行时注册表，但 Android 暂无可视化组件 |
 | PMX 静态网格 | 完整材质和 Pass | 部分（阶段 1 已完成 Android 主链） | 共享 PC/Android 黄金截图和非均匀缩放矩阵仍需阶段 3 验证 |
@@ -116,7 +120,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | TTS 和口型 | 合成、播放、PMX Morph 驱动 | 缺失 | 需要 Android ABI 的推理库、音频输出和共享口型控制 |
 | 麦克风/ASR | PortAudio/Sherpa/Whisper | 已接入 Android SpeechRecognizer/AudioRecord | 需要运行时 `RECORD_AUDIO` 权限 |
 | Realtime Voice | WebSocket、采音、播放和事件 | 已接入完整 PCM16 双向闭环 | 需要 WebSocket endpoint、API Key 和模型配置 |
-| LLM | Chat、流式、工具调用、Skills/Memory | 缺失 | 没有 Android RuntimeScene、网络服务和安全存储策略 |
+| LLM | Chat、流式、工具调用、Skills/Memory | 已接入 | 复用 PC RuntimeLlm / RuntimeLlmSkillTools；脚本工具回到渲染线程，Memory 使用应用存档目录 |
 | 网络 API | HTTP/运行时封装 | 缺失 | Manifest 权限、客户端生命周期、证书和脚本 API 未接入 |
 | Save | 工程外保存目录 | 缺失 | Loader 创建了保存路径，但没有 `RuntimeSaveStore` 或迁移/备份策略 |
 | Collider/Raycast | Box/Capsule/Mesh、骨骼绑定 | 缺失 | 场景 Collider 与 PMX 内部 Bullet 物理是两套概念；Android 只实现了后者 |

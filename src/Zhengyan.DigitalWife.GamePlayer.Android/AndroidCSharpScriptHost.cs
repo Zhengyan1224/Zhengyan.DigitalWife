@@ -348,7 +348,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         string path = GameProjectPath.ToAbsolute(_projectDirectory, binding.Path);
         if (_runners.TryGetValue(path, out AndroidCompiledScript? cachedRunner))
         {
-            ExecuteCached(cachedRunner, path, scene, entity, deltaSeconds, isStart, runtimeEvent, input);
+            try { ExecuteCached(cachedRunner, path, scene, entity, deltaSeconds, isStart, runtimeEvent, input); }
+            catch (Exception ex) { RecordScriptFailure(path, ex); }
             return;
         }
 
@@ -390,9 +391,16 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
         catch (Exception ex)
         {
-            _failedScripts[path] = version;
-            global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {ex}");
+            RecordScriptFailure(path, ex);
         }
+    }
+
+    private void RecordScriptFailure(string path, Exception error)
+    {
+        _runners.Remove(path);
+        FileInfo source = new(path);
+        _failedScripts[path] = new(source.LastWriteTimeUtc.Ticks, source.Exists ? source.Length : 0);
+        global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {error}");
     }
 
     private void ExecuteCached(
@@ -649,7 +657,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 // Do not assign a file path. Android assemblies commonly have
                 // synthetic locations, and Roslyn otherwise attempts to probe
                 // that path while binding System.Private.CoreLib.
-                return assemblyMetadata.GetReference();
+                return assemblyMetadata.GetReference(aliases: assembly.GetName().Name == "Zhengyan.DigitalWife.Mmd"
+                    ? ["MmdDesktop"] : default);
             }
         }
 
@@ -723,7 +732,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         return binding.Enabled
             && (string.Equals(binding.Language, "csharp", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(binding.Language, "cs", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(binding.Language, "csx", StringComparison.OrdinalIgnoreCase));
+                || string.Equals(binding.Language, "csx", StringComparison.OrdinalIgnoreCase)
+                || (string.IsNullOrWhiteSpace(binding.Language)
+                    && Path.GetExtension(binding.Path).ToLowerInvariant() is ".cs" or ".csx"));
     }
 
     public void Dispose()
