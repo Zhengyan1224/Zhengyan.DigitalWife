@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>$(DefineConstants);ANDROID_SCRIPT_RUNTIME</DefineConstants>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" Aliases="MmdDesktop" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
+    <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeLlm.cs" Link="Shared\RuntimeLlm.cs" />
+    <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeLlmSkillTools.cs" Link="Shared\RuntimeLlmSkillTools.cs" />
+    <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\MainThreadDispatcher.cs" Link="Shared\MainThreadDispatcher.cs" />
+    <InternalsVisibleTo Include="Zhengyan.DigitalWife.GamePlayer.Android" />
+    <InternalsVisibleTo Include="Zhengyan.DigitalWife.AndroidRuntime.Tests" />
+  </ItemGroup>
+</Project>

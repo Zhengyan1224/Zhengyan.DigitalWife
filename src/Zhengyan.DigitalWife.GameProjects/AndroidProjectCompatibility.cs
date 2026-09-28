@@ -125,43 +125,6 @@ public static class AndroidProjectCompatibility
                 scenePath));
         }
 
-        if (scene.GuiControls.Count != 0 || scene.ContextMenus.Count != 0)
-        {
-            issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_GUI_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Warning,
-                "Android renders GUI backgrounds/progress and native Canvas text; touch events are dispatched to C# scripts. Full IME text editing and persistent context-menu state remain limited.",
-                scenePath));
-        }
-
-        if (scene.Sprites.Any(sprite => sprite.Visible))
-        {
-            issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_GAME_SPRITE_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Warning,
-                "Android renders visible game sprites with texture, layout, rotation and opacity; pointer events are dispatched to C# scripts.",
-                scenePath));
-        }
-
-        if (scene.Audio.Any(audio => audio.PlayOnStart))
-        {
-            issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_AUDIO_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Warning,
-                "Android supports PlayOnStart audio and C# play/stop calls through MediaPlayer; advanced spatial mixing is not available.",
-                scenePath));
-        }
-
-        if (scene.LoadingScripts.Any(script => script.Enabled)
-            || !string.IsNullOrWhiteSpace(scene.LoadingScreen.BackgroundImagePath))
-        {
-            issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_LOADING_SCREEN_UNSUPPORTED",
-                AndroidCompatibilitySeverity.Error,
-                "Loading-screen images and loading scripts are not implemented by the current Android runtime.",
-                scenePath));
-        }
-
         if (scene.Skybox.Enabled)
         {
             issues.Add(new AndroidCompatibilityIssue(
@@ -191,7 +154,7 @@ public static class AndroidProjectCompatibility
                     AndroidCompatibilitySeverity.Warning,
                         isPointLight
                         ? "Android renders independent point-light shadow cubemaps for up to two shadow-casting point lights; additional lights remain unshadowed."
-                        : "Android renders independent spot-light shadow maps for up to two shadow-casting spot lights; additional lights remain unshadowed.",
+                        : "Android renders independent spot-light shadow maps for up to four shadow-casting spot lights; additional lights remain unshadowed.",
                     scenePath,
                     entity.Name));
             }
@@ -262,7 +225,7 @@ public static class AndroidProjectCompatibility
             issues.Add(new AndroidCompatibilityIssue(
                 "ANDROID_LOCAL_LIGHT_SHADOW_DEGRADED",
                 AndroidCompatibilitySeverity.Warning,
-                "Android supports directional shadows plus independent shadow maps for up to two point lights and two spot lights; additional local-light maps are budget-limited.",
+                "Android supports directional shadows plus independent shadow maps for up to two point lights and four spot lights; additional local-light maps are budget-limited.",
                 scenePath,
                 entity.Name));
         }
@@ -329,7 +292,7 @@ public static class AndroidProjectCompatibility
                 issues.Add(new AndroidCompatibilityIssue(
                     "ANDROID_CSHARP_PRECOMPILE_REQUIRED",
                     AndroidCompatibilitySeverity.Warning,
-                    $"Enabled C# script '{script.Path}' is compiled in memory by the Android GamePlayer; unsupported APIs and compile/runtime failures are logged.",
+                    $"Enabled C# script '{script.Path}' should be exported with Android C# precompilation enabled. The player prefers the published DLL and uses runtime compilation only for older packages.",
                     scenePath,
                     entityName));
                 continue;

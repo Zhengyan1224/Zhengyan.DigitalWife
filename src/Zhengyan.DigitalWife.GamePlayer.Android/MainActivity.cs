@@ -116,8 +116,10 @@ public sealed class MainActivity : Activity
     private void OnLoadingStateChanged()
     {
         if (_gameView is null || _loadingOverlay is null) return;
-        _loadingOverlay.SetProgress(_gameView.LoadingProgress, _gameView.LoadingMessage);
-        if (_gameView.IsReady) _loadingOverlay.Visibility = ViewStates.Gone;
+        if (_guiOverlay is not null) _guiOverlay.Visibility = _gameView.IsReady ? ViewStates.Visible : ViewStates.Gone;
+        if (_gameView.LoadingError is { } error) _loadingOverlay.SetError(error);
+        else if (_gameView.HasSceneFrame) _loadingOverlay.Visibility = ViewStates.Gone;
+        else _loadingOverlay.SetProgress(_gameView.LoadingProgress, _gameView.LoadingMessage);
     }
 
     private void ShowTextEditor(GuiControlSettings control, LayoutRect rect)

@@ -46,6 +46,8 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     public GameProject? Project => _project;
 
     public bool IsReady => _game?.IsReady == true;
+    public bool HasSceneFrame => _game?.HasDrawnFrame == true;
+    public string? LoadingError => _game?.LoadingError is null ? null : _game.LoadingMessage;
 
     public float LoadingProgress => _game?.LoadingProgress ?? 0.0f;
 
@@ -221,16 +223,18 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
 
         _lastFrameTimeNanos = frameTimeNanos;
         RuntimeScene? inputScene = _sceneManager?.Current;
-        if (inputScene is not null)
+        _scriptHost?.PumpCallbacks();
+        if (inputScene is not null && _scriptsStarted && IsReady)
         {
             DispatchTouchEvents(inputScene, input);
         }
-        _sceneManager?.Update((float)deltaSeconds, ToCameraInput(input));
+        _sceneManager?.Update(_scriptsStarted && IsReady ? (float)deltaSeconds : 0.0f,
+            _scriptsStarted && IsReady ? ToCameraInput(input) : RuntimeCameraInput.None);
 
         RuntimeScene? runtimeScene = _sceneManager?.Current;
         if (runtimeScene is not null)
         {
-            _scriptHost?.Update(runtimeScene, (float)deltaSeconds, input);
+            if (_scriptsStarted && IsReady) _scriptHost?.Update(runtimeScene, (float)deltaSeconds, input);
             _project!.Scene = runtimeScene.Definition;
             SetClearColor(runtimeScene.Definition.Lighting.ClearColor);
         }
@@ -414,8 +418,11 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             _loadingStarted = true;
             _scriptsStarted = false;
             _lastLoadingProgress = -1.0f;
+            _audioHost?.StopAll();
             _scriptHost?.StartLoading(runtimeScene);
-            _audioHost?.StartScene(runtimeScene);
+            foreach (AudioAsset audio in runtimeScene.Definition.Audio)
+                game.EnqueueLoadingStep($"Loading audio: {audio.Name}", () => _audioHost?.LoadAsset(audio));
+            game.EnqueueLoadingStep("Starting scene audio", () => _audioHost?.PlayOnStart(runtimeScene));
         }
         catch
         {
@@ -429,6 +436,12 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     private void ReportLoadingState(RuntimeScene scene)
     {
         if (!_loadingStarted || _scriptHost is null || _game is null) return;
+        if (_game.LoadingError is not null)
+        {
+            _scriptHost.FailLoading(scene, _game.LoadingProgress, _game.LoadingMessage);
+            _loadingStarted = false;
+            return;
+        }
         float progress = _game.LoadingProgress;
         if (!_game.IsReady && Math.Abs(progress - _lastLoadingProgress) < 0.0001f) return;
         _lastLoadingProgress = progress;

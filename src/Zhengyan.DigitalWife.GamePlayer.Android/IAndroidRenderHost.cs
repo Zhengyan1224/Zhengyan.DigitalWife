@@ -8,6 +8,8 @@ internal interface IAndroidRenderHost : IDisposable
     GameProject? Project { get; }
 
     bool IsReady { get; }
+    bool HasSceneFrame { get; }
+    string? LoadingError { get; }
 
     float LoadingProgress { get; }
 

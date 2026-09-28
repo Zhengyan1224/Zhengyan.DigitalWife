@@ -14,11 +14,17 @@
     <type fullname="System.Runtime.CompilerServices.AsyncVoidMethodBuilder" preserve="all" />
   </assembly>
   <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Android">
-    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptScene" preserve="all" />
-    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptSprite" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptInput" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptAsr" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptTts" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptRealtimeVoice" preserve="all" />
     <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptRealtime" preserve="all" />
     <type fullname="Zhengyan.DigitalWife.GamePlayer.Android.AndroidPcmAudioStream" preserve="all" />
   </assembly>
+  <!-- Published scripts are loaded after trimming and can use every public API. -->
+  <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Android.Scripting" preserve="all" />
+  <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Runtime.Core" preserve="all" />
+  <assembly fullname="Zhengyan.DigitalWife.GameProjects.Core" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.Abstractions">
     <type fullname="Zhengyan.DigitalWife.GameProjects.AndroidScriptGlobalsContract" preserve="all" />
   </assembly>

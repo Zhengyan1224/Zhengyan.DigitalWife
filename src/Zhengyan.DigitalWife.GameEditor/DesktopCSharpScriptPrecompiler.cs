@@ -185,8 +185,9 @@ internal static class DesktopCSharpScriptPrecompiler
         foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
         {
             string name = assembly.GetName().Name ?? string.Empty;
-            if (name.StartsWith("Zhengyan.DigitalWife.", StringComparison.Ordinal)
-                && name.EndsWith(".Core", StringComparison.Ordinal))
+            if (name.StartsWith("Zhengyan.DigitalWife.GamePlayer.Android", StringComparison.Ordinal)
+                || (name.StartsWith("Zhengyan.DigitalWife.", StringComparison.Ordinal)
+                    && name.EndsWith(".Core", StringComparison.Ordinal)))
             {
                 continue;
             }

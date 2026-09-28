@@ -42,6 +42,8 @@
         <PackageReference Include="Veldrid.SPIRV" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" />
+        <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Android.Scripting\Zhengyan.DigitalWife.GamePlayer.Android.Scripting.csproj" />
+        <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\LoadingScreenComponent.cs" Link="Shared\LoadingScreenComponent.cs" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Core\Zhengyan.DigitalWife.Mmd.Core.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
         <!-- Mmd.Game depends on the full desktop MMD assembly. Keep that transitive assembly

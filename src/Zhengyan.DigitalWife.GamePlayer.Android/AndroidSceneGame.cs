@@ -68,19 +68,18 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     private string? _activeRenderTextureName;
     private long _reflectionTicks;
     private long _underwaterTicks;
-    private readonly Queue<(string Message, Action Action)> _loadingSteps = new();
-    private int _loadingTotalSteps;
-    private int _loadingCompletedSteps;
-    private bool _loading;
+    private readonly AndroidSceneLoading _loadingSequence = new();
+    private LoadingScreenComponent? _loadingScreen;
+    private readonly HashSet<GameComponent> _pausedLoadingComponents = [];
     internal DrawProfile LastDrawProfile { get; private set; }
 
-    public bool IsReady => !_loading;
+    public bool IsReady => _loadingSequence.IsReady;
+    public bool HasDrawnFrame { get; private set; }
+    public Exception? LoadingError => _loadingSequence.Error;
 
-    public float LoadingProgress => _loadingTotalSteps == 0
-        ? 0.0f
-        : Math.Clamp((float)_loadingCompletedSteps / _loadingTotalSteps, 0.0f, 1.0f);
+    public float LoadingProgress => _loadingSequence.Progress;
 
-    public string LoadingMessage { get; private set; } = "Loading scene...";
+    public string LoadingMessage => _loadingSequence.Message;
 
     public AndroidSceneGame(
         GameProject project,
@@ -100,10 +99,29 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     protected override void Initialize()
     {
         SyncCamera();
-        _loading = true;
-        EnqueueLoadingStep("Loading scene components", () =>
+        _loadingScreen = AddComponent(new LoadingScreenComponent(
+            () => LoadingProgress, () => LoadingMessage,
+            () => _scene.Definition.LoadingScreen, ResolvePath) { DrawOrder = int.MaxValue });
+        foreach (RuntimeEntity entity in _scene.Entities)
         {
-            LoadSceneComponents();
+            RuntimeEntity captured = entity;
+            EnqueueLoadingStep($"Loading entity: {captured.Name}", () =>
+            {
+                if (captured.IsPmxModel) LoadPmx(captured);
+                else if (captured.IsParticleSystem) LoadParticle(captured);
+                else if (captured.IsWaterSurface) LoadWater(captured);
+                else if (captured.IsTexturedPlane) LoadPlane(captured);
+            });
+        }
+        EnqueueLoadingStep("Loading skybox", SyncSkybox);
+        EnqueueLoadingStep("Loading sprites", () =>
+            _spriteComponent = AddComponent(new AndroidSpriteComponent(
+                _scene.Definition, _windowSettings, ResolvePath, this) { DrawOrder = 10000 }));
+        EnqueueLoadingStep("Preparing scene rendering", () =>
+        {
+            BindPmxRelations();
+            RefreshComponentSnapshots();
+            _loadedEntityRevision = _scene.EntityRevision;
             _shadowRenderer = new ShadowMapRenderer(this) { Resolution = _renderPolicy.ShadowMapSize };
             _localLightShadowRenderer = new LocalLightShadowRenderer(this) { Resolution = _renderPolicy.LocalShadowMapSize * 4 };
             _planarReflectionRenderer = new PlanarReflectionRenderer(this);
@@ -116,12 +134,13 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
     public void CompleteInitialization()
     {
-        while (_loading) ProcessLoadingStep();
+        while (!IsReady && LoadingError is null) ProcessLoadingStep();
+        if (LoadingError is not null) throw new InvalidOperationException(LoadingMessage, LoadingError);
     }
 
     protected override void Update(GameTime gameTime)
     {
-        if (_loading)
+        if (!IsReady)
         {
             ProcessLoadingStep();
             return;
@@ -132,37 +151,29 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
     protected override void LateUpdate(GameTime gameTime)
     {
-        if (!_loading) UpdateWaterInteractions(gameTime.TotalSeconds);
+        if (IsReady) UpdateWaterInteractions(gameTime.TotalSeconds);
     }
 
-    private void EnqueueLoadingStep(string message, Action action)
-    {
-        _loadingSteps.Enqueue((message, action));
-        _loadingTotalSteps++;
-        LoadingMessage = message;
-    }
+    internal void EnqueueLoadingStep(string message, Action action) => _loadingSequence.Enqueue(message, action);
 
     private void ProcessLoadingStep()
     {
-        if (_loadingSteps.TryDequeue(out (string Message, Action Action) step))
+        _loadingSequence.Advance();
+        if (_loadingScreen is not null) _loadingScreen.Visible = !IsReady;
+        if (IsReady)
         {
-            LoadingMessage = step.Message;
-            try
-            {
-                step.Action();
-                _loadingCompletedSteps++;
-            }
-            catch (Exception ex)
-            {
-                LoadingMessage = $"Load failed: {ex.Message}";
-                _loadingCompletedSteps = _loadingTotalSteps;
-                _loadingSteps.Clear();
-            }
-            return;
+            foreach (GameComponent component in _pausedLoadingComponents) component.Enabled = true;
+            _pausedLoadingComponents.Clear();
         }
-
-        _loading = false;
-        LoadingMessage = "Loading complete";
+        else
+        {
+            foreach (GameComponent component in Components)
+            {
+                if (!component.Enabled || ReferenceEquals(component, _loadingScreen)) continue;
+                _pausedLoadingComponents.Add(component);
+                component.Enabled = false;
+            }
+        }
     }
 
     public IReadOnlyList<AndroidRuntimeEvent> DrainRuntimeEvents()
@@ -241,10 +252,11 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
     protected override void Draw(GameTime gameTime)
     {
+        HasDrawnFrame = true;
         LastDrawProfile = default;
         _reflectionTicks = 0;
         _underwaterTicks = 0;
-        if (_shadowRenderer is null || _localLightShadowRenderer is null)
+        if (!IsReady || _shadowRenderer is null || _localLightShadowRenderer is null)
         {
             return;
         }
@@ -417,27 +429,6 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             new MotionLayerDefinition(GameProjectPath.ToAbsolute(_projectDirectory, motionPath), 1.0f)
         ]);
         model.IsPlaying = true;
-    }
-
-    private void LoadSceneComponents()
-    {
-        foreach (RuntimeEntity entity in _scene.Entities)
-        {
-            if (entity.IsPmxModel) LoadPmx(entity);
-            else if (entity.IsParticleSystem) LoadParticle(entity);
-            else if (entity.IsWaterSurface) LoadWater(entity);
-            else if (entity.IsTexturedPlane) LoadPlane(entity);
-        }
-
-        SyncSkybox();
-
-        _spriteComponent = AddComponent(new AndroidSpriteComponent(
-            _scene.Definition, _windowSettings, ResolvePath, this) { DrawOrder = 10000 });
-
-        BindPmxRelations();
-
-        RefreshComponentSnapshots();
-        _loadedEntityRevision = _scene.EntityRevision;
     }
 
     private void SyncSkybox()
@@ -1302,6 +1293,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
     public override bool ShouldDrawComponent(DrawableGameComponent component)
     {
+        if (!IsReady) return ReferenceEquals(component, _loadingScreen);
         // World and screen components are rendered explicitly above so that
         // each configured camera receives its own viewport.
         return component is not (PmxModelComponent or TexturedPlaneComponent

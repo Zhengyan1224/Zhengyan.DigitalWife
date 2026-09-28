@@ -961,8 +961,8 @@ internal sealed class RuntimeLlmSkillTools
             }
             else
             {
-                startInfo.FileName = "/bin/sh";
-                startInfo.ArgumentList.Add("-lc");
+                startInfo.FileName = OperatingSystem.IsAndroid() ? "/system/bin/sh" : "/bin/sh";
+                startInfo.ArgumentList.Add(OperatingSystem.IsAndroid() ? "-c" : "-lc");
             }
 
             startInfo.ArgumentList.Add(parsed.Command);

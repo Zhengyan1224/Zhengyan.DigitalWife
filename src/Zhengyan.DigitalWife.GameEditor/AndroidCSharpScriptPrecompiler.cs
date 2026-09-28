@@ -1,14 +1,10 @@
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Emit;
-using System.Reflection;
+extern alias AndroidScripting;
+
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
-using Zhengyan.DigitalWife.Mmd.Game.Pmx;
+using AndroidScriptCompiler = AndroidScripting::Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptCompiler;
+using AndroidScriptGlobals = AndroidScripting::Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptGlobals;
 
 namespace Zhengyan.DigitalWife.GameEditor;
 
@@ -53,7 +49,7 @@ internal static class AndroidCSharpScriptPrecompiler
                 string relativeAssembly = Path.ChangeExtension(relativeSource, ".dll");
                 string assemblyPath = Path.Combine(outputDirectory, relativeAssembly.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(assemblyPath)!);
-                byte[] image = Compile(sourcePath);
+                byte[] image = AndroidScriptCompiler.Compile(sourcePath);
                 File.WriteAllBytes(assemblyPath, image);
                 entries.Add(new AndroidScriptPrecompileEntry(relativeSource, $"{OutputRoot}/{relativeAssembly}", Convert.ToHexString(SHA256.HashData(image))));
             }
@@ -66,9 +62,9 @@ internal static class AndroidCSharpScriptPrecompiler
         string manifestPath = Path.Combine(outputDirectory, "manifest.json");
         File.WriteAllBytes(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new
         {
-            version = 1,
+            version = 2,
             generatedAtUtc = DateTimeOffset.UtcNow,
-            globalsContract = typeof(AndroidScriptGlobalsContract).Assembly.GetName().Name,
+            globalsContract = typeof(AndroidScriptGlobals).Assembly.GetName().Name,
             scripts = entries,
             errors
         }, new JsonSerializerOptions { WriteIndented = true }));
@@ -107,169 +103,4 @@ internal static class AndroidCSharpScriptPrecompiler
             || string.Equals(Path.GetExtension(path), ".cs", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static byte[] Compile(string path)
-    {
-        string scriptSource = File.ReadAllText(path);
-        string compilationBody = string.IsNullOrWhiteSpace(scriptSource) ? "return null;" : scriptSource;
-        string source = "using System;\n"
-            + "using System.Collections.Generic;\n"
-            + "using System.Globalization;\n"
-            + "using System.IO;\n"
-            + "using System.Linq;\n"
-            + "using System.Net;\n"
-            + "using System.Net.Http;\n"
-            + "using System.Net.Sockets;\n"
-            + "using System.Numerics;\n"
-            + "using System.Text;\n"
-            + "using System.Text.Json;\n"
-            + "using System.Text.RegularExpressions;\n"
-            + "using System.Threading;\n"
-            + "using System.Threading.Tasks;\n"
-            + "using Zhengyan.DigitalWife.GameProjects;\n"
-            + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n\n"
-            + compilationBody;
-        CSharpParseOptions parseOptions = new(LanguageVersion.Latest, kind: SourceCodeKind.Script);
-        SyntaxTree parsedTree = CSharpSyntaxTree.ParseText(source, parseOptions, path);
-        SyntaxNode portableRoot = new PortableInterpolatedStringRewriter().Visit(parsedTree.GetRoot())!;
-        SyntaxTree syntaxTree = CSharpSyntaxTree.Create(
-            (CSharpSyntaxNode)portableRoot, parseOptions, path, parsedTree.Encoding);
-        CSharpCompilation compilation = CSharpCompilation.CreateScriptCompilation(
-            "AndroidScript_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).Substring(0, 16),
-            syntaxTree,
-            GetMetadataReferences(),
-            new CSharpCompilationOptions(
-                OutputKind.DynamicallyLinkedLibrary,
-                optimizationLevel: OptimizationLevel.Release,
-                allowUnsafe: true,
-                concurrentBuild: false),
-            returnType: typeof(object),
-            globalsType: typeof(AndroidScriptGlobalsContract));
-
-        using MemoryStream image = new();
-        EmitResult result = compilation.Emit(image);
-        if (!result.Success)
-        {
-            // Emit diagnostics can be empty for script compilations when the
-            // failure is produced by the compilation pipeline itself. Include
-            // the complete compilation diagnostic set as a fallback so export
-            // never fails with an opaque "no diagnostics" message.
-            IEnumerable<Diagnostic> allDiagnostics = result.Diagnostics
-                .Concat(compilation.GetDiagnostics())
-                .GroupBy(diagnostic => diagnostic.ToString(), StringComparer.Ordinal)
-                .Select(group => group.First())
-                .Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning);
-            string diagnostics = string.Join(Environment.NewLine, allDiagnostics.Select(diagnostic => diagnostic.ToString()));
-            if (string.IsNullOrWhiteSpace(diagnostics))
-            {
-                diagnostics = $"Roslyn did not emit an assembly (result.Success={result.Success}, " +
-                    $"diagnosticCount={result.Diagnostics.Length}, compilationDiagnosticCount={compilation.GetDiagnostics().Length}).";
-            }
-            throw new InvalidOperationException(diagnostics);
-        }
-
-        return image.ToArray();
-    }
-
-    private sealed class PortableInterpolatedStringRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode? VisitInterpolatedStringExpression(InterpolatedStringExpressionSyntax node)
-        {
-            List<ExpressionSyntax> values = [];
-            StringBuilder format = new();
-            foreach (InterpolatedStringContentSyntax content in node.Contents)
-            {
-                if (content is InterpolatedStringTextSyntax text)
-                {
-                    format.Append(text.TextToken.ValueText.Replace("{", "{{", StringComparison.Ordinal)
-                        .Replace("}", "}}", StringComparison.Ordinal));
-                    continue;
-                }
-
-                InterpolationSyntax interpolation = (InterpolationSyntax)content;
-                int index = values.Count;
-                values.Add((ExpressionSyntax)Visit(interpolation.Expression)!);
-                format.Append('{').Append(index);
-                if (interpolation.AlignmentClause is not null)
-                    format.Append(',').Append(interpolation.AlignmentClause.Value.ToString());
-                if (interpolation.FormatClause is not null)
-                    format.Append(':').Append(interpolation.FormatClause.FormatStringToken.ValueText);
-                format.Append('}');
-            }
-
-            ExpressionSyntax provider = SyntaxFactory.ParseExpression(
-                "global::System.Globalization.CultureInfo.CurrentCulture");
-            ExpressionSyntax method = SyntaxFactory.ParseExpression("global::System.String.Format");
-            ArrayCreationExpressionSyntax arguments = SyntaxFactory.ArrayCreationExpression(
-                SyntaxFactory.ArrayType(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)))
-                    .WithRankSpecifiers(SyntaxFactory.SingletonList(
-                        SyntaxFactory.ArrayRankSpecifier(
-                            SyntaxFactory.SingletonSeparatedList<ExpressionSyntax>(
-                                SyntaxFactory.OmittedArraySizeExpression())))))
-                .WithInitializer(SyntaxFactory.InitializerExpression(
-                    SyntaxKind.ArrayInitializerExpression,
-                    SyntaxFactory.SeparatedList(values)));
-            return SyntaxFactory.InvocationExpression(method)
-                .WithArgumentList(SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList([
-                    SyntaxFactory.Argument(provider),
-                    SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(
-                        SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(format.ToString()))),
-                    SyntaxFactory.Argument(arguments)
-                ])))
-                .WithTriviaFrom(node);
-        }
-    }
-
-    private static IEnumerable<MetadataReference> GetMetadataReferences()
-    {
-        HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
-        Assembly[] requiredAssemblies =
-        [
-            typeof(object).Assembly,
-            typeof(Console).Assembly,
-            typeof(Task).Assembly,
-            typeof(DateTimeOffset).Assembly,
-            typeof(System.Net.Sockets.Socket).Assembly,
-            typeof(System.Runtime.GCSettings).Assembly,
-            typeof(System.Runtime.CompilerServices.CallSite).Assembly,
-            typeof(System.Linq.Expressions.Expression).Assembly,
-            typeof(System.Dynamic.DynamicObject).Assembly,
-            typeof(System.Runtime.CompilerServices.DynamicAttribute).Assembly,
-            typeof(System.Linq.Enumerable).Assembly,
-            typeof(Vector3).Assembly,
-            typeof(AndroidScriptGlobalsContract).Assembly,
-            typeof(GameProject).Assembly,
-            typeof(PmxModelComponent).Assembly,
-            typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly
-        ];
-        foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
-        {
-            if (assembly.IsDynamic || string.IsNullOrWhiteSpace(assembly.Location) || !File.Exists(assembly.Location)
-                || !paths.Add(Path.GetFullPath(assembly.Location))) continue;
-            yield return MetadataReference.CreateFromFile(assembly.Location);
-        }
-
-        // Keep the runtime binder reference explicit. On some .NET SDK layouts an
-        // AppDomain-loaded facade with the same identity can otherwise hide the
-        // implementation metadata required for dynamic globals in script submissions.
-        string binderPath = typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly.Location;
-        if (File.Exists(binderPath) && paths.Add(Path.GetFullPath(binderPath)))
-        {
-            yield return MetadataReference.CreateFromFile(binderPath);
-        }
-
-        // Include the complete .NET shared-framework reference set. This is
-        // required by dynamic script submissions on machines where the editor's
-        // plugin load context does not have every runtime facade loaded yet.
-        if (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") is string trustedAssemblies)
-        {
-            foreach (string path in trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (File.Exists(path) && paths.Add(Path.GetFullPath(path)))
-                {
-                    yield return MetadataReference.CreateFromFile(path);
-                }
-            }
-        }
-
-    }
 }

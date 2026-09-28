@@ -47,6 +47,8 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public GameProject? Project => _renderHost.Project;
 
     public bool IsReady => _renderHost.IsReady;
+    public bool HasSceneFrame => _renderHost.HasSceneFrame;
+    public string? LoadingError => _renderHost.LoadingError;
 
     public float LoadingProgress => _renderHost.LoadingProgress;
 

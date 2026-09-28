@@ -15,9 +15,8 @@ internal sealed class AndroidAudioHost : IDisposable
 
     public AndroidAudioHost(string projectDirectory) => _projectDirectory = projectDirectory;
 
-    public void StartScene(RuntimeScene scene)
+    public void PlayOnStart(RuntimeScene scene)
     {
-        StopAll();
         foreach (AudioAsset audio in scene.Definition.Audio.Where(asset => asset.PlayOnStart))
         {
             Play(audio);
@@ -105,41 +104,15 @@ internal sealed class AndroidAudioHost : IDisposable
         try { return _players.TryGetValue(key, out MediaPlayer? player) ? player.Duration : 0; } catch { return 0; }
     }
 
-    private bool Play(AudioAsset asset)
+    public void LoadAsset(AudioAsset asset)
     {
+        if (_players.ContainsKey(asset.Name)) return;
         string path = GameProjectPath.ToAbsolute(_projectDirectory, asset.Path);
-        if (!File.Exists(path))
-        {
-            Log.Warn(LogTag, $"Android audio file not found: {path}");
-            return false;
-        }
+        if (!File.Exists(path)) throw new FileNotFoundException("Android audio file not found.", path);
 
-        RegisterAliases(asset);
-        if (_players.TryGetValue(asset.Name, out MediaPlayer? existing))
-        {
-            try
-            {
-                if (_paused.Remove(asset.Name))
-                {
-                    existing.Start();
-                }
-                else
-                {
-                    // OpenAL SourcePlay restarts an already-playing source but
-                    // resumes a paused source. Mirror that distinction here.
-                    existing.SeekTo(0);
-                    existing.Start();
-                }
-                return true;
-            }
-            catch
-            {
-                Stop(asset.Name);
-            }
-        }
+        MediaPlayer player = new();
         try
         {
-            MediaPlayer player = new();
             player.SetAudioAttributes(new AudioAttributes.Builder()!
                 .SetContentType(AudioContentType.Music)!
                 .SetUsage(AudioUsageKind.Game)!
@@ -149,18 +122,34 @@ internal sealed class AndroidAudioHost : IDisposable
             float volume = Math.Clamp(asset.Volume, 0.0f, 1.0f);
             player.SetVolume(volume, volume);
             player.Prepare();
-            player.Start();
-            RegisterAliases(asset);
             _players[asset.Name] = player;
+            RegisterAliases(asset);
+        }
+        catch
+        {
+            player.Dispose();
+            throw;
+        }
+    }
+
+    private bool Play(AudioAsset asset)
+    {
+        try
+        {
+            LoadAsset(asset);
+            MediaPlayer player = _players[asset.Name];
+            // Resume a paused source; explicitly playing any other source restarts it.
+            if (!_paused.Remove(asset.Name)) player.SeekTo(0);
+            player.Start();
             return true;
         }
         catch (Exception ex)
         {
             Log.Warn(LogTag, $"Android audio failed '{asset.Name}': {ex.GetBaseException().Message}");
+            Stop(asset.Name);
             return false;
         }
     }
-
     public void StopAll()
     {
         foreach (MediaPlayer player in _players.Values)

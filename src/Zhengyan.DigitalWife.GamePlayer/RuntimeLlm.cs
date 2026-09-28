@@ -3,6 +3,10 @@ using System.Text.Json;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Llm;
 using Zhengyan.DigitalWife.Llm.OpenAI;
+#if ANDROID_SCRIPT_RUNTIME
+using RuntimeEntity = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptEntity;
+using RuntimeScene = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptScene;
+#endif
 
 namespace Zhengyan.DigitalWife.GamePlayer;
 
@@ -55,13 +59,15 @@ public sealed class RuntimeLlm : IDisposable
         string projectDirectory,
         string saveDirectory,
         MainThreadDispatcher dispatcher,
-        Action<RuntimeEntity, RuntimeLlmScriptEvent> dispatchScriptEvent)
+        Action<RuntimeEntity, RuntimeLlmScriptEvent> dispatchScriptEvent,
+        OpenAiCompatibleLlmClient? client = null)
     {
         _settings = settings;
         _projectDirectory = Path.GetFullPath(projectDirectory);
         _skillTools = new RuntimeLlmSkillTools(_projectDirectory, saveDirectory);
         _dispatcher = dispatcher;
         _dispatchScriptEvent = dispatchScriptEvent;
+        _client = client;
     }
 
     public bool Enabled => _settings.Enabled;
@@ -117,7 +123,7 @@ public sealed class RuntimeLlm : IDisposable
 
         foreach (ActiveLlmRequest request in requests)
         {
-            request.Cancellation.Cancel();
+            TryCancel(request);
         }
     }
 
@@ -135,7 +141,7 @@ public sealed class RuntimeLlm : IDisposable
 
         foreach (ActiveLlmRequest request in requests)
         {
-            request.Cancellation.Cancel();
+            TryCancel(request);
         }
     }
 
@@ -426,6 +432,8 @@ public sealed class RuntimeLlm : IDisposable
                 nativeToolsEnabled = false;
             }
 
+            if (round >= Math.Max(0, maxToolRounds))
+                throw new InvalidOperationException($"LLM tool call loop exceeded maxToolRounds={maxToolRounds}.");
             AddToolCallMessage(conversation, roundLastUpdate, resolvedToolCalls);
 
             foreach (RuntimeLlmToolCall toolCall in toolCalls)
@@ -522,12 +530,19 @@ public sealed class RuntimeLlm : IDisposable
 
         foreach (ActiveLlmRequest request in requests)
         {
-            request.Cancellation.Cancel();
-            request.Cancellation.Dispose();
+            // The worker owns disposal; it may not have started reading its
+            // token yet when a scene is unloaded immediately after StartChat.
+            TryCancel(request);
         }
 
         _client?.Dispose();
         _client = null;
+    }
+
+    private static void TryCancel(ActiveLlmRequest request)
+    {
+        try { request.Cancellation.Cancel(); }
+        catch (ObjectDisposedException) { /* The request finished after the snapshot. */ }
     }
 
     private string StartChatCore(
@@ -563,6 +578,7 @@ public sealed class RuntimeLlm : IDisposable
                 $"[GamePlayer] LLM request start request={resolvedRequestId}, target={callbackTarget.Name}, " +
                 $"model={displayModel}, tools={capturedTools.Count}, messages={capturedMessages.Count}");
             CancellationTokenSource cts = new();
+            CancellationToken requestCancellation = cts.Token;
             ActiveLlmRequest activeRequest = new(resolvedRequestId, cts);
             lock (_sync)
             {
@@ -574,13 +590,14 @@ public sealed class RuntimeLlm : IDisposable
                 string accumulated = string.Empty;
                 try
                 {
+                    requestCancellation.ThrowIfCancellationRequested();
                     void DispatchDelta(RuntimeLlmStreamUpdate update)
                     {
                         accumulated = update.AccumulatedText;
                         RuntimeLlmStreamUpdate capturedUpdate = update;
                         _dispatcher.Post(() =>
                         {
-                            if (_disposed)
+                            if (_disposed || requestCancellation.IsCancellationRequested)
                             {
                                 return;
                             }
@@ -614,11 +631,11 @@ public sealed class RuntimeLlm : IDisposable
                             onToolCallCallback,
                             onToolResultCallback,
                             DispatchDelta,
-                            cts.Token);
+                            requestCancellation);
                     }
                     else
                     {
-                        await foreach (RuntimeLlmStreamUpdate update in StreamChatAsync(capturedMessages, model, temperature, cts.Token))
+                        await foreach (RuntimeLlmStreamUpdate update in StreamChatAsync(capturedMessages, model, temperature, requestCancellation))
                         {
                             DispatchDelta(update);
                         }
@@ -630,7 +647,7 @@ public sealed class RuntimeLlm : IDisposable
                         $"textLength={result.Text.Length}");
                     _dispatcher.Post(() =>
                     {
-                        if (_disposed)
+                        if (_disposed || requestCancellation.IsCancellationRequested)
                         {
                             return;
                         }
@@ -650,7 +667,7 @@ public sealed class RuntimeLlm : IDisposable
                                 null));
                     });
                 }
-                catch (OperationCanceledException) when (cts.IsCancellationRequested || _disposed)
+                catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested || _disposed)
                 {
                     Console.WriteLine(
                         $"[GamePlayer] LLM request canceled request={resolvedRequestId}, " +
@@ -661,7 +678,7 @@ public sealed class RuntimeLlm : IDisposable
                     Console.Error.WriteLine($"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}");
                     _dispatcher.Post(() =>
                     {
-                        if (_disposed)
+                        if (_disposed || requestCancellation.IsCancellationRequested)
                         {
                             return;
                         }
@@ -847,6 +864,8 @@ public sealed class RuntimeLlm : IDisposable
                 nativeToolsEnabled = false;
             }
 
+            if (round >= Math.Max(0, maxToolRounds))
+                throw new InvalidOperationException($"LLM tool call loop exceeded maxToolRounds={maxToolRounds}.");
             AddToolCallMessage(conversation, roundLastUpdate, resolvedToolCalls);
 
             foreach (RuntimeLlmToolCall toolCall in toolCalls)
@@ -1523,7 +1542,7 @@ public sealed record RuntimeLlmScriptTool(
             async (toolCall, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? result = await scene.InvokeLlmToolAsync(entity, CallbackName, toolCall);
+                string? result = await scene.InvokeLlmToolAsync(entity, CallbackName, toolCall).WaitAsync(cancellationToken);
                 return string.IsNullOrWhiteSpace(result) ? "{}" : result;
             });
     }
