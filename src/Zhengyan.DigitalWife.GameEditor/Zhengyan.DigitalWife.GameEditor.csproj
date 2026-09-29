@@ -7,6 +7,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="Zhengyan.DigitalWife.GameEditor.Tests" />
         <PackageReference Include="ImGui.NET" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
         <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />

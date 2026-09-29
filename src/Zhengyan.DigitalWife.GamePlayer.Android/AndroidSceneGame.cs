@@ -787,7 +787,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         int viewportWidth = Math.Clamp((int)MathF.Round(rect.Width), 1, Math.Max(width - x, 1));
         int viewportHeight = Math.Clamp((int)MathF.Round(rect.Height), 1, Math.Max(height - y, 1));
         return new RuntimeViewport(x,
-            GraphicsDevice.Backend == GraphicsBackend.OpenGL ? height - y - viewportHeight : y,
+            GraphicsDevice.ResolveFramebufferViewportY(y, viewportHeight, height),
             viewportWidth, viewportHeight);
     }
 

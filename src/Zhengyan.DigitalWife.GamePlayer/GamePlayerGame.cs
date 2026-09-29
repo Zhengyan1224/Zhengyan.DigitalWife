@@ -404,7 +404,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             int yTop = Math.Clamp((int)MathF.Round(rect.Y), 0, screenHeight - 1);
             int width = Math.Clamp((int)MathF.Round(rect.Width), 1, screenWidth - x);
             int height = Math.Clamp((int)MathF.Round(rect.Height), 1, screenHeight - yTop);
-            int y = ResolveFramebufferViewportY(yTop, height, screenHeight);
+            int y = GraphicsDevice.ResolveFramebufferViewportY(yTop, height, screenHeight);
 
             OrbitCamera camera = _renderTextureManager.ResolveCamera(settings.Name, _camera);
             camera.Width = width;
@@ -561,7 +561,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         int layoutWidth = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
         int layoutHeight = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
-        int viewportY = ResolveLayoutViewportY(y, height, layoutHeight);
+        int viewportY = GraphicsDevice.ResolveLayoutViewportY(y, height, layoutHeight);
         DrawUnderwaterCamera(
             gameTime,
             camera,
@@ -2873,16 +2873,6 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         return GetOverlayComponents().Contains(component);
     }
-
-    private int ResolveFramebufferViewportY(int layoutY, int viewportHeight, int framebufferHeight)
-        => GraphicsDevice.Backend == GraphicsBackend.OpenGL
-            ? Math.Max(framebufferHeight - layoutY - viewportHeight, 0)
-            : Math.Max(layoutY, 0);
-
-    private int ResolveLayoutViewportY(int framebufferY, int viewportHeight, int framebufferHeight)
-        => GraphicsDevice.Backend == GraphicsBackend.OpenGL
-            ? Math.Max(framebufferHeight - framebufferY - viewportHeight, 0)
-            : Math.Max(framebufferY, 0);
 
     private static string NormalizeProjectionMode(string projectionMode)
     {

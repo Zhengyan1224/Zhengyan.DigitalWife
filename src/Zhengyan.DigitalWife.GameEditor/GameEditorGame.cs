@@ -56,7 +56,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         _initialProjectDirectory = string.IsNullOrWhiteSpace(initialProjectDirectory)
             ? null
             : Path.GetFullPath(initialProjectDirectory.Trim().Trim('"'));
-        ProjectDirectory = GameProjectStore.CreateDefaultProjectDirectory();
+        // The overlay captures this directory before Initialize loads the project.
+        ProjectDirectory = _initialProjectDirectory ?? GameProjectStore.CreateDefaultProjectDirectory();
         Project = CreateDefaultProject();
         Project.Runtime.GraphicsBackend = graphicsBackend.ToSettingValue();
         _sceneVmdAnimations = new SceneVmdAnimationController(path => GameProjectPath.ToAbsolute(ProjectDirectory, path));
@@ -211,7 +212,6 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         UpdateStatus($"Project ready: {ProjectDirectory}");
         if (_initialProjectDirectory is not null)
         {
-            ProjectDirectory = _initialProjectDirectory;
             LoadProject();
         }
     }
@@ -359,7 +359,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
             int yTop = Math.Clamp((int)MathF.Round(rect.Y), 0, screenHeight - 1);
             int width = Math.Clamp((int)MathF.Round(rect.Width), 1, screenWidth - x);
             int height = Math.Clamp((int)MathF.Round(rect.Height), 1, screenHeight - yTop);
-            int y = Math.Max(screenHeight - yTop - height, 0);
+            int y = GraphicsDevice.ResolveFramebufferViewportY(yTop, height, screenHeight);
 
             OrbitCamera camera = _renderTextureManager.ResolveCamera(settings.Name, _camera);
             camera.Width = width;
@@ -515,7 +515,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         int layoutWidth = Math.Max(_sceneRenderTarget.Width, 1);
         int layoutHeight = Math.Max(_sceneRenderTarget.Height, 1);
-        int viewportY = Math.Max(layoutHeight - y - height, 0);
+        int viewportY = GraphicsDevice.ResolveLayoutViewportY(y, height, layoutHeight);
         DrawUnderwaterCamera(
             gameTime,
             camera,

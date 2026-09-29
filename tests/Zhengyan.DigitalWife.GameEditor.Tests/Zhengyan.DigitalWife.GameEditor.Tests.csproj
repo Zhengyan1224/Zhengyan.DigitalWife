@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GameEditor\Zhengyan.DigitalWife.GameEditor.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GamePlayer\Zhengyan.DigitalWife.GamePlayer.csproj" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android.Scripting\Zhengyan.DigitalWife.GamePlayer.Android.Scripting.csproj" Aliases="AndroidScripting" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" Aliases="AndroidProjects" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" Aliases="AndroidRuntime" />
+    <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd.Core\Zhengyan.DigitalWife.Mmd.Core.csproj" Aliases="AndroidMmd" />
+  </ItemGroup>
+</Project>

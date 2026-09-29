@@ -73,6 +73,16 @@ public sealed class GraphicsDevice
         _renderer.RestoreBackBuffer();
     }
 
+    /// <summary>Converts a top-left layout Y to the active backend's framebuffer coordinates.</summary>
+    public int ResolveFramebufferViewportY(int layoutY, int viewportHeight, int framebufferHeight)
+        => Backend == GraphicsBackend.OpenGL
+            ? Math.Max(framebufferHeight - layoutY - viewportHeight, 0)
+            : Math.Max(layoutY, 0);
+
+    /// <summary>Converts a framebuffer Y back to top-left layout coordinates, including offscreen targets.</summary>
+    public int ResolveLayoutViewportY(int framebufferY, int viewportHeight, int framebufferHeight)
+        => ResolveFramebufferViewportY(framebufferY, viewportHeight, framebufferHeight);
+
     public void SetViewport(int x, int y, int width, int height) => _renderer.SetViewport(x, y, width, height);
 
     public void SetScissor(int x, int y, int width, int height, bool enabled = true)
