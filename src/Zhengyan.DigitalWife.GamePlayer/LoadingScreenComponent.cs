@@ -111,7 +111,7 @@ internal sealed unsafe class LoadingScreenComponent(
             gl.BindTexture(GLEnum.Texture2D, 0);
         }
 
-        DrawProgressBar(gl, settings);
+        DrawProgressBar(settings, (rect, color) => DrawRect(gl, rect, color, useTexture: false));
 
         _ = _getMessage();
 
@@ -188,25 +188,7 @@ internal sealed unsafe class LoadingScreenComponent(
         if (image is not null)
             _backendRenderer.DrawRect(new Vector4(-1, -1, 1, 1), Vector4.One, image, settings.BackgroundImageOpacity);
 
-        if (!settings.ProgressBar.Visible) return;
-        LoadingProgressBarSettings progress = settings.ProgressBar;
-        LayoutRect pixelRect = LayoutResolver.Resolve(progress.LayoutMode, progress.X, progress.Y, progress.Width, progress.Height,
-            Game.Window.Size.X, Game.Window.Size.Y, 1280, 720);
-        DrawVulkanBar(pixelRect, progress.BorderColor.ToVector4(), progress.BorderThickness);
-        float border = Math.Clamp(progress.BorderThickness, 0, MathF.Min(pixelRect.Width, pixelRect.Height) * .45f);
-        LayoutRect background = new(pixelRect.X + border, pixelRect.Y + border, Math.Max(pixelRect.Width - border * 2, 1), Math.Max(pixelRect.Height - border * 2, 1));
-        DrawVulkanBar(background, progress.BackgroundColor.ToVector4(), 0);
-        float padding = Math.Clamp(progress.Padding, 0, MathF.Min(background.Width, background.Height) * .45f);
-        LayoutRect track = new(background.X + padding, background.Y + padding, Math.Max(background.Width - padding * 2, 1), Math.Max(background.Height - padding * 2, 1));
-        DrawVulkanBar(track, progress.TrackColor.ToVector4(), 0);
-        float amount = Math.Clamp(_getProgress(), 0, 1);
-        if (amount > 0) DrawVulkanBar(track with { Width = Math.Max(track.Width * amount, 0) }, progress.FillColor.ToVector4(), 0);
-    }
-
-    private void DrawVulkanBar(LayoutRect rect, Vector4 color, float thickness)
-    {
-        if (Game is null || _backendRenderer is null) return;
-        _backendRenderer.DrawRect(ToClipRect(rect, Game.Window.Size.X, Game.Window.Size.Y), color);
+        DrawProgressBar(settings, (rect, color) => _backendRenderer.DrawRect(rect, color));
     }
 
     private ITexture2D? GetBackendBackgroundTexture(LoadingScreenSettings settings)
@@ -260,13 +242,16 @@ internal sealed unsafe class LoadingScreenComponent(
         gl.DrawArrays(GLEnum.Triangles, 0, 6);
     }
 
-    private void DrawProgressBar(GL gl, LoadingScreenSettings settings)
+    private void DrawProgressBar(LoadingScreenSettings settings, Action<Vector4, Vector4> drawRect)
     {
         if (Game is null || !settings.ProgressBar.Visible)
         {
             return;
         }
 
+        // Android owns its presentation surface and has no Silk.NET window.
+        // Use the current framebuffer for both pixel layout and clip coordinates.
+        var framebufferSize = Game.GraphicsDevice.BackBufferSize;
         LoadingProgressBarSettings progressBar = settings.ProgressBar;
         LayoutRect pixelRect = LayoutResolver.Resolve(
             progressBar.LayoutMode,
@@ -274,11 +259,11 @@ internal sealed unsafe class LoadingScreenComponent(
             progressBar.Y,
             progressBar.Width,
             progressBar.Height,
-            Game.Window.Size.X,
-            Game.Window.Size.Y,
+            framebufferSize.X,
+            framebufferSize.Y,
             1280.0f,
             720.0f);
-        DrawRect(gl, ToClipRect(pixelRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.BorderColor.ToVector4(), useTexture: false);
+        drawRect(ToClipRect(pixelRect, framebufferSize.X, framebufferSize.Y), progressBar.BorderColor.ToVector4());
 
         float border = Math.Clamp(progressBar.BorderThickness, 0.0f, MathF.Min(pixelRect.Width, pixelRect.Height) * 0.45f);
         LayoutRect backgroundRect = new(
@@ -286,7 +271,7 @@ internal sealed unsafe class LoadingScreenComponent(
             pixelRect.Y + border,
             Math.Max(pixelRect.Width - (border * 2.0f), 1.0f),
             Math.Max(pixelRect.Height - (border * 2.0f), 1.0f));
-        DrawRect(gl, ToClipRect(backgroundRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.BackgroundColor.ToVector4(), useTexture: false);
+        drawRect(ToClipRect(backgroundRect, framebufferSize.X, framebufferSize.Y), progressBar.BackgroundColor.ToVector4());
 
         float padding = Math.Clamp(progressBar.Padding, 0.0f, MathF.Min(backgroundRect.Width, backgroundRect.Height) * 0.45f);
         LayoutRect trackRect = new(
@@ -294,7 +279,7 @@ internal sealed unsafe class LoadingScreenComponent(
             backgroundRect.Y + padding,
             Math.Max(backgroundRect.Width - (padding * 2.0f), 1.0f),
             Math.Max(backgroundRect.Height - (padding * 2.0f), 1.0f));
-        DrawRect(gl, ToClipRect(trackRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.TrackColor.ToVector4(), useTexture: false);
+        drawRect(ToClipRect(trackRect, framebufferSize.X, framebufferSize.Y), progressBar.TrackColor.ToVector4());
 
         float progress = Math.Clamp(_getProgress(), 0.0f, 1.0f);
         LayoutRect fillRect = trackRect with
@@ -303,7 +288,7 @@ internal sealed unsafe class LoadingScreenComponent(
         };
         if (fillRect.Width > 0.0f)
         {
-            DrawRect(gl, ToClipRect(fillRect, Game.Window.Size.X, Game.Window.Size.Y), progressBar.FillColor.ToVector4(), useTexture: false);
+            drawRect(ToClipRect(fillRect, framebufferSize.X, framebufferSize.Y), progressBar.FillColor.ToVector4());
         }
     }
 

@@ -21,6 +21,8 @@ internal static class AndroidRuntimeRegressionTests
         (string Name, Action Test)[] tests =
         [
             ("Loading frames and failure preservation", TestLoading),
+            ("Hosted loading progress layout without a desktop window", HostedLoadingScreenRegressionTests.TestProgressLayout),
+            ("Hosted Vulkan loading frames without device recreation", HostedLoadingScreenRegressionTests.TestVulkanFrames),
             ("Published script ABI, lambda and event fields", TestPublishedScript),
             ("Streamed multi-round script tools and main-thread callbacks", TestNativeTools),
             ("Native-tool rejection and text fallback", TestTextFallback),
