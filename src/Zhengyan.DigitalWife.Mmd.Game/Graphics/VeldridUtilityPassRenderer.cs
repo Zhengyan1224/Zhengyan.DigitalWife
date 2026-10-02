@@ -38,7 +38,7 @@ internal sealed class VeldridUtilityPassRenderer : IDisposable
 
         CommandList commands = _renderer.CommandList;
         int slot = _renderer.CurrentFrameSlot;
-        commands.UpdateBuffer(_uniformBuffers[slot], 0, new UtilityUniforms { Color = color });
+        commands.UpdateGraphicsBuffer(_uniformBuffers[slot], 0, new UtilityUniforms { Color = color });
         commands.SetViewport(0, new Viewport(x, y, Math.Max(width, 1), Math.Max(height, 1), 0, 1));
         commands.SetScissorRect(0, (uint)Math.Max(x, 0), (uint)Math.Max(y, 0),
             (uint)Math.Max(width, 1), (uint)Math.Max(height, 1));
@@ -55,7 +55,7 @@ internal sealed class VeldridUtilityPassRenderer : IDisposable
         target.ResumePass();
         CommandList commands = _renderer.CommandList;
         int slot = _renderer.CurrentFrameSlot;
-        commands.UpdateBuffer(_uniformBuffers[slot], 0, new UtilityUniforms { Color = Vector4.One });
+        commands.UpdateGraphicsBuffer(_uniformBuffers[slot], 0, new UtilityUniforms { Color = Vector4.One });
         commands.SetFullViewports();
         commands.SetFullScissorRects();
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, UtilityPassKind.OpaqueAlpha));

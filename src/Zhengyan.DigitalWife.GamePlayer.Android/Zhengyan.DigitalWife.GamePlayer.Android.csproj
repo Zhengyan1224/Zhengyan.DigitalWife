@@ -13,6 +13,13 @@
         <!-- Keep project JSON model types available until the Android source-generated JSON context is complete. -->
         <TrimMode>partial</TrimMode>
         <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+        <!-- Mono's AOT async unwind allocator can abort at memory-manager.c:85
+             (dotnet/runtime#129843; not backported to release/10.0). Use JIT
+             until the Android runtime includes that fix. This also supports
+             assemblies loaded from dwgame packages. An explicit build property
+             can re-enable AOT when validating a fixed runtime. -->
+        <RunAOTCompilation Condition="'$(RunAOTCompilation)' == ''">false</RunAOTCompilation>
+        <AndroidEnableProfiledAot Condition="'$(RunAOTCompilation)' != 'true'">false</AndroidEnableProfiledAot>
     </PropertyGroup>
 
     <ItemGroup>

@@ -89,9 +89,9 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
         };
         CommandList commands = _renderer.CommandList;
         DeviceBuffer verticesBuffer = _vertices[_renderer.CurrentFrameSlot];
-        commands.UpdateBuffer(verticesBuffer, 0, vertices);
-        commands.UpdateBuffer(_uniforms[_renderer.CurrentFrameSlot], 0, data);
-        commands.UpdateBuffer(_ripples[_renderer.CurrentFrameSlot], 0, ripples);
+        commands.UpdateGraphicsBuffer(verticesBuffer, 0, vertices);
+        commands.UpdateGraphicsBuffer(_uniforms[_renderer.CurrentFrameSlot], 0, data);
+        commands.UpdateGraphicsBuffer(_ripples[_renderer.CurrentFrameSlot], 0, ripples);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, verticesBuffer);
         commands.SetIndexBuffer(_indices, IndexFormat.UInt32);

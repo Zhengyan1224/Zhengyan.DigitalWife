@@ -154,7 +154,16 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         if (IsReady) UpdateWaterInteractions(gameTime.TotalSeconds);
     }
 
-    internal void EnqueueLoadingStep(string message, Action action) => _loadingSequence.Enqueue(message, action);
+    internal void EnqueueLoadingStep(string message, Action action) => _loadingSequence.Enqueue(message, () =>
+    {
+        // Emit before native work: a Mono/driver abort cannot be caught by the
+        // loading error handler, but logcat will still identify the active step.
+        global::Android.Util.Log.Info("ZhengyanGamePlayer", $"Loading step begin: {message}");
+        long start = Stopwatch.GetTimestamp();
+        action();
+        global::Android.Util.Log.Info("ZhengyanGamePlayer",
+            $"Loading step complete ({Stopwatch.GetElapsedTime(start).TotalMilliseconds:F0} ms): {message}");
+    });
 
     private void ProcessLoadingStep()
     {

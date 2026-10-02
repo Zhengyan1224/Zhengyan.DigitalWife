@@ -57,6 +57,10 @@ public sealed class MainActivity : Activity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        global::Android.Util.Log.Info("ZhengyanGamePlayer",
+            $"Managed runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}; " +
+            $"architecture={System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}; " +
+            $"dynamicCode={System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported}");
 
         Window?.SetFlags(WindowManagerFlags.KeepScreenOn, WindowManagerFlags.KeepScreenOn);
         EnterImmersiveMode();

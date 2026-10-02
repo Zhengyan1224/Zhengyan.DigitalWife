@@ -594,7 +594,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             : 0.0f;
 
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
+        commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
         commands.SetVertexBuffer(0, RequireDeviceBuffer(resources.PositionBuffer));
         commands.SetVertexBuffer(1, RequireDeviceBuffer(resources.NormalBuffer));
         commands.SetVertexBuffer(2, RequireDeviceBuffer(resources.UvBuffer));
@@ -637,7 +637,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                     materialIndex)
             };
 
-            commands.UpdateBuffer(RequireDeviceBuffer(resources.MaterialUniformBuffer), 0, materialData);
+            commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.MaterialUniformBuffer), 0, materialData);
             commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
             commands.SetGraphicsResourceSet(0, frameSet);
             commands.SetGraphicsResourceSet(1, GetMaterialSet(resources, textures.DescriptorSet, overrideTexture));

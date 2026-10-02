@@ -138,12 +138,15 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             UploadTransformsIfNeeded(slot);
 
             slot.Commands.Begin();
+            VeldridVulkanSynchronization.PrepareSkinning(slot.Commands);
             slot.Commands.SetPipeline(_pipeline);
             slot.Commands.SetComputeResourceSet(0, slot.ResourceSet);
             slot.Commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
+            VeldridVulkanSynchronization.ComputeToTransfer(slot.Commands);
             slot.Commands.CopyBuffer(slot.PositionOutputs, 0, slot.PositionStaging, 0, slot.PositionStaging.SizeInBytes);
             slot.Commands.CopyBuffer(slot.NormalOutputs, 0, slot.NormalStaging, 0, slot.NormalStaging.SizeInBytes);
             slot.Commands.CopyBuffer(slot.UvOutputs, 0, slot.UvStaging, 0, slot.UvStaging.SizeInBytes);
+            VeldridVulkanSynchronization.TransferToHost(slot.Commands);
             slot.Commands.End();
 
             _renderer.Device.ResetFence(slot.Fence);
@@ -245,9 +248,11 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             bool validateOutput = _validatedDispatchCount < ValidationDispatchCount;
 
             slot.Commands.Begin();
+            VeldridVulkanSynchronization.PrepareSkinning(slot.Commands);
             slot.Commands.SetPipeline(_pipeline);
             slot.Commands.SetComputeResourceSet(0, slot.ResourceSet);
             slot.Commands.Dispatch((uint)((vertexCount + WorkgroupSize - 1) / WorkgroupSize), 1, 1);
+            VeldridVulkanSynchronization.ComputeToTransfer(slot.Commands);
             slot.Commands.CopyBuffer(slot.PositionOutputs, 0, _gpuPositionOutput!, 0, slot.PositionOutputs.SizeInBytes);
             slot.Commands.CopyBuffer(slot.NormalOutputs, 0, _gpuNormalOutput!, 0, slot.NormalOutputs.SizeInBytes);
             slot.Commands.CopyBuffer(slot.UvOutputs, 0, _gpuUvOutput!, 0, slot.UvOutputs.SizeInBytes);
@@ -256,6 +261,7 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
                 slot.Commands.CopyBuffer(slot.PositionOutputs, 0, slot.PositionStaging, 0, slot.PositionStaging.SizeInBytes);
                 slot.Commands.CopyBuffer(slot.NormalOutputs, 0, slot.NormalStaging, 0, slot.NormalStaging.SizeInBytes);
                 slot.Commands.CopyBuffer(slot.UvOutputs, 0, slot.UvStaging, 0, slot.UvStaging.SizeInBytes);
+                VeldridVulkanSynchronization.TransferToHost(slot.Commands);
             }
             slot.Commands.End();
 
@@ -265,11 +271,16 @@ internal sealed unsafe class VulkanPmxSkinningCompute :
             slot.SubmissionId = ++_submissionId;
             _nextSlot = (_nextSlot + 1) % _slots.Length;
 
-            // Rendering consumes these buffers from a different command-list
-            // submission. Veldrid does not expose a semaphore dependency here,
-            // so complete the transfer before the vertex-input submission.
-            _renderer.Device.WaitForFence(slot.Fence);
-            slot.InFlight = false;
+            // Veldrid submits compute and draw command lists to the same graphics
+            // queue. PrepareSkinning protects earlier vertex reads, the explicit
+            // compute barrier makes shader writes visible to the copies, and
+            // CopyBuffer supplies TransferWrite -> VertexAttributeRead for later
+            // draws (also across submissions). Only validation needs CPU readback.
+            if (validateOutput)
+            {
+                _renderer.Device.WaitForFence(slot.Fence);
+                slot.InFlight = false;
+            }
             if (validateOutput && !ValidateGpuOutput(
                     slot,
                     vertexCount,

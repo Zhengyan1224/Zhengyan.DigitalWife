@@ -44,8 +44,8 @@ public sealed class VeldridLineRenderer : ILineRenderer
         EnsureCapacity(byteCount);
         CommandList commands = _renderer.CommandList;
         int slot = _renderer.CurrentFrameSlot;
-        commands.UpdateBuffer(_vertices[slot], 0, interleavedPositionColor[..(vertexCount * 6)]);
-        commands.UpdateBuffer(_uniforms[slot], 0, worldViewProjection);
+        commands.UpdateGraphicsBuffer(_vertices[slot], 0, interleavedPositionColor[..(vertexCount * 6)]);
+        commands.UpdateGraphicsBuffer(_uniforms[slot], 0, worldViewProjection);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, depthTest));
         commands.SetVertexBuffer(0, _vertices[slot]);
         commands.SetGraphicsResourceSet(0, _sets[slot]);

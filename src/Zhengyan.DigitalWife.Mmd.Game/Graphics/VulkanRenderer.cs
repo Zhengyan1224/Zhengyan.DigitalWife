@@ -31,6 +31,7 @@ public sealed class VulkanRenderer : IRenderer
     private bool _mainColorResolved;
     private bool _frameOpen;
     private Fence[]? _frameFences;
+    private Fence? _lastSubmittedFrameFence;
     private int _frameSlot;
     private readonly IRenderBackendServices _services;
 
@@ -48,11 +49,16 @@ public sealed class VulkanRenderer : IRenderer
     public int AntiAliasingSamples => (int)_sampleCount;
 
     /// <summary>
-    /// Waits for the previous submitted command buffer before the next frame
-    /// updates shared dynamic resources. This avoids Android Mali buffer races
-    /// without idling the entire Vulkan device after presentation.
+    /// Compatibility option that idles the device before presentation.
+    /// Prefer submission fences and queue memory barriers for normal rendering.
     /// </summary>
     public bool WaitForIdleAfterPresent { get; set; }
+
+    /// <summary>
+    /// Protects shared (non-ring-buffered) CPU uploads before the next update.
+    /// The wait covers graphics work, not presentation or unrelated device work.
+    /// </summary>
+    public bool WaitForPreviousFrameBeforeUpdate { get; set; }
 
     public IRenderBackendServices Services => _services;
 
@@ -72,6 +78,8 @@ public sealed class VulkanRenderer : IRenderer
     public void BeginFrameSlot()
     {
         if (_device is null || _frameOpen || _frameFences is null) return;
+        if (WaitForPreviousFrameBeforeUpdate && _lastSubmittedFrameFence is { Signaled: false } previous)
+            _device.WaitForFence(previous);
         Fence fence = _frameFences[_frameSlot];
         if (!fence.Signaled) _device.WaitForFence(fence);
     }
@@ -186,7 +194,7 @@ public sealed class VulkanRenderer : IRenderer
         bool copiedResult = false;
         foreach (ReadbackSlot slot in _readbackSlots)
         {
-            if (!slot.InFlight || !slot.Fence.Signaled)
+            if (!slot.InFlight || slot.CompletionFence?.Signaled != true)
             {
                 continue;
             }
@@ -232,7 +240,7 @@ public sealed class VulkanRenderer : IRenderer
         {
             Texture texture = ResourceFactory.CreateTexture(TextureDescription.Texture2D(
                 (uint)width, (uint)height, 1, 1, format, TextureUsage.Staging));
-            _readbackSlots.Add(new ReadbackSlot(texture, ResourceFactory.CreateFence(false)));
+            _readbackSlots.Add(new ReadbackSlot(texture));
         }
 
         _readbackWidth = width;
@@ -475,6 +483,7 @@ public sealed class VulkanRenderer : IRenderer
             throw new InvalidOperationException("A Vulkan frame is already recording.");
         }
 
+        BeginFrameSlot();
         commands.Begin();
         commands.SetFramebuffer(MainFramebuffer);
         CurrentOutputDescription = MainFramebuffer.OutputDescription;
@@ -507,22 +516,26 @@ public sealed class VulkanRenderer : IRenderer
 
         ResolveMainColor();
         commands.End();
+        Fence fence = _frameFences![_frameSlot];
+        // Readback and dynamic resources belong to the same submission. Do not
+        // replace the frame fence with a readback fence: that lets the CPU reuse
+        // a frame slot while its screenshot submission is still running.
+        foreach (ReadbackSlot slot in _readbackSlots)
+        {
+            if (ReferenceEquals(slot.CompletionFence, fence))
+            {
+                slot.InFlight = false;
+                slot.CompletionFence = null;
+            }
+        }
+        device.ResetFence(fence);
+        device.SubmitCommands(commands, fence);
+        _lastSubmittedFrameFence = fence;
         if (_pendingReadbackSlot is not null)
         {
-            device.ResetFence(_pendingReadbackSlot.Fence);
-            device.SubmitCommands(commands, _pendingReadbackSlot.Fence);
+            _pendingReadbackSlot.CompletionFence = fence;
             _pendingReadbackSlot.InFlight = true;
             _pendingReadbackSlot = null;
-        }
-        else
-        {
-            if (_frameFences is not null)
-            {
-                Fence fence = _frameFences[_frameSlot];
-                device.ResetFence(fence);
-                device.SubmitCommands(commands, fence);
-            }
-            else device.SubmitCommands(commands);
         }
         if (WaitForIdleAfterPresent)
         {
@@ -547,6 +560,8 @@ public sealed class VulkanRenderer : IRenderer
 
         _device.WaitForIdle();
     }
+
+    internal void WaitForSubmittedWork() => _device?.WaitForIdle();
 
     public void Dispose()
     {
@@ -586,6 +601,7 @@ public sealed class VulkanRenderer : IRenderer
             _device.Dispose();
             _commandList = null;
             _pendingReadbackSlot = null;
+            _lastSubmittedFrameFence = null;
             _device = null;
         }
     }
@@ -663,15 +679,15 @@ public sealed class VulkanRenderer : IRenderer
         _mainColorResolved = true;
     }
 
-    private sealed class ReadbackSlot(Texture texture, Fence fence) : IDisposable
+    private sealed class ReadbackSlot(Texture texture) : IDisposable
     {
         public Texture Texture { get; } = texture;
-        public Fence Fence { get; } = fence;
+        // Borrowed from the frame ring; never disposed by the readback slot.
+        public Fence? CompletionFence { get; set; }
         public bool InFlight { get; set; }
 
         public void Dispose()
         {
-            Fence.Dispose();
             Texture.Dispose();
         }
     }

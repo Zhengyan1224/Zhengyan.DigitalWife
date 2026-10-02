@@ -276,6 +276,7 @@ public abstract class Game : IDisposable
 
         _disposed = true;
 
+        if (_renderer is VulkanRenderer vulkan) vulkan.WaitForSubmittedWork();
         UnloadContent();
 
         for (int i = _components.Count - 1; i >= 0; i--)
@@ -339,6 +340,7 @@ public abstract class Game : IDisposable
             return;
         }
 
+        if (_renderer is VulkanRenderer vulkan) vulkan.BeginFrameSlot();
         Input?.BeginFrame();
 
         GameTime gameTime = CreateGameTime(deltaSeconds);

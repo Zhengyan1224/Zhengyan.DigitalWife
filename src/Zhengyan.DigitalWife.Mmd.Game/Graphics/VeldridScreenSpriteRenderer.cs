@@ -79,8 +79,8 @@ public sealed class VeldridScreenSpriteRenderer : IScreenSpriteRenderer
             }
 
             FillVertices(command, targetWidth, targetHeight, _vertices);
-            commandList.UpdateBuffer(vertexBuffer, 0, _vertices);
-            commandList.UpdateBuffer(parametersBuffer, 0, new SpriteParameters(
+            commandList.UpdateGraphicsBuffer(vertexBuffer, 0, _vertices);
+            commandList.UpdateGraphicsBuffer(parametersBuffer, 0, new SpriteParameters(
                 Math.Max(targetWidth, 1), Math.Max(targetHeight, 1), Math.Clamp(command.Opacity, 0.0f, 1.0f), 0.0f));
             commandList.SetGraphicsResourceSet(1, GetTextureSet(textureView));
             commandList.Draw(MaxVerticesPerSprite);

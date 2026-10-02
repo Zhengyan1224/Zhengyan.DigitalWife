@@ -114,7 +114,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
             capture.ResourceSets[slot] = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[slot], view, _sampler, depthView, _sampler));
         }
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_uniforms[slot], 0, data);
+        commands.UpdateGraphicsBuffer(_uniforms[slot], 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices);
         commands.SetGraphicsResourceSet(0, capture.ResourceSets[slot]!);

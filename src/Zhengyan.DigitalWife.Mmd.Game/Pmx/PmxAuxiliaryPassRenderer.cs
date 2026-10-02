@@ -324,7 +324,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
                 ScreenAndEdgeSize = new Vector4(Math.Max(screenSize.X, 1.0f), Math.Max(screenSize.Y, 1.0f), material.EdgeSize, 0.0f),
                 EdgeColor = material.EdgeColor
             };
-            commands.UpdateBuffer(RequireDeviceBuffer(resources.EdgeUniformBuffer), 0, data);
+            commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.EdgeUniformBuffer), 0, data);
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
             count++;
         }
@@ -351,7 +351,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
             WorldViewProjection = worldViewProjection,
             ShadowColor = shadowColor
         };
-        commands.UpdateBuffer(RequireDeviceBuffer(resources.GroundShadowUniformBuffer), 0, data);
+        commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.GroundShadowUniformBuffer), 0, data);
 
         int count = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -382,7 +382,7 @@ internal sealed class VeldridPmxAuxiliaryPassRenderer : IPmxAuxiliaryPassRendere
             WorldLightViewProjection = worldLightViewProjection,
             Parameters = new Vector4(Math.Max(depthBias, 0.0f), 0.0f, 0.0f, 0.0f)
         };
-        commands.UpdateBuffer(RequireDeviceBuffer(resources.ShadowDepthUniformBuffer), 0, data);
+        commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.ShadowDepthUniformBuffer), 0, data);
 
         int count = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)

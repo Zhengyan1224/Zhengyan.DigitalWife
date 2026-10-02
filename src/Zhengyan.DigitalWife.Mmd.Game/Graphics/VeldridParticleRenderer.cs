@@ -79,8 +79,8 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         CommandList commands = _renderer.CommandList;
         DeviceBuffer verticesBuffer = _vertices[_renderer.CurrentFrameSlot];
         DeviceBuffer uniformsBuffer = _uniforms[_renderer.CurrentFrameSlot];
-        commands.UpdateBuffer(verticesBuffer, 0, vertices[..vertexCount]);
-        commands.UpdateBuffer(uniformsBuffer, 0, data);
+        commands.UpdateGraphicsBuffer(verticesBuffer, 0, vertices[..vertexCount]);
+        commands.UpdateGraphicsBuffer(uniformsBuffer, 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, additive));
         commands.SetVertexBuffer(0, verticesBuffer);
         commands.SetGraphicsResourceSet(0, set);
@@ -113,8 +113,8 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         CommandList commands = _renderer.CommandList;
         DeviceBuffer verticesBuffer = _vertices[_renderer.CurrentFrameSlot];
         DeviceBuffer uniformsBuffer = _uniforms[_renderer.CurrentFrameSlot];
-        commands.UpdateBuffer(verticesBuffer, 0, vertices[..vertexCount]);
-        commands.UpdateBuffer(uniformsBuffer, 0, data);
+        commands.UpdateGraphicsBuffer(verticesBuffer, 0, vertices[..vertexCount]);
+        commands.UpdateGraphicsBuffer(uniformsBuffer, 0, data);
         commands.SetPipeline(GetShadowPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, verticesBuffer);
         commands.SetGraphicsResourceSet(0, set);

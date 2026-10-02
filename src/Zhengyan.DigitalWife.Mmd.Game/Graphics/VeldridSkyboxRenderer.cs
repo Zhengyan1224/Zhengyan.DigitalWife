@@ -55,7 +55,7 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
             TintExposure = new Vector4(tint, Math.Max(0, exposure))
         };
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_uniforms[slot], 0, data);
+        commands.UpdateGraphicsBuffer(_uniforms[slot], 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices);
         commands.SetGraphicsResourceSet(0, set);

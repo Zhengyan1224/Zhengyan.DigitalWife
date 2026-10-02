@@ -182,8 +182,8 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
             ImDrawListPtr drawList = drawData.CmdLists[i];
             uint vertexBytes = checked((uint)(drawList.VtxBuffer.Size * sizeof(ImDrawVert)));
             uint indexBytes = checked((uint)(drawList.IdxBuffer.Size * sizeof(ushort)));
-            commands.UpdateBuffer(vertexBuffer, vertexOffsetBytes, (nint)drawList.VtxBuffer.Data, vertexBytes);
-            commands.UpdateBuffer(indexBuffer, indexOffsetBytes, (nint)drawList.IdxBuffer.Data, indexBytes);
+            commands.UpdateGraphicsBuffer(vertexBuffer, vertexOffsetBytes, (nint)drawList.VtxBuffer.Data, vertexBytes);
+            commands.UpdateGraphicsBuffer(indexBuffer, indexOffsetBytes, (nint)drawList.IdxBuffer.Data, indexBytes);
             vertexOffsetBytes += vertexBytes;
             indexOffsetBytes += indexBytes;
         }

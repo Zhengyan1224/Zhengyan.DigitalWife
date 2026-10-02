@@ -242,11 +242,12 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return;
         }
 
-        // Keep the full-device wait until the Vulkan backend has explicit
-        // semaphore/barrier support for Compute-to-vertex visibility.
+        // PMX CPU uploads still share vertex buffers between frames. Wait only
+        // for the preceding graphics submission before updating them; presenting
+        // must not idle the entire device. Compute uses explicit queue barriers.
         VulkanRenderer renderer = new VulkanRenderer
         {
-            WaitForIdleAfterPresent = true
+            WaitForPreviousFrameBeforeUpdate = true
         };
         AndroidSceneGame? game = null;
         try
@@ -278,6 +279,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 $"MSAA requested={_game.GraphicsDevice.RequestedAntiAliasingSamples}x, " +
                 $"actual={_game.GraphicsDevice.AntiAliasingSamples}x; " +
                 $"openCL=disabled; " +
+                $"frameSync=previous-submission-fence; deviceIdlePerFrame=false; " +
                 $"vulkanCompute=requested={_project.Runtime.UseVulkanCompute}; " +
                 $"skinning={(_project.Runtime.UseVulkanCompute ? "Vulkan Compute (or CPU fallback)" : "CPU compatibility")}; " +
                 $"projectMsaa={_project.Window.AntiAliasingSamples}x; " +

@@ -57,8 +57,8 @@ public sealed class VeldridLoadingScreenRenderer : ILoadingScreenPassRenderer
         ];
         UniformData data = new() { Color = new Vector4(color.X, color.Y, color.Z, color.W * Math.Clamp(opacity, 0, 1)), UseTexture = texture is null ? 0 : 1 };
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(_vertices[slot], 0, vertices);
-        commands.UpdateBuffer(_uniforms[slot], 0, data);
+        commands.UpdateGraphicsBuffer(_vertices[slot], 0, vertices);
+        commands.UpdateGraphicsBuffer(_uniforms[slot], 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices[slot]);
         commands.SetGraphicsResourceSet(0, set);

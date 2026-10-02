@@ -116,7 +116,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         };
 
         CommandList commands = _renderer.CommandList;
-        commands.UpdateBuffer(RequireDeviceBuffer(_uniformBuffer, slot), 0, data);
+        commands.UpdateGraphicsBuffer(RequireDeviceBuffer(_uniformBuffer, slot), 0, data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, RequireDeviceBuffer(_vertexBuffer));
         commands.SetGraphicsResourceSet(0, resources);
