@@ -26,7 +26,9 @@ if (args is ["--compile-project", string projectDirectory])
     {
         try
         {
-            byte[] assembly = AndroidScriptCompiler.Compile(path);
+            // Use the actual Android in-memory reference collector. Scanning
+            // the desktop framework directory masks lazy-load failures on Mono.
+            byte[] assembly = AndroidScriptCompiler.Compile(path, AndroidScriptMetadata.GetReferences());
             Console.WriteLine($"PASS {Path.GetRelativePath(projectDirectory, path)} ({assembly.Length} bytes)");
         }
         catch (Exception ex)

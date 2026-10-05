@@ -3,24 +3,19 @@ using Android.Content;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Emit;
 using System.Numerics;
 using System.Reflection;
-using System.Reflection.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Globalization;
 using System.IO;
-using System.Net;
-using System.Net.Http;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
+using Zhengyan.DigitalWife.Mmd.Game.Speech;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -52,6 +47,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private double _fps;
     private bool _disposed;
     private RuntimeScene? _activeScene;
+    private readonly GameProjectLipSyncSettings _lipSyncSettings;
+    private SpeechDictionarySet? _speechDictionaries;
+    private AndroidSpeechLipSync? _lipSync;
+    private long _speechVersion;
+    private readonly CancellationTokenSource _speechLifetime = new();
 
     public void PumpCallbacks()
     {
@@ -94,7 +94,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         Func<string, float, bool>? setAudioVolume = null,
         Func<string, bool, bool>? setAudioLoop = null,
         Func<string, bool>? isAudioPlaying = null,
-        GameProjectLlmSettings? llmSettings = null)
+        GameProjectLlmSettings? llmSettings = null,
+        GameProjectLipSyncSettings? lipSyncSettings = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -112,6 +113,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _setAudioLoop = setAudioLoop ?? ((_, _) => false);
         _isAudioPlaying = isAudioPlaying ?? (_ => false);
         _llmSettings = llmSettings ?? new GameProjectLlmSettings();
+        _lipSyncSettings = lipSyncSettings ?? new GameProjectLipSyncSettings();
     }
 
     public void Start(RuntimeScene scene)
@@ -128,6 +130,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     public void StartLoading(RuntimeScene scene)
     {
+        StopSpeech();
         AndroidScriptBubbleManager.Shared.Clear();
         if (_activeScene is not null)
         {
@@ -306,7 +309,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 () => _resolvePmxModel(entity),
                 ResolveScriptAssetPath,
                 (text, callback) => _ = SpeakAsync(scene, entity, text, 1.0f, 1.0f, null, callback),
-                () => AndroidScriptTts.Shared.Stop(),
+                StopSpeech,
                 (callbackName, toolCall) => InvokeLlmToolAsync(scene, entity, callbackName, toolCall),
                 (text, speakerId, speed, volume, completed, callback) => _ = SpeakAsync(scene, entity, text, speed, volume, completed, callback)),
             scriptInput,
@@ -321,12 +324,35 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     private async Task SpeakAsync(RuntimeScene scene, RuntimeEntity entity, string text, float speed, float volume, Action? completed, string callback)
     {
+        long version = ++_speechVersion;
+        _lipSync?.Dispose();
+        _lipSync = null;
         try
         {
-            await AndroidScriptTts.Shared.SpeakAsync(text, speed, volume).ConfigureAwait(false);
+            await AndroidScriptTts.Shared.SpeakWithProgressAsync(text, speed, volume,
+                () => _dispatcher.Post(() =>
+                {
+                    if (_disposed || version != _speechVersion || !ReferenceEquals(scene, _activeScene) || !_lipSyncSettings.Enabled) return;
+                    try
+                    {
+                        PmxModelComponent? model = _resolvePmxModel(entity);
+                        if (model is null) return;
+                        _speechDictionaries ??= AndroidSpeechLipSync.LoadDictionaries(_lipSyncSettings,
+                            _projectDirectory, AndroidBundledResourceStore.RootDirectory ?? AppContext.BaseDirectory);
+                        _lipSync = new AndroidSpeechLipSync(model, _speechDictionaries, _lipSyncSettings, text, speed);
+                    }
+                    catch (Exception ex) { global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"TTS lip sync failed: {ex.Message}"); }
+                }),
+                (start, end) => _dispatcher.Post(() =>
+                {
+                    if (!_disposed && version == _speechVersion && start >= 0 && end > start && end <= text.Length)
+                        _lipSync?.SetRange(text[start..end]);
+                }), _speechLifetime.Token).ConfigureAwait(false);
             _dispatcher.Post(() =>
             {
-                if (_disposed || !ReferenceEquals(scene, _activeScene)) return;
+                if (_disposed || version != _speechVersion || !ReferenceEquals(scene, _activeScene)) return;
+                _lipSync?.Dispose();
+                _lipSync = null;
                 completed?.Invoke();
                 if (!string.IsNullOrWhiteSpace(callback))
                     DispatchEvent(scene, new AndroidRuntimeEvent("speech", Guid.NewGuid().ToString("N"), callback, Vector2.Zero, text, entity.Id));
@@ -334,6 +360,23 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Speech failed: {ex.Message}"); }
+        finally
+        {
+            _dispatcher.Post(() =>
+            {
+                if (version != _speechVersion) return;
+                _lipSync?.Dispose();
+                _lipSync = null;
+            });
+        }
+    }
+
+    private void StopSpeech()
+    {
+        ++_speechVersion;
+        _lipSync?.Dispose();
+        _lipSync = null;
+        AndroidScriptTts.Shared.Stop();
     }
 
     private void Execute(
@@ -449,7 +492,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         string source = File.ReadAllText(path);
         if (string.IsNullOrWhiteSpace(source)) return AndroidCompiledScript.NoOp;
-        byte[] image = AndroidScriptCompiler.Compile(path, GetMetadataReferences());
+        byte[] image = AndroidScriptCompiler.Compile(path, AndroidScriptMetadata.GetReferences());
         return CreateCompiledScript(Assembly.Load(image), AnalyzeScriptPhases(source));
     }
 
@@ -597,73 +640,6 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         return false;
     }
 
-    private static IEnumerable<MetadataReference> GetMetadataReferences()
-    {
-        HashSet<string> identities = new(StringComparer.OrdinalIgnoreCase);
-        // The Android host may not have loaded framework assemblies that are
-        // only used by a script (Console is a common example). Touch the
-        // representative types first so their in-memory metadata is available.
-        List<Assembly> requiredAssemblies =
-        [
-            typeof(object).Assembly,
-            typeof(Console).Assembly,
-            typeof(Task).Assembly,
-            typeof(DateTimeOffset).Assembly,
-            typeof(System.Net.Sockets.Socket).Assembly,
-            typeof(System.Runtime.GCSettings).Assembly,
-            typeof(System.Runtime.CompilerServices.DefaultInterpolatedStringHandler).Assembly,
-            typeof(System.Runtime.CompilerServices.CallSite).Assembly,
-            typeof(System.Linq.Expressions.Expression).Assembly,
-            typeof(System.Dynamic.DynamicObject).Assembly,
-            typeof(System.Runtime.CompilerServices.DynamicAttribute).Assembly,
-            typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly,
-            typeof(System.Linq.Enumerable).Assembly,
-            typeof(Vector3).Assembly,
-            typeof(AndroidScriptGlobals).Assembly,
-            typeof(RuntimeScene).Assembly,
-            typeof(GameProject).Assembly,
-            typeof(PmxModelComponent).Assembly
-        ];
-
-        foreach (Assembly assembly in requiredAssemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
-        {
-            if (assembly.IsDynamic || !identities.Add(assembly.FullName ?? assembly.GetName().Name ?? string.Empty))
-            {
-                continue;
-            }
-
-            yield return CreateMetadataReference(assembly);
-        }
-    }
-
-    private static MetadataReference CreateMetadataReference(Assembly assembly)
-    {
-        // Android assemblies are loaded from the APK and Assembly.Location is
-        // commonly a synthetic path such as '/Zhengyan...'. Roslyn's Assembly
-        // overload then tries to open that path. Use the in-memory metadata
-        // image instead.
-        unsafe
-        {
-            if (assembly.TryGetRawMetadata(out byte* blob, out int length)
-                && blob is not null && length > 0)
-            {
-                // TryGetRawMetadata returns the metadata directory inside the
-                // loaded PE image, not a complete PE image. CreateFromImage
-                // therefore makes Roslyn reject the reference and fall back
-                // to Assembly.Location (which is a synthetic Android path).
-                // Build a reference directly from the in-memory metadata.
-                ModuleMetadata module = ModuleMetadata.CreateFromMetadata((IntPtr)blob, length);
-                AssemblyMetadata assemblyMetadata = AssemblyMetadata.Create(module);
-                // Do not assign a file path. Android assemblies commonly have
-                // synthetic locations, and Roslyn otherwise attempts to probe
-                // that path while binding System.Private.CoreLib.
-                return assemblyMetadata.GetReference(aliases: assembly.GetName().Name == "Zhengyan.DigitalWife.Mmd"
-                    ? ["MmdDesktop"] : default);
-            }
-        }
-
-        throw new InvalidOperationException($"Assembly metadata is unavailable: {assembly.FullName}");
-    }
 
     private sealed class AndroidCompiledScript
     {
@@ -741,6 +717,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        StopSpeech();
+        _speechLifetime.Cancel();
+        _speechLifetime.Dispose();
         _activeScene = null;
         _loadingEntity = null;
         _loadingBindings = [];

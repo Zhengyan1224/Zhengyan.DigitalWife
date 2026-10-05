@@ -58,4 +58,48 @@
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" Aliases="MmdDesktop" />
     </ItemGroup>
 
+    <ItemGroup>
+        <ProjectReference Include="..\..\tools\VeldridAndroidPatch\VeldridAndroidPatch.csproj"
+                          ReferenceOutputAssembly="false" PrivateAssets="all"
+                          GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;SelfContained" />
+    </ItemGroup>
+
+    <!-- Patch a private build copy before trimming/JNI processing. Never modify
+         the NuGet cache, and never substitute the desktop Veldrid assembly. -->
+    <Target Name="PatchAndroidVeldrid" AfterTargets="ComputeResolvedFilesToPublishList"
+            BeforeTargets="PrepareForILLink" Condition="'$(DesignTimeBuild)' != 'true'">
+        <ItemGroup>
+            <_AndroidOriginalVeldrid Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'Veldrid.dll'" />
+        </ItemGroup>
+        <PropertyGroup>
+            <_AndroidPatchedVeldrid>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)patched-vulkan\Veldrid.dll</_AndroidPatchedVeldrid>
+            <_AndroidVeldridPatchTool>$(MSBuildProjectDirectory)\..\..\tools\VeldridAndroidPatch\bin\$(Configuration)\net10.0\VeldridAndroidPatch.dll</_AndroidVeldridPatchTool>
+        </PropertyGroup>
+        <Exec Condition="'@(_AndroidOriginalVeldrid)' != ''"
+              Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; &quot;@(_AndroidOriginalVeldrid)&quot; &quot;$(_AndroidPatchedVeldrid)&quot;" />
+        <ItemGroup Condition="'@(_AndroidOriginalVeldrid)' != ''">
+            <ResolvedFileToPublish Remove="@(_AndroidOriginalVeldrid)" />
+            <ResolvedFileToPublish Include="@(_AndroidOriginalVeldrid->'$(_AndroidPatchedVeldrid)')" PostprocessAssembly="true" />
+            <!-- ILLink resolves references as well as publish inputs. Both must
+                 resolve to the same binary, or it can load the unpatched DLL. -->
+            <_AndroidVeldridReference Include="@(ReferencePath)" Condition="'%(Filename)%(Extension)' == 'Veldrid.dll'" />
+            <ReferencePath Remove="@(_AndroidVeldridReference)" />
+            <ReferencePath Include="@(_AndroidVeldridReference->'$(_AndroidPatchedVeldrid)')" />
+            <FileWrites Include="$(_AndroidPatchedVeldrid)" />
+        </ItemGroup>
+    </Target>
+
+    <Target Name="CheckAndroidVeldridLinkInput" BeforeTargets="_RunILLink" Condition="'$(DesignTimeBuild)' != 'true'">
+        <ItemGroup>
+            <_AndroidVeldridLinkInput Include="@(ManagedAssemblyToLink)" Condition="'%(Filename)' == 'Veldrid'" />
+        </ItemGroup>
+        <Error Condition="'@(_AndroidVeldridLinkInput)' != '$(_AndroidPatchedVeldrid)'"
+               Text="Android ILLink must consume the patched Veldrid: @(_AndroidVeldridLinkInput)" />
+    </Target>
+
+    <Target Name="VerifyLinkedAndroidVeldrid" AfterTargets="ILLink"
+            Condition="'$(PublishTrimmed)' == 'true' and '$(_AndroidPatchedVeldrid)' != ''">
+        <Exec Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; --check &quot;$(IntermediateLinkDir)Veldrid.dll&quot;" />
+    </Target>
+
 </Project>

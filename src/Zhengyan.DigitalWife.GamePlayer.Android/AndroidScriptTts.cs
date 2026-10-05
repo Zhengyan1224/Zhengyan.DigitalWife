@@ -15,6 +15,7 @@ public sealed class AndroidScriptTts : Java.Lang.Object, IAndroidScriptTts
     private TaskCompletionSource<bool>? _pendingInitialization;
     private InitializationListener? _initializationListener;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _utterances = new();
+    private readonly ConcurrentDictionary<string, PlaybackCallbacks> _playbackCallbacks = new();
     private readonly CompletionListener _listener;
     private string? _activeUtterance;
     private int _stopVersion;
@@ -92,7 +93,11 @@ public sealed class AndroidScriptTts : Java.Lang.Object, IAndroidScriptTts
         return started;
     }
 
-    public async Task SpeakAsync(string text, float speed = 1.0f, float volume = 1.0f, CancellationToken cancellationToken = default)
+    public Task SpeakAsync(string text, float speed = 1.0f, float volume = 1.0f, CancellationToken cancellationToken = default)
+        => SpeakWithProgressAsync(text, speed, volume, null, null, cancellationToken);
+
+    internal async Task SpeakWithProgressAsync(string text, float speed, float volume,
+        Action? started, Action<int, int>? rangeStarted, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -106,6 +111,7 @@ public sealed class AndroidScriptTts : Java.Lang.Object, IAndroidScriptTts
             { completion.TrySetCanceled(); return; }
             CancelUtterances();
             _utterances[id] = completion;
+            _playbackCallbacks[id] = new(started, rangeStarted);
             _activeUtterance = id;
             try
             {
@@ -125,6 +131,7 @@ public sealed class AndroidScriptTts : Java.Lang.Object, IAndroidScriptTts
         finally
         {
             _utterances.TryRemove(id, out _);
+            _playbackCallbacks.TryRemove(id, out _);
             if (cancellationToken.IsCancellationRequested)
                 _main.Post(() => { if (_activeUtterance == id) { _engine?.Stop(); _activeUtterance = null; } });
         }
@@ -140,12 +147,17 @@ public sealed class AndroidScriptTts : Java.Lang.Object, IAndroidScriptTts
     private void CancelUtterances()
     {
         foreach (string id in _utterances.Keys)
-            if (_utterances.TryRemove(id, out var completion)) completion.TrySetCanceled();
+            if (_utterances.TryRemove(id, out var completion))
+            {
+                _playbackCallbacks.TryRemove(id, out _);
+                completion.TrySetCanceled();
+            }
     }
 
     private void Complete(string? id, Exception? error = null)
     {
         if (id is null || !_utterances.TryRemove(id, out var completion)) return;
+        _playbackCallbacks.TryRemove(id, out _);
         if (error is null) completion.TrySetResult(true);
         else completion.TrySetException(error);
     }
@@ -180,13 +192,28 @@ public sealed class AndroidScriptTts : Java.Lang.Object, IAndroidScriptTts
 
     private sealed class CompletionListener(AndroidScriptTts owner) : UtteranceProgressListener
     {
-        public override void OnStart(string? utteranceId) { }
+        public override void OnStart(string? utteranceId)
+        {
+            if (utteranceId is not null && owner._playbackCallbacks.TryGetValue(utteranceId, out var callbacks))
+                callbacks.Started?.Invoke();
+        }
+        public override void OnRangeStart(string? utteranceId, int start, int end, int frame)
+        {
+            if (utteranceId is not null && owner._playbackCallbacks.TryGetValue(utteranceId, out var callbacks))
+                callbacks.RangeStarted?.Invoke(start, end);
+        }
         public override void OnDone(string? utteranceId) => owner.Complete(utteranceId);
         [Obsolete("Required override for the Android UtteranceProgressListener contract.")]
         public override void OnError(string? utteranceId) => owner.Complete(utteranceId, new InvalidOperationException("Android text-to-speech failed."));
         public override void OnStop(string? utteranceId, bool interrupted)
         {
-            if (utteranceId is not null && owner._utterances.TryRemove(utteranceId, out var completion)) completion.TrySetCanceled();
+            if (utteranceId is not null && owner._utterances.TryRemove(utteranceId, out var completion))
+            {
+                owner._playbackCallbacks.TryRemove(utteranceId, out _);
+                completion.TrySetCanceled();
+            }
         }
     }
+
+    private sealed record PlaybackCallbacks(Action? Started, Action<int, int>? RangeStarted);
 }

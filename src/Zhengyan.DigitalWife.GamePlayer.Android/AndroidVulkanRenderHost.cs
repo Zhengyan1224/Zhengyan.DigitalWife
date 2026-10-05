@@ -83,7 +83,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 (name, volume) => _audioHost?.SetVolume(name, volume) == true,
                 (name, loop) => _audioHost?.SetLoop(name, loop) == true,
                 name => _audioHost?.IsPlaying(name) == true,
-                llmSettings: project.Llm);
+                llmSettings: project.Llm,
+                lipSyncSettings: project.Voice.LipSync);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -252,6 +253,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         AndroidSceneGame? game = null;
         try
         {
+            if (!_surface.IsValid) throw new InvalidOperationException("Android Vulkan surface is no longer valid.");
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=1");
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618
@@ -261,9 +264,12 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             // immediate-mode swapchain, so keep FIFO presentation here; frame pacing
             // remains governed by the Android Choreographer callback.
             renderer.Initialize(source, new Vector2D<int>(_width, _height), requestedMsaa);
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization complete; {renderer.Name}");
             game = new AndroidSceneGame(
                 _project, scene, _projectDirectory, renderer, new Vector2D<int>(_width, _height));
+            Log.Info(LogTag, "Vulkan startup: hosted content initialization begin");
             game.InitializeHosted();
+            Log.Info(LogTag, "Vulkan startup: hosted content initialization complete");
             _game = game;
             _loadingStarted = true;
             _scriptsStarted = false;

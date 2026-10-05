@@ -1367,7 +1367,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public bool RemoveTransformUpdater(ITransformUpdater updater)
     {
-        return _transformUpdaters.Remove(updater);
+        bool removed = _transformUpdaters.Remove(updater);
+        if (removed) MarkPoseDirty();
+        return removed;
     }
 
     public void ClearTransformUpdaters()

@@ -1,4 +1,9 @@
 <linker>
+  <!-- User scripts can instantiate these types even before the host's HTTP path runs. -->
+  <assembly fullname="System.Net.Http" preserve="all" />
+  <assembly fullname="System.Net.Sockets" preserve="all" />
+  <assembly fullname="System.Text.Json" preserve="all" />
+  <assembly fullname="System.Text.RegularExpressions" preserve="all" />
   <assembly fullname="System.Private.CoreLib">
     <!-- Required by every Roslyn script submission factory. -->
     <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder" preserve="all" />
