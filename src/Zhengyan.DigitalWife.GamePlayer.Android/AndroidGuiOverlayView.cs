@@ -81,19 +81,27 @@ internal sealed class AndroidGuiOverlayView : View
 
         foreach (RuntimeDialogueBubble bubble in AndroidScriptBubbleManager.Shared.VisibleBubbles)
         {
-            float width = Math.Clamp(bubble.Width, 160.0f, Width * 0.9f);
-            float left = (Width - width) * 0.5f;
-            float top = Height * 0.56f;
-            float height = Math.Clamp((bubble.Text.Length / 28 + 2) * Math.Max(bubble.FontSize, 16.0f) + 48.0f, 80.0f, Height * 0.35f);
+            if (!_gameView.TryGetBubblePosition(bubble, Width, Height, out var anchor)) continue;
+            float requestedWidth = LayoutResolver.Resolve(bubble.LayoutMode, 0, 0, bubble.Width, 1,
+                Width, Height, referenceWidth, referenceHeight).Width;
+            float width = Math.Clamp(requestedWidth, Math.Min(160.0f, Width * 0.9f), Width * 0.9f);
+            float fontSize = LayoutResolver.ResolveFontSize(bubble.LayoutMode, bubble.FontSize,
+                Width, Height, referenceWidth, referenceHeight);
+            float height = Math.Clamp((bubble.Text.Length / 28 + 2) * Math.Max(fontSize, 16.0f) + 48.0f,
+                Math.Min(80.0f, Height * 0.35f), Height * 0.35f);
+            var topLeft = AndroidDialogueBubbleLayout.TopLeft(bubble, anchor, new(width, height));
+            float left = topLeft.X;
+            float top = topLeft.Y;
             using Paint panel = new() { AntiAlias = true, Color = ToColor(bubble.BackgroundColor) };
             panel.SetStyle(Paint.Style.Fill);
             canvas.DrawRoundRect(left, top, left + width, top + height, 12, 12, panel);
             panel.Color = ToColor(bubble.BorderColor); panel.SetStyle(Paint.Style.Stroke); panel.StrokeWidth = 2;
             canvas.DrawRoundRect(left, top, left + width, top + height, 12, 12, panel);
-            _paint.Color = ToColor(bubble.TextColor); _paint.TextSize = Math.Max(bubble.FontSize, 16.0f);
+            _paint.Color = ToColor(bubble.TextColor); _paint.TextSize = Math.Max(fontSize, 16.0f);
             canvas.DrawText(bubble.HeaderText, left + 14, top + 26, _paint);
             canvas.DrawText(bubble.Text, left + 14, top + 26 + _paint.TextSize + 6, _paint);
-            _paint.TextSize = Math.Max(bubble.FooterFontSize, 12.0f);
+            _paint.TextSize = Math.Max(LayoutResolver.ResolveFontSize(bubble.LayoutMode, bubble.FooterFontSize,
+                Width, Height, referenceWidth, referenceHeight), 12.0f);
             canvas.DrawText(bubble.FooterText, left + 14, top + height - 14, _paint);
         }
     }

@@ -190,6 +190,15 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     public void Pause() => ResetFrameClock();
 
+    public bool TryGetBubblePosition(RuntimeDialogueBubble bubble, int canvasWidth, int canvasHeight, out Vector2 position)
+    {
+        lock (_lifecycleLock)
+        {
+            position = default;
+            return _game?.TryGetBubblePosition(bubble, canvasWidth, canvasHeight, out position) == true;
+        }
+    }
+
     public void DestroySurface()
     {
         lock (_lifecycleLock)
@@ -254,7 +263,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         try
         {
             if (!_surface.IsValid) throw new InvalidOperationException("Android Vulkan surface is no longer valid.");
-            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=1");
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=2; loader=borrowed-dlerror");
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618

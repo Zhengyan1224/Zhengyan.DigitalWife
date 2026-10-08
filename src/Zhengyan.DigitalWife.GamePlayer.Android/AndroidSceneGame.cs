@@ -1154,6 +1154,34 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     internal OrbitCamera Camera => _camera;
     internal RuntimeScene Scene => _scene;
 
+    internal bool TryGetBubblePosition(RuntimeDialogueBubble bubble, int canvasWidth, int canvasHeight, out Vector2 position)
+    {
+        position = default;
+        if (!IsReady || canvasWidth <= 0 || canvasHeight <= 0) return false;
+        Vector3? anchor = null;
+        if (string.Equals(bubble.AnchorMode, "entity", StringComparison.OrdinalIgnoreCase))
+        {
+            RuntimeEntity? entity = _scene.GetEntity(bubble.AnchorEntity);
+            if (entity is null) return false;
+            PmxModelComponent? model = FindModel(entity.Id);
+            anchor = model?.IsLoaded == true
+                ? AndroidDialogueBubbleLayout.ModelAnchor(model.BoundsMin, model.BoundsMax, model.World, bubble.UseEntityTopAnchor)
+                : entity.Position;
+        }
+
+        int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
+        int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        RuntimeCamera runtimeCamera = _scene.MainCamera;
+        RuntimeViewport viewport = ResolveViewport(runtimeCamera, width, height);
+        OrbitCamera camera = ResolveScreenCamera(runtimeCamera, viewport.Width, viewport.Height);
+        float scaleX = (float)canvasWidth / width, scaleY = (float)canvasHeight / height;
+        LayoutRect canvasViewport = new(viewport.X * scaleX,
+            GraphicsDevice.ResolveLayoutViewportY(viewport.Y, viewport.Height, height) * scaleY,
+            viewport.Width * scaleX, viewport.Height * scaleY);
+        return AndroidDialogueBubbleLayout.TryResolveAnchor(bubble, anchor, camera.View, camera.Projection,
+            canvasViewport, new(canvasWidth, canvasHeight), new(_windowSettings.Width, _windowSettings.Height), out position);
+    }
+
     internal RuntimeMeshCollider? TryCreateMeshCollider(string idOrName, ColliderSettings settings)
     {
         PmxModelComponent? component = FindModel(idOrName);

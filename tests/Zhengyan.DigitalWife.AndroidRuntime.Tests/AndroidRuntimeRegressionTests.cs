@@ -30,6 +30,8 @@ internal static class AndroidRuntimeRegressionTests
             ("TTS initialization cancellation is per caller", AndroidTtsInitializationTests.TestCancellation),
             ("TTS timeout and stale initialization completion", AndroidTtsInitializationTests.TestTimeout),
             ("TTS playback range drives mouth morphs and resets on stop", AndroidSpeechLipSyncTests.TestPlaybackMorphs),
+            ("Dialogue bubbles follow model transforms, camera and resize", AndroidDialogueBubbleTests.TestFollowing),
+            ("Dialogue bubble anchor modes, viewport and missing targets", AndroidDialogueBubbleTests.TestAnchorModesAndVisibility),
             ("Streamed multi-round script tools and main-thread callbacks", TestNativeTools),
             ("Native-tool rejection and text fallback", TestTextFallback),
             ("Tool round limit prevents extra execution", TestRoundLimit),

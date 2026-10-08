@@ -277,6 +277,12 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         }
     }
 
+    public bool TryGetBubblePosition(RuntimeDialogueBubble bubble, int canvasWidth, int canvasHeight, out Vector2 position)
+    {
+        position = default;
+        return _game?.TryGetBubblePosition(bubble, canvasWidth, canvasHeight, out position) == true;
+    }
+
     public void DestroySurface()
     {
         if (_display is null)

@@ -54,6 +54,9 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
     public string LoadingMessage => _renderHost.LoadingMessage;
 
+    internal bool TryGetBubblePosition(RuntimeDialogueBubble bubble, int width, int height, out System.Numerics.Vector2 position)
+        => _renderHost.TryGetBubblePosition(bubble, width, height, out position);
+
     public void SurfaceCreated(ISurfaceHolder holder)
     {
         _hasSurface = true;

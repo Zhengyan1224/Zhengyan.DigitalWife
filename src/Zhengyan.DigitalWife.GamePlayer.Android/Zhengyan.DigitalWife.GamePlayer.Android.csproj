@@ -70,13 +70,21 @@
             BeforeTargets="PrepareForILLink" Condition="'$(DesignTimeBuild)' != 'true'">
         <ItemGroup>
             <_AndroidOriginalVeldrid Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'Veldrid.dll'" />
+            <_AndroidOriginalVk Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'vk.dll'" />
+            <_AndroidOriginalNativeLoader Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'NativeLibraryLoader.dll'" />
         </ItemGroup>
         <PropertyGroup>
             <_AndroidPatchedVeldrid>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)patched-vulkan\Veldrid.dll</_AndroidPatchedVeldrid>
+            <_AndroidPatchedVk>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)patched-vulkan\vk.dll</_AndroidPatchedVk>
+            <_AndroidPatchedNativeLoader>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)patched-vulkan\NativeLibraryLoader.dll</_AndroidPatchedNativeLoader>
             <_AndroidVeldridPatchTool>$(MSBuildProjectDirectory)\..\..\tools\VeldridAndroidPatch\bin\$(Configuration)\net10.0\VeldridAndroidPatch.dll</_AndroidVeldridPatchTool>
         </PropertyGroup>
         <Exec Condition="'@(_AndroidOriginalVeldrid)' != ''"
               Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; &quot;@(_AndroidOriginalVeldrid)&quot; &quot;$(_AndroidPatchedVeldrid)&quot;" />
+        <Exec Condition="'@(_AndroidOriginalVk)' != ''"
+              Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; --loader &quot;@(_AndroidOriginalVk)&quot; &quot;$(_AndroidPatchedVk)&quot;" />
+        <Exec Condition="'@(_AndroidOriginalNativeLoader)' != ''"
+              Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; --loader &quot;@(_AndroidOriginalNativeLoader)&quot; &quot;$(_AndroidPatchedNativeLoader)&quot;" />
         <ItemGroup Condition="'@(_AndroidOriginalVeldrid)' != ''">
             <ResolvedFileToPublish Remove="@(_AndroidOriginalVeldrid)" />
             <ResolvedFileToPublish Include="@(_AndroidOriginalVeldrid->'$(_AndroidPatchedVeldrid)')" PostprocessAssembly="true" />
@@ -87,19 +95,43 @@
             <ReferencePath Include="@(_AndroidVeldridReference->'$(_AndroidPatchedVeldrid)')" />
             <FileWrites Include="$(_AndroidPatchedVeldrid)" />
         </ItemGroup>
+        <ItemGroup Condition="'@(_AndroidOriginalVk)' != ''">
+            <ResolvedFileToPublish Remove="@(_AndroidOriginalVk)" />
+            <ResolvedFileToPublish Include="@(_AndroidOriginalVk->'$(_AndroidPatchedVk)')" PostprocessAssembly="true" />
+            <_AndroidVkReference Include="@(ReferencePath)" Condition="'%(Filename)%(Extension)' == 'vk.dll'" />
+            <ReferencePath Remove="@(_AndroidVkReference)" />
+            <ReferencePath Include="@(_AndroidVkReference->'$(_AndroidPatchedVk)')" />
+            <FileWrites Include="$(_AndroidPatchedVk)" />
+        </ItemGroup>
+        <ItemGroup Condition="'@(_AndroidOriginalNativeLoader)' != ''">
+            <ResolvedFileToPublish Remove="@(_AndroidOriginalNativeLoader)" />
+            <ResolvedFileToPublish Include="@(_AndroidOriginalNativeLoader->'$(_AndroidPatchedNativeLoader)')" PostprocessAssembly="true" />
+            <_AndroidNativeLoaderReference Include="@(ReferencePath)" Condition="'%(Filename)%(Extension)' == 'NativeLibraryLoader.dll'" />
+            <ReferencePath Remove="@(_AndroidNativeLoaderReference)" />
+            <ReferencePath Include="@(_AndroidNativeLoaderReference->'$(_AndroidPatchedNativeLoader)')" />
+            <FileWrites Include="$(_AndroidPatchedNativeLoader)" />
+        </ItemGroup>
     </Target>
 
     <Target Name="CheckAndroidVeldridLinkInput" BeforeTargets="_RunILLink" Condition="'$(DesignTimeBuild)' != 'true'">
         <ItemGroup>
             <_AndroidVeldridLinkInput Include="@(ManagedAssemblyToLink)" Condition="'%(Filename)' == 'Veldrid'" />
+            <_AndroidVkLinkInput Include="@(ManagedAssemblyToLink)" Condition="'%(Filename)' == 'vk'" />
+            <_AndroidNativeLoaderLinkInput Include="@(ManagedAssemblyToLink)" Condition="'%(Filename)' == 'NativeLibraryLoader'" />
         </ItemGroup>
         <Error Condition="'@(_AndroidVeldridLinkInput)' != '$(_AndroidPatchedVeldrid)'"
                Text="Android ILLink must consume the patched Veldrid: @(_AndroidVeldridLinkInput)" />
+        <Error Condition="'@(_AndroidVkLinkInput)' != '$(_AndroidPatchedVk)'"
+               Text="Android ILLink must consume the safe Vk loader: @(_AndroidVkLinkInput)" />
+        <Error Condition="'@(_AndroidNativeLoaderLinkInput)' != '$(_AndroidPatchedNativeLoader)'"
+               Text="Android ILLink must consume the safe NativeLibraryLoader: @(_AndroidNativeLoaderLinkInput)" />
     </Target>
 
     <Target Name="VerifyLinkedAndroidVeldrid" AfterTargets="ILLink"
             Condition="'$(PublishTrimmed)' == 'true' and '$(_AndroidPatchedVeldrid)' != ''">
         <Exec Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; --check &quot;$(IntermediateLinkDir)Veldrid.dll&quot;" />
+        <Exec Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; --check-loader &quot;$(IntermediateLinkDir)vk.dll&quot;" />
+        <Exec Command="dotnet &quot;$(_AndroidVeldridPatchTool)&quot; --check-loader &quot;$(IntermediateLinkDir)NativeLibraryLoader.dll&quot;" />
     </Target>
 
 </Project>

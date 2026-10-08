@@ -1,4 +1,5 @@
 using Android.Views;
+using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
@@ -22,6 +23,8 @@ internal interface IAndroidRenderHost : IDisposable
     void Resize(int width, int height);
 
     void Render(long frameTimeNanos, AndroidInputSnapshot input);
+
+    bool TryGetBubblePosition(RuntimeDialogueBubble bubble, int canvasWidth, int canvasHeight, out Vector2 position);
 
     void Pause();
 

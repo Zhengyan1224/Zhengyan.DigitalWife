@@ -21,8 +21,11 @@ internal static class AndroidVeldridPatchVerification
     internal static void Run(string path)
     {
         Check(path);
+        string loaderPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, "vk.dll");
+        AndroidVkLoaderPatch.Check(loaderPath);
         var context = new AssemblyLoadContext("Android Vulkan patch verification", isCollectible: true);
-        context.Resolving += (_, name) => Assembly.Load(name);
+        context.Resolving += (target, name) => name.Name == "vk"
+            ? target.LoadFromAssemblyPath(loaderPath) : Assembly.Load(name);
         try
         {
             Assembly assembly = context.LoadFromAssemblyPath(Path.GetFullPath(path));

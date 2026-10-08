@@ -2,6 +2,10 @@
 
 对应 2026-10-04 的 DemoGame01、DemoGame05、DemoGame06 反馈。
 
+2026-10-08：用户确认脚本和 TTS 口型已恢复；完整崩溃日志进一步定位到 Vulkan 库加载时的
+`dlerror` 返回值所有权错误，见 [Android Vulkan dlerror 闪退修复](android-vulkan-dlerror-fix.md)。
+下面的设备创建修复发生在此次崩溃点之后，不能消除库加载时的错误。
+
 ## Vulkan 启动
 
 提供的日志停在 `Android graphics backend request`，尚未到场景资源加载，且没有 native crash buffer。

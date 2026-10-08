@@ -5,6 +5,21 @@ using System.Runtime.InteropServices;
 
 try
 {
+    if (args is ["--loader", string originalLoader, string patchedLoader])
+    {
+        AndroidVkLoaderPatch.Apply(originalLoader, patchedLoader);
+        return 0;
+    }
+    if (args is ["--check-loader", string loaderPath])
+    {
+        AndroidVkLoaderPatch.Check(loaderPath);
+        return 0;
+    }
+    if (args is ["--verify-loader", string testLoaderPath])
+    {
+        AndroidVkLoaderPatch.Verify(testLoaderPath);
+        return 0;
+    }
     if (args is ["--check", string linkedAssemblyPath])
     {
         AndroidVeldridPatchVerification.Check(linkedAssemblyPath);
