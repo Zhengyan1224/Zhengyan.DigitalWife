@@ -47,6 +47,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     private readonly string? _initialProjectDirectory;
     private bool _restartRequested;
     private bool _runtimeSettingsApplyPending;
+    private string? _pendingScenePath;
 
     public GameEditorGame(
         GraphicsBackend graphicsBackend = GraphicsBackend.Auto,
@@ -228,6 +229,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             _runtimeSettingsApplyPending = false;
             ApplyRuntimeSettings();
+        }
+
+        if (_pendingScenePath is { } scenePath)
+        {
+            _pendingScenePath = null;
+            SwitchSceneCore(scenePath);
         }
 
         RefreshPointLights();
@@ -823,11 +830,19 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     public void SwitchScene(string scenePath)
     {
         string normalizedScenePath = GameProjectStore.NormalizeScenePath(scenePath);
+        // ImGui invokes this while the old scene's draw commands are still
+        // recording. Finish that frame before destroying or loading resources.
+        _pendingScenePath = normalizedScenePath;
+    }
+
+    private void SwitchSceneCore(string normalizedScenePath)
+    {
         if (string.Equals(normalizedScenePath, ActiveScenePath, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
+        GraphicsDevice.WaitForIdle();
         SaveActiveSceneFile();
         Project.EditorScene = normalizedScenePath;
         Project.Scene = GameProjectStore.LoadScene(ProjectDirectory, normalizedScenePath);

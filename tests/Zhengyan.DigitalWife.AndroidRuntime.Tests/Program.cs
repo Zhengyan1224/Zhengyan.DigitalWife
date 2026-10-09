@@ -1,6 +1,12 @@
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 
+if (args is ["--vulkan-project-models", string modelProject])
+{
+    VulkanProjectModelRegression.Run(modelProject);
+    return 0;
+}
+
 if (args is ["--sleep-child", string readyPath])
 {
     File.WriteAllText(readyPath, Environment.ProcessId.ToString());

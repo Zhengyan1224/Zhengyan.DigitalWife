@@ -1612,7 +1612,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
                 _gpuResources, _meshes, transform, Camera.View, Camera.Projection, screenSize);
         }
 
-        if (!isPlanarReflectionPass && DrawShadowInMainPass && ShadowMap is not { TextureId: not 0 })
+        if (!isPlanarReflectionPass && DrawShadowInMainPass && ShadowMap is not { Texture.IsValid: true })
         {
             DrawGroundShadowPassCore(transform);
         }

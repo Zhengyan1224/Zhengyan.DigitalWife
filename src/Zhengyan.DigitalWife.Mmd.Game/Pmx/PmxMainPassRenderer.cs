@@ -435,7 +435,6 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
     private readonly ResourceLayout _frameLayout;
     private readonly ResourceLayout _materialLayout;
     private readonly Dictionary<FrameSetKey, ResourceSet> _frameSets = [];
-    private readonly FrameSetKey _fallbackFrameSetKey;
     private readonly ShaderSetDescription _shaderSet;
     private readonly VeldridShader[] _shaders;
     private readonly Dictionary<MaterialSetKey, ResourceSet> _materialSets = [];
@@ -453,29 +452,19 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
         ResourceFactory factory = renderer.ResourceFactory;
         _frameLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("PmxFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("PmxFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment, ResourceLayoutElementOptions.DynamicBinding),
             new ResourceLayoutElementDescription("PmxShadowMap", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxShadowSampler", ResourceKind.Sampler, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxLocalShadowAtlas", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxLocalShadowSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         _materialLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("PmxMaterial", ResourceKind.UniformBuffer, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("PmxMaterial", ResourceKind.UniformBuffer, ShaderStages.Fragment, ResourceLayoutElementOptions.DynamicBinding),
             new ResourceLayoutElementDescription("PmxBaseTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxBaseSampler", ResourceKind.Sampler, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxSphereTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxSphereSampler", ResourceKind.Sampler, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxToonTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("PmxToonSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
-        TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
-        VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
-        _fallbackFrameSetKey = new FrameSetKey(0, fallbackTexture, fallbackSampler, fallbackTexture, fallbackSampler);
-        _frameSets[_fallbackFrameSetKey] = factory.CreateResourceSet(new ResourceSetDescription(
-            _frameLayout,
-            RequireDeviceBuffer(resources.FrameUniformBuffer),
-            fallbackTexture,
-            fallbackSampler,
-            fallbackTexture,
-            fallbackSampler));
 
         bool customSpirv = !string.IsNullOrWhiteSpace(vertexSpirvPath)
             || !string.IsNullOrWhiteSpace(fragmentSpirvPath);
@@ -516,7 +505,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 "TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2))
         ];
         _shaderSet = new ShaderSetDescription(vertexLayouts, _shaders);
-        _ = GetPipelineBundle(renderer.Device.SwapchainFramebuffer.OutputDescription);
+        if (renderer.Device.MainSwapchain is { } swapchain)
+            _ = GetPipelineBundle(swapchain.Framebuffer.OutputDescription);
     }
 
     public int Draw(
@@ -594,7 +584,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             : 0.0f;
 
         CommandList commands = _renderer.CommandList;
-        commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.FrameUniformBuffer), 0, frameData);
+        VeldridUniformSlice frameUniform = _renderer.FrameUniforms.Upload(frameData);
         commands.SetVertexBuffer(0, RequireDeviceBuffer(resources.PositionBuffer));
         commands.SetVertexBuffer(1, RequireDeviceBuffer(resources.NormalBuffer));
         commands.SetVertexBuffer(2, RequireDeviceBuffer(resources.UvBuffer));
@@ -603,6 +593,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         commands.SetPipeline(pipelines.Culled);
         ResourceSet frameSet = GetFrameSet(
             resources,
+            frameUniform,
             shadowTexture,
             shadowSampler,
             receiveShadow ? localShadowTexture : null,
@@ -637,10 +628,10 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                     materialIndex)
             };
 
-            commands.UpdateGraphicsBuffer(RequireDeviceBuffer(resources.MaterialUniformBuffer), 0, materialData);
+            VeldridUniformSlice materialUniform = _renderer.FrameUniforms.Upload(materialData);
             commands.SetPipeline(material.BothFace ? pipelines.DoubleSided : pipelines.Culled);
-            commands.SetGraphicsResourceSet(0, frameSet);
-            commands.SetGraphicsResourceSet(1, GetMaterialSet(resources, textures.DescriptorSet, overrideTexture));
+            frameUniform.Bind(commands, 0, frameSet);
+            materialUniform.Bind(commands, 1, GetMaterialSet(materialUniform, textures.DescriptorSet, overrideTexture));
             commands.DrawIndexed((uint)mesh.VertexCount, 1, (uint)mesh.BeginIndex, 0, 0);
             drawCount++;
         }
@@ -682,11 +673,11 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
     }
 
     private ResourceSet GetMaterialSet(
-        PmxGpuResources resources,
+        VeldridUniformSlice uniform,
         PmxMaterialDescriptorSet descriptorSet,
         TextureView? overrideTexture)
     {
-        MaterialSetKey key = new(_renderer.CurrentFrameSlot, descriptorSet, overrideTexture);
+        MaterialSetKey key = new(uniform.Buffer, descriptorSet, overrideTexture);
         if (_materialSets.TryGetValue(key, out ResourceSet? resourceSet))
         {
             return resourceSet;
@@ -697,7 +688,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         PmxTextureDescriptor toonTexture = descriptorSet.Bindings[2];
         resourceSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
             _materialLayout,
-            RequireDeviceBuffer(resources.MaterialUniformBuffer),
+            uniform.BindingRange,
             overrideTexture ?? RequireTextureView(baseTexture.Texture),
             RequireSampler(baseTexture.Sampler),
             RequireTextureView(sphereTexture.Texture),
@@ -710,6 +701,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
     private ResourceSet GetFrameSet(
         PmxGpuResources resources,
+        VeldridUniformSlice uniform,
         TextureView? shadowTexture,
         VeldridSampler? shadowSampler,
         TextureView? localShadowTexture,
@@ -718,7 +710,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         TextureView fallbackTexture = RequireTextureView(resources.DefaultTexture);
         VeldridSampler fallbackSampler = RequireSampler(resources.TextureSampler);
         FrameSetKey key = new(
-            _renderer.CurrentFrameSlot,
+            uniform.Buffer,
             shadowTexture ?? fallbackTexture,
             shadowSampler ?? fallbackSampler,
             localShadowTexture ?? fallbackTexture,
@@ -729,7 +721,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         }
 
         foreach (FrameSetKey staleKey in _frameSets.Keys
-            .Where(existingKey => !existingKey.Equals(_fallbackFrameSetKey))
+            .Where(existingKey => existingKey.Texture.IsDisposed || existingKey.LocalShadowTexture.IsDisposed)
             .ToArray())
         {
             _frameSets[staleKey].Dispose();
@@ -738,7 +730,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
         resourceSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
             _frameLayout,
-            RequireDeviceBuffer(resources.FrameUniformBuffer),
+            uniform.BindingRange,
             key.Texture,
             key.Sampler,
             key.LocalShadowTexture,
@@ -852,9 +844,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
     private sealed record PipelineBundle(OutputDescription OutputDescription, Pipeline Culled, Pipeline DoubleSided);
 
-    private readonly record struct MaterialSetKey(int Slot, PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
+    private readonly record struct MaterialSetKey(DeviceBuffer Buffer, PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
     private readonly record struct FrameSetKey(
-        int Slot,
+        DeviceBuffer Buffer,
         TextureView Texture,
         VeldridSampler Sampler,
         TextureView LocalShadowTexture,

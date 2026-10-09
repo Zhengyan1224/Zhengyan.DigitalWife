@@ -13,6 +13,12 @@ using Device = Veldrid.GraphicsDevice;
 internal static unsafe class VulkanSynchronizationRegressionTests
 {
     public static void TestSkinningFrames()
+        => TestFrames(false);
+
+    public static void TestCpuFallbackFrames()
+        => TestFrames(true);
+
+    private static void TestFrames(bool forceCpuFallback)
     {
         if (!VulkanRenderer.IsSupported(out string reason))
         {
@@ -27,7 +33,8 @@ internal static unsafe class VulkanSynchronizationRegressionTests
         VulkanRenderer renderer = new();
         typeof(VulkanRenderer).GetField("_device", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer, device);
         ResourceFactory factory = device.ResourceFactory;
-        using DeviceBuffer positions = factory.CreateBuffer(new BufferDescription(36, BufferUsage.VertexBuffer));
+        using VeldridGpuBuffer cpuPositions = new(renderer, new GpuBufferDescription(100012 * 12, GpuBufferKind.Vertex));
+        DeviceBuffer positions = cpuPositions.NativeBuffer;
         using DeviceBuffer normals = factory.CreateBuffer(new BufferDescription(36, BufferUsage.VertexBuffer));
         using DeviceBuffer uvs = factory.CreateBuffer(new BufferDescription(24, BufferUsage.VertexBuffer));
         using VulkanPmxSkinningCompute compute = new(renderer, 3, 1);
@@ -82,13 +89,25 @@ internal static unsafe class VulkanSynchronizationRegressionTests
             bones[i].BoneWeights[0] = 1;
         }
         Matrix4x4 transform;
+        Vector3[] fallbackPositions = new Vector3[100012];
         try
         {
             for (int frame = 0; frame < snapshots.Length; frame++)
             {
                 transform = Matrix4x4.CreateTranslation((frame & 1) == 0 ? -0.5f : 0.5f, 0, 0);
-                Check(compute.ExecuteGpu(3, 1, inputPositions, inputNormals, inputUvs, bones,
-                    morphs, uvMorphs, &transform, &transform), $"GPU skinning failed on frame {frame}.");
+                if (frame < 90 || !forceCpuFallback)
+                {
+                    Check(compute.ExecuteGpu(3, 1, inputPositions, inputNormals, inputUvs, bones,
+                        morphs, uvMorphs, &transform, &transform), $"GPU skinning failed on frame {frame}.");
+                }
+                else
+                {
+                    // Match a runtime GPU validation failure: retire Compute,
+                    // then upload a large CPU pose to the same renderer buffer.
+                    if (frame == 90) compute.Dispose();
+                    for (int i = 0; i < 3; i++) fallbackPositions[i] = Vector3.Transform(inputPositions[i], transform);
+                    cpuPositions.Update<Vector3>(fallbackPositions);
+                }
                 commands.Begin();
                 commands.SetFramebuffer(framebuffer);
                 commands.ClearColorTarget(0, RgbaFloat.Black);

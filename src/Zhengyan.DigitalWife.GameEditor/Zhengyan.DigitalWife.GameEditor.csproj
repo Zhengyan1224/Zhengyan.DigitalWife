@@ -9,6 +9,7 @@
     <ItemGroup>
         <InternalsVisibleTo Include="Zhengyan.DigitalWife.GameEditor.Tests" />
         <PackageReference Include="ImGui.NET" />
+        <ProjectReference Include="..\..\tools\VeldridTransparentSwapchainPatch\VeldridTransparentSwapchainPatch.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
         <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects\Zhengyan.DigitalWife.GameProjects.csproj" />
@@ -69,6 +70,13 @@
             <ScriptCompilerContractFiles Include="..\Zhengyan.DigitalWife.GamePlayer\bin\$(Configuration)\net10.0\Zhengyan.DigitalWife.Llm.OpenAI.dll" />
         </ItemGroup>
         <Copy SourceFiles="@(ScriptCompilerContractFiles)" DestinationFolder="$(TargetDir)" />
+    </Target>
+
+    <Target Name="PatchEditorVeldridBuild" AfterTargets="CopyScriptCompilerContracts" Condition="Exists('$(TargetDir)Veldrid.dll')">
+        <Exec Command="dotnet &quot;$(MSBuildProjectDirectory)\..\..\tools\VeldridTransparentSwapchainPatch\bin\$(Configuration)\net10.0\VeldridTransparentSwapchainPatch.dll&quot; &quot;$(TargetDir)Veldrid.dll&quot;" />
+    </Target>
+    <Target Name="PatchEditorVeldridPublish" AfterTargets="Publish" Condition="Exists('$(PublishDir)Veldrid.dll')">
+        <Exec Command="dotnet &quot;$(MSBuildProjectDirectory)\..\..\tools\VeldridTransparentSwapchainPatch\bin\$(Configuration)\net10.0\VeldridTransparentSwapchainPatch.dll&quot; &quot;$(PublishDir)Veldrid.dll&quot;" />
     </Target>
 
 </Project>

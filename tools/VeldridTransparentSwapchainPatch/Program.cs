@@ -28,8 +28,15 @@ using ModuleDefinition module = ModuleDefinition.ReadModule(assemblyPath, new Re
     AssemblyResolver = resolver
 });
 
+bool memoryPatched = VeldridMemorySafetyPatch.Apply(module);
 if (module.Types.Any(type => type.Namespace == "Veldrid.Vk" && type.Name == MarkerTypeName))
 {
+    if (memoryPatched)
+    {
+        string updated = assemblyPath + ".memory-safety.tmp";
+        module.Write(updated);
+        File.Move(updated, assemblyPath, overwrite: true);
+    }
     return 0;
 }
 

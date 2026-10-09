@@ -872,9 +872,6 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             foreach (DrawableGameComponent drawable in drawables.OrderBy(component => component.DrawOrder))
             {
                 if (drawable.Visible) drawable.Draw(gameTime);
-                if (drawable is PmxModelComponent { Visible: true, DrawShadowInMainPass: false } model
-                    && !_renderingRenderTexture)
-                    model.DrawGroundShadowPass();
             }
         }
         finally

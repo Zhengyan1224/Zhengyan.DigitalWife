@@ -24,6 +24,8 @@ internal static class AndroidRuntimeRegressionTests
             ("Hosted loading progress layout without a desktop window", HostedLoadingScreenRegressionTests.TestProgressLayout),
             ("Hosted Vulkan loading frames without device recreation", HostedLoadingScreenRegressionTests.TestVulkanFrames),
             ("Vulkan asynchronous skinning and vertex visibility", VulkanSynchronizationRegressionTests.TestSkinningFrames),
+            ("Vulkan large CPU uploads after Compute fallback", VulkanSynchronizationRegressionTests.TestCpuFallbackFrames),
+            ("Vulkan PMX draw snapshots, reflection and depth across frame slots", VulkanDrawSnapshotTests.TestPmxPasses),
             ("Published script ABI, lambda and event fields", TestPublishedScript),
             ("Android in-memory script references include default imports", AndroidScriptMetadataTests.TestDefaultImports),
             ("TTS initialization retries after failure", AndroidTtsInitializationTests.TestRetry),

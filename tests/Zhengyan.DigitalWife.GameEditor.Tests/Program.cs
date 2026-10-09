@@ -17,6 +17,7 @@ if (args is ["--export-project", string projectDirectory, string outputPath])
     ("OpenGL and Vulkan viewport placement and underwater layout", TestViewportCoordinates),
     ("Editor sends matching viewport, scissor, and clear rectangles", ViewportRenderingRegression.Run),
     ("Startup directory is available before the overlay captures it", TestStartupDirectory),
+    ("Scene requests preserve the current scene until the next update", TestDeferredSceneSwitch),
     ("Save and export all scenes after opening a project", TestMultiSceneExport)
 ];
 int failures = 0;
@@ -72,6 +73,35 @@ static void TestStartupDirectory()
     using GameEditorGame defaultEditor = new(GraphicsBackend.OpenGL);
     Check(CaptureDirectoryInput(defaultEditor) == GameProjectStore.CreateDefaultProjectDirectory(),
         "Starting without a project should retain the default directory.");
+}
+
+static void TestDeferredSceneSwitch()
+{
+    string root = Path.Combine(Path.GetTempPath(), "dw-switch-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        GameProject project = new() { EditorScene = "scenes/a.scene.json", DefaultScene = "scenes/a.scene.json",
+            Scenes = ["scenes/a.scene.json", "scenes/b.scene.json"] };
+        GameProjectStore.Save(root, project);
+        GameProjectStore.SaveScene(root, "scenes/b.scene.json", new GameProjectScene { Name = "B" });
+        using GameEditorGame editor = new(GraphicsBackend.OpenGL, root);
+        using VulkanRenderer renderer = new();
+        typeof(Zhengyan.DigitalWife.Mmd.Game.Game).GetProperty("GraphicsDevice")!
+            .SetValue(editor, new GraphicsDevice(renderer, Vector4.Zero));
+        typeof(GameEditorGame).GetProperty(nameof(GameEditorGame.Project))!.SetValue(editor, project);
+        for (int i = 0; i < 8; i++)
+        {
+            string previous = editor.ActiveScenePath;
+            string next = i % 2 == 0 ? "scenes/b.scene.json" : "scenes/a.scene.json";
+            editor.SwitchScene(next);
+            Check(editor.ActiveScenePath == previous, "SwitchScene mutated the scene while UI drawing was still active.");
+            typeof(GameEditorGame).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(editor, [default(Zhengyan.DigitalWife.Mmd.Game.GameTime)]);
+            Check(editor.ActiveScenePath == next, "The queued scene change was not applied at update time.");
+        }
+    }
+    finally { Directory.Delete(root, recursive: true); }
 }
 
 static void TestMultiSceneExport()

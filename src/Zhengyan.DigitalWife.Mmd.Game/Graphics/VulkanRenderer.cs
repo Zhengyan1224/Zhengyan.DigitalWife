@@ -33,6 +33,8 @@ public sealed class VulkanRenderer : IRenderer
     private Fence[]? _frameFences;
     private Fence? _lastSubmittedFrameFence;
     private int _frameSlot;
+    private long _uniformFrameId;
+    private VeldridUniformArena? _uniformArena;
     private readonly IRenderBackendServices _services;
 
     public VulkanRenderer()
@@ -60,6 +62,8 @@ public sealed class VulkanRenderer : IRenderer
     /// </summary>
     public bool WaitForPreviousFrameBeforeUpdate { get; set; }
 
+    public int LastFrameUniformUploadCount { get; private set; }
+
     public IRenderBackendServices Services => _services;
 
     public Vector2D<int> BackBufferSize { get; private set; }
@@ -74,6 +78,16 @@ public sealed class VulkanRenderer : IRenderer
 
     internal bool IsFrameOpen => _frameOpen;
     internal int CurrentFrameSlot => _frameSlot;
+
+    internal VeldridUniformArena FrameUniforms
+    {
+        get
+        {
+            _uniformArena ??= new VeldridUniformArena(Device);
+            _uniformArena.BeginFrame(_frameSlot, _uniformFrameId);
+            return _uniformArena;
+        }
+    }
 
     public void BeginFrameSlot()
     {
@@ -516,6 +530,7 @@ public sealed class VulkanRenderer : IRenderer
 
         ResolveMainColor();
         commands.End();
+        LastFrameUniformUploadCount = _uniformArena is null ? 0 : FrameUniforms.AllocationCount;
         Fence fence = _frameFences![_frameSlot];
         // Readback and dynamic resources belong to the same submission. Do not
         // replace the frame fence with a readback fence: that lets the CPU reuse
@@ -543,6 +558,7 @@ public sealed class VulkanRenderer : IRenderer
         }
         device.SwapBuffers();
         _frameOpen = false;
+        _uniformFrameId++;
         if (_frameFences is not null) _frameSlot = (_frameSlot + 1) % FrameSlotCount;
     }
 
@@ -585,6 +601,8 @@ public sealed class VulkanRenderer : IRenderer
             _commandList?.Dispose();
             _utilityPasses?.Dispose();
             _utilityPasses = null;
+            _uniformArena?.Dispose();
+            _uniformArena = null;
             _multisampleFramebuffer?.Dispose();
             _multisampleDepth?.Dispose();
             _multisampleColor?.Dispose();

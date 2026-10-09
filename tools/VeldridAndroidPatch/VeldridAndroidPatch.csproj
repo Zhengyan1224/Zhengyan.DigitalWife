@@ -6,6 +6,7 @@
     <ShouldBeValidatedAsExecutableReference>false</ShouldBeValidatedAsExecutableReference>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\VeldridCommonPatch\VeldridMemorySafetyPatch.cs" Link="VeldridMemorySafetyPatch.cs" />
     <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="Veldrid" />
     <PackageReference Include="Newtonsoft.Json" />

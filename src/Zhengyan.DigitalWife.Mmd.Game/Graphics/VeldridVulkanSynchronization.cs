@@ -9,6 +9,13 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 internal static unsafe class VeldridVulkanSynchronization
 {
     private static readonly PropertyInfo CommandBufferProperty = FindCommandBufferProperty();
+    private static readonly MethodInfo EndRenderPassMethod = FindEndRenderPassMethod();
+
+    [DynamicDependency("EnsureNoRenderPass", "Veldrid.Vk.VkCommandList", "Veldrid")]
+    private static MethodInfo FindEndRenderPassMethod()
+        => typeof(CommandList).Assembly.GetType("Veldrid.Vk.VkCommandList")
+            ?.GetMethod("EnsureNoRenderPass", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new NotSupportedException("This Veldrid version cannot end its Vulkan render pass for an upload.");
 
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, "Veldrid.Vk.VkCommandList", "Veldrid")]
     private static PropertyInfo FindCommandBufferProperty()
@@ -34,15 +41,31 @@ internal static unsafe class VeldridVulkanSynchronization
     // storage buffers also need visibility in vertex/fragment shaders. Record
     // this immediately after UpdateBuffer, which has ended any active render
     // pass; a pipeline barrier inserted in an active render pass is not valid.
-    private static void TransferToGraphics(CommandList commands)
+    internal static void TransferToGraphics(CommandList commands)
         => Barrier(commands, VkPipelineStageFlags.Transfer, VkAccessFlags.TransferWrite,
             VkPipelineStageFlags.AllGraphics,
             VkAccessFlags.UniformRead | VkAccessFlags.ShaderRead |
             VkAccessFlags.VertexAttributeRead | VkAccessFlags.IndexRead);
 
+    internal static void PrepareBufferTransfer(CommandList commands)
+        => Barrier(commands, VkPipelineStageFlags.AllCommands,
+            VkAccessFlags.MemoryRead | VkAccessFlags.MemoryWrite,
+            VkPipelineStageFlags.Transfer, VkAccessFlags.TransferRead | VkAccessFlags.TransferWrite);
+
+    private static void PrepareGraphicsUpload(CommandList commands)
+    {
+        EndRenderPassMethod.Invoke(commands, null);
+        // A post-copy barrier alone does not protect earlier draws reading the
+        // destination. This also orders consecutive writes to the same range.
+        Barrier(commands, VkPipelineStageFlags.AllGraphics | VkPipelineStageFlags.Transfer,
+            VkAccessFlags.MemoryRead | VkAccessFlags.MemoryWrite,
+            VkPipelineStageFlags.Transfer, VkAccessFlags.TransferWrite);
+    }
+
     public static void UpdateGraphicsBuffer<T>(this CommandList commands, DeviceBuffer buffer, uint offset, T data)
         where T : unmanaged
     {
+        PrepareGraphicsUpload(commands);
         commands.UpdateBuffer(buffer, offset, data);
         TransferToGraphics(commands);
     }
@@ -51,6 +74,7 @@ internal static unsafe class VeldridVulkanSynchronization
         where T : unmanaged
     {
         if (data.IsEmpty) return;
+        PrepareGraphicsUpload(commands);
         commands.UpdateBuffer(buffer, offset, data);
         TransferToGraphics(commands);
     }
@@ -64,6 +88,7 @@ internal static unsafe class VeldridVulkanSynchronization
     public static void UpdateGraphicsBuffer(this CommandList commands, DeviceBuffer buffer, uint offset, nint data, uint size)
     {
         if (size == 0) return;
+        PrepareGraphicsUpload(commands);
         commands.UpdateBuffer(buffer, offset, data, size);
         TransferToGraphics(commands);
     }

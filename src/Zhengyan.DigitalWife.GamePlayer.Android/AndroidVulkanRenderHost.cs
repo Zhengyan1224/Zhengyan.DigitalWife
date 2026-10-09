@@ -31,6 +31,10 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private float _lastLoadingProgress = -1.0f;
     private Surface? _surface;
     private readonly object _lifecycleLock = new();
+    private long _profileStart;
+    private int _profileFrames;
+    private readonly long[] _profileTicks = new long[7];
+    private long _profileUniforms;
 
     public GameProject? Project => _project;
 
@@ -129,10 +133,12 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 return;
             }
 
+            long frameStart = Stopwatch.GetTimestamp();
             if (_game.GraphicsDevice.Renderer is VulkanRenderer renderer)
             {
                 renderer.BeginFrameSlot();
             }
+            long waitEnd = Stopwatch.GetTimestamp();
 
             double deltaSeconds = 0.0;
             if (_lastFrameTimeNanos != 0 && frameTimeNanos >= _lastFrameTimeNanos)
@@ -161,8 +167,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                     _scriptHost?.Start(scene);
                     _scriptsStarted = true;
                 }
+                long updateEnd = Stopwatch.GetTimestamp();
                 _game.RenderHostedWithoutPresent(deltaSeconds);
+                long drawEnd = Stopwatch.GetTimestamp();
                 _game.PresentHosted();
+                if (IsReady) RecordFrameProfile(frameStart, waitEnd, updateEnd, drawEnd, Stopwatch.GetTimestamp());
                 if (scene is not null)
                 {
                     foreach (AndroidRuntimeEvent runtimeEvent in _game.DrainRuntimeEvents())
@@ -245,6 +254,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     private void ReloadGame()
     {
+        ResetFrameProfile();
         _game?.Dispose();
         _game = null;
         if (!_surfaceAvailable || _surface is null || _project is null || _sceneManager?.Current is not { } scene)
@@ -263,7 +273,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         try
         {
             if (!_surface.IsValid) throw new InvalidOperationException("Android Vulkan surface is no longer valid.");
-            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=2; loader=borrowed-dlerror");
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=3; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth");
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618
@@ -326,6 +336,27 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _lastLoadingProgress = progress;
         _scriptHost.UpdateLoading(scene, progress, _game.LoadingMessage, _game.IsReady);
         if (_game.IsReady) _loadingStarted = false;
+    }
+
+    private void RecordFrameProfile(long start, long waitEnd, long updateEnd, long drawEnd, long presentEnd)
+    {
+        if (_profileStart == 0) _profileStart = start;
+        _profileFrames++;
+        _profileTicks[0] += waitEnd - start;
+        _profileTicks[1] += updateEnd - waitEnd;
+        _profileTicks[2] += drawEnd - updateEnd;
+        _profileTicks[3] += presentEnd - drawEnd;
+        AndroidSceneGame.DrawProfile draw = _game!.LastDrawProfile;
+        _profileTicks[4] += draw.DirectionalShadowTicks;
+        _profileTicks[5] += draw.LocalShadowTicks;
+        _profileTicks[6] += draw.ReflectionTicks;
+        _profileUniforms += ((VulkanRenderer)_game.GraphicsDevice.Renderer).LastFrameUniformUploadCount;
+        double seconds = (presentEnd - _profileStart) / (double)Stopwatch.Frequency;
+        if (seconds < 5) return;
+        double millisecondsPerTick = 1000.0 / Stopwatch.Frequency / _profileFrames;
+        Log.Info(LogTag, FormattableString.Invariant(
+            $"Vulkan frame profile: fps={_profileFrames / seconds:F1}; frames={_profileFrames}; CPU ms/frame: fence={_profileTicks[0] * millisecondsPerTick:F2}, update={_profileTicks[1] * millisecondsPerTick:F2}, record={_profileTicks[2] * millisecondsPerTick:F2}, present={_profileTicks[3] * millisecondsPerTick:F2}; record subsets: shadow={_profileTicks[4] * millisecondsPerTick:F2}, localShadow={_profileTicks[5] * millisecondsPerTick:F2}, reflection={_profileTicks[6] * millisecondsPerTick:F2}; uniformSnapshots={_profileUniforms / _profileFrames}"));
+        ResetFrameProfile();
     }
 
     private void OnSceneChanged(RuntimeSceneChange change)
@@ -445,5 +476,14 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private void ResetFrameClock()
     {
         _lastFrameTimeNanos = 0;
+        ResetFrameProfile();
+    }
+
+    private void ResetFrameProfile()
+    {
+        _profileStart = 0;
+        _profileFrames = 0;
+        _profileUniforms = 0;
+        Array.Clear(_profileTicks);
     }
 }

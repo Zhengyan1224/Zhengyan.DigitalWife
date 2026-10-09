@@ -5,6 +5,11 @@ using System.Runtime.InteropServices;
 
 try
 {
+    if (args is ["--verify-memory", string memoryAssembly])
+    {
+        VeldridMemorySafetyPatch.VerifyFailures(memoryAssembly);
+        return 0;
+    }
     if (args is ["--loader", string originalLoader, string patchedLoader])
     {
         AndroidVkLoaderPatch.Apply(originalLoader, patchedLoader);
@@ -75,6 +80,8 @@ public static class AndroidVeldridPatch
         MethodDefinition log = CreateLogger(module, marker);
         AddStartupLogs(module, log);
         PatchCompositeAlpha(module, marker);
+        AndroidVulkanRenderPassPatch.Apply(module);
+        VeldridMemorySafetyPatch.Apply(module);
 
         foreach (TypeDefinition type in module.Types)
             foreach (MethodDefinition method in type.Methods.Where(m => m.HasBody)) method.Body.OptimizeMacros();
