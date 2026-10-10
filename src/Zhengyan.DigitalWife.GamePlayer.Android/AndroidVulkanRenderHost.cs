@@ -273,7 +273,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         try
         {
             if (!_surface.IsValid) throw new InvalidOperationException("Android Vulkan surface is no longer valid.");
-            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=3; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth");
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=4; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth; presentSync=per-image-semaphore");
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618

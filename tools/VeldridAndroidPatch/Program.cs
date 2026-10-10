@@ -5,6 +5,11 @@ using System.Runtime.InteropServices;
 
 try
 {
+    if (args is ["--verify-present", string presentAssembly])
+    {
+        VulkanPresentationVerification.Run(presentAssembly);
+        return 0;
+    }
     if (args is ["--verify-memory", string memoryAssembly])
     {
         VeldridMemorySafetyPatch.VerifyFailures(memoryAssembly);
@@ -81,6 +86,7 @@ public static class AndroidVeldridPatch
         AddStartupLogs(module, log);
         PatchCompositeAlpha(module, marker);
         AndroidVulkanRenderPassPatch.Apply(module);
+        AndroidVulkanPresentationPatch.Apply(module);
         VeldridMemorySafetyPatch.Apply(module);
 
         foreach (TypeDefinition type in module.Types)
