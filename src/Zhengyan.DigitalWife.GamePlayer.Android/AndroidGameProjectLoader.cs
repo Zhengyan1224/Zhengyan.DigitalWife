@@ -22,6 +22,8 @@ internal sealed class AndroidGameProjectLoadResult : IDisposable
 
     public string? Error { get; init; }
 
+    public GameProjectPackagePasswordError? PasswordError { get; init; }
+
     public bool Succeeded => Project is not null && Error is null;
 
     public void Dispose()
@@ -49,28 +51,29 @@ internal static class AndroidGameProjectLoader
         return Directory.Exists(bundledProject) || File.Exists(bundledProject);
     }
 
-    public static AndroidGameProjectLoadResult Load(Activity activity, Intent? intent, string? password = null)
+    public static AndroidGameProjectLoadResult Load(Activity activity, Intent? intent, string? password = null, string? sourcePath = null)
     {
         ArgumentNullException.ThrowIfNull(activity);
-
+        string? inputPath = sourcePath;
+        GameProjectPackageSession? session = null;
         try
         {
             AndroidBundledResourceStore.EnsureExtracted(activity);
             BundledAssetPathResolver.RegisterSearchRoot(AndroidBundledResourceStore.RootDirectory);
 
-            string? inputPath = ResolveInputPath(activity, intent);
+            inputPath ??= ResolveInputPath(activity, intent);
             if (string.IsNullOrWhiteSpace(inputPath))
             {
                 return Failure("No game project was supplied. Open a project directory or .dwgame package with this app, or copy it to the app's files/GameProject directory.");
             }
 
-            GameProjectPackageSession session = GameProjectPackage.OpenOrExtract(
+            session = GameProjectPackage.OpenOrExtract(
                 inputPath,
                 new GameProjectPackageOpenOptions
                 {
                     Password = password,
                     SaveDirectory = Path.Combine(activity.FilesDir?.AbsolutePath ?? activity.CacheDir?.AbsolutePath ?? string.Empty, "saves"),
-                    TempRootDirectory = Path.Combine(activity.CacheDir?.AbsolutePath ?? string.Empty, "GamePackages"),
+                    TempRootDirectory = Path.Combine(activity.CacheDir?.AbsolutePath ?? string.Empty, "GamePackages", Guid.NewGuid().ToString("N")),
                     PersistentCacheDirectory = Path.Combine(activity.FilesDir?.AbsolutePath ?? activity.CacheDir?.AbsolutePath ?? string.Empty, "PackageCache"),
                     UsePersistentCache = true
                 });
@@ -93,8 +96,21 @@ internal static class AndroidGameProjectLoader
                 Source = source
             };
         }
+        catch (GameProjectPackagePasswordException ex)
+        {
+            session?.Dispose();
+            // Expected interaction, not a renderer/startup failure. Reuse this
+            // imported path on retry instead of copying a content URI again.
+            return new AndroidGameProjectLoadResult
+            {
+                Source = inputPath ?? string.Empty,
+                Error = ex.Message,
+                PasswordError = ex.Reason
+            };
+        }
         catch (Exception ex)
         {
+            session?.Dispose();
             Log.Error(LogTag, $"Game project load failed: {ex}");
             return Failure(ex.Message);
         }

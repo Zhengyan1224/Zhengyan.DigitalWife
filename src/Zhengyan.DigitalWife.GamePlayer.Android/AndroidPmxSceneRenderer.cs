@@ -2078,23 +2078,11 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             return;
         }
 
-        float aspect = Math.Max(viewportWidth, 1) / (float)Math.Max(viewportHeight, 1);
         // Reflections are sampled as a normal screen-space texture. A 512px
         // target is visibly jagged on phone displays, especially on the mirror
         // plane close to the camera; use a 1024px target for the normal profile.
-        int longestSide = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 512 : 1024;
-        int targetWidth;
-        int targetHeight;
-        if (aspect >= 1.0f)
-        {
-            targetWidth = longestSide;
-            targetHeight = Math.Max(16, (int)MathF.Round(longestSide / aspect));
-        }
-        else
-        {
-            targetWidth = Math.Max(16, (int)MathF.Round(longestSide * aspect));
-            targetHeight = longestSide;
-        }
+        (int targetWidth, int targetHeight) = AndroidRenderPolicy.ResolveReflectionSize(
+            viewportWidth, viewportHeight, _quality.Profile);
 
         foreach (string surfaceId in _reflectionTargets.Keys.ToArray())
         {

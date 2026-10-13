@@ -26,6 +26,8 @@ internal static class AndroidRuntimeRegressionTests
             ("Vulkan asynchronous skinning and vertex visibility", VulkanSynchronizationRegressionTests.TestSkinningFrames),
             ("Vulkan large CPU uploads after Compute fallback", VulkanSynchronizationRegressionTests.TestCpuFallbackFrames),
             ("Vulkan PMX draw snapshots, reflection and depth across frame slots", VulkanDrawSnapshotTests.TestPmxPasses),
+            ("Vulkan scene upload snapshots and uninterrupted passes", VulkanSceneUploadTests.TestScenePasses),
+            ("Android reflection sizes match across backends", VulkanSceneUploadTests.TestReflectionSizes),
             ("Published script ABI, lambda and event fields", TestPublishedScript),
             ("Android in-memory script references include default imports", AndroidScriptMetadataTests.TestDefaultImports),
             ("TTS initialization retries after failure", AndroidTtsInitializationTests.TestRetry),
@@ -41,6 +43,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Skills, memory paths and automatic registration", TestSkills),
             ("Skill command cancellation stops the child process", TestCommandCancellation),
             ("Editor precompile and encrypted dwgame round trip", TestPackage),
+            ("Encrypted package password requests, retries and split parts", PackagePasswordTests.TestOpening),
             ("Desktop and Android exports in one process", TestDesktopIsolation)
         ];
         if (filter is not null) tests = tests.Where(test => test.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToArray();

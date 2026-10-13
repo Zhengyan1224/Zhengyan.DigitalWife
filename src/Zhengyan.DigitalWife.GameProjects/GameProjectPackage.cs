@@ -48,6 +48,20 @@ public sealed class GameProjectPackageOpenOptions
     public bool UsePersistentCache { get; set; } = true;
 }
 
+public enum GameProjectPackagePasswordError
+{
+    Required,
+    Invalid
+}
+
+/// <summary>Lets interactive hosts request/retry a password without parsing localized error text.</summary>
+public sealed class GameProjectPackagePasswordException(
+    GameProjectPackagePasswordError reason, string message, Exception? innerException = null)
+    : CryptographicException(message, innerException)
+{
+    public GameProjectPackagePasswordError Reason { get; } = reason;
+}
+
 public sealed class GameProjectPackageSession : IDisposable
 {
     private readonly string? _tempRootDirectory;
@@ -240,6 +254,8 @@ public static class GameProjectPackage
     {
         PackageInput packageInput = ResolvePackageInput(inputPath);
         PackageHeader packageHeader = ReadPackageInputHeader(packageInput);
+        // Ask before combining large split packages or creating extraction files.
+        if (packageHeader.Crypto is not null) _ = ResolvePackagePassword(options.Password);
         bool usePersistentCache = options.UsePersistentCache
             && packageHeader.Crypto is null
             && (string.IsNullOrWhiteSpace(options.TempRootDirectory)
@@ -464,36 +480,45 @@ public static class GameProjectPackage
             HashAlgorithmName.SHA256,
             KeySize);
 
-        using AesGcm aes = new(key, crypto.TagSize);
-        using FileStream output = File.Create(outputPath);
-
-        long remaining = payloadLength;
-        ulong chunkIndex = 0;
-        byte[] lengthBuffer = new byte[4];
-        while (remaining > 0)
+        try
         {
-            ReadExactly(input, lengthBuffer);
-            remaining -= lengthBuffer.Length;
-            int plainLength = BinaryPrimitives.ReadInt32LittleEndian(lengthBuffer);
-            if (plainLength <= 0 || plainLength > crypto.ChunkSize || remaining < plainLength + crypto.TagSize)
+            using AesGcm aes = new(key, crypto.TagSize);
+            using FileStream output = File.Create(outputPath);
+            long remaining = payloadLength;
+            ulong chunkIndex = 0;
+            byte[] lengthBuffer = new byte[4];
+            while (remaining > 0)
             {
-                throw new InvalidDataException("Invalid encrypted package payload.");
+                ReadExactly(input, lengthBuffer);
+                remaining -= lengthBuffer.Length;
+                int plainLength = BinaryPrimitives.ReadInt32LittleEndian(lengthBuffer);
+                if (plainLength <= 0 || plainLength > crypto.ChunkSize || remaining < plainLength + crypto.TagSize)
+                {
+                    throw new InvalidDataException("Invalid encrypted package payload.");
+                }
+
+                byte[] cipherText = new byte[plainLength];
+                byte[] tag = new byte[crypto.TagSize];
+                ReadExactly(input, cipherText);
+                ReadExactly(input, tag);
+                remaining -= plainLength + crypto.TagSize;
+
+                byte[] plainText = new byte[plainLength];
+                byte[] nonce = CreateChunkNonce(baseNonce, chunkIndex);
+                try
+                {
+                    aes.Decrypt(nonce, cipherText, tag, plainText);
+                }
+                catch (AuthenticationTagMismatchException ex)
+                {
+                    throw new GameProjectPackagePasswordException(GameProjectPackagePasswordError.Invalid,
+                        "The package password is incorrect, or the encrypted package is damaged.", ex);
+                }
+                output.Write(plainText);
+                chunkIndex++;
             }
-
-            byte[] cipherText = new byte[plainLength];
-            byte[] tag = new byte[crypto.TagSize];
-            ReadExactly(input, cipherText);
-            ReadExactly(input, tag);
-            remaining -= plainLength + crypto.TagSize;
-
-            byte[] plainText = new byte[plainLength];
-            byte[] nonce = CreateChunkNonce(baseNonce, chunkIndex);
-            aes.Decrypt(nonce, cipherText, tag, plainText);
-            output.Write(plainText);
-            chunkIndex++;
         }
-
-        CryptographicOperations.ZeroMemory(key);
+        finally { CryptographicOperations.ZeroMemory(key); }
     }
 
     private static void WriteContainer(string containerPath, PackageHeader header, string payloadPath)
@@ -573,16 +598,7 @@ public static class GameProjectPackage
 
         if (header.Crypto is not null)
         {
-            string normalizedPassword = NormalizePassword(password)
-                ?? Environment.GetEnvironmentVariable(PasswordEnvironmentVariable)
-                ?? string.Empty;
-            if (string.IsNullOrEmpty(normalizedPassword))
-            {
-                throw new InvalidOperationException(
-                    $"Encrypted package requires a password. Pass --package-password or set {PasswordEnvironmentVariable}.");
-            }
-
-            DecryptPayload(input, header.PayloadLength, zipPath, normalizedPassword, header.Crypto);
+            DecryptPayload(input, header.PayloadLength, zipPath, ResolvePackagePassword(password), header.Crypto);
         }
         else
         {
@@ -1002,6 +1018,14 @@ public static class GameProjectPackage
         using FileStream stream = File.OpenRead(path);
         byte[] hash = SHA256.HashData(stream);
         return Convert.ToHexString(hash);
+    }
+
+    private static string ResolvePackagePassword(string? password)
+    {
+        string? resolved = NormalizePassword(password)
+            ?? NormalizePassword(Environment.GetEnvironmentVariable(PasswordEnvironmentVariable));
+        return resolved ?? throw new GameProjectPackagePasswordException(GameProjectPackagePasswordError.Required,
+            $"Encrypted package requires a password. Pass --package-password or set {PasswordEnvironmentVariable}.");
     }
 
     private static string? NormalizePassword(string? password)

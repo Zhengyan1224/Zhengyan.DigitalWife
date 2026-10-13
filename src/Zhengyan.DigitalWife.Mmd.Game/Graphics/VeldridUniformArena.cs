@@ -32,8 +32,13 @@ internal sealed class VeldridUniformArena(Veldrid.GraphicsDevice device) : IDisp
     }
 
     public VeldridUniformSlice Upload<T>(in T value) where T : unmanaged
+        => UploadSpan(MemoryMarshal.CreateReadOnlySpan(in value, 1));
+
+    public VeldridUniformSlice UploadSpan<T>(ReadOnlySpan<T> values) where T : unmanaged
     {
-        uint size = (uint)Marshal.SizeOf<T>();
+        ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(values);
+        ArgumentOutOfRangeException.ThrowIfZero(bytes.Length);
+        uint size = (uint)bytes.Length;
         uint alignment = Math.Max(device.UniformBufferMinOffsetAlignment, 16);
         uint stride = checked((size + alignment - 1) / alignment * alignment);
         List<DeviceBuffer> pages = _pages[_slot];
@@ -60,7 +65,7 @@ internal sealed class VeldridUniformArena(Veldrid.GraphicsDevice device) : IDisp
         // Dynamic buffers are host-visible. Each draw gets a different range;
         // queue submission makes these host writes available to the shaders.
         // No transfer command or render-pass interruption is needed.
-        device.UpdateBuffer(buffer, _offset, value);
+        device.UpdateBuffer(buffer, _offset, bytes);
         VeldridUniformSlice result = new(buffer, _offset, size);
         _offset += stride;
         AllocationCount++;

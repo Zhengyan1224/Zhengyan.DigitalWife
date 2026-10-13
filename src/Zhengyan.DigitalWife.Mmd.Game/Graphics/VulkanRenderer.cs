@@ -35,6 +35,7 @@ public sealed class VulkanRenderer : IRenderer
     private int _frameSlot;
     private long _uniformFrameId;
     private VeldridUniformArena? _uniformArena;
+    private VeldridVertexArena? _vertexArena;
     private readonly IRenderBackendServices _services;
 
     public VulkanRenderer()
@@ -63,6 +64,8 @@ public sealed class VulkanRenderer : IRenderer
     public bool WaitForPreviousFrameBeforeUpdate { get; set; }
 
     public int LastFrameUniformUploadCount { get; private set; }
+    public int LastFrameVertexUploadCount { get; private set; }
+    public ulong LastFrameVertexUploadBytes { get; private set; }
 
     public IRenderBackendServices Services => _services;
 
@@ -86,6 +89,16 @@ public sealed class VulkanRenderer : IRenderer
             _uniformArena ??= new VeldridUniformArena(Device);
             _uniformArena.BeginFrame(_frameSlot, _uniformFrameId);
             return _uniformArena;
+        }
+    }
+
+    internal VeldridVertexArena FrameVertices
+    {
+        get
+        {
+            _vertexArena ??= new VeldridVertexArena(Device);
+            _vertexArena.BeginFrame(_frameSlot, _uniformFrameId);
+            return _vertexArena;
         }
     }
 
@@ -531,6 +544,8 @@ public sealed class VulkanRenderer : IRenderer
         ResolveMainColor();
         commands.End();
         LastFrameUniformUploadCount = _uniformArena is null ? 0 : FrameUniforms.AllocationCount;
+        LastFrameVertexUploadCount = _vertexArena is null ? 0 : FrameVertices.AllocationCount;
+        LastFrameVertexUploadBytes = _vertexArena is null ? 0 : FrameVertices.BytesWritten;
         Fence fence = _frameFences![_frameSlot];
         // Readback and dynamic resources belong to the same submission. Do not
         // replace the frame fence with a readback fence: that lets the CPU reuse
@@ -603,6 +618,8 @@ public sealed class VulkanRenderer : IRenderer
             _utilityPasses = null;
             _uniformArena?.Dispose();
             _uniformArena = null;
+            _vertexArena?.Dispose();
+            _vertexArena = null;
             _multisampleFramebuffer?.Dispose();
             _multisampleDepth?.Dispose();
             _multisampleColor?.Dispose();

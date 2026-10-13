@@ -12,6 +12,18 @@ internal sealed record AndroidRenderPolicy(
     int ParticleCount,
     int Samples)
 {
+    // Keep both Android backends at the same reflection detail. Memory budgets
+    // alone allow full phone resolution, which can cost several times as many
+    // fragments as the GLES 1024px reflection. Never upscale small viewports.
+    public static (int Width, int Height) ResolveReflectionSize(int width, int height, string? profile)
+    {
+        width = Math.Max(width, 1);
+        height = Math.Max(height, 1);
+        int limit = string.Equals(profile?.Trim(), "low", StringComparison.OrdinalIgnoreCase) ? 512 : 1024;
+        float scale = Math.Min(1f, limit / (float)Math.Max(width, height));
+        return (Math.Max(1, (int)MathF.Round(width * scale)), Math.Max(1, (int)MathF.Round(height * scale)));
+    }
+
     public static AndroidRenderPolicy Resolve(AndroidQualitySettings quality, int requestedSamples)
     {
         string profile = (quality.Profile ?? "auto").Trim().ToLowerInvariant();

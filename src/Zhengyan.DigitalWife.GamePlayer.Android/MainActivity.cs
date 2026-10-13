@@ -51,6 +51,9 @@ public sealed class MainActivity : Activity
     private ImeEditText? _textEditor;
     private AndroidGameProjectLoadResult? _projectLoadResult;
     private AndroidLoadingOverlayView? _loadingOverlay;
+    private AlertDialog? _packagePasswordDialog;
+    private int _projectLoadVersion;
+    private bool _openingProject;
     private bool _packagePickerActive;
     private const int PackagePickerRequestCode = 7002;
 
@@ -95,6 +98,8 @@ public sealed class MainActivity : Activity
 
     protected override void OnDestroy()
     {
+        _projectLoadVersion++;
+        _packagePasswordDialog?.Dismiss();
         if (_gameView is not null)
         {
             _gameView.OverlayInvalidated -= OnOverlayInvalidated;
@@ -119,7 +124,7 @@ public sealed class MainActivity : Activity
 
     private void OnLoadingStateChanged()
     {
-        if (_gameView is null || _loadingOverlay is null) return;
+        if (_openingProject || _gameView is null || _loadingOverlay is null) return;
         if (_guiOverlay is not null) _guiOverlay.Visibility = _gameView.IsReady ? ViewStates.Visible : ViewStates.Gone;
         if (_gameView.LoadingError is { } error) _loadingOverlay.SetError(error);
         else if (_gameView.HasSceneFrame) _loadingOverlay.Visibility = ViewStates.Gone;
@@ -306,31 +311,50 @@ public sealed class MainActivity : Activity
 #pragma warning restore CA1422
     }
 
-    private async Task LoadProjectAsync(Intent? intent, string? packagePassword = null, int passwordAttempt = 0)
+    private async Task LoadProjectAsync(Intent? intent)
     {
-        _loadingOverlay?.ShowLoading();
-        AndroidGameProjectLoadResult result = await Task.Run(() => AndroidGameProjectLoader.Load(this, intent, packagePassword));
-        if (IsFinishing || IsDestroyed)
+        int loadVersion = ++_projectLoadVersion;
+        _packagePasswordDialog?.Dismiss();
+        _openingProject = true;
+        string? packagePassword = null;
+        string? sourcePath = null;
+        AndroidGameProjectLoadResult result;
+        while (true)
         {
-            result.Dispose();
-            return;
-        }
-
-        if (!result.Succeeded
-            && passwordAttempt < 3
-            && IsPackagePasswordError(result.Error))
-        {
-            result.Dispose();
-            string? enteredPassword = await PromptPackagePasswordAsync();
-            if (!string.IsNullOrEmpty(enteredPassword))
+            _loadingOverlay?.ShowLoading();
+            result = await Task.Run(() => AndroidGameProjectLoader.Load(this, intent, packagePassword, sourcePath));
+            if (IsFinishing || IsDestroyed || loadVersion != _projectLoadVersion)
             {
-                await LoadProjectAsync(intent, enteredPassword, passwordAttempt + 1);
+                result.Dispose();
+                return;
+            }
+            if (result.PasswordError is not { } passwordError) break;
+
+            sourcePath = result.Source;
+            result.Dispose();
+            packagePassword = await PromptPackagePasswordAsync(passwordError);
+            if (IsFinishing || IsDestroyed || loadVersion != _projectLoadVersion) return;
+            if (packagePassword is null)
+            {
+                _openingProject = false;
+                if (_gameView is not null) OnLoadingStateChanged();
+                else
+                {
+                    _loadingOverlay?.SetError("已取消打开加密包，请重新选择游戏包。");
+                    OpenPackagePicker();
+                }
                 return;
             }
         }
 
         RunOnUiThread(() =>
         {
+            if (IsFinishing || IsDestroyed || loadVersion != _projectLoadVersion)
+            {
+                result.Dispose();
+                return;
+            }
+            _openingProject = false;
             if (!result.Succeeded)
             {
                 if (!_packagePickerActive && IsNoProjectSuppliedError(result.Error))
@@ -351,6 +375,7 @@ public sealed class MainActivity : Activity
             Title = result.Project?.Name ?? GetString(Resource.String.app_name);
             if (result.Project is not null && result.ProjectDirectory is not null)
             {
+                ApplyProjectOrientation(result.Project);
                 _loadingOverlay?.Configure(result.Project.Scene.LoadingScreen, result.ProjectDirectory);
             }
             if (_gameView is null)
@@ -379,14 +404,34 @@ public sealed class MainActivity : Activity
         });
     }
 
-    private Task<string?> PromptPackagePasswordAsync()
+    private void ApplyProjectOrientation(GameProject project)
+    {
+        // Apply only after a successful load, before creating/replacing the
+        // game view. ConfigChanges keeps the Activity alive during rotation;
+        // SurfaceChanged resizes either graphics backend to the actual surface.
+        // Square projects retain the player's landscape default.
+        ScreenOrientation orientation = project.Window.Width < project.Window.Height
+            ? ScreenOrientation.SensorPortrait
+            : ScreenOrientation.SensorLandscape;
+        if (RequestedOrientation != orientation) RequestedOrientation = orientation;
+        global::Android.Util.Log.Info("ZhengyanGamePlayer",
+            $"Project orientation: window={project.Window.Width}x{project.Window.Height}; requested={orientation}");
+    }
+
+    private Task<string?> PromptPackagePasswordAsync(GameProjectPackagePasswordError passwordError)
     {
         TaskCompletionSource<string?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         RunOnUiThread(() =>
         {
+            if (IsFinishing || IsDestroyed)
+            {
+                completion.TrySetResult(null);
+                return;
+            }
             EditText input = new(this)
             {
-                Hint = "Password"
+                Hint = "请输入游戏包密码",
+                ImeOptions = ImeAction.Done | (ImeAction)(ImeFlags.NoExtractUi | ImeFlags.NoFullscreen)
             };
             input.InputType = global::Android.Text.InputTypes.ClassText
                 | global::Android.Text.InputTypes.TextVariationPassword;
@@ -394,27 +439,53 @@ public sealed class MainActivity : Activity
             input.SetSelectAllOnFocus(false);
 #pragma warning disable CS8600, CS8602
             AlertDialog dialog = new AlertDialog.Builder(this)
-                .SetTitle("Encrypted package")
-                .SetMessage("Enter the package password to continue.")
+                .SetTitle("打开加密游戏包")
+                .SetMessage(passwordError == GameProjectPackagePasswordError.Required
+                    ? "此游戏包已加密，请输入导出时设置的密码。"
+                    : "密码不正确或游戏包已损坏，请重新输入密码。")
                 .SetView(input)
-                .SetNegativeButton("Cancel", (_, _) => completion.TrySetResult(null))
-                .SetPositiveButton("Open", (_, _) => completion.TrySetResult(input.Text ?? string.Empty))
+                .SetNegativeButton("取消", (_, _) => completion.TrySetResult(null))
+                .SetPositiveButton("打开", (_, _) => { })
                 .Create();
-            dialog.SetOnDismissListener(new DialogDismissListener(() => completion.TrySetResult(null)));
+            dialog.SetOnDismissListener(new DialogDismissListener(() =>
+            {
+                if (ReferenceEquals(_packagePasswordDialog, dialog)) _packagePasswordDialog = null;
+                completion.TrySetResult(null);
+            }));
+            _packagePasswordDialog = dialog;
             dialog.Show();
+            Button open = dialog.GetButton((int)DialogButtonType.Positive)!;
+            open.Enabled = false;
+            open.Click += (_, _) => Submit();
+            input.TextChanged += (_, _) => open.Enabled = !string.IsNullOrEmpty(input.Text);
+            input.EditorAction += (_, args) =>
+            {
+                if (args.ActionId != ImeAction.Done) return;
+                args.Handled = true;
+                Submit();
+            };
+            dialog.Window?.SetSoftInputMode(SoftInput.StateAlwaysVisible | SoftInput.AdjustResize);
 #pragma warning restore CS8600, CS8602
             input.RequestFocus();
+            input.Post(() =>
+            {
+                if (dialog.IsShowing)
+                    ((InputMethodManager?)GetSystemService(InputMethodService))?.ShowSoftInput(input, ShowFlags.Implicit);
+            });
+
+            void Submit()
+            {
+                string password = input.Text ?? string.Empty;
+                if (password.Length == 0)
+                {
+                    input.Error = "请输入密码";
+                    return;
+                }
+                completion.TrySetResult(password);
+                dialog.Dismiss();
+            }
         });
         return completion.Task;
-    }
-
-    private static bool IsPackagePasswordError(string? error)
-    {
-        if (string.IsNullOrWhiteSpace(error)) return false;
-        return error.Contains("requires a password", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("integrity check failed", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("需要密码", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("完整性校验", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsNoProjectSuppliedError(string? error) =>
@@ -459,7 +530,7 @@ public sealed class MainActivity : Activity
     {
         RunOnUiThread(() =>
         {
-            if (_loadingOverlay is not null)
+            if (!_openingProject && _loadingOverlay is not null)
             {
                 _loadingOverlay.Visibility = ViewStates.Gone;
             }

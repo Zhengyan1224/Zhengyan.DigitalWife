@@ -9,12 +9,11 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
 {
     private readonly VulkanRenderer _renderer;
     private readonly DeviceBuffer _vertices;
-    private readonly DeviceBuffer[] _uniforms;
     private readonly ResourceLayout _layout;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
-    private readonly Dictionary<(int Slot, TextureView View), ResourceSet> _sets = [];
+    private readonly Dictionary<(DeviceBuffer Buffer, TextureView View), ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
 
     public VeldridSkyboxRenderer(VulkanRenderer renderer)
@@ -23,12 +22,11 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
         ResourceFactory factory = renderer.ResourceFactory;
         _vertices = factory.CreateBuffer(new BufferDescription(12u * sizeof(float), BufferUsage.VertexBuffer));
         renderer.Device.UpdateBuffer(_vertices, 0, new float[] { -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1 });
-        _uniforms = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _sampler = factory.CreateSampler(new SamplerDescription(
             SamplerAddressMode.Wrap, SamplerAddressMode.Clamp, SamplerAddressMode.Clamp,
             SamplerFilter.MinLinear_MagLinear_MipLinear, null, 0, 0, uint.MaxValue, 0, SamplerBorderColor.TransparentBlack));
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("SkyFrame", ResourceKind.UniformBuffer, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("SkyFrame", ResourceKind.UniformBuffer, ShaderStages.Fragment, ResourceLayoutElementOptions.DynamicBinding),
             new ResourceLayoutElementDescription("SkyTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("SkySampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         _shaders = factory.CreateFromSpirv(
@@ -42,23 +40,22 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
     public void Draw(ITexture2D texture, Matrix4x4 inverseViewProjection, Vector3 tint, float exposure)
     {
         if (!_renderer.IsFrameOpen || texture.NativeResource is not TextureView view) return;
-        int slot = _renderer.CurrentFrameSlot;
-        if (!_sets.TryGetValue((slot, view), out ResourceSet? set))
-        {
-            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[slot], view, _sampler));
-            _sets.Add((slot, view), set);
-        }
-
         UniformData data = new()
         {
             InverseViewProjection = inverseViewProjection,
             TintExposure = new Vector4(tint, Math.Max(0, exposure))
         };
         CommandList commands = _renderer.CommandList;
-        commands.UpdateGraphicsBuffer(_uniforms[slot], 0, data);
+        VeldridUniformSlice uniforms = _renderer.FrameUniforms.Upload(data);
+        var key = (uniforms.Buffer, view);
+        if (!_sets.TryGetValue(key, out ResourceSet? set))
+        {
+            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, uniforms.BindingRange, view, _sampler));
+            _sets.Add(key, set);
+        }
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
         commands.SetVertexBuffer(0, _vertices);
-        commands.SetGraphicsResourceSet(0, set);
+        uniforms.Bind(commands, 0, set);
         commands.Draw(6);
     }
 
@@ -69,7 +66,6 @@ internal sealed class VeldridSkyboxRenderer : ISkyboxPassRenderer
         foreach (Shader shader in _shaders) shader.Dispose();
         _layout.Dispose();
         _sampler.Dispose();
-        foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose();
         _vertices.Dispose();
     }
 

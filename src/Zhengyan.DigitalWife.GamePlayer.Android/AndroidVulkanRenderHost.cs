@@ -35,6 +35,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private int _profileFrames;
     private readonly long[] _profileTicks = new long[7];
     private long _profileUniforms;
+    private long _profileVertices;
+    private ulong _profileVertexBytes;
 
     public GameProject? Project => _project;
 
@@ -273,7 +275,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         try
         {
             if (!_surface.IsValid) throw new InvalidOperationException("Android Vulkan surface is no longer valid.");
-            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=4; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth; presentSync=per-image-semaphore");
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=5; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth; presentSync=per-image-semaphore; sceneUploads=draw-snapshots; reflections=android-size-limit");
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618
@@ -298,6 +300,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             foreach (AudioAsset audio in scene.Definition.Audio)
                 game.EnqueueLoadingStep($"Loading audio: {audio.Name}", () => _audioHost?.LoadAsset(audio));
             game.EnqueueLoadingStep("Starting scene audio", () => _audioHost?.PlayOnStart(scene));
+            (int reflectionWidth, int reflectionHeight) = AndroidRenderPolicy.ResolveReflectionSize(
+                _width, _height, _project.AndroidQuality.Profile);
             Log.Info(LogTag,
                 $"Android graphics backend: {_game.GraphicsDevice.Backend}; " +
                 $"renderer: {_game.GraphicsDevice.RendererName}; " +
@@ -312,6 +316,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 $"shadow={_project.AndroidQuality.MaxShadowMapSize}px; " +
                 $"localShadow={_project.AndroidQuality.MaxLocalShadowMapSize}px; " +
                 $"reflections={_project.AndroidQuality.MaxReflectionSurfaces}; " +
+                $"reflectionSizeLimit={reflectionWidth}x{reflectionHeight}; " +
                 $"particles={_project.AndroidQuality.MaxParticleCount}");
         }
         catch
@@ -350,12 +355,15 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _profileTicks[4] += draw.DirectionalShadowTicks;
         _profileTicks[5] += draw.LocalShadowTicks;
         _profileTicks[6] += draw.ReflectionTicks;
-        _profileUniforms += ((VulkanRenderer)_game.GraphicsDevice.Renderer).LastFrameUniformUploadCount;
+        VulkanRenderer renderer = (VulkanRenderer)_game.GraphicsDevice.Renderer;
+        _profileUniforms += renderer.LastFrameUniformUploadCount;
+        _profileVertices += renderer.LastFrameVertexUploadCount;
+        _profileVertexBytes += renderer.LastFrameVertexUploadBytes;
         double seconds = (presentEnd - _profileStart) / (double)Stopwatch.Frequency;
         if (seconds < 5) return;
         double millisecondsPerTick = 1000.0 / Stopwatch.Frequency / _profileFrames;
         Log.Info(LogTag, FormattableString.Invariant(
-            $"Vulkan frame profile: fps={_profileFrames / seconds:F1}; frames={_profileFrames}; CPU ms/frame: fence={_profileTicks[0] * millisecondsPerTick:F2}, update={_profileTicks[1] * millisecondsPerTick:F2}, record={_profileTicks[2] * millisecondsPerTick:F2}, present={_profileTicks[3] * millisecondsPerTick:F2}; record subsets: shadow={_profileTicks[4] * millisecondsPerTick:F2}, localShadow={_profileTicks[5] * millisecondsPerTick:F2}, reflection={_profileTicks[6] * millisecondsPerTick:F2}; uniformSnapshots={_profileUniforms / _profileFrames}"));
+            $"Vulkan frame profile: fps={_profileFrames / seconds:F1}; frames={_profileFrames}; CPU ms/frame: fence={_profileTicks[0] * millisecondsPerTick:F2}, update={_profileTicks[1] * millisecondsPerTick:F2}, record={_profileTicks[2] * millisecondsPerTick:F2}, present={_profileTicks[3] * millisecondsPerTick:F2}; record subsets: shadow={_profileTicks[4] * millisecondsPerTick:F2}, localShadow={_profileTicks[5] * millisecondsPerTick:F2}, reflection={_profileTicks[6] * millisecondsPerTick:F2}; uniformSnapshots={_profileUniforms / _profileFrames}; vertexSnapshots={_profileVertices / _profileFrames}; vertexUploadKB={_profileVertexBytes / (double)_profileFrames / 1024:F1}"));
         ResetFrameProfile();
     }
 
@@ -484,6 +492,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _profileStart = 0;
         _profileFrames = 0;
         _profileUniforms = 0;
+        _profileVertices = 0;
+        _profileVertexBytes = 0;
         Array.Clear(_profileTicks);
     }
 }

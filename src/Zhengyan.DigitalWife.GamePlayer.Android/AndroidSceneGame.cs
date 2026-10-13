@@ -832,6 +832,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             .Take(Math.Max(_renderPolicy.ReflectionCount - waters.Length, 0)).ToArray();
         foreach (WaterSurfaceComponent water in _waterSnapshot) water.ClearPlanarReflection();
         foreach (TexturedPlaneComponent plane in _planeSnapshot) plane.ClearPlanarReflection();
+        (width, height) = AndroidRenderPolicy.ResolveReflectionSize(width, height, _quality.Profile);
         int surfaces = Math.Max(waters.Length + planes.Length, 1);
         long budgetBytes = Math.Max(_quality.RenderTargetMemoryBudgetMb, 1) * 1024L * 1024;
         int cameraCount = Math.Max(_scene.RenderCameras.Count + _scene.Definition.RenderTextures.Count(item => item.Enabled), 1);

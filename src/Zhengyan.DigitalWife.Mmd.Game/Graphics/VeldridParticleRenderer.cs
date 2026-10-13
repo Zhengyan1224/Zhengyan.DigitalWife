@@ -7,18 +7,14 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 internal sealed class VeldridParticleRenderer : IParticlePassRenderer
 {
-    private const int FrameSlotCount = 3;
     private readonly VulkanRenderer _renderer;
-    private DeviceBuffer[] _vertices;
-    private uint _vertexCapacity;
-    private readonly DeviceBuffer[] _uniforms;
     private readonly ResourceLayout _layout;
     private readonly Sampler _sampler;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
     private readonly Shader[] _shadowShaders;
     private readonly ShaderSetDescription _shadowShaderSet;
-    private readonly Dictionary<(int Slot, TextureView Texture), ResourceSet> _sets = [];
+    private readonly Dictionary<(DeviceBuffer Buffer, TextureView Texture), ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, bool Additive, Pipeline Pipeline)> _pipelines = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _shadowPipelines = [];
 
@@ -26,16 +22,9 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
     {
         _renderer = renderer;
         ResourceFactory factory = renderer.ResourceFactory;
-        _vertexCapacity = Math.Max(initialCapacityBytes, 256);
-        _vertices = Enumerable.Range(0, FrameSlotCount)
-            .Select(_ => factory.CreateBuffer(new BufferDescription(_vertexCapacity, BufferUsage.VertexBuffer | BufferUsage.Dynamic)))
-            .ToArray();
-        _uniforms = Enumerable.Range(0, FrameSlotCount)
-            .Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<UniformData>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic)))
-            .ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Linear);
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("ParticleFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("ParticleFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment, ResourceLayoutElementOptions.DynamicBinding),
             new ResourceLayoutElementDescription("ParticleTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("ParticleSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
         _shaders = factory.CreateFromSpirv(
@@ -60,15 +49,6 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         if (!_renderer.IsFrameOpen || vertexCount <= 0) return;
         TextureView? view = runtimeTexture?.NativeResource as TextureView ?? fallbackTexture.NativeResource as TextureView;
         if (view is null) return;
-        uint bytes = checked((uint)(vertexCount * Marshal.SizeOf<T>()));
-        EnsureCapacity(bytes);
-        var setKey = (_renderer.CurrentFrameSlot, view);
-        if (!_sets.TryGetValue(setKey, out ResourceSet? set))
-        {
-            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[_renderer.CurrentFrameSlot], view, _sampler));
-            _sets.Add(setKey, set);
-        }
-
         UniformData data = new()
         {
             ViewProjection = viewProjection,
@@ -77,13 +57,11 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
             Parameters = new Vector4(Math.Clamp(opacity, 0, 1), useTextureColor ? 1 : 0, 0, 0)
         };
         CommandList commands = _renderer.CommandList;
-        DeviceBuffer verticesBuffer = _vertices[_renderer.CurrentFrameSlot];
-        DeviceBuffer uniformsBuffer = _uniforms[_renderer.CurrentFrameSlot];
-        commands.UpdateGraphicsBuffer(verticesBuffer, 0, vertices[..vertexCount]);
-        commands.UpdateGraphicsBuffer(uniformsBuffer, 0, data);
+        VeldridVertexSlice vertexSlice = _renderer.FrameVertices.Upload(vertices[..vertexCount]);
+        VeldridUniformSlice uniformSlice = _renderer.FrameUniforms.Upload(data);
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, additive));
-        commands.SetVertexBuffer(0, verticesBuffer);
-        commands.SetGraphicsResourceSet(0, set);
+        vertexSlice.Bind(commands);
+        uniformSlice.Bind(commands, 0, GetResourceSet(uniformSlice, view));
         commands.Draw((uint)vertexCount);
     }
 
@@ -94,15 +72,6 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         if (!_renderer.IsFrameOpen || vertexCount <= 0) return;
         TextureView? view = runtimeTexture?.NativeResource as TextureView ?? fallbackTexture.NativeResource as TextureView;
         if (view is null) return;
-        uint bytes = checked((uint)(vertexCount * Marshal.SizeOf<T>()));
-        EnsureCapacity(bytes);
-        var setKey = (_renderer.CurrentFrameSlot, view);
-        if (!_sets.TryGetValue(setKey, out ResourceSet? set))
-        {
-            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _uniforms[_renderer.CurrentFrameSlot], view, _sampler));
-            _sets.Add(setKey, set);
-        }
-
         UniformData data = new()
         {
             ViewProjection = lightViewProjection,
@@ -111,13 +80,11 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
             Parameters = new Vector4(Math.Clamp(opacity, 0, 1), 0, Math.Max(depthBias, 0), 0)
         };
         CommandList commands = _renderer.CommandList;
-        DeviceBuffer verticesBuffer = _vertices[_renderer.CurrentFrameSlot];
-        DeviceBuffer uniformsBuffer = _uniforms[_renderer.CurrentFrameSlot];
-        commands.UpdateGraphicsBuffer(verticesBuffer, 0, vertices[..vertexCount]);
-        commands.UpdateGraphicsBuffer(uniformsBuffer, 0, data);
+        VeldridVertexSlice vertexSlice = _renderer.FrameVertices.Upload(vertices[..vertexCount]);
+        VeldridUniformSlice uniformSlice = _renderer.FrameUniforms.Upload(data);
         commands.SetPipeline(GetShadowPipeline(_renderer.CurrentOutputDescription));
-        commands.SetVertexBuffer(0, verticesBuffer);
-        commands.SetGraphicsResourceSet(0, set);
+        vertexSlice.Bind(commands);
+        uniformSlice.Bind(commands, 0, GetResourceSet(uniformSlice, view));
         commands.Draw((uint)vertexCount);
     }
 
@@ -130,18 +97,18 @@ internal sealed class VeldridParticleRenderer : IParticlePassRenderer
         foreach (Shader shader in _shadowShaders) shader.Dispose();
         _layout.Dispose();
         _sampler.Dispose();
-        foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose();
-        foreach (DeviceBuffer buffer in _vertices) buffer.Dispose();
     }
 
-    private void EnsureCapacity(uint bytes)
+    private ResourceSet GetResourceSet(VeldridUniformSlice uniforms, TextureView view)
     {
-        if (bytes <= _vertexCapacity) return;
-        _vertexCapacity = Math.Max(bytes, _vertexCapacity * 2);
-        foreach (DeviceBuffer buffer in _vertices) buffer.Dispose();
-        _vertices = Enumerable.Range(0, FrameSlotCount)
-            .Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_vertexCapacity, BufferUsage.VertexBuffer | BufferUsage.Dynamic)))
-            .ToArray();
+        var key = (uniforms.Buffer, view);
+        if (!_sets.TryGetValue(key, out ResourceSet? set))
+        {
+            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
+                _layout, uniforms.BindingRange, view, _sampler));
+            _sets.Add(key, set);
+        }
+        return set;
     }
 
     private Pipeline GetPipeline(OutputDescription output, bool additive)
