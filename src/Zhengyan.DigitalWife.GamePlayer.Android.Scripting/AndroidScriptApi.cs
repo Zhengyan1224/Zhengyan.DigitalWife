@@ -258,7 +258,7 @@ public sealed class AndroidScriptEntity
     }
     public bool ResetPhysicsOnMotionLoop
     {
-        get => _entity.Definition.ResetPhysicsOnMotionLoop;
+        get => Pmx?.ResetPhysicsOnMotionLoop ?? _entity.Definition.ResetPhysicsOnMotionLoop;
         set { _entity.Definition.ResetPhysicsOnMotionLoop = value; if (Pmx is { } model) model.ResetPhysicsOnMotionLoop = value; }
     }
     public float PlaybackSpeed

@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidRenderPolicy.cs" Link="AndroidRenderPolicy.cs" />
+    <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidPmxPlaybackSync.cs" Link="AndroidPmxPlaybackSync.cs" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android.Scripting\Zhengyan.DigitalWife.GamePlayer.Android.Scripting.csproj" Aliases="global,AndroidScripting" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" Aliases="MmdDesktop" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GameEditor\AndroidCSharpScriptPrecompiler.cs" Link="AndroidCSharpScriptPrecompiler.cs" />

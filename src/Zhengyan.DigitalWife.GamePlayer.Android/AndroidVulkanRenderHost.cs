@@ -264,13 +264,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return;
         }
 
-        // PMX CPU uploads still share vertex buffers between frames. Wait only
-        // for the preceding graphics submission before updating them; presenting
-        // must not idle the entire device. Compute uses explicit queue barriers.
-        VulkanRenderer renderer = new VulkanRenderer
-        {
-            WaitForPreviousFrameBeforeUpdate = true
-        };
+        // Uniform/vertex arenas wait when their frame slot is reused. PMX
+        // staging copies and compute protect shared output with queue barriers.
+        // Waiting for the immediately preceding draw here unnecessarily
+        // serializes the CPU animation/physics update behind the GPU.
+        VulkanRenderer renderer = new();
         AndroidSceneGame? game = null;
         try
         {

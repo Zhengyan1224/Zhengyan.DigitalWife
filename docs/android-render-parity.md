@@ -50,6 +50,36 @@ TTS completion callbacks wait for the Android utterance completion notification.
 
 ## Verification
 
+### Motion loops, physics timing and Vulkan uploads
+
+Android applies the scene's global loop-reset default only when initializing a
+PMX component. Runtime per-layer settings (including mixed `true`/`false` layers)
+survive scene synchronization; explicit script changes to the global setting
+still update all layers.
+
+Time-synchronized PMX playback now advances animation and physics together in
+steps of at most 1/30 second on slow frames, then skins/uploads the final pose
+once. It does not drop physics time to preserve frame rate. Normal frame deltas
+and the intentional slowdown of frame-rate-dependent playback remain unchanged.
+This implementation is shared by desktop, Android GLES and Android Vulkan.
+
+Android Vulkan relies on frame-slot fences and GPU barriers instead of waiting
+for the immediately preceding graphics frame before CPU updates. Device-local
+CPU uploads use three fenced staging slots, including GPU-skinning fallback.
+
+The package password editor reconnects the IME after its dialog gains window
+focus; the dialog explicitly permits IME focus. Real keyboard typing, deletion,
+paste, Done, retry and cancellation still require device validation.
+
+The runtime suite exercises slow frames, loop flags, pause and asynchronous
+Vulkan compute/CPU uploads. A read-only native Bullet comparison can also use a
+project's actual character and motion, comparing 32 FPS with slow frames (1/32
+second is exactly representable, so Bullet receives identical substep timing):
+
+```powershell
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --physics-project ../GameEditorProjects/DemoGame07 assets/motions/Lamb.vmd
+```
+
 ```powershell
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --compile-project <project-directory>

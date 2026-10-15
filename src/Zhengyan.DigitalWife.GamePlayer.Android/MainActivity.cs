@@ -428,14 +428,17 @@ public sealed class MainActivity : Activity
                 completion.TrySetResult(null);
                 return;
             }
-            EditText input = new(this)
+            PackagePasswordEditText input = new(this)
             {
+                Id = View.GenerateViewId(),
+                Focusable = true,
+                FocusableInTouchMode = true,
                 Hint = "请输入游戏包密码",
                 ImeOptions = ImeAction.Done | (ImeAction)(ImeFlags.NoExtractUi | ImeFlags.NoFullscreen)
             };
+            input.SetSingleLine(true);
             input.InputType = global::Android.Text.InputTypes.ClassText
                 | global::Android.Text.InputTypes.TextVariationPassword;
-            input.SetSingleLine(true);
             input.SetSelectAllOnFocus(false);
 #pragma warning disable CS8600, CS8602
             AlertDialog dialog = new AlertDialog.Builder(this)
@@ -454,6 +457,9 @@ public sealed class MainActivity : Activity
             }));
             _packagePasswordDialog = dialog;
             dialog.Show();
+            // AlertDialog installs its window flags during Show. A password
+            // editor needs the dialog window itself to be an IME target.
+            dialog.Window?.ClearFlags(WindowManagerFlags.NotFocusable | WindowManagerFlags.AltFocusableIm);
             Button open = dialog.GetButton((int)DialogButtonType.Positive)!;
             open.Enabled = false;
             open.Click += (_, _) => Submit();
@@ -467,11 +473,6 @@ public sealed class MainActivity : Activity
             dialog.Window?.SetSoftInputMode(SoftInput.StateAlwaysVisible | SoftInput.AdjustResize);
 #pragma warning restore CS8600, CS8602
             input.RequestFocus();
-            input.Post(() =>
-            {
-                if (dialog.IsShowing)
-                    ((InputMethodManager?)GetSystemService(InputMethodService))?.ShowSoftInput(input, ShowFlags.Implicit);
-            });
 
             void Submit()
             {
@@ -486,6 +487,26 @@ public sealed class MainActivity : Activity
             }
         });
         return completion.Task;
+    }
+
+    private sealed class PackagePasswordEditText(Context context) : EditText(context)
+    {
+        public override void OnWindowFocusChanged(bool hasWindowFocus)
+        {
+            base.OnWindowFocusChanged(hasWindowFocus);
+            if (!hasWindowFocus) return;
+            RequestFocus();
+            // Showing the keyboard before the dialog owns window focus can
+            // leave it connected to the activity's previous editor. Rebind only
+            // after focus arrives, also when returning from a system window.
+            Post(() =>
+            {
+                if (!IsAttachedToWindow || !HasWindowFocus || !HasFocus) return;
+                InputMethodManager? manager = (InputMethodManager?)Context?.GetSystemService(InputMethodService);
+                manager?.RestartInput(this);
+                manager?.ShowSoftInput(this, ShowFlags.Implicit);
+            });
+        }
     }
 
     private static bool IsNoProjectSuppliedError(string? error) =>

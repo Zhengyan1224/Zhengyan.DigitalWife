@@ -1,6 +1,12 @@
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 
+if (args is ["--physics-project", string physicsProject, string motionPath])
+{
+    AndroidMotionLoopTests.RunProjectPhysics(physicsProject, motionPath);
+    return 0;
+}
+
 if (args is ["--vulkan-project-models", string modelProject])
 {
     VulkanProjectModelRegression.Run(modelProject);

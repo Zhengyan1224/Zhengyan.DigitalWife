@@ -1072,12 +1072,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         model.Position = entity.Position;
         model.Scale = entity.Scale;
         model.Rotation = ToQuaternion(entity.RotationDegrees);
-        model.IsPlaying = definition.IsPlaying;
-        model.PlaybackSpeed = definition.PlaybackSpeed;
-        model.LoopMotion = definition.LoopMotion;
-        model.EnablePhysical = definition.EnablePhysics;
-        model.PhysicsGravity = definition.PhysicsGravity;
-        model.ResetPhysicsOnMotionLoop = definition.ResetPhysicsOnMotionLoop;
+        AndroidPmxPlaybackSync.Apply(definition, model, initialize: includeMotions);
         model.EnableEdge = definition.EnableEdge;
         model.EnableShadow = definition.EnableShadow;
         model.ReceiveShadow = definition.ReceiveShadow;

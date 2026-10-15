@@ -1470,8 +1470,30 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         float frameLimitedElapsed = MathF.Min(rawElapsed, 1.0f / 30.0f);
         AnimationTimingMode timingMode = Game?.Options.AnimationTimingMode ?? AnimationTimingMode.FrameRateDependent;
         float playbackElapsed = timingMode == AnimationTimingMode.TimeSynchronized ? rawElapsed : frameLimitedElapsed;
+        // Advance the animated targets and Bullet together. Advancing a slow
+        // frame's entire motion while clamping only physics compresses the
+        // target displacement into too little simulation time (hair/skirt stretch).
+        // Skinning and GPU uploads are needed only for the final visible pose.
+        int steps = timingMode == AnimationTimingMode.TimeSynchronized && IsPlaying && EnablePhysical && _motionLayers.Count != 0
+            ? Math.Max(1, (int)MathF.Ceiling(playbackElapsed / (1.0f / 30.0f)))
+            : 1;
+        float stepElapsed = playbackElapsed / steps;
+        double startSeconds = gameTime.TotalSeconds - playbackElapsed;
+        for (int step = 0; step < steps; step++)
+        {
+            bool finalStep = step == steps - 1;
+            GameTime stepTime = finalStep ? gameTime : new GameTime(
+                TimeSpan.FromSeconds(startSeconds + (step + 1) * (double)stepElapsed),
+                TimeSpan.FromSeconds(stepElapsed), gameTime.FrameCount);
+            UpdateAnimationStep(stepTime, stepElapsed, finalStep);
+        }
+    }
+
+    private void UpdateAnimationStep(GameTime gameTime, float playbackElapsed, bool uploadPose)
+    {
+        if (_model is null) return;
         float updaterElapsed = playbackElapsed;
-        float physicsElapsed = frameLimitedElapsed;
+        float physicsElapsed = MathF.Min(playbackElapsed, 1.0f / 30.0f);
 
         bool resetPhysicsOnLoopThisFrame = false;
         if (IsPlaying && _motionLayers.Count != 0)
@@ -1533,6 +1555,12 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         _model.UpdateNodeAnimation(true);
         _transformUpdaters.UpdateStage(TransformUpdaterStage.PostAnimation, this, updaterElapsed);
         _model.EndAnimation();
+
+        if (!uploadPose)
+        {
+            _skipPhysicsOnNextPlayFrame = false;
+            return;
+        }
 
         if (poseDirty || shouldUpdatePose)
         {

@@ -112,10 +112,8 @@ internal sealed class VeldridGpuBuffer : IGpuBuffer
     private readonly VulkanRenderer _renderer;
     private readonly DeviceBuffer[] _buffers;
     private readonly bool _hostVisible;
-    private DeviceBuffer? _uploadStaging;
-    private CommandList? _uploadCommands;
-    private Fence? _uploadFence;
-    private bool _uploadPending;
+    private readonly UploadSlot?[] _uploadSlots = new UploadSlot?[VulkanRenderer.FrameSlotCount];
+    private int _nextUploadSlot;
     private bool _disposed;
 
     public VeldridGpuBuffer(VulkanRenderer renderer, GpuBufferDescription description)
@@ -168,20 +166,20 @@ internal sealed class VeldridGpuBuffer : IGpuBuffer
 
         // Device.UpdateBuffer's implicit staging copy has no memory barriers
         // and allocates from a device-wide temporary pool. Own a bounded upload
-        // buffer and fence instead, including after GPU skinning falls back.
-        if (_uploadPending) _renderer.Device.WaitForFence(_uploadFence!);
-        _uploadStaging ??= _renderer.ResourceFactory.CreateBuffer(new BufferDescription(SizeInBytes, BufferUsage.Staging));
-        _uploadCommands ??= _renderer.ResourceFactory.CreateCommandList();
-        _uploadFence ??= _renderer.ResourceFactory.CreateFence(false);
-        _renderer.Device.UpdateBuffer(_uploadStaging, 0, data);
-        _uploadCommands.Begin();
-        VeldridVulkanSynchronization.PrepareBufferTransfer(_uploadCommands);
-        _uploadCommands.CopyBuffer(_uploadStaging, 0, CurrentBuffer, offsetInBytes, byteCount);
-        VeldridVulkanSynchronization.TransferToGraphics(_uploadCommands);
-        _uploadCommands.End();
-        _renderer.Device.ResetFence(_uploadFence);
-        _renderer.Device.SubmitCommands(_uploadCommands, _uploadFence);
-        _uploadPending = true;
+        // slots instead, including after GPU skinning falls back. Wait only
+        // when reusing a staging slot, so CPU poses can overlap earlier draws.
+        UploadSlot slot = _uploadSlots[_nextUploadSlot] ??= new(_renderer.ResourceFactory, SizeInBytes);
+        if (slot.Pending) _renderer.Device.WaitForFence(slot.Fence);
+        _renderer.Device.UpdateBuffer(slot.Staging, 0, data);
+        slot.Commands.Begin();
+        VeldridVulkanSynchronization.PrepareBufferTransfer(slot.Commands);
+        slot.Commands.CopyBuffer(slot.Staging, 0, CurrentBuffer, offsetInBytes, byteCount);
+        VeldridVulkanSynchronization.TransferToGraphics(slot.Commands);
+        slot.Commands.End();
+        _renderer.Device.ResetFence(slot.Fence);
+        _renderer.Device.SubmitCommands(slot.Commands, slot.Fence);
+        slot.Pending = true;
+        _nextUploadSlot = (_nextUploadSlot + 1) % _uploadSlots.Length;
     }
 
     internal void UpdateAllSlots<T>(ReadOnlySpan<T> data, uint offsetInBytes = 0) where T : unmanaged
@@ -203,12 +201,24 @@ internal sealed class VeldridGpuBuffer : IGpuBuffer
     {
         if (_disposed) return;
         _disposed = true;
-        if (_uploadPending) _renderer.Device.WaitForFence(_uploadFence!);
-        _uploadCommands?.Dispose();
-        _uploadStaging?.Dispose();
-        _uploadFence?.Dispose();
+        foreach (UploadSlot? slot in _uploadSlots)
+        {
+            if (slot is null) continue;
+            if (slot.Pending) _renderer.Device.WaitForFence(slot.Fence);
+            slot.Commands.Dispose();
+            slot.Staging.Dispose();
+            slot.Fence.Dispose();
+        }
         foreach (DeviceBuffer buffer in _buffers) buffer.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private sealed class UploadSlot(ResourceFactory factory, uint size)
+    {
+        public DeviceBuffer Staging { get; } = factory.CreateBuffer(new BufferDescription(size, BufferUsage.Staging));
+        public CommandList Commands { get; } = factory.CreateCommandList();
+        public Fence Fence { get; } = factory.CreateFence(false);
+        public bool Pending { get; set; }
     }
 }
 
