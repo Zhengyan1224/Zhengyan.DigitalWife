@@ -67,8 +67,12 @@ Android Vulkan relies on frame-slot fences and GPU barriers instead of waiting
 for the immediately preceding graphics frame before CPU updates. Device-local
 CPU uploads use three fenced staging slots, including GPU-skinning fallback.
 
-The package password editor reconnects the IME after its dialog gains window
-focus; the dialog explicitly permits IME focus. Real keyboard typing, deletion,
+The package password editor uses the native editable connection and permits
+dialog IME focus. For the reported Redmi Note 12 Pro secure-keyboard failure,
+it requests the regular password keyboard via `EditorInfo` while keeping the
+actual TextView in masked password mode. Suggestions and personalized learning
+are disabled. Window focus only shows the keyboard; it no longer restarts an
+input session that Android just established. Real keyboard typing, deletion,
 paste, Done, retry and cancellation still require device validation.
 
 The runtime suite exercises slow frames, loop flags, pause and asynchronous
@@ -78,7 +82,13 @@ second is exactly representable, so Bullet receives identical substep timing):
 
 ```powershell
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --physics-project ../GameEditorProjects/DemoGame07 assets/motions/Lamb.vmd
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --skinning-project ../GameEditorProjects/DemoGame07 assets/motions/Lamb.vmd
 ```
+
+The skinning probe also compares CPU and Vulkan Compute vertex positions using
+the same animation/physics timing. It performs GPU readback for verification;
+the player keeps its asynchronous Vulkan path. Device frame pacing can still
+affect the simulated motion even when these equal-timestep results agree.
 
 ```powershell
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests

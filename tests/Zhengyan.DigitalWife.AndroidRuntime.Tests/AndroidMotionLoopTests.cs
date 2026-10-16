@@ -116,7 +116,7 @@ internal static class AndroidMotionLoopTests
         Check(fixture.Physics.StepCount == steps, "Paused motion continued simulating physics.");
     }
 
-    internal static void RunProjectPhysics(string projectDirectory, string motionPath)
+    internal static unsafe void RunProjectPhysics(string projectDirectory, string motionPath, bool compareSkinning = false)
     {
         // Read-only probe using the user's actual dance and character. Compare
         // 32 FPS against batched slow frames through the real Bullet model.
@@ -135,6 +135,13 @@ internal static class AndroidMotionLoopTests
             }
         }
         Check(paths.Count > 0, "The project has no scripted PMX character.");
+        // Optional CPU-vs-Vulkan probe uses real compute outputs, read back for
+        // comparison. It does not change the player's asynchronous render path.
+        using var device = compareSkinning
+            ? Veldrid.GraphicsDevice.CreateVulkan(new Veldrid.GraphicsDeviceOptions()) : null;
+        VulkanRenderer? renderer = compareSkinning ? new() : null;
+        if (renderer is not null)
+            typeof(VulkanRenderer).GetField("_device", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer, device);
         bool previousOpenCl = Mmd.Kernel.UseOpenCL;
         Mmd.Kernel.UseOpenCL = false;
         try
@@ -143,9 +150,10 @@ internal static class AndroidMotionLoopTests
             {
                 using Fixture reference = new(timing: AnimationTimingMode.TimeSynchronized);
                 using Fixture slow = new(timing: AnimationTimingMode.TimeSynchronized);
-                Mmd.PmxModel referenceModel = Load(reference);
-                Mmd.PmxModel slowModel = Load(slow);
+                Mmd.PmxModel referenceModel = Load(reference, false);
+                Mmd.PmxModel slowModel = Load(slow, compareSkinning);
                 float maximumError = 0;
+                float maximumVertexError = 0;
                 for (int frame = 0; frame < 90; frame++)
                 {
                     int steps = new[] { 1, 2, 3, 6 }[frame % 4];
@@ -159,13 +167,30 @@ internal static class AndroidMotionLoopTests
                         Check(float.IsFinite(error), "Physics produced a non-finite bone transform.");
                         maximumError = Math.Max(maximumError, error);
                     }
+                    if (compareSkinning)
+                    {
+                        Check(slowModel.IsUsingVulkanCompute, "The Vulkan model silently fell back to CPU.");
+                        for (int i = 0; i < referenceModel.GetVertexCount(); i++)
+                        {
+                            float error = Vector3.Distance(referenceModel.GetUpdatePositions()[i], slowModel.GetUpdatePositions()[i]);
+                            Check(float.IsFinite(error), "Skinning produced a non-finite vertex.");
+                            maximumVertexError = Math.Max(maximumVertexError, error);
+                        }
+                    }
                 }
                 Check(maximumError < 0.001f, $"Slow-frame physics diverged from 32 FPS: {maximumError}.");
                 Console.WriteLine($"PASS native dance physics: {Path.GetFileName(path)}; max bone position error={maximumError:G6}");
+                if (compareSkinning)
+                {
+                    Check(maximumVertexError < 0.002f, $"CPU/Vulkan vertex positions diverged: {maximumVertexError}.");
+                    Console.WriteLine($"PASS CPU/Vulkan dance skinning: {Path.GetFileName(path)}; max vertex position error={maximumVertexError:G6}");
+                }
 
-                Mmd.PmxModel Load(Fixture fixture)
+                Mmd.PmxModel Load(Fixture fixture, bool useCompute)
                 {
                     Mmd.PmxModel model = new();
+                    if (useCompute)
+                        model.SkinningComputeFactory = (vertices, bones) => new VulkanPmxSkinningCompute(renderer!, vertices, bones);
                     Check(model.Load(path, Path.GetDirectoryName(path)!), "PMX loading failed.");
                     model.InitializeAnimation();
                     fixture.Entity.SetMotionLayers([new(Path.GetFullPath(Path.Combine(projectDirectory, motionPath)), 1, false)]);

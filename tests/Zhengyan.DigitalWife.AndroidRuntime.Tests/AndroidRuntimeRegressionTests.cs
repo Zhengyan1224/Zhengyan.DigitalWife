@@ -218,6 +218,15 @@ internal static class AndroidRuntimeRegressionTests
         GameProject project = new() { Name = "Script ABI fixture", Scene = fixture.CoreScene.Definition };
         project.Scene.LoadingScripts.Add(new() { Language = "csharp", Path = "script.csx", Enabled = true });
         project.Scene.Entities[0].Scripts.Add(new() { Language = "csharp", Path = "script.csx", Enabled = true });
+        // A previously compiled script can remain in a project after disabling
+        // its binding. Packaging must retain false even when the DLL exists.
+        File.Copy(Path.Combine(fixture.Root, "script.csx"), Path.Combine(fixture.Root, "disabled.csx"));
+        project.Scene.LoadingScripts.Add(new() { Path = "disabled.csx", Enabled = true });
+        project.Scene.Entities[0].Scripts.Add(new() { Path = "disabled.csx", Enabled = true });
+        GameProjectStore.Save(fixture.Root, project);
+        Check(AndroidCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 2, "Enabled scripts should both be precompiled.");
+        project.Scene.LoadingScripts[1].Enabled = false;
+        project.Scene.Entities[0].Scripts[1].Enabled = false;
         GameProjectStore.Save(fixture.Root, project);
         Check(AndroidProjectCompatibility.Analyze(fixture.Root, project).CanPublish, "Supported loading scripts must not reject Android publication.");
         AndroidScriptPrecompileResult compiled = AndroidCSharpScriptPrecompiler.Precompile(fixture.Root, project);
@@ -227,6 +236,11 @@ internal static class AndroidRuntimeRegressionTests
         using GameProjectPackageSession extracted = GameProjectPackage.OpenOrExtract(package.OutputPath,
             new() { Password = "test-only", TempRootDirectory = Path.Combine(fixture.Root, "extract"), UsePersistentCache = false, SaveDirectory = fixture.SaveRoot });
         AndroidScriptPrecompileEntry entry = compiled.Entries.Single();
+        GameProject published = GameProjectStore.Load(extracted.ProjectDirectory);
+        Check(!published.Scene.LoadingScripts[1].Enabled && !published.Scene.Entities[0].Scripts[1].Enabled,
+            "Encrypted package extraction must preserve disabled loading and entity bindings.");
+        Check(File.Exists(Path.Combine(extracted.ProjectDirectory, "compiled", "android", "disabled.dll")),
+            "The disabled-binding regression needs an existing precompiled DLL.");
         byte[] image = File.ReadAllBytes(Path.Combine(extracted.ProjectDirectory, entry.Assembly));
         Check(Convert.ToHexString(SHA256.HashData(image)) == entry.Sha256, "Published assembly changed during packaging.");
         using JsonDocument manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(extracted.ProjectDirectory, "compiled", "android", "manifest.json")));

@@ -49,6 +49,8 @@ public sealed class MainActivity : Activity
     private AndroidGuiOverlayView? _guiOverlay;
     private FrameLayout? _root;
     private ImeEditText? _textEditor;
+    private GameProjectScene? _textEditorScene;
+    private GuiControlSettings? _textEditorControl;
     private AndroidGameProjectLoadResult? _projectLoadResult;
     private AndroidLoadingOverlayView? _loadingOverlay;
     private AlertDialog? _packagePasswordDialog;
@@ -92,6 +94,7 @@ public sealed class MainActivity : Activity
 
     protected override void OnPause()
     {
+        CloseTextEditor();
         _gameView?.PauseRendering();
         base.OnPause();
     }
@@ -120,10 +123,16 @@ public sealed class MainActivity : Activity
         base.OnDestroy();
     }
 
-    private void OnOverlayInvalidated() => _guiOverlay?.Refresh();
+    private void OnOverlayInvalidated()
+    {
+        RefreshTextEditor();
+        _guiOverlay?.Refresh();
+    }
 
     private void OnLoadingStateChanged()
     {
+        if (_textEditor is not null && (_gameView?.IsReady != true
+            || !ReferenceEquals(_textEditorScene, _gameView.Project?.Scene))) CloseTextEditor();
         if (_openingProject || _gameView is null || _loadingOverlay is null) return;
         if (_guiOverlay is not null) _guiOverlay.Visibility = _gameView.IsReady ? ViewStates.Visible : ViewStates.Gone;
         if (_gameView.LoadingError is { } error) _loadingOverlay.SetError(error);
@@ -136,22 +145,23 @@ public sealed class MainActivity : Activity
         RunOnUiThread(() =>
         {
             CloseTextEditor();
-            if (_root is null) return;
+            if (_root is null || _gameView?.Project is not { } project || !_gameView.IsReady
+                || !control.Visible || !project.Scene.GuiControls.Contains(control)) return;
             ImeEditText editor = new(this)
             {
-                Text = control.Text,
-                TextSize = control.Style.FontSize
+                Text = control.Text
             };
             editor.SetSingleLine(!control.Multiline);
-            editor.SetTextColor(Color.White);
-            editor.SetBackgroundColor(Color.Argb(230, 25, 55, 90));
+            editor.SetBackgroundColor(Color.Transparent);
+            editor.SetPadding(4, 4, 4, 4);
+            editor.SetTypeface(Typeface.Create(Typeface.Default, TypefaceStyle.Normal), TypefaceStyle.Normal);
             editor.SetSelectAllOnFocus(false);
-            editor.SetTextIsSelectable(true);
             editor.LongClickable = true;
             editor.InputType = control.Multiline
                 ? (global::Android.Text.InputTypes.ClassText | global::Android.Text.InputTypes.TextFlagMultiLine | global::Android.Text.InputTypes.TextFlagCapSentences)
                 : (global::Android.Text.InputTypes.ClassText | global::Android.Text.InputTypes.TextFlagCapSentences);
-            editor.ImeOptions = control.Multiline ? ImeAction.None : ImeAction.Done;
+            editor.ImeOptions = (control.Multiline ? ImeAction.None : ImeAction.Done)
+                | (ImeAction)(ImeFlags.NoExtractUi | ImeFlags.NoFullscreen);
             FrameLayout.LayoutParams layout = new((int)Math.Max(rect.Width, 1), (int)Math.Max(rect.Height, 1))
             {
                 LeftMargin = (int)rect.X,
@@ -175,9 +185,23 @@ public sealed class MainActivity : Activity
                 control.SelectionStart = Math.Clamp(editor.SelectionStart, 0, length);
                 control.SelectionEnd = Math.Clamp(editor.SelectionEnd, 0, length);
             };
-            editor.FocusChange += (_, args) => { if (!args.HasFocus) CloseTextEditor(); };
-            _root.AddView(editor, layout);
+            void FinishEditing()
+            {
+                editor.Post(() => { if (ReferenceEquals(editor, _textEditor)) CloseTextEditor(); });
+            }
+            editor.FocusChange += (_, args) => { if (!args.HasFocus) FinishEditing(); };
+            editor.EditingFinished += (_, _) => FinishEditing();
+            editor.EditorAction += (_, args) =>
+            {
+                args.Handled = args.ActionId == ImeAction.Done;
+                if (args.Handled) FinishEditing();
+            };
             _textEditor = editor;
+            _textEditorScene = project.Scene;
+            _textEditorControl = control;
+            if (_guiOverlay is not null) _guiOverlay.EditingControl = control;
+            _root.AddView(editor, layout);
+            RefreshTextEditor();
             editor.RequestFocus();
             int textLength = (editor.Text ?? string.Empty).Length;
             editor.SetSelection(Math.Clamp(control.SelectionStart, 0, textLength), Math.Clamp(control.SelectionEnd, 0, textLength));
@@ -188,18 +212,99 @@ public sealed class MainActivity : Activity
     private void CloseTextEditor()
     {
         ImeEditText? editor = _textEditor;
+        if (_textEditorControl is { } control)
+        {
+            control.CompositionStart = -1;
+            control.CompositionEnd = -1;
+        }
         _textEditor = null;
+        _textEditorScene = null;
+        _textEditorControl = null;
+        if (_guiOverlay is not null) _guiOverlay.EditingControl = null;
         if (editor is null) return;
         ((InputMethodManager?)GetSystemService(InputMethodService))?.HideSoftInputFromWindow(editor.WindowToken, HideSoftInputFlags.None);
         _root?.RemoveView(editor);
         editor.Dispose();
+        _guiOverlay?.Refresh();
+    }
+
+    private void RefreshTextEditor()
+    {
+        if (_textEditor is not { } editor || _textEditorControl is not { } control) return;
+        if (_gameView?.Project is not { } project || !_gameView.IsReady
+            || !ReferenceEquals(_textEditorScene, project.Scene) || !control.Visible
+            || !project.Scene.GuiControls.Contains(control))
+        {
+            CloseTextEditor();
+            return;
+        }
+        LayoutRect rect = LayoutResolver.Resolve(control.LayoutMode, control.X, control.Y, control.Width, control.Height,
+            _gameView.Width, _gameView.Height, project.Window.Width, project.Window.Height);
+        if ((editor.Text ?? string.Empty) != (control.Text ?? string.Empty))
+        {
+            int start = control.SelectionStart, end = control.SelectionEnd;
+            editor.Text = control.Text ?? string.Empty;
+            int length = editor.Text.Length;
+            editor.SetSelection(Math.Clamp(start, 0, length), Math.Clamp(end, 0, length));
+        }
+        if (editor.LayoutParameters is FrameLayout.LayoutParams layout)
+        {
+            int width = (int)Math.Max(rect.Width, 1), height = (int)Math.Max(rect.Height, 1);
+            int left = (int)rect.X, top = (int)rect.Y;
+            if (layout.Width != width || layout.Height != height || layout.LeftMargin != left || layout.TopMargin != top)
+            {
+                layout.Width = width; layout.Height = height; layout.LeftMargin = left; layout.TopMargin = top;
+                editor.LayoutParameters = layout;
+            }
+        }
+        float fontSize = LayoutResolver.ResolveFontSize(control.LayoutMode, control.Style.FontSize,
+            _gameView.Width, _gameView.Height, project.Window.Width, project.Window.Height);
+        if (Math.Abs(editor.TextSize - fontSize) > 0.01f) editor.SetTextSize(global::Android.Util.ComplexUnitType.Px, fontSize);
+        Vector4Dto color = control.Style.TextColor;
+        editor.SetTextColor(Color.Argb((int)(Math.Clamp(color.W, 0, 1) * 255),
+            (int)(Math.Clamp(color.X, 0, 1) * 255), (int)(Math.Clamp(color.Y, 0, 1) * 255), (int)(Math.Clamp(color.Z, 0, 1) * 255)));
+        editor.Gravity = (control.Style.HorizontalAlignment.ToLowerInvariant() switch
+        {
+            "left" => GravityFlags.Left,
+            "right" => GravityFlags.Right,
+            _ => GravityFlags.CenterHorizontal
+        }) | (control.Style.VerticalAlignment.ToLowerInvariant() switch
+        {
+            "top" => GravityFlags.Top,
+            "bottom" => GravityFlags.Bottom,
+            _ => GravityFlags.CenterVertical
+        });
+    }
+
+    public override bool DispatchTouchEvent(MotionEvent? e)
+    {
+        if (e?.ActionMasked == MotionEventActions.Down && _textEditor is { } editor)
+        {
+            using Rect bounds = new();
+            if (!editor.GetGlobalVisibleRect(bounds) || !bounds.Contains((int)e.RawX, (int)e.RawY)) CloseTextEditor();
+        }
+        return base.DispatchTouchEvent(e);
     }
 
     private sealed class ImeEditText(Context context) : EditText(context)
     {
         public event EventHandler? SelectionChanged;
+        public event EventHandler? EditingFinished;
         public int CompositionStart { get; private set; } = -1;
         public int CompositionEnd { get; private set; } = -1;
+
+        public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs)
+        {
+            IInputConnection? connection = base.OnCreateInputConnection(outAttrs);
+            return connection is null ? null : new AndroidTextInputConnection(connection);
+        }
+
+        public override bool OnKeyPreIme(Keycode keyCode, KeyEvent? e)
+        {
+            bool handled = base.OnKeyPreIme(keyCode, e);
+            if (keyCode == Keycode.Back && e?.Action == KeyEventActions.Up) EditingFinished?.Invoke(this, EventArgs.Empty);
+            return handled;
+        }
 
         protected override void OnSelectionChanged(int selStart, int selEnd)
         {
@@ -313,6 +418,7 @@ public sealed class MainActivity : Activity
 
     private async Task LoadProjectAsync(Intent? intent)
     {
+        CloseTextEditor();
         int loadVersion = ++_projectLoadVersion;
         _packagePasswordDialog?.Dismiss();
         _openingProject = true;
@@ -428,18 +534,10 @@ public sealed class MainActivity : Activity
                 completion.TrySetResult(null);
                 return;
             }
-            PackagePasswordEditText input = new(this)
+            AndroidPasswordEditText input = new(this)
             {
-                Id = View.GenerateViewId(),
-                Focusable = true,
-                FocusableInTouchMode = true,
-                Hint = "请输入游戏包密码",
-                ImeOptions = ImeAction.Done | (ImeAction)(ImeFlags.NoExtractUi | ImeFlags.NoFullscreen)
+                Hint = "请输入游戏包密码"
             };
-            input.SetSingleLine(true);
-            input.InputType = global::Android.Text.InputTypes.ClassText
-                | global::Android.Text.InputTypes.TextVariationPassword;
-            input.SetSelectAllOnFocus(false);
 #pragma warning disable CS8600, CS8602
             AlertDialog dialog = new AlertDialog.Builder(this)
                 .SetTitle("打开加密游戏包")
@@ -466,8 +564,8 @@ public sealed class MainActivity : Activity
             input.TextChanged += (_, _) => open.Enabled = !string.IsNullOrEmpty(input.Text);
             input.EditorAction += (_, args) =>
             {
-                if (args.ActionId != ImeAction.Done) return;
-                args.Handled = true;
+                args.Handled = args.ActionId == ImeAction.Done;
+                if (!args.Handled) return;
                 Submit();
             };
             dialog.Window?.SetSoftInputMode(SoftInput.StateAlwaysVisible | SoftInput.AdjustResize);
@@ -487,26 +585,6 @@ public sealed class MainActivity : Activity
             }
         });
         return completion.Task;
-    }
-
-    private sealed class PackagePasswordEditText(Context context) : EditText(context)
-    {
-        public override void OnWindowFocusChanged(bool hasWindowFocus)
-        {
-            base.OnWindowFocusChanged(hasWindowFocus);
-            if (!hasWindowFocus) return;
-            RequestFocus();
-            // Showing the keyboard before the dialog owns window focus can
-            // leave it connected to the activity's previous editor. Rebind only
-            // after focus arrives, also when returning from a system window.
-            Post(() =>
-            {
-                if (!IsAttachedToWindow || !HasWindowFocus || !HasFocus) return;
-                InputMethodManager? manager = (InputMethodManager?)Context?.GetSystemService(InputMethodService);
-                manager?.RestartInput(this);
-                manager?.ShowSoftInput(this, ShowFlags.Implicit);
-            });
-        }
     }
 
     private static bool IsNoProjectSuppliedError(string? error) =>

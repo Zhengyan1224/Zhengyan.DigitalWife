@@ -5,6 +5,10 @@
   <assembly fullname="System.Text.Json" preserve="all" />
   <assembly fullname="System.Text.RegularExpressions" preserve="all" />
   <assembly fullname="System.Private.CoreLib">
+    <!-- Precompiled user scripts can call time APIs absent from the host's call graph. -->
+    <type fullname="System.DateTimeOffset" preserve="all" />
+    <type fullname="System.DateTime" preserve="all" />
+    <type fullname="System.TimeSpan" preserve="all" />
     <!-- Required by every Roslyn script submission factory. -->
     <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder" preserve="all" />
     <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1" preserve="all" />

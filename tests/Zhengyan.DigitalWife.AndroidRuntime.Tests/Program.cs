@@ -1,6 +1,18 @@
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 
+if (args is ["--verify-linked-script-apis", string linkedDirectory])
+{
+    AndroidScriptLinkerTests.Verify(linkedDirectory);
+    return 0;
+}
+
+if (args is ["--skinning-project", string skinningProject, string skinningMotion])
+{
+    AndroidMotionLoopTests.RunProjectPhysics(skinningProject, skinningMotion, compareSkinning: true);
+    return 0;
+}
+
 if (args is ["--physics-project", string physicsProject, string motionPath])
 {
     AndroidMotionLoopTests.RunProjectPhysics(physicsProject, motionPath);

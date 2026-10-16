@@ -14,6 +14,8 @@ internal sealed class AndroidGuiOverlayView : View
     private readonly Paint _paint = new() { AntiAlias = true, SubpixelText = true };
     private readonly AndroidGameSurfaceView _gameView;
 
+    public GuiControlSettings? EditingControl { get; set; }
+
     public AndroidGuiOverlayView(Context context, AndroidGameSurfaceView gameView)
         : base(context)
     {
@@ -63,19 +65,28 @@ internal sealed class AndroidGuiOverlayView : View
                 float progressWidth = rect.Width * Math.Clamp(control.Progress, 0.0f, 1.0f);
                 canvas.DrawRoundRect(rect.X, rect.Y, rect.X + progressWidth, rect.Y + rect.Height, radius, radius, panel);
             }
-            Vector4Dto textColor = style.TextColor;
-            _paint.Color = Color.Rgb(
-                (int)(Math.Clamp(textColor.X, 0, 1) * 255),
-                (int)(Math.Clamp(textColor.Y, 0, 1) * 255),
-                (int)(Math.Clamp(textColor.Z, 0, 1) * 255));
+            // The native editor draws the active text, while this layer keeps
+            // drawing its original panel. Never blend two copies of the text.
+            if (ReferenceEquals(control, EditingControl)) continue;
+            _paint.Color = ToColor(style.TextColor);
             _paint.TextSize = LayoutResolver.ResolveFontSize(control.LayoutMode, style.FontSize,
                 Width, Height, referenceWidth, referenceHeight);
             _paint.SetTypeface(Typeface.Create(Typeface.Default, TypefaceStyle.Normal));
             string text = control.Text ?? string.Empty;
             float textWidth = _paint.MeasureText(text);
-            float x = rect.X + Math.Max((rect.Width - textWidth) * 0.5f, 4.0f);
+            float x = style.HorizontalAlignment.ToLowerInvariant() switch
+            {
+                "left" => rect.X + 4.0f,
+                "right" => rect.X + Math.Max(rect.Width - textWidth - 4.0f, 4.0f),
+                _ => rect.X + Math.Max((rect.Width - textWidth) * 0.5f, 4.0f)
+            };
             Paint.FontMetrics metrics = _paint.GetFontMetrics()!;
-            float baseline = rect.Y + (rect.Height - metrics.Bottom - metrics.Top) * 0.5f;
+            float baseline = style.VerticalAlignment.ToLowerInvariant() switch
+            {
+                "top" => rect.Y + 4.0f - metrics.Top,
+                "bottom" => rect.Y + rect.Height - 4.0f - metrics.Bottom,
+                _ => rect.Y + (rect.Height - metrics.Bottom - metrics.Top) * 0.5f
+            };
             canvas.DrawText(text, x, baseline, _paint);
         }
 
