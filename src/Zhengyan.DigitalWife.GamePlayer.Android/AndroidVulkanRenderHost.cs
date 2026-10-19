@@ -18,6 +18,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private AndroidSceneGame? _game;
     private RuntimeSceneManager? _sceneManager;
     private AndroidCSharpScriptHost? _scriptHost;
+    private readonly AndroidGuiPointerEvents _guiPointerEvents = new();
     private AndroidAudioHost? _audioHost;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
@@ -367,6 +368,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     private void OnSceneChanged(RuntimeSceneChange change)
     {
+        _guiPointerEvents.Reset();
         if (change.Current is not null) _project!.Scene = change.Current.Definition;
         if (_surfaceAvailable) ReloadGame();
     }
@@ -392,6 +394,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     private void DisposeRuntime()
     {
+        _guiPointerEvents.Reset();
         _game?.Dispose();
         _game = null;
         _sceneManager?.Dispose();
@@ -429,25 +432,22 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
 
     private void DispatchTouchEvents(RuntimeScene scene, AndroidInputSnapshot input)
     {
-        if (_scriptHost is null || input.Touches.Count == 0) return;
-        foreach (AndroidTouchPoint touch in input.Touches.Where(point => point.Phase is AndroidTouchPhase.Began or AndroidTouchPhase.Ended))
+        if (_scriptHost is null || input.TouchTransitions.Count == 0) return;
+        foreach (AndroidTouchPoint touch in input.TouchTransitions)
         {
             float x = touch.PixelPosition.X;
             float y = touch.PixelPosition.Y;
             string eventType = touch.Phase == AndroidTouchPhase.Began ? "pointer_down" : "pointer_up";
-            bool handled = false;
-            foreach (GuiControlSettings control in scene.Definition.GuiControls.Where(control => control.Visible).Reverse())
+            AndroidGuiPointerPhase phase = touch.Phase switch
             {
-                LayoutRect rect = LayoutResolver.Resolve(control.LayoutMode, control.X, control.Y, control.Width, control.Height,
-                    _width, _height, _project?.Window.Width ?? _width, _project?.Window.Height ?? _height);
-                if (x < rect.X || x > rect.X + rect.Width || y < rect.Y || y > rect.Y + rect.Height) continue;
-                _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
-                    "gui", control.Id,
-                    touch.Phase == AndroidTouchPhase.Ended ? control.EventName : eventType,
-                    touch.Position, control.Name, control.TargetEntity));
-                handled = true;
-                break;
-            }
+                AndroidTouchPhase.Began => AndroidGuiPointerPhase.Pressed,
+                AndroidTouchPhase.Ended => AndroidGuiPointerPhase.Released,
+                _ => AndroidGuiPointerPhase.Cancelled
+            };
+            bool handled = _guiPointerEvents.Dispatch(scene, touch.Id, phase, touch.PixelPosition, touch.Position,
+                new(_width, _height), new(_project?.Window.Width ?? _width, _project?.Window.Height ?? _height),
+                runtimeEvent => _scriptHost.DispatchEvent(scene, runtimeEvent));
+            if (touch.Phase == AndroidTouchPhase.Cancelled) continue;
 
             if (!handled)
             {

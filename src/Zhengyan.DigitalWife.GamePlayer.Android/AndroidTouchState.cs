@@ -36,7 +36,8 @@ public sealed class AndroidInputSnapshot
         int activeTouchCount,
         bool touchStarted,
         bool touchEnded,
-        AndroidDeviceInputSnapshot deviceInput)
+        AndroidDeviceInputSnapshot deviceInput,
+        IReadOnlyList<AndroidTouchPoint>? touchTransitions = null)
     {
         Touches = touches;
         PrimaryTouch = primaryTouch;
@@ -44,9 +45,13 @@ public sealed class AndroidInputSnapshot
         IsTouchStarted = touchStarted;
         IsTouchEnded = touchEnded;
         DeviceInput = deviceInput;
+        TouchTransitions = touchTransitions ?? touches;
     }
 
     public IReadOnlyList<AndroidTouchPoint> Touches { get; }
+
+    // Preserve down/up ordering when a quick tap completes between frames.
+    public IReadOnlyList<AndroidTouchPoint> TouchTransitions { get; }
 
     public AndroidTouchPoint? PrimaryTouch { get; }
 
@@ -63,13 +68,14 @@ public sealed class AndroidInputSnapshot
     internal AndroidInputSnapshot WithDeviceInput(AndroidDeviceInputSnapshot deviceInput)
         => ReferenceEquals(this, Empty) && deviceInput.Equals(AndroidDeviceInputSnapshot.Empty)
             ? this
-            : new(Touches, PrimaryTouch, ActiveTouchCount, IsTouchStarted, IsTouchEnded, deviceInput);
+            : new(Touches, PrimaryTouch, ActiveTouchCount, IsTouchStarted, IsTouchEnded, deviceInput, TouchTransitions);
 }
 
 internal sealed class AndroidTouchState
 {
     private readonly object _sync = new();
     private readonly Dictionary<int, TouchState> _touches = [];
+    private readonly List<AndroidTouchPoint> _transitions = [];
 
     public void Apply(MotionEvent motionEvent)
     {
@@ -100,6 +106,7 @@ internal sealed class AndroidTouchState
                         state.Phase = AndroidTouchPhase.Cancelled;
                         state.Pressure = 0.0f;
                         state.EndedThisFrame = true;
+                        _transitions.Add(state.ToPoint(1, 1, false));
                     }
 
                     break;
@@ -133,13 +140,21 @@ internal sealed class AndroidTouchState
                 ? primaryPoint
                 : null;
 
+            AndroidTouchPoint[] transitions = _transitions.Select(point => point with
+            {
+                Position = new(point.PixelPosition.X / safeWidth, point.PixelPosition.Y / safeHeight),
+                IsPrimary = point.Id == primaryId
+            }).ToArray();
+            _transitions.Clear();
+
             AndroidInputSnapshot snapshot = new(
                 points,
                 primary,
                 ordered.Count(static state => state.IsActive),
                 ordered.Any(static state => state.StartedThisFrame),
                 ordered.Any(static state => state.EndedThisFrame),
-                AndroidDeviceInputSnapshot.Empty);
+                AndroidDeviceInputSnapshot.Empty,
+                transitions);
 
             foreach (int id in _touches
                 .Where(static pair => !pair.Value.IsActive)
@@ -188,6 +203,11 @@ internal sealed class AndroidTouchState
         {
             state.Pressure = 0.0f;
             state.EndedThisFrame = true;
+        }
+
+        if (phase is AndroidTouchPhase.Began or AndroidTouchPhase.Ended or AndroidTouchPhase.Cancelled)
+        {
+            _transitions.Add(state.ToPoint(1, 1, false));
         }
     }
 

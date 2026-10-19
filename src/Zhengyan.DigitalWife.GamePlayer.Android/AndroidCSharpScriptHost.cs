@@ -211,8 +211,24 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 Execute(binding, scene, _loadingEntity, 0.0f, false, runtimeEvent);
             return;
         }
-        RuntimeEntity? target = scene.GetEntity(runtimeEvent.TargetEntity);
-        if (target is null && !string.IsNullOrEmpty(runtimeEvent.TargetEntity)) return;
+        RuntimeEntity? target;
+        if (string.Equals(runtimeEvent.Type, "gui", StringComparison.OrdinalIgnoreCase))
+        {
+            target = AndroidGuiEventRouting.ResolveTarget(scene, runtimeEvent.TargetEntity,
+                entity => entity.Definition.Scripts.Where(IsSupported)
+                    .Any(binding => _runners.ContainsKey(GameProjectPath.ToAbsolute(_projectDirectory, binding.Path))));
+            if (target is null)
+            {
+                global::Android.Util.Log.Warn("ZhengyanGamePlayer",
+                    $"GUI event '{runtimeEvent.EventName}' from '{runtimeEvent.Text}' has no target entity and no script target fallback.");
+                return;
+            }
+        }
+        else
+        {
+            target = scene.GetEntity(runtimeEvent.TargetEntity);
+            if (target is null && !string.IsNullOrEmpty(runtimeEvent.TargetEntity)) return;
+        }
         IEnumerable<RuntimeEntity> entities = target is null ? scene.Entities : [target];
         foreach (RuntimeEntity entity in entities)
         {

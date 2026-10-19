@@ -15,6 +15,7 @@ it does not establish identical output on every Android GPU.
 | Scene loading screen | Shared desktop `LoadingScreenComponent` | Same component, Vulkan renderer | Background color/image/opacity and full progress-bar layout, border and padding |
 | C# loading scripts | Implemented | Implemented | `loading_started`, `loading_progress`, `loading_completed`; Android also reports `loading_failed` |
 | C# publication | Shared typed Android API and compiler | Same | Editor emits `compiled/android/manifest.json` and DLLs; player consumes the same globals type |
+| GUI button events and default targets | Desktop event order and target selection | Same helper | `pressed`, `released`, then configured click event; untargeted GUI events select one scripted entity |
 | LLM streaming and tool calls | Shared desktop `RuntimeLlm` | Same | Multi-round calls, script tool callbacks, native-tool/text-protocol fallback, cancellation and round limits |
 | Skills and memory | Shared desktop `RuntimeLlmSkillTools` | Same | Controlled by `Project.Llm.EnableSkills` / `EnableMemory`; memory uses `Save.SaveDirectory/memory` |
 | Scene audio | Android `MediaPlayer` | Same | Preloaded during scene loading; play/pause/stop/loop/volume supported |
@@ -49,6 +50,26 @@ but desktop capture chunk settings cannot be reproduced exactly by that service.
 TTS completion callbacks wait for the Android utterance completion notification.
 
 ## Verification
+
+### GUI buttons
+
+Both Android hosts preserve touch down/up ordering, including taps completed
+between frames. Buttons send `pressed` immediately and `released` to the original
+button when the touch ends or is canceled. A click is sent only when the same
+button receives the release; blank event names default to `clicked`.
+
+GUI events resolve an explicit target by ID or name. Empty or missing targets
+use the desktop fallback: prefer a scripted PMX model that other PMX models bind
+to, then an independent scripted PMX model, then sort by name. Without a scripted
+PMX model, use the first scripted entity. GUI events with no eligible target are
+ignored. In DemoGame01 scene2, this selects `Body` and prevents the house and
+outfit scripts from speaking in response to the recording button.
+
+Run the button, recording, target, cancellation and quick-tap regression cases:
+
+```powershell
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android GUI"
+```
 
 ### Motion loops, physics timing and Vulkan uploads
 
