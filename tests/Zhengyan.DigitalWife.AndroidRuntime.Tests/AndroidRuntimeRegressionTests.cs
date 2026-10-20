@@ -40,6 +40,11 @@ internal static class AndroidRuntimeRegressionTests
             ("Android LLM HTTP streaming and native diagnostics", TestLlmHttpStreaming),
             ("Android LLM failures preserve callback and inner exception logs", TestLlmFailureDiagnostics),
             ("Android LLM cleartext network policy", TestLlmNetworkPolicy),
+            ("Android RealtimeVoice server response and HTTP speech", AndroidRealtimeVoiceTests.TestResponseAndSpeech),
+            ("Android RealtimeVoice transcription and conversation reuse", AndroidRealtimeVoiceTests.TestTranscriptionAndConversation),
+            ("Android RealtimeVoice complete voice turn", AndroidRealtimeVoiceTests.TestVoiceTurn),
+            ("Android RealtimeVoice timeout, cancellation and service errors", AndroidRealtimeVoiceTests.TestTimeoutCancellationAndErrors),
+            ("Android RealtimeVoice wake words and native capture", AndroidRealtimeVoiceTests.TestWakeWordAndCapture),
             ("Android GUI recording events match desktop", AndroidGuiEventTests.TestRecordingEvents),
             ("Android GUI quick taps preserve native event ordering", AndroidGuiEventTests.TestQuickTap),
             ("Android GUI releases, cancellation and scene changes", AndroidGuiEventTests.TestReleaseAndCancellation),
@@ -110,6 +115,16 @@ internal static class AndroidRuntimeRegressionTests
         Check(fixture.Globals.LlmDelta == "world" && fixture.Globals.LlmText == "hello world" && fixture.Globals.LlmCallbackName == "custom_delta" && fixture.Globals.LlmEventName == "delta", "Event names, callbacks and accumulated text must remain separate.");
         fixture.Globals.Update(0.1f, false, null);
         Check(fixture.Globals.IsUpdate && !fixture.Globals.IsLlmEvent && fixture.Globals.LlmText.Length == 0, "Event state leaked into the next frame.");
+
+        RuntimeRealtimeVoiceScriptEvent voice = new("voice-request", "delta", "user text", "reply delta", "full reply", false, "", "voice_delta", "小雨", "heard text");
+        fixture.Globals.Update(0, false, AndroidRuntimeEvent.FromRealtimeVoice(fixture.Entity, voice));
+        Check(fixture.Globals.RealtimeVoiceEvent == voice && fixture.Globals.RealtimeVoiceText == "user text"
+            && fixture.Globals.RealtimeVoiceDelta == "reply delta" && fixture.Globals.RealtimeVoiceAccumulatedText == "full reply"
+            && !fixture.Globals.RealtimeVoiceIsFinal && fixture.Globals.RealtimeVoiceCallbackName == "voice_delta", "Voice text, delta, accumulated text and callbacks were conflated.");
+        var legacyVoice = (AndroidScriptGlobalsContract)fixture.Globals;
+        Check(legacyVoice.RealtimeVoiceDelta == "reply delta" && legacyVoice.RealtimeVoiceAccumulatedText == "full reply", "Legacy globals lost voice event fields.");
+        fixture.Globals.Update(0.1f, false, null);
+        Check(!fixture.Globals.IsRealtimeVoiceEvent && fixture.Globals.RealtimeVoiceEvent is null && fixture.Globals.RealtimeVoiceDelta == "", "Voice event leaked into the next frame.");
     }
 
     private static void TestLlmHttpStreaming()

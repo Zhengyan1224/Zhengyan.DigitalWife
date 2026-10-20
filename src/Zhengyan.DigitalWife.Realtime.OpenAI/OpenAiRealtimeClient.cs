@@ -350,6 +350,7 @@ public sealed class OpenAiRealtimeClient : IAsyncDisposable, IDisposable
         payload.Voice ??= CurrentSession?.Audio?.Output?.Voice;
 
         Uri endpoint = _options.BuildAudioSpeechEndpoint();
+        _logger.LogInformation("Sending RealtimeVoice speech request to {Endpoint}; textLength={TextLength}.", endpoint, text.Length);
         using HttpRequestMessage httpRequest = new(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(payload)

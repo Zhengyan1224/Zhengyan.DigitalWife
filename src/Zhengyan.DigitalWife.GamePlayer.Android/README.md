@@ -7,6 +7,11 @@ Skills / Memory。编辑器和 Android 现在引用同一套强类型脚本 API�
 的替代接口。升级后请同时更新 Android 播放器并重新导出 `.dwgame`。
 详见 [当前能力与验证范围](../../docs/android-render-parity.md)。
 
+2026-10-20：`Scene.RealtimeVoice` 已接入 PC 共用运行逻辑和服务协议，包括服务端转写、
+唤醒词、流式语音回复、HTTP 语音合成、会话重置、取消和口型同步。Android 用原生麦克风和
+扬声器适配，读取游戏包内的 RealtimeVoice 配置；完成事件等待播放结束，错误写入
+`ZhengyanGamePlayer` 日志。HTTP / HTTPS 地址均支持，实时连接对应 WS / WSS。
+
 直接安装或分享 Debug APK 时，构建命令需要添加 `-p:EmbedAssembliesIntoApk=true`。
 否则默认快速部署产物依赖开发工具另行推送程序集，单独安装 APK 不完整。构建仍需 JDK 21。
 

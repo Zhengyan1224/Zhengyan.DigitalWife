@@ -361,7 +361,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 if (_activeScene is { } scene) DispatchEvent(scene, AndroidRuntimeEvent.FromRealtimeVoice(entity, value));
             },
             new AndroidRealtimeVoiceMicrophone(), new AndroidRealtimeVoiceSpeaker(),
-            microphoneAvailable, "Android microphone permission is not granted.", AndroidRuntimeLoggerFactory.Instance);
+            microphoneAvailable, "Android microphone permission is not granted.", AndroidRuntimeLoggerFactory.Instance,
+            () => Application.Context.CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio)
+                == global::Android.Content.PM.Permission.Granted);
         return _realtimeVoiceApi = new(_realtimeVoice);
     }
 

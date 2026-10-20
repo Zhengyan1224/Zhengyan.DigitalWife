@@ -17,6 +17,7 @@ it does not establish identical output on every Android GPU.
 | C# publication | Shared typed Android API and compiler | Same | Editor emits `compiled/android/manifest.json` and DLLs; player consumes the same globals type |
 | GUI button events and default targets | Desktop event order and target selection | Same helper | `pressed`, `released`, then configured click event; untargeted GUI events select one scripted entity |
 | LLM streaming and tool calls | Shared desktop `RuntimeLlm` | Same | Multi-round calls, script tool callbacks, native-tool/text-protocol fallback, cancellation and round limits |
+| RealtimeVoice | Shared desktop `RuntimeRealtimeVoice` and service client | Same | Server transcription, wake-word filtering, streamed replies, HTTP speech, conversation reuse/reset, cancellation and lip sync; native microphone/speaker adapters |
 | Skills and memory | Shared desktop `RuntimeLlmSkillTools` | Same | Controlled by `Project.Llm.EnableSkills` / `EnableMemory`; memory uses `Save.SaveDirectory/memory` |
 | Scene audio | Android `MediaPlayer` | Same | Preloaded during scene loading; play/pause/stop/loop/volume supported |
 | Spatial audio mixing | Deferred | Deferred | Desktop's OpenAL source/listener features need an Android native backend and shared scene/script configuration |
@@ -48,6 +49,32 @@ Desktop executables and Python installations are not supplied. Android ASR uses
 the device speech recognizer: the exported wake-word API filters recognized text,
 but desktop capture chunk settings cannot be reproduced exactly by that service.
 TTS completion callbacks wait for the Android utterance completion notification.
+
+`Scene.RealtimeVoice` reads `Project.RealtimeVoice` and uses the desktop service
+protocol. `StartTranscription`, `StartVoiceTurn` and wake-word monitoring capture
+PCM using Android `AudioRecord`, then transcribe through the configured Realtime
+service. `StartResponse` creates a server conversation response and plays its
+streamed audio through `AudioTrack`. `StartSpeakText` uses the configured HTTP
+audio-speech endpoint and waits for native playback to drain before completion.
+The `RealtimeVoiceText`, `Delta`, `AccumulatedText`, request ID, callback name,
+final flag and wake-word fields follow the desktop events. Callbacks run on the
+render dispatcher. Scene changes cancel voice work and discard late callbacks.
+
+HTTP base URLs become `ws://` for the Realtime connection; HTTPS becomes
+`wss://`. Speech synthesis uses HTTP/HTTPS. Model, voice, instructions, capture
+thresholds, sample rates, prompt speed and output volume come from the game
+package. Desktop PortAudio device indices are not Android audio device IDs;
+Android uses its platform microphone and speaker routes.
+
+```powershell
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android RealtimeVoice"
+```
+
+The regression uses a local WebSocket/HTTP server, generated PCM, and a player
+that explicitly waits for playback completion. It covers server responses,
+speech synthesis, empty transcription retries, conversation item reuse/deletion,
+reset, wake-word extension/tail extraction, timeout, cancellation and service
+errors. It does not establish microphone, speaker or network behavior on a phone.
 
 Game packages can configure HTTP or HTTPS service URLs at runtime. The Android
 manifest and network security configuration permit HTTP, matching desktop

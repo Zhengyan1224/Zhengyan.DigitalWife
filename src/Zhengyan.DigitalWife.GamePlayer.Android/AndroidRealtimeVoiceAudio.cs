@@ -91,7 +91,8 @@ internal sealed class AndroidRealtimeVoiceSpeaker : IAudioPlayer, IDisposable
             using AudioAttributes attributes = new AudioAttributes.Builder()!.SetUsage(AudioUsageKind.Media)!.SetContentType(AudioContentType.Speech)!.Build()!;
             using global::Android.Media.AudioFormat nativeFormat = new global::Android.Media.AudioFormat.Builder()!
                 .SetSampleRate(format.SampleRate)!.SetEncoding(Encoding.Pcm16bit)!.SetChannelMask(channels)!.Build()!;
-            using AudioTrack track = new(attributes, nativeFormat, Math.Max(minimum * 2, 4096), AudioTrackMode.Stream, AudioManager.AudioSessionIdGenerate);
+            int bufferBytes = Math.Max(minimum * 2, 4096);
+            using AudioTrack track = new(attributes, nativeFormat, bufferBytes, AudioTrackMode.Stream, AudioManager.AudioSessionIdGenerate);
             if (track.State != AudioTrackState.Initialized) throw new InvalidOperationException("Android speaker could not be initialized.");
             using CancellationTokenRegistration stop = playback.Token.Register(() => { try { track.Pause(); track.Flush(); } catch { } });
             long frames = 0;
@@ -114,6 +115,21 @@ internal sealed class AndroidRealtimeVoiceSpeaker : IAudioPlayer, IDisposable
                         offset += written;
                     }
                     frames += samples.Length / format.Channels;
+                }
+                // Older Android devices wait for a full initial buffer. Pad a
+                // short utterance with silence so playback can start there too.
+                int bufferFrames = bufferBytes / sizeof(short) / format.Channels;
+                if (frames > 0 && frames < bufferFrames)
+                {
+                    short[] silence = new short[(bufferFrames - (int)frames) * format.Channels];
+                    int offset = 0;
+                    while (offset < silence.Length)
+                    {
+                        playback.Token.ThrowIfCancellationRequested();
+                        int written = await Task.Run(() => track.Write(silence, offset, silence.Length - offset, WriteMode.Blocking), CancellationToken.None).ConfigureAwait(false);
+                        if (written <= 0) throw new InvalidOperationException($"Android speaker padding failed: {written}.");
+                        offset += written;
+                    }
                 }
                 // AudioTrack.Write only queues audio. Completion waits until the
                 // device has played every frame, as the desktop player does.

@@ -32,9 +32,9 @@ public sealed class AndroidScriptRealtimeVoice : IAndroidScriptRealtimeVoice
     public string StartTranscription(AndroidScriptEntity entity, string? requestId = null, float? timeoutSeconds = null,
         string? onCompletedCallback = "realtime_voice_transcription_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error")
         => _runtime.StartTranscription(entity, requestId, timeoutSeconds, onCompletedCallback, onTimeoutCallback, onErrorCallback);
-    public string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "realtime_voice_delta",
+    public string StartResponse(AndroidScriptEntity entity, string userText, string onDeltaCallback = "realtime_voice_delta",
         string onCompletedCallback = "realtime_voice_completed", string onErrorCallback = "realtime_voice_error")
-        => _runtime.StartResponse(entity, text, onDeltaCallback: onDeltaCallback, onCompletedCallback: onCompletedCallback, onErrorCallback: onErrorCallback);
+        => _runtime.StartResponse(entity, userText, onDeltaCallback: onDeltaCallback, onCompletedCallback: onCompletedCallback, onErrorCallback: onErrorCallback);
     public string StartResponse(AndroidScriptEntity entity, string userText, string? requestId,
         string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onErrorCallback = "realtime_voice_error")
         => _runtime.StartResponse(entity, userText, requestId, onDeltaCallback, onCompletedCallback, onErrorCallback);

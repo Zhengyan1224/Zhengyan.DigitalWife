@@ -47,10 +47,11 @@ public sealed class RuntimeRealtimeVoice : IDisposable
     private PendingRealtimeUserItem? _pendingTranscribedUserItem;
     private SpeechDictionarySet? _dictionaries;
     private bool _disposed;
-    private readonly ILoggerFactory? _loggerFactory;
-    private readonly ILogger<RuntimeRealtimeVoice>? _logger;
+    private readonly ILoggerFactory? _loggerFactory = null;
+    private readonly ILogger<RuntimeRealtimeVoice>? _logger = null;
 #if ANDROID_SCRIPT_RUNTIME
     private readonly string _engineDirectory;
+    private readonly Func<bool>? _microphoneAvailable;
 #endif
 
 #if !ANDROID_SCRIPT_RUNTIME
@@ -105,7 +106,8 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         IAudioPlayer audioPlayer,
         bool microphoneInputAvailable = true,
         string? microphoneUnavailableReason = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        Func<bool>? microphoneAvailable = null)
     {
         _projectDirectory = projectDirectory;
         _engineDirectory = engineDirectory;
@@ -120,6 +122,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         _microphoneUnavailableReason = microphoneUnavailableReason ?? "No usable microphone input device is available.";
         _loggerFactory = loggerFactory;
         _logger = loggerFactory?.CreateLogger<RuntimeRealtimeVoice>();
+        _microphoneAvailable = microphoneAvailable;
     }
 #endif
 
@@ -131,15 +134,19 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
     public string Voice => _settings.Voice;
 
-    public bool WakeWordEnabled => _settings.WakeWord.Enabled && _microphoneInputAvailable;
+    public bool WakeWordEnabled => _settings.WakeWord.Enabled && MicrophoneInputAvailable;
 
     public IReadOnlyList<string> WakeWords => _settings.WakeWord.Keywords;
 
     public int? InputDeviceIndex => _settings.InputDeviceIndex;
 
-    public bool MicrophoneInputAvailable => _microphoneInputAvailable;
+    public bool MicrophoneInputAvailable =>
+#if ANDROID_SCRIPT_RUNTIME
+        _microphoneAvailable?.Invoke() ??
+#endif
+        _microphoneInputAvailable;
 
-    public string MicrophoneUnavailableReason => _microphoneInputAvailable ? string.Empty : _microphoneUnavailableReason;
+    public string MicrophoneUnavailableReason => MicrophoneInputAvailable ? string.Empty : _microphoneUnavailableReason;
 
     public bool IsWakeWordMonitoring
     {
@@ -683,14 +690,13 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         finally
         {
             audioChannel.Writer.TryComplete();
-            if (playbackTask is not null)
+            try
             {
-                await playbackTask.ConfigureAwait(false);
+                if (playbackTask is not null) await playbackTask.ConfigureAwait(false);
             }
-
-            if (lipSyncLoopStarted)
+            finally
             {
-                await StopLipSyncAsync(callbackTarget).ConfigureAwait(false);
+                if (lipSyncLoopStarted) await StopLipSyncAsync(callbackTarget).ConfigureAwait(false);
             }
         }
 
@@ -810,6 +816,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         long sceneVersion = Interlocked.Read(ref _sceneVersion);
         lock (_sync)
         {
+            if (_activeRequests.TryGetValue(requestId, out CancellationTokenSource? previous)) previous.Cancel();
             _activeRequests[requestId] = cts;
         }
 
@@ -818,10 +825,13 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             _requestSceneVersion.Value = sceneVersion;
             try
             {
+                WriteLog(LogLevel.Information, $"RealtimeVoice request started request={requestId}, target={callbackTarget.Name}, model={_settings.Model}");
                 await work(cts).ConfigureAwait(false);
+                WriteLog(LogLevel.Information, $"RealtimeVoice request finished request={requestId}");
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested || _disposed)
             {
+                WriteLog(LogLevel.Information, $"RealtimeVoice request canceled request={requestId}");
             }
             catch (Exception ex)
             {
@@ -844,7 +854,8 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             {
                 lock (_sync)
                 {
-                    _activeRequests.Remove(requestId);
+                    if (_activeRequests.TryGetValue(requestId, out CancellationTokenSource? active) && ReferenceEquals(active, cts))
+                        _activeRequests.Remove(requestId);
                 }
 
                 cts.Dispose();
@@ -1071,7 +1082,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
     private void EnsureMicrophoneInputAvailable()
     {
-        if (!_microphoneInputAvailable)
+        if (!MicrophoneInputAvailable)
         {
             throw new InvalidOperationException($"Project Realtime Voice microphone input is unavailable: {_microphoneUnavailableReason}");
         }
@@ -1115,8 +1126,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             return;
         }
 
+        long sceneVersion = _requestSceneVersion.Value ?? Interlocked.Read(ref _sceneVersion);
         await _dispatcher.InvokeAsync(() =>
         {
+            if (_disposed || sceneVersion != Interlocked.Read(ref _sceneVersion)) return;
             AttachEntity(entity);
             if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? updater))
             {
@@ -1132,8 +1145,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             return;
         }
 
+        long sceneVersion = _requestSceneVersion.Value ?? Interlocked.Read(ref _sceneVersion);
         await _dispatcher.InvokeAsync(() =>
         {
+            if (_disposed || sceneVersion != Interlocked.Read(ref _sceneVersion)) return;
             AttachEntity(entity);
             if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? updater))
             {
@@ -1144,8 +1159,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
     private async Task StopLipSyncAsync(RuntimeEntity entity)
     {
+        long sceneVersion = _requestSceneVersion.Value ?? Interlocked.Read(ref _sceneVersion);
         await _dispatcher.InvokeAsync(() =>
         {
+            if (_disposed || sceneVersion != Interlocked.Read(ref _sceneVersion)) return;
             if (_speechUpdaters.TryGetValue(entity.Id, out SpeechTransformUpdater? updater))
             {
                 updater.Stop(resetFace: true);

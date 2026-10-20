@@ -712,10 +712,10 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new string RealtimeVoiceText => IsRealtimeVoiceEvent ? Event!.Text : string.Empty;
     public new string RealtimeVoiceDelta => IsRealtimeVoiceEvent ? Event!.Delta : string.Empty;
     public new string RealtimeVoiceAccumulatedText => IsRealtimeVoiceEvent ? Event!.AccumulatedText : string.Empty;
-    public new bool RealtimeVoiceIsFinal => IsRealtimeVoiceEvent && (Event!.IsFinal || RealtimeVoiceEventName is "voice_done" or "voice_transcribed");
+    public new bool RealtimeVoiceIsFinal => IsRealtimeVoiceEvent && Event!.IsFinal;
     public new string RealtimeVoiceError => IsRealtimeVoiceEvent ? Event!.Error : string.Empty;
     public new string RealtimeVoiceCallbackName => IsRealtimeVoiceEvent
-        ? (string.IsNullOrEmpty(Event!.CallbackName) ? Event.EventName : Event.CallbackName) : string.Empty;
+        ? Event!.CallbackName : string.Empty;
     public string RealtimeVoiceWakeWord => IsRealtimeVoiceEvent ? Event!.WakeWord : string.Empty;
     public string RealtimeVoiceRecognizedText => IsRealtimeVoiceEvent ? Event!.RecognizedText : string.Empty;
     public new string GuiControlId => IsGuiEvent ? Event!.Id : string.Empty;

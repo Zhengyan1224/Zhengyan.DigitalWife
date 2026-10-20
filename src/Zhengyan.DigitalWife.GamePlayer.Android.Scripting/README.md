@@ -5,9 +5,12 @@ platform service interfaces, and publication compiler used by both GameEditor
 and the Android player. The editor can compile scripts without loading Android
 framework assemblies. Platform implementations remain in GamePlayer.Android.
 
-`RuntimeLlm`, `RuntimeLlmSkillTools`, and `MainThreadDispatcher` are source-linked
+`RuntimeLlm`, `RuntimeLlmSkillTools`, `RuntimeRealtimeVoice`,
+`ContinuousAudioCaptureSession`, and `MainThreadDispatcher` are source-linked
 from GamePlayer. `ANDROID_SCRIPT_RUNTIME` binds their entity/scene parameters to
-the Android script wrappers, so both platforms run the same tool-call protocol.
+the Android script wrappers, so both platforms run the same tool-call and
+RealtimeVoice protocols. Native Android audio adapters implement `IAudioSource`
+and `IAudioPlayer`; service conversation and callback behavior remain shared.
 
 Reference this assembly with the `AndroidScripting` alias from desktop tools.
 Its linked LLM types share the desktop namespace; desktop script compilers must
