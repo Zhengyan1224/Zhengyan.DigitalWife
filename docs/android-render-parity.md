@@ -90,6 +90,28 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "
 
 ## Verification
 
+### Published scripts and dialogue text
+
+Android script compilation rewrites expanded `params Span<T>` and
+`params ReadOnlySpan<T>` calls to explicitly allocated arrays, keeping the
+selected overload and argument evaluation order. This prevents desktop .NET 10
+precompilation from referencing private CoreLib `InlineArrayN<T>` types absent
+from the Android runtime. The player checks older DLL metadata before loading
+and compiles the packaged source once when those references are present.
+Re-exporting with the updated editor produces compatible DLLs directly.
+
+Dialogue bubble headers, body text and footers wrap using Android font
+measurements at the available content width. Layout retains explicit newlines,
+emoji and combining characters, uses each section's font/color, and grows the
+panel to the measured text height. Text is clipped to the panel; unchanged
+layouts are cached until text, size or viewport changes. Existing world/model
+anchors and pivots are retained.
+
+```powershell
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android script portability"
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Dialogue bubble"
+```
+
 ### GUI buttons
 
 Both Android hosts preserve touch down/up ordering, including taps completed

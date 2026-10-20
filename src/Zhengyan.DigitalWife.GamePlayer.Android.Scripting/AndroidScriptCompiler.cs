@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Emit;
+using Microsoft.CodeAnalysis.Operations;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -103,6 +104,14 @@ public static class AndroidScriptCompiler
             returnType: typeof(object),
             globalsType: typeof(AndroidScriptGlobals));
 
+        // Desktop .NET 10 overload resolution can choose params ReadOnlySpan<T>
+        // and lower expanded arguments to private CoreLib InlineArray types.
+        // Pass an explicit array instead, preserving arguments and evaluation.
+        SyntaxNode portableCalls = new PortableParamsRewriter(compilation.GetSemanticModel(syntaxTree))
+            .Visit(syntaxTree.GetRoot())!;
+        SyntaxTree portableTree = CSharpSyntaxTree.Create((CSharpSyntaxNode)portableCalls, parseOptions, path, parsedTree.Encoding);
+        compilation = compilation.ReplaceSyntaxTree(syntaxTree, portableTree);
+
         using MemoryStream image = new();
         EmitResult result = compilation.Emit(image);
         if (!result.Success)
@@ -176,6 +185,50 @@ public static class AndroidScriptCompiler
                 ])))
                 .WithTriviaFrom(node);
         }
+    }
+
+    private sealed class PortableParamsRewriter(SemanticModel model) : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
+        {
+            InvocationExpressionSyntax visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+            if (model.GetOperation(node) is not IInvocationOperation invocation) return visited;
+            IArgumentOperation? expanded = invocation.Arguments.FirstOrDefault(argument => argument.ArgumentKind == ArgumentKind.ParamCollection);
+            if (expanded?.Parameter?.Type is not INamedTypeSymbol collection || collection.TypeArguments.Length != 1
+                || collection.ContainingNamespace.ToDisplayString() != "System" || collection.Name is not ("Span" or "ReadOnlySpan")
+                || expanded.Value is not ICollectionExpressionOperation elements) return visited;
+
+            int first = node.ArgumentList.Arguments.Count;
+            foreach (IOperation element in elements.Elements)
+            {
+                for (int index = 0; index < node.ArgumentList.Arguments.Count; index++)
+                    if (node.ArgumentList.Arguments[index].Expression.Span.Contains(element.Syntax.Span)) first = Math.Min(first, index);
+            }
+            var values = visited.ArgumentList.Arguments.Skip(first).Select(argument => argument.Expression);
+            ExpressionSyntax array = CreateArray(collection.TypeArguments[0], values);
+            ArgumentSyntax packed = SyntaxFactory.Argument(SyntaxFactory.CastExpression(
+                SyntaxFactory.ParseTypeName(collection.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)), array));
+            if (visited.ArgumentList.Arguments.Any(argument => argument.NameColon is not null))
+                packed = packed.WithNameColon(SyntaxFactory.NameColon(SyntaxFactory.IdentifierName(expanded.Parameter.Name)));
+            return visited.WithArgumentList(visited.ArgumentList.WithArguments(
+                SyntaxFactory.SeparatedList(visited.ArgumentList.Arguments.Take(first).Append(packed))));
+        }
+
+        public override SyntaxNode? VisitCollectionExpression(CollectionExpressionSyntax node)
+        {
+            CollectionExpressionSyntax visited = (CollectionExpressionSyntax)base.VisitCollectionExpression(node)!;
+            if (model.GetTypeInfo(node).ConvertedType is not INamedTypeSymbol type || type.TypeArguments.Length != 1
+                || type.ContainingNamespace.ToDisplayString() != "System" || type.Name is not ("Span" or "ReadOnlySpan")
+                || visited.Elements.Any(element => element is SpreadElementSyntax)) return visited;
+            return CreateArray(type.TypeArguments[0], visited.Elements.Cast<ExpressionElementSyntax>().Select(element => element.Expression)).WithTriviaFrom(node);
+        }
+
+        private static ArrayCreationExpressionSyntax CreateArray(ITypeSymbol elementType, IEnumerable<ExpressionSyntax> values)
+            => SyntaxFactory.ArrayCreationExpression(SyntaxFactory.ArrayType(
+                    SyntaxFactory.ParseTypeName(elementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))
+                .WithRankSpecifiers(SyntaxFactory.SingletonList(SyntaxFactory.ArrayRankSpecifier(
+                    SyntaxFactory.SingletonSeparatedList<ExpressionSyntax>(SyntaxFactory.OmittedArraySizeExpression())))))
+                .WithInitializer(SyntaxFactory.InitializerExpression(SyntaxKind.ArrayInitializerExpression, SyntaxFactory.SeparatedList(values)));
     }
 
 }

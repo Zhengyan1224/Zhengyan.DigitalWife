@@ -1,6 +1,7 @@
 using Android.Content;
 using Android.Graphics;
 using Android.Views;
+using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
@@ -13,6 +14,10 @@ internal sealed class AndroidGuiOverlayView : View
 {
     private readonly Paint _paint = new() { AntiAlias = true, SubpixelText = true };
     private readonly AndroidGameSurfaceView _gameView;
+    private readonly Dictionary<string, (BubbleLayoutKey Key, AndroidBubbleTextLayout Layout)> _bubbleLayouts = new();
+    private sealed record BubbleLayoutKey(string Text, string Header, string Footer, string Mode, string Alignment,
+        float Width, float FontSize, float HeaderSize, float FooterSize, int CanvasWidth, int CanvasHeight,
+        float ReferenceWidth, float ReferenceHeight);
 
     public GuiControlSettings? EditingControl { get; set; }
 
@@ -90,16 +95,32 @@ internal sealed class AndroidGuiOverlayView : View
             canvas.DrawText(text, x, baseline, _paint);
         }
 
-        foreach (RuntimeDialogueBubble bubble in AndroidScriptBubbleManager.Shared.VisibleBubbles)
+        RuntimeDialogueBubble[] visibleBubbles = AndroidScriptBubbleManager.Shared.VisibleBubbles.ToArray();
+        HashSet<string> visibleNames = visibleBubbles.Select(bubble => bubble.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (string name in _bubbleLayouts.Keys.Where(name => !visibleNames.Contains(name)).ToArray()) _bubbleLayouts.Remove(name);
+        foreach (RuntimeDialogueBubble bubble in visibleBubbles)
         {
             if (!_gameView.TryGetBubblePosition(bubble, Width, Height, out var anchor)) continue;
-            float requestedWidth = LayoutResolver.Resolve(bubble.LayoutMode, 0, 0, bubble.Width, 1,
-                Width, Height, referenceWidth, referenceHeight).Width;
-            float width = Math.Clamp(requestedWidth, Math.Min(160.0f, Width * 0.9f), Width * 0.9f);
-            float fontSize = LayoutResolver.ResolveFontSize(bubble.LayoutMode, bubble.FontSize,
+            BubbleLayoutKey key = new(bubble.Text, bubble.HeaderText, bubble.FooterText, bubble.LayoutMode,
+                bubble.TextAlignment, bubble.Width, bubble.FontSize, bubble.HeaderFontSize, bubble.FooterFontSize,
                 Width, Height, referenceWidth, referenceHeight);
-            float height = Math.Clamp((bubble.Text.Length / 28 + 2) * Math.Max(fontSize, 16.0f) + 48.0f,
-                Math.Min(80.0f, Height * 0.35f), Height * 0.35f);
+            if (!_bubbleLayouts.TryGetValue(bubble.Name, out var cached) || cached.Key != key)
+            {
+                AndroidBubbleTextLayout measured = AndroidDialogueBubbleTextLayout.Build(bubble,
+                    new(Width, Height), new(referenceWidth, referenceHeight),
+                    (text, size) => { _paint.TextSize = size; return _paint.MeasureText(text); },
+                    size =>
+                    {
+                        _paint.TextSize = size;
+                        Paint.FontMetrics metrics = _paint.GetFontMetrics()!;
+                        return new(metrics.Top, metrics.Bottom, _paint.FontSpacing);
+                    });
+                cached = (key, measured);
+                _bubbleLayouts[bubble.Name] = cached;
+            }
+            AndroidBubbleTextLayout layout = cached.Layout;
+            float width = layout.Size.X;
+            float height = layout.Size.Y;
             var topLeft = AndroidDialogueBubbleLayout.TopLeft(bubble, anchor, new(width, height));
             float left = topLeft.X;
             float top = topLeft.Y;
@@ -108,12 +129,21 @@ internal sealed class AndroidGuiOverlayView : View
             canvas.DrawRoundRect(left, top, left + width, top + height, 12, 12, panel);
             panel.Color = ToColor(bubble.BorderColor); panel.SetStyle(Paint.Style.Stroke); panel.StrokeWidth = 2;
             canvas.DrawRoundRect(left, top, left + width, top + height, 12, 12, panel);
-            _paint.Color = ToColor(bubble.TextColor); _paint.TextSize = Math.Max(fontSize, 16.0f);
-            canvas.DrawText(bubble.HeaderText, left + 14, top + 26, _paint);
-            canvas.DrawText(bubble.Text, left + 14, top + 26 + _paint.TextSize + 6, _paint);
-            _paint.TextSize = Math.Max(LayoutResolver.ResolveFontSize(bubble.LayoutMode, bubble.FooterFontSize,
-                Width, Height, referenceWidth, referenceHeight), 12.0f);
-            canvas.DrawText(bubble.FooterText, left + 14, top + height - 14, _paint);
+            int saved = canvas.Save();
+            canvas.ClipRect(left + layout.Padding, top + layout.Padding,
+                left + width - layout.Padding, top + height - layout.Padding);
+            foreach (AndroidBubbleTextLine line in layout.Lines)
+            {
+                _paint.TextSize = line.FontSize;
+                _paint.Color = ToColor(line.Part switch
+                {
+                    0 => bubble.HeaderTextColor,
+                    2 => bubble.FooterTextColor,
+                    _ => bubble.TextColor
+                });
+                canvas.DrawText(line.Text, left + line.X, top + line.Baseline, _paint);
+            }
+            canvas.RestoreToCount(saved);
         }
     }
 

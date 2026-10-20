@@ -549,7 +549,14 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         if (!File.Exists(assemblyPath)) return null;
         try
         {
-            return CreateCompiledScript(Assembly.Load(File.ReadAllBytes(assemblyPath)), AnalyzeScriptPhases(File.ReadAllText(sourcePath)));
+            byte[] image = File.ReadAllBytes(assemblyPath);
+            if (AndroidPrecompiledScriptCompatibility.ReferencesPrivateInlineArray(image))
+            {
+                global::Android.Util.Log.Warn("ZhengyanGamePlayer",
+                    $"Precompiled Android script references desktop InlineArray types; compiling compatible source once: '{sourcePath}'. Re-export the game package with the updated editor.");
+                return null;
+            }
+            return CreateCompiledScript(Assembly.Load(image), AnalyzeScriptPhases(File.ReadAllText(sourcePath)));
         }
         catch (Exception ex)
         {

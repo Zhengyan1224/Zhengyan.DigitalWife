@@ -1,10 +1,47 @@
 using System.Numerics;
+using System.Globalization;
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 internal static class AndroidDialogueBubbleTests
 {
+    internal static void TestTextWrapping()
+    {
+        string text = "这是一段较长的中文回复，包含English words与emoji🙂和组合字符e\u0301。\n第二段继续显示。";
+        float Measure(string value) => StringInfo.ParseCombiningCharacters(value).Sum(index => char.IsAscii(value[index]) ? 5f : 10f);
+        var lines = AndroidDialogueBubbleTextLayout.Wrap(text, 60, Measure);
+        Check(lines.Count > 2 && lines.All(line => Measure(line) <= 60), "Mixed dialogue text exceeded the available content width.");
+        Check(string.Concat(lines) == text.Replace("\n", ""), "Wrapping lost characters or punctuation.");
+        Check(lines.All(line => !line.StartsWith('\u0301') && !char.IsLowSurrogate(line.FirstOrDefault()) && !char.IsHighSurrogate(line.LastOrDefault())), "Wrapping split an emoji or combining character.");
+        Check(AndroidDialogueBubbleTextLayout.Wrap("a\r\n\r\nb", 60, Measure).SequenceEqual(["a", "", "b"]), "Explicit line breaks were not retained.");
+
+        RuntimeDialogueBubble bubble = new("reply") { Width = 180, FontSize = 20, HeaderFontSize = 14, FooterFontSize = 12, TextAlignment = "center" };
+        bubble.SetContent(text, "长标题也需要换行", "回复完成");
+        AndroidBubbleTextLayout Build(float width) => AndroidDialogueBubbleTextLayout.Build(bubble, new(width, 600), new(800, 600),
+            (value, size) => Measure(value) * size / 10, size => new(-size * .8f, size * .2f, size * 1.2f));
+        var layout = Build(800);
+        foreach (var line in layout.Lines)
+        {
+            Check(line.X >= layout.Padding && line.X + Measure(line.Text) * line.FontSize / 10 <= layout.Size.X - layout.Padding + .01f, "A wrapped line escaped the bubble panel.");
+            Check(line.Baseline - line.FontSize * .8f >= layout.Padding - .01f && line.Baseline + line.FontSize * .2f <= layout.Size.Y - layout.Padding + .01f, "Font ascent or descent escaped bubble height.");
+        }
+        Check(layout.Lines.Select(line => line.Part).Distinct().SequenceEqual([0, 1, 2]), "Header, body or footer was missing.");
+        Check(layout.Lines.First(line => line.Part == 2).FontSize == 12 && layout.Lines.First().FontSize == 14, "Header/footer font sizes were ignored.");
+        float firstHeight = layout.Size.Y;
+        bubble.SetContent(string.Concat(Enumerable.Repeat(text, 10)), "标题", "回复完成");
+        var longLayout = Build(800);
+        Check(longLayout.Size.Y > firstHeight && longLayout.Size.Y > 600 * .35f, "Bubble height was capped before all wrapped content fit.");
+        bubble.LayoutMode = "relative";
+        var resized = Build(400);
+        Check(resized.Size.X <= 400 * .9f && resized.Lines.All(line => line.X >= resized.Padding), "Resize did not recompute dialogue layout.");
+    }
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
     private static OrbitCamera Camera()
     {
         OrbitCamera camera = new() { Width = 800, Height = 600, ProjectionMode = CameraProjectionMode.Orthographic, OrthographicSize = 3 };
