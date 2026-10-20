@@ -1,11 +1,14 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using System.Numerics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Zhengyan.DigitalWife.GameEditor;
 using Zhengyan.DigitalWife.GamePlayer;
@@ -34,6 +37,9 @@ internal static class AndroidRuntimeRegressionTests
             ("PMX slow frames keep animation and physics synchronized", AndroidMotionLoopTests.TestSlowFrames),
             ("PMX slow frames preserve loop reset and pause behavior", AndroidMotionLoopTests.TestSlowFrameLoopReset),
             ("Published script ABI, lambda and event fields", TestPublishedScript),
+            ("Android LLM HTTP streaming and native diagnostics", TestLlmHttpStreaming),
+            ("Android LLM failures preserve callback and inner exception logs", TestLlmFailureDiagnostics),
+            ("Android LLM cleartext network policy", TestLlmNetworkPolicy),
             ("Android GUI recording events match desktop", AndroidGuiEventTests.TestRecordingEvents),
             ("Android GUI quick taps preserve native event ordering", AndroidGuiEventTests.TestQuickTap),
             ("Android GUI releases, cancellation and scene changes", AndroidGuiEventTests.TestReleaseAndCancellation),
@@ -104,6 +110,105 @@ internal static class AndroidRuntimeRegressionTests
         Check(fixture.Globals.LlmDelta == "world" && fixture.Globals.LlmText == "hello world" && fixture.Globals.LlmCallbackName == "custom_delta" && fixture.Globals.LlmEventName == "delta", "Event names, callbacks and accumulated text must remain separate.");
         fixture.Globals.Update(0.1f, false, null);
         Check(fixture.Globals.IsUpdate && !fixture.Globals.IsLlmEvent && fixture.Globals.LlmText.Length == 0, "Event state leaked into the next frame.");
+    }
+
+    private static void TestLlmHttpStreaming()
+    {
+        using ScriptFixture fixture = new();
+        global::Android.Util.Log.Entries.Clear();
+        using TcpListener listener = new(IPAddress.Loopback, 0);
+        listener.Start();
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Task server = Task.Run(async () =>
+        {
+            using TcpClient connection = await listener.AcceptTcpClientAsync(timeout.Token);
+            await using NetworkStream stream = connection.GetStream();
+            using StreamReader reader = new(stream, Encoding.UTF8, false, 1024, leaveOpen: true);
+            string requestLine = (await reader.ReadLineAsync(timeout.Token))!;
+            int contentLength = 0;
+            string authorization = string.Empty;
+            while (await reader.ReadLineAsync(timeout.Token) is { Length: > 0 } header)
+            {
+                if (header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                    contentLength = int.Parse(header["Content-Length:".Length..].Trim());
+                if (header.StartsWith("Authorization:", StringComparison.OrdinalIgnoreCase)) authorization = header;
+            }
+            char[] body = new char[contentLength];
+            int received = 0;
+            while (received < body.Length)
+            {
+                int count = await reader.ReadAsync(body.AsMemory(received), timeout.Token);
+                if (count == 0) throw new EndOfStreamException("HTTP test request ended before its body.");
+                received += count;
+            }
+            Check(requestLine == "POST /openapi/test/v1/chat/completions HTTP/1.1", "HTTP LLM endpoint was composed incorrectly.");
+            Check(authorization.EndsWith("Bearer test-only-key", StringComparison.Ordinal), "HTTP LLM request lost authorization.");
+            using JsonDocument payload = JsonDocument.Parse(new string(body));
+            Check(payload.RootElement.GetProperty("stream").GetBoolean() && payload.RootElement.GetProperty("model").GetString() == "test", "HTTP LLM request lost streaming or model settings.");
+
+            string sse = "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n"
+                + "data: [DONE]\n\n";
+            byte[] responseBody = Encoding.UTF8.GetBytes(sse);
+            byte[] headers = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {responseBody.Length}\r\nConnection: close\r\n\r\n");
+            await stream.WriteAsync(headers, timeout.Token);
+            await stream.WriteAsync(responseBody, timeout.Token);
+        });
+
+        List<RuntimeLlmScriptEvent> events = [];
+        using RuntimeLlm llm = new(new()
+        {
+            Enabled = true, BaseUrl = $"http://127.0.0.1:{port}/openapi/test", Model = "test", ApiKey = "test-only-key", TimeoutSeconds = 10
+        }, fixture.Root, fixture.SaveRoot, fixture.Dispatcher, (_, value) => events.Add(value),
+            loggerFactory: AndroidRuntimeLoggerFactory.Instance);
+        string id = llm.StartChatWithTools(fixture.Entity, "hello", [], requestId: "http-test", onCompletedCallback: "done", onErrorCallback: "failed");
+        PumpUntil(fixture.Dispatcher, () => events.Any(value => value.EventName is "completed" or "error"));
+        server.GetAwaiter().GetResult();
+        RuntimeLlmScriptEvent result = events.Last();
+        Check(id == "http-test" && result.EventName == "completed" && result.AccumulatedText == "hello world" && result.CallbackName == "done", "HTTP streaming failed to complete the script callback.");
+        string logs = string.Join("\n", global::Android.Util.Log.Entries.Select(entry => entry.Message));
+        Check(logs.Contains("LLM request start request=http-test") && logs.Contains("LLM request completed request=http-test"), "Android LLM lifecycle logs did not reach logcat.");
+        Check(logs.Contains($"http://127.0.0.1:{port}/openapi/test/v1/chat/completions"), "Android HTTP diagnostics lost the actual request URL.");
+        Check(!logs.Contains("test-only-key"), "LLM diagnostics included the API key.");
+        Check(global::Android.Util.Log.Entries.All(entry => entry.Tag == "ZhengyanGamePlayer"), "LLM logs escaped the Android player tag.");
+    }
+
+    private static void TestLlmFailureDiagnostics()
+    {
+        using ScriptFixture fixture = new();
+        global::Android.Util.Log.Entries.Clear();
+        HttpRequestException failure = new("Native HTTP request failed", new InvalidOperationException("Cleartext HTTP traffic not permitted"));
+        using FakeHandler handler = new(_ => Task.FromException<HttpResponseMessage>(failure));
+        List<RuntimeLlmScriptEvent> events = [];
+        using RuntimeLlm llm = CreateLlm(fixture, handler, (_, value) => events.Add(value),
+            loggerFactory: AndroidRuntimeLoggerFactory.Instance);
+        llm.StartChatWithTools(fixture.Entity, "test", [], requestId: "failed-test", onErrorCallback: "voice_chat_llm_error");
+        PumpUntil(fixture.Dispatcher, () => events.Any(value => value.EventName == "error"));
+        Check(events.Last().RequestId == "failed-test" && events.Last().CallbackName == "voice_chat_llm_error"
+            && events.Last().Error == failure.Message, "Logging changed the script error callback.");
+        string logs = string.Join("", global::Android.Util.Log.Entries.Where(entry => entry.Level == "error").Select(entry => entry.Message));
+        Check(logs.Contains("failed-test") && logs.Contains("HttpRequestException") && logs.Contains("Cleartext HTTP traffic not permitted"), "Android logs omitted the request ID or inner network exception.");
+
+        global::Android.Util.Log.Entries.Clear();
+        ILogger logger = AndroidRuntimeLoggerFactory.Instance.CreateLogger("chunk-test");
+        string longMessage = new('x', 5000);
+        logger.LogError("{Message}", longMessage);
+        var chunks = global::Android.Util.Log.Entries.ToArray();
+        Check(chunks.Length > 1 && chunks.All(entry => entry.Message.Length <= 900)
+            && string.Concat(chunks.Select(entry => entry.Message)) == "chunk-test: " + longMessage, "Logcat chunking truncated a long diagnostic.");
+    }
+
+    private static void TestLlmNetworkPolicy()
+    {
+        XNamespace android = "http://schemas.android.com/apk/res/android";
+        string root = Path.Combine(AppContext.BaseDirectory, "AndroidNetwork");
+        XElement application = XDocument.Load(Path.Combine(root, "AndroidManifest.xml")).Root!.Element("application")!;
+        Check((string?)application.Attribute(android + "usesCleartextTraffic") == "true", "Android manifest blocks configured HTTP services.");
+        Check((string?)application.Attribute(android + "networkSecurityConfig") == "@xml/network_security_config", "Android manifest did not reference the network policy.");
+        XElement policy = XDocument.Load(Path.Combine(root, "network_security_config.xml")).Root!;
+        Check((string?)policy.Element("base-config")?.Attribute("cleartextTrafficPermitted") == "true", "Android network policy blocks dynamic HTTP endpoints.");
+        Check(!policy.Descendants("trust-anchors").Any() && !policy.Descendants("debug-overrides").Any(), "HTTP compatibility unexpectedly changed HTTPS certificate trust.");
     }
 
     private static void TestNativeTools()
@@ -294,12 +399,13 @@ internal static class AndroidRuntimeRegressionTests
     }
 
     private static RuntimeLlm CreateLlm(ScriptFixture fixture, FakeHandler handler,
-        Action<AndroidScriptEntity, RuntimeLlmScriptEvent>? dispatch = null, GameProjectLlmSettings? settings = null)
+        Action<AndroidScriptEntity, RuntimeLlmScriptEvent>? dispatch = null, GameProjectLlmSettings? settings = null,
+        ILoggerFactory? loggerFactory = null)
     {
         OpenAiCompatibleLlmClient client = new(new() { BaseUrl = "https://test.invalid", ApiKey = "test-only" },
             NullLogger<OpenAiCompatibleLlmClient>.Instance, new HttpClient(handler));
         return new(settings ?? new() { Enabled = true, Model = "test" }, fixture.Root, fixture.SaveRoot,
-            fixture.Dispatcher, dispatch ?? ((_, _) => { }), client);
+            fixture.Dispatcher, dispatch ?? ((_, _) => { }), client, loggerFactory);
     }
 
     private static HttpResponseMessage TextResponse(params string[] deltas)

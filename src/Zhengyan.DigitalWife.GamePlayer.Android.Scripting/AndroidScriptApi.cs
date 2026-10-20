@@ -1,4 +1,5 @@
 using System.Numerics;
+using Microsoft.Extensions.Logging;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
@@ -20,12 +21,18 @@ public sealed record AndroidRuntimeEvent(
     string AccumulatedText = "",
     bool IsFinal = false,
     string WakeWord = "",
-    string RecognizedText = "")
+    string RecognizedText = "",
+    string Delta = "")
 {
     internal static AndroidRuntimeEvent FromLlm(AndroidScriptEntity entity, RuntimeLlmScriptEvent value)
         => new("llm", value.RequestId, value.EventName, Vector2.Zero, value.Delta,
             entity.Id, value.ToolCall, value.ToolResult ?? string.Empty, value.Error,
             CallbackName: value.CallbackName, AccumulatedText: value.AccumulatedText, IsFinal: value.IsFinal);
+
+    internal static AndroidRuntimeEvent FromRealtimeVoice(AndroidScriptEntity entity, RuntimeRealtimeVoiceScriptEvent value)
+        => new("realtime_voice", value.RequestId, value.EventName, Vector2.Zero, value.Text, entity.Id,
+            Error: value.Error, CallbackName: value.CallbackName, AccumulatedText: value.AccumulatedText,
+            IsFinal: value.IsFinal, WakeWord: value.WakeWord, RecognizedText: value.RecognizedText, Delta: value.Delta);
 }
 
 public sealed record AndroidRenderTextureInfo(
@@ -202,6 +209,17 @@ public sealed class AndroidScriptEntity
     public Vector3 Scale { get => _entity.Scale; set => _entity.Scale = value; }
     public string ReceiveShadowMode { get => _entity.ReceiveShadowMode; set => _entity.ReceiveShadowMode = value; }
     public bool IsPmxModel => _entity.IsPmxModel;
+    internal Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater.SpeechTransformUpdater CreateSpeechUpdater(
+        Zhengyan.DigitalWife.Mmd.Game.Speech.SpeechDictionarySet dictionaries,
+        IReadOnlyDictionary<string, string>? vowelMorphMap, string? fallbackVowel)
+        => RequirePmx().CreateSpeechTransformUpdater(dictionaries.Kana, dictionaries.Vowel, vowelMorphMap, fallbackVowel);
+
+    internal void RemoveSpeechUpdater(Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater.SpeechTransformUpdater updater)
+    {
+        if (Pmx is not { } model) return;
+        updater.UpdateTransform(model, 0);
+        model.RemoveTransformUpdater(updater);
+    }
     public CollisionSettings Collision => _entity.Collision;
     public IList<ColliderSettings> Colliders => _entity.Colliders;
     public bool CollisionEnabled { get => _entity.CollisionEnabled; set => _entity.CollisionEnabled = value; }
@@ -664,7 +682,10 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
         ? new(LlmRequestId, LlmEventName, LlmDelta, LlmText, LlmIsFinal, LlmError, LlmCallbackName, Event!.ToolCall, Event.ToolResult)
         : null;
     public dynamic? AsrEvent => IsAsrEvent ? Event : null;
-    public dynamic? RealtimeVoiceEvent => IsRealtimeVoiceEvent ? Event : null;
+    public RuntimeRealtimeVoiceScriptEvent? RealtimeVoiceEvent => IsRealtimeVoiceEvent
+        ? new(RealtimeVoiceRequestId, RealtimeVoiceEventName, RealtimeVoiceText, RealtimeVoiceDelta,
+            RealtimeVoiceAccumulatedText, RealtimeVoiceIsFinal, RealtimeVoiceError, RealtimeVoiceCallbackName,
+            RealtimeVoiceWakeWord, RealtimeVoiceRecognizedText) : null;
     public new string LlmRequestId => IsLlmEvent ? Event!.Id : string.Empty;
     public new string LlmEventName => IsLlmEvent ? Event!.EventName : string.Empty;
     public new string LlmDelta => IsLlmEvent ? Event!.Text : string.Empty;
@@ -689,8 +710,8 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new string RealtimeVoiceRequestId => IsRealtimeVoiceEvent ? Event!.Id : string.Empty;
     public new string RealtimeVoiceEventName => IsRealtimeVoiceEvent ? Event!.EventName : string.Empty;
     public new string RealtimeVoiceText => IsRealtimeVoiceEvent ? Event!.Text : string.Empty;
-    public new string RealtimeVoiceDelta => RealtimeVoiceText;
-    public new string RealtimeVoiceAccumulatedText => RealtimeVoiceText;
+    public new string RealtimeVoiceDelta => IsRealtimeVoiceEvent ? Event!.Delta : string.Empty;
+    public new string RealtimeVoiceAccumulatedText => IsRealtimeVoiceEvent ? Event!.AccumulatedText : string.Empty;
     public new bool RealtimeVoiceIsFinal => IsRealtimeVoiceEvent && (Event!.IsFinal || RealtimeVoiceEventName is "voice_done" or "voice_transcribed");
     public new string RealtimeVoiceError => IsRealtimeVoiceEvent ? Event!.Error : string.Empty;
     public new string RealtimeVoiceCallbackName => IsRealtimeVoiceEvent
@@ -812,7 +833,8 @@ public sealed class AndroidScriptServices : IDisposable
         IAndroidScriptTts tts,
         IAndroidScriptRealtime realtime,
         IAndroidScriptAsr asr,
-        IAndroidScriptRealtimeVoice realtimeVoice)
+        IAndroidScriptRealtimeVoice realtimeVoice,
+        ILoggerFactory? loggerFactory = null)
     {
         _scene = scene;
         _requestSceneChange = requestSceneChange;
@@ -826,7 +848,7 @@ public sealed class AndroidScriptServices : IDisposable
         Network = new AndroidScriptNetwork();
         Save = new AndroidScriptSaveStore(saveDirectory);
         Llm = new RuntimeLlm(llmSettings, projectDirectory, saveDirectory, dispatcher,
-            (entity, value) => dispatchEvent(AndroidRuntimeEvent.FromLlm(entity, value)));
+            (entity, value) => dispatchEvent(AndroidRuntimeEvent.FromLlm(entity, value)), loggerFactory: loggerFactory);
         Tts = tts;
         Realtime = realtime;
         RealtimeVoice = realtimeVoice;

@@ -1,15 +1,21 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Zhengyan.DigitalWife.Audio;
+#if !ANDROID_SCRIPT_RUNTIME
 using Zhengyan.DigitalWife.Audio.PortAudio;
+#endif
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Audio;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx.TransformUpdater;
 using Zhengyan.DigitalWife.Mmd.Game.Speech;
 using Zhengyan.DigitalWife.Realtime.OpenAI;
 using Zhengyan.DigitalWife.RealtimeVoice.Client;
+#if ANDROID_SCRIPT_RUNTIME
+using RuntimeEntity = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptEntity;
+#endif
 
 namespace Zhengyan.DigitalWife.GamePlayer;
 
@@ -17,7 +23,9 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 {
     private const float WakeWordSpeechRmsThreshold = 0.008f;
 
+#if !ANDROID_SCRIPT_RUNTIME
     private readonly GamePlayerGame _game;
+#endif
     private readonly string _projectDirectory;
     private readonly GameProjectRealtimeVoiceSettings _settings;
     private readonly GameProjectVoiceSettings _voiceSettings;
@@ -31,13 +39,21 @@ public sealed class RuntimeRealtimeVoice : IDisposable
     private readonly object _sync = new();
     private readonly object _resourceSync = new();
     private readonly Dictionary<string, CancellationTokenSource> _activeRequests = new(StringComparer.OrdinalIgnoreCase);
+    private long _sceneVersion;
+    private readonly AsyncLocal<long?> _requestSceneVersion = new();
     private readonly Dictionary<string, SpeechTransformUpdater> _speechUpdaters = new(StringComparer.OrdinalIgnoreCase);
     private RealtimeVoiceClient? _client;
     private CancellationTokenSource? _wakeWordMonitorCts;
     private PendingRealtimeUserItem? _pendingTranscribedUserItem;
     private SpeechDictionarySet? _dictionaries;
     private bool _disposed;
+    private readonly ILoggerFactory? _loggerFactory;
+    private readonly ILogger<RuntimeRealtimeVoice>? _logger;
+#if ANDROID_SCRIPT_RUNTIME
+    private readonly string _engineDirectory;
+#endif
 
+#if !ANDROID_SCRIPT_RUNTIME
     internal RuntimeRealtimeVoice(
         GamePlayerGame game,
         string projectDirectory,
@@ -77,6 +93,35 @@ public sealed class RuntimeRealtimeVoice : IDisposable
                 () => _game.AudioStatusMessage);
         _audioPlayer = (IAudioPlayer)_ownedAudioPlayer;
     }
+#else
+    internal RuntimeRealtimeVoice(
+        string projectDirectory,
+        string engineDirectory,
+        GameProjectRealtimeVoiceSettings settings,
+        GameProjectVoiceSettings voiceSettings,
+        MainThreadDispatcher dispatcher,
+        Action<RuntimeEntity, RuntimeRealtimeVoiceScriptEvent> dispatchScriptEvent,
+        IAudioSource audioSource,
+        IAudioPlayer audioPlayer,
+        bool microphoneInputAvailable = true,
+        string? microphoneUnavailableReason = null,
+        ILoggerFactory? loggerFactory = null)
+    {
+        _projectDirectory = projectDirectory;
+        _engineDirectory = engineDirectory;
+        _settings = settings;
+        _voiceSettings = voiceSettings;
+        _dispatcher = dispatcher;
+        _dispatchScriptEvent = dispatchScriptEvent;
+        _audioSource = audioSource;
+        _audioPlayer = audioPlayer;
+        _ownedAudioPlayer = (IDisposable)audioPlayer;
+        _microphoneInputAvailable = microphoneInputAvailable;
+        _microphoneUnavailableReason = microphoneUnavailableReason ?? "No usable microphone input device is available.";
+        _loggerFactory = loggerFactory;
+        _logger = loggerFactory?.CreateLogger<RuntimeRealtimeVoice>();
+    }
+#endif
 
     public bool Enabled => _settings.Enabled;
 
@@ -120,6 +165,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         StopWakeWordMonitoring();
 
         CancellationTokenSource cts = new();
+        long sceneVersion = Interlocked.Read(ref _sceneVersion);
         lock (_sync)
         {
             _wakeWordMonitorCts = cts;
@@ -127,10 +173,11 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
         _ = Task.Run(async () =>
         {
+            _requestSceneVersion.Value = sceneVersion;
             try
             {
                 AudioCaptureOptions captureOptions = CreateAudioCaptureOptions(_settings.WakeWord.Capture);
-                Console.WriteLine(
+                WriteLog(LogLevel.Information,
                     $"[GamePlayer] RealtimeVoice wake word capture open target={callbackTarget.Name}, " +
                     $"device={captureOptions.DeviceIndex?.ToString() ?? "default"}, " +
                     $"sampleRate={captureOptions.SampleRate}, channels={captureOptions.Channels}, " +
@@ -177,6 +224,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             }
             catch (Exception ex)
             {
+                WriteLog(LogLevel.Error, $"RealtimeVoice wake word failed target={callbackTarget.Name}: {ex.Message}", ex);
                 DispatchEvent(
                     callbackTarget,
                     new RuntimeRealtimeVoiceScriptEvent(
@@ -490,6 +538,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
     internal void ClearScene()
     {
+        Interlocked.Increment(ref _sceneVersion);
         StopWakeWordMonitoring();
         CancellationTokenSource[] requests;
         lock (_sync)
@@ -502,13 +551,16 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         foreach (CancellationTokenSource request in requests)
         {
             request.Cancel();
-            request.Dispose();
         }
 
         foreach (SpeechTransformUpdater updater in _speechUpdaters.Values)
         {
             updater.Stop(resetFace: true);
         }
+#if ANDROID_SCRIPT_RUNTIME
+        foreach (RuntimeEntity entity in _speechEntities.Values) entity.RemoveSpeechUpdater(_speechUpdaters[entity.Id]);
+        _speechEntities.Clear();
+#endif
 
         _speechUpdaters.Clear();
     }
@@ -755,6 +807,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
         string? onErrorCallback)
     {
         CancellationTokenSource cts = new();
+        long sceneVersion = Interlocked.Read(ref _sceneVersion);
         lock (_sync)
         {
             _activeRequests[requestId] = cts;
@@ -762,6 +815,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
         _ = Task.Run(async () =>
         {
+            _requestSceneVersion.Value = sceneVersion;
             try
             {
                 await work(cts).ConfigureAwait(false);
@@ -771,6 +825,7 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             }
             catch (Exception ex)
             {
+                WriteLog(LogLevel.Error, $"RealtimeVoice request failed request={requestId}, target={callbackTarget.Name}: {ex.Message}", ex);
                 DispatchEvent(
                     callbackTarget,
                     new RuntimeRealtimeVoiceScriptEvent(
@@ -941,7 +996,9 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             return _client;
         }
 
-        _client = new RealtimeVoiceClient(
+        lock (_resourceSync)
+        {
+        _client ??= new RealtimeVoiceClient(
             new RealtimeVoiceClientSettings
             {
                 ClientOptions = new OpenAiRealtimeClientOptions
@@ -984,7 +1041,9 @@ public sealed class RuntimeRealtimeVoice : IDisposable
                     Temperature = _settings.Temperature
                 }
             },
-            NullLogger<RealtimeVoiceClient>.Instance);
+            _loggerFactory?.CreateLogger<RealtimeVoiceClient>() ?? NullLogger<RealtimeVoiceClient>.Instance,
+            _loggerFactory?.CreateLogger<OpenAiRealtimeClient>());
+        }
         _client.EnsureReadyAsync(cancellationToken).GetAwaiter().GetResult();
         return _client;
     }
@@ -1044,6 +1103,9 @@ public sealed class RuntimeRealtimeVoice : IDisposable
             ResolveNoMatchFallbackVowel(_voiceSettings.LipSync));
         updater.Stop(resetFace: true);
         _speechUpdaters[entity.Id] = updater;
+#if ANDROID_SCRIPT_RUNTIME
+        _speechEntities[entity.Id] = entity;
+#endif
     }
 
     private async Task StartLipSyncAsync(RuntimeEntity entity, string text, TimeSpan audioDuration)
@@ -1139,11 +1201,16 @@ public sealed class RuntimeRealtimeVoice : IDisposable
                 return _dictionaries;
             }
 
+#if ANDROID_SCRIPT_RUNTIME
+            _dictionaries = Zhengyan.DigitalWife.GamePlayer.Android.AndroidSpeechLipSync.LoadDictionaries(
+                _voiceSettings.LipSync, _projectDirectory, _engineDirectory);
+#else
             string dictionaryDirectory = ResolveOptionalPath(_voiceSettings.LipSync.DictionaryDirectory)
                 ?? Path.Combine(AppContext.BaseDirectory, "Resources", "SpeechLipSyncDictionaries");
             _dictionaries = SpeechDictionarySet.LoadFromDirectory(
                 dictionaryDirectory,
                 ResolveDictionaryLanguages(_voiceSettings.LipSync));
+#endif
             return _dictionaries;
         }
     }
@@ -1171,9 +1238,10 @@ public sealed class RuntimeRealtimeVoice : IDisposable
 
     private void DispatchEvent(RuntimeEntity target, RuntimeRealtimeVoiceScriptEvent scriptEvent)
     {
+        long sceneVersion = _requestSceneVersion.Value ?? Interlocked.Read(ref _sceneVersion);
         _dispatcher.Post(() =>
         {
-            if (_disposed)
+            if (_disposed || sceneVersion != Interlocked.Read(ref _sceneVersion))
             {
                 return;
             }
@@ -1396,6 +1464,17 @@ public sealed class RuntimeRealtimeVoice : IDisposable
     }
 
     private readonly record struct PendingRealtimeUserItem(string ItemId, string Text);
+
+#if ANDROID_SCRIPT_RUNTIME
+    private readonly Dictionary<string, RuntimeEntity> _speechEntities = new(StringComparer.OrdinalIgnoreCase);
+#endif
+
+    private void WriteLog(LogLevel level, string message, Exception? exception = null)
+    {
+        if (_logger is not null) _logger.Log(level, exception, "{Message}", message);
+        else if (level >= LogLevel.Warning) Console.Error.WriteLine(message);
+        else Console.WriteLine(message);
+    }
 
     private readonly record struct RealtimeVoiceCaptureResult(OpenAiRealtimeTranscriptionResult? Result, bool TimedOut);
 }

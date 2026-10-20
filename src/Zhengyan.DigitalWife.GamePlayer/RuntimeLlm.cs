@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Llm;
 using Zhengyan.DigitalWife.Llm.OpenAI;
@@ -49,6 +50,8 @@ public sealed class RuntimeLlm : IDisposable
     private readonly RuntimeLlmSkillTools _skillTools;
     private readonly MainThreadDispatcher _dispatcher;
     private readonly Action<RuntimeEntity, RuntimeLlmScriptEvent> _dispatchScriptEvent;
+    private readonly ILoggerFactory? _loggerFactory;
+    private readonly ILogger<RuntimeLlm>? _logger;
     private readonly object _sync = new();
     private readonly List<ActiveLlmRequest> _activeRequests = [];
     private OpenAiCompatibleLlmClient? _client;
@@ -60,7 +63,8 @@ public sealed class RuntimeLlm : IDisposable
         string saveDirectory,
         MainThreadDispatcher dispatcher,
         Action<RuntimeEntity, RuntimeLlmScriptEvent> dispatchScriptEvent,
-        OpenAiCompatibleLlmClient? client = null)
+        OpenAiCompatibleLlmClient? client = null,
+        ILoggerFactory? loggerFactory = null)
     {
         _settings = settings;
         _projectDirectory = Path.GetFullPath(projectDirectory);
@@ -68,6 +72,8 @@ public sealed class RuntimeLlm : IDisposable
         _dispatcher = dispatcher;
         _dispatchScriptEvent = dispatchScriptEvent;
         _client = client;
+        _loggerFactory = loggerFactory;
+        _logger = loggerFactory?.CreateLogger<RuntimeLlm>();
     }
 
     public bool Enabled => _settings.Enabled;
@@ -574,7 +580,7 @@ public sealed class RuntimeLlm : IDisposable
 
         try
         {
-            Console.WriteLine(
+            WriteLog(LogLevel.Information,
                 $"[GamePlayer] LLM request start request={resolvedRequestId}, target={callbackTarget.Name}, " +
                 $"model={displayModel}, tools={capturedTools.Count}, messages={capturedMessages.Count}");
             CancellationTokenSource cts = new();
@@ -642,7 +648,7 @@ public sealed class RuntimeLlm : IDisposable
                     }
 
                     RuntimeLlmResult result = new(resolvedRequestId, accumulated);
-                    Console.WriteLine(
+                    WriteLog(LogLevel.Information,
                         $"[GamePlayer] LLM request completed request={resolvedRequestId}, " +
                         $"textLength={result.Text.Length}");
                     _dispatcher.Post(() =>
@@ -669,13 +675,13 @@ public sealed class RuntimeLlm : IDisposable
                 }
                 catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested || _disposed)
                 {
-                    Console.WriteLine(
+                    WriteLog(LogLevel.Information,
                         $"[GamePlayer] LLM request canceled request={resolvedRequestId}, " +
                         $"reason={activeRequest.CancelReason}.");
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}");
+                    WriteLog(LogLevel.Error, $"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}", ex);
                     _dispatcher.Post(() =>
                     {
                         if (_disposed || requestCancellation.IsCancellationRequested)
@@ -711,7 +717,7 @@ public sealed class RuntimeLlm : IDisposable
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}");
+            WriteLog(LogLevel.Error, $"[GamePlayer] LLM request failed request={resolvedRequestId}: {ex.Message}", ex);
             _dispatcher.Post(() =>
             {
                 onError?.Invoke(ex);
@@ -836,12 +842,12 @@ public sealed class RuntimeLlm : IDisposable
                 }
                 catch (HttpRequestException exception) when (nativeToolsEnabled && IsNativeToolPayloadRejected(exception))
                 {
-                    Console.Error.WriteLine($"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
+                    WriteLog(LogLevel.Warning, $"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
                     nativeToolsEnabled = false;
                 }
                 catch (TimeoutException exception) when (nativeToolsEnabled)
                 {
-                    Console.Error.WriteLine($"[GamePlayer] LLM native tool stream timed out before first update; retrying with text tool protocol. {exception.Message}");
+                    WriteLog(LogLevel.Warning, $"[GamePlayer] LLM native tool stream timed out before first update; retrying with text tool protocol. {exception.Message}");
                     nativeToolsEnabled = false;
                 }
             }
@@ -870,7 +876,7 @@ public sealed class RuntimeLlm : IDisposable
 
             foreach (RuntimeLlmToolCall toolCall in toolCalls)
             {
-                Console.WriteLine(
+                WriteLog(LogLevel.Information,
                     $"[GamePlayer] LLM tool call request={requestId}, name={toolCall.Name}, " +
                     $"argumentsLength={toolCall.ArgumentsJson.Length}");
                 DispatchToolEvent(callbackTarget, requestId, "tool_call", onToolCallCallback, toolCall, null);
@@ -878,7 +884,7 @@ public sealed class RuntimeLlm : IDisposable
                 string result = tool is null
                     ? $"Tool '{toolCall.Name}' is not registered."
                     : await tool.InvokeAsync(toolCall, cancellationToken);
-                Console.WriteLine(
+                WriteLog(LogLevel.Information,
                     $"[GamePlayer] LLM tool result request={requestId}, name={toolCall.Name}, " +
                     $"resultLength={result.Length}");
                 DispatchToolEvent(callbackTarget, requestId, "tool_result", onToolResultCallback, toolCall, result);
@@ -992,7 +998,7 @@ public sealed class RuntimeLlm : IDisposable
         }
         catch (HttpRequestException exception) when (nativeToolsEnabled && IsNativeToolPayloadRejected(exception))
         {
-            Console.Error.WriteLine($"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
+            WriteLog(LogLevel.Warning, $"[GamePlayer] LLM backend rejected native tool payload ({(int?)exception.StatusCode}); retrying with text tool protocol.");
             return await ReadToolRoundCoreAsync(
                 conversation,
                 model,
@@ -1004,7 +1010,7 @@ public sealed class RuntimeLlm : IDisposable
         }
         catch (TimeoutException exception) when (nativeToolsEnabled)
         {
-            Console.Error.WriteLine($"[GamePlayer] LLM native tool stream timed out before first update; retrying with text tool protocol. {exception.Message}");
+            WriteLog(LogLevel.Warning, $"[GamePlayer] LLM native tool stream timed out before first update; retrying with text tool protocol. {exception.Message}");
             return await ReadToolRoundCoreAsync(
                 conversation,
                 model,
@@ -1166,8 +1172,22 @@ public sealed class RuntimeLlm : IDisposable
                     : _settings.ChatCompletionsPath,
                 Timeout = TimeSpan.FromSeconds(Math.Clamp(_settings.TimeoutSeconds, 1, 3600))
             },
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenAiCompatibleLlmClient>.Instance);
+            _loggerFactory?.CreateLogger<OpenAiCompatibleLlmClient>()
+                ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenAiCompatibleLlmClient>.Instance);
         return _client;
+    }
+
+    private void WriteLog(LogLevel level, string message, Exception? exception = null)
+    {
+        if (_logger is not null)
+        {
+            _logger.Log(level, exception, "{Message}", message);
+            return;
+        }
+
+        // Desktop hosts retain their existing console diagnostics.
+        if (level >= LogLevel.Warning) Console.Error.WriteLine(message);
+        else Console.WriteLine(message);
     }
 
     private string ResolveModel(string? overrideModel)

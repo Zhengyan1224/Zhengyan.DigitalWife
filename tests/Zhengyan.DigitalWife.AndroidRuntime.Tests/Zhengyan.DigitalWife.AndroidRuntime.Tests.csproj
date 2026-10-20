@@ -8,6 +8,9 @@
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidRenderPolicy.cs" Link="AndroidRenderPolicy.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidPmxPlaybackSync.cs" Link="AndroidPmxPlaybackSync.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidTouchState.cs" Link="AndroidTouchState.cs" />
+    <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidRuntimeLoggerFactory.cs" Link="AndroidRuntimeLoggerFactory.cs" />
+    <None Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidManifest.xml" Link="AndroidNetwork\AndroidManifest.xml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\Resources\xml\network_security_config.xml" Link="AndroidNetwork\network_security_config.xml" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android.Scripting\Zhengyan.DigitalWife.GamePlayer.Android.Scripting.csproj" Aliases="global,AndroidScripting" />
     <ProjectReference Include="..\..\src\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" Aliases="MmdDesktop" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GameEditor\AndroidCSharpScriptPrecompiler.cs" Link="AndroidCSharpScriptPrecompiler.cs" />

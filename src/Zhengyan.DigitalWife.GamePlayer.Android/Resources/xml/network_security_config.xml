@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <!-- Game packages configure their own HTTP/HTTPS service addresses at runtime. -->
+  <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

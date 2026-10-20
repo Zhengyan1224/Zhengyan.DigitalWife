@@ -37,6 +37,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, bool, bool> _setAudioLoop;
     private readonly Func<string, bool> _isAudioPlaying;
     private readonly GameProjectLlmSettings _llmSettings;
+    private readonly GameProjectRealtimeVoiceSettings _realtimeVoiceSettings;
+    private readonly GameProjectVoiceSettings _voiceSettings;
+    private RuntimeRealtimeVoice? _realtimeVoice;
+    private AndroidScriptRealtimeVoice? _realtimeVoiceApi;
     private readonly MainThreadDispatcher _dispatcher = new();
     private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
@@ -95,7 +99,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         Func<string, bool, bool>? setAudioLoop = null,
         Func<string, bool>? isAudioPlaying = null,
         GameProjectLlmSettings? llmSettings = null,
-        GameProjectLipSyncSettings? lipSyncSettings = null)
+        GameProjectLipSyncSettings? lipSyncSettings = null,
+        GameProjectRealtimeVoiceSettings? realtimeVoiceSettings = null,
+        GameProjectVoiceSettings? voiceSettings = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -114,6 +120,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _isAudioPlaying = isAudioPlaying ?? (_ => false);
         _llmSettings = llmSettings ?? new GameProjectLlmSettings();
         _lipSyncSettings = lipSyncSettings ?? new GameProjectLipSyncSettings();
+        _realtimeVoiceSettings = realtimeVoiceSettings ?? new();
+        _voiceSettings = voiceSettings ?? new() { LipSync = _lipSyncSettings };
     }
 
     public void Start(RuntimeScene scene)
@@ -130,6 +138,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     public void StartLoading(RuntimeScene scene)
     {
+        _realtimeVoice?.ClearScene();
         StopSpeech();
         AndroidScriptBubbleManager.Shared.Clear();
         if (_activeScene is not null)
@@ -314,7 +323,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             AndroidScriptTts.Shared,
             AndroidScriptRealtime.Shared,
             AndroidScriptAsr.Shared,
-            new AndroidScriptRealtimeVoice(Dispatch));
+            GetRealtimeVoiceApi(),
+            AndroidRuntimeLoggerFactory.Instance);
         AndroidScriptInput scriptInput = new(input);
         AndroidScriptGlobals globals = new(
             new AndroidScriptScene(scene, _projectDirectory, _requestSceneChange, () => _fps, services),
@@ -336,6 +346,23 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             null,
             services);
         return new AndroidScriptExecutionContext(globals, scriptInput);
+    }
+
+    private AndroidScriptRealtimeVoice GetRealtimeVoiceApi()
+    {
+        if (_realtimeVoiceApi is not null) return _realtimeVoiceApi;
+        bool microphoneAvailable = Application.Context.CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio)
+            == global::Android.Content.PM.Permission.Granted;
+        _realtimeVoice = new RuntimeRealtimeVoice(
+            _projectDirectory, AndroidBundledResourceStore.RootDirectory ?? AppContext.BaseDirectory,
+            _realtimeVoiceSettings, _voiceSettings, _dispatcher,
+            (entity, value) =>
+            {
+                if (_activeScene is { } scene) DispatchEvent(scene, AndroidRuntimeEvent.FromRealtimeVoice(entity, value));
+            },
+            new AndroidRealtimeVoiceMicrophone(), new AndroidRealtimeVoiceSpeaker(),
+            microphoneAvailable, "Android microphone permission is not granted.", AndroidRuntimeLoggerFactory.Instance);
+        return _realtimeVoiceApi = new(_realtimeVoice);
     }
 
     private async Task SpeakAsync(RuntimeScene scene, RuntimeEntity entity, string text, float speed, float volume, Action? completed, string callback)
@@ -733,6 +760,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _realtimeVoice?.Dispose();
+        _realtimeVoice = null;
+        _realtimeVoiceApi = null;
         StopSpeech();
         _speechLifetime.Cancel();
         _speechLifetime.Dispose();

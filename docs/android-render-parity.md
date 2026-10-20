@@ -49,6 +49,18 @@ the device speech recognizer: the exported wake-word API filters recognized text
 but desktop capture chunk settings cannot be reproduced exactly by that service.
 TTS completion callbacks wait for the Android utterance completion notification.
 
+Game packages can configure HTTP or HTTPS service URLs at runtime. The Android
+manifest and network security configuration permit HTTP, matching desktop
+connectivity; HTTPS continues to use the platform's default certificate trust.
+LLM request start, endpoint, completion, cancellation, tool fallback and failures
+are written to logcat with the `ZhengyanGamePlayer` tag. Failures include the
+exception stack and inner network exceptions; API keys are not logged.
+
+```powershell
+adb logcat -s ZhengyanGamePlayer
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android LLM"
+```
+
 ## Verification
 
 ### GUI buttons

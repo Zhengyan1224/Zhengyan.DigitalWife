@@ -94,7 +94,9 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 setAudioLoop: (name, loop) => _audioHost?.SetLoop(name, loop) == true,
                 isAudioPlaying: name => _audioHost?.IsPlaying(name) == true,
                 llmSettings: project.Llm,
-                lipSyncSettings: project.Voice.LipSync);
+                lipSyncSettings: project.Voice.LipSync,
+                realtimeVoiceSettings: project.RealtimeVoice,
+                voiceSettings: project.Voice);
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
             _sceneManager.LoadInitial();

@@ -250,23 +250,3 @@ public sealed class AndroidScriptRealtime : IAndroidScriptRealtime, IDisposable
     private void DisposeSocket() { _socket?.Dispose(); _socket = null; }
 }
 
-public sealed class AndroidScriptRealtimeVoice : IAndroidScriptRealtimeVoice
-{
-    private readonly Action<AndroidRuntimeEvent>? _dispatch;
-    private readonly AndroidScriptAsr _asr;
-    internal AndroidScriptRealtimeVoice(Action<AndroidRuntimeEvent>? dispatch = null) { _dispatch = dispatch; _asr = AndroidScriptAsr.Shared; }
-    public bool WakeWordEnabled => _asr.IsAvailable;
-    public string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "", string onErrorCallback = "") => _asr.StartStreamingRecognition(entity, onCompletedCallback: onDetectedCallback, onErrorCallback: onErrorCallback, eventType: "realtime_voice");
-    public void StopWakeWordMonitoring() => _asr.Stop();
-    public string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds = 30, string onCompletedCallback = "", string onTimeoutCallback = "", string onErrorCallback = "") => _asr.StartStreamingRecognition(entity, onCompletedCallback: onCompletedCallback, onErrorCallback: onErrorCallback, eventType: "realtime_voice");
-    public void CancelRequest(string requestId) => _asr.StopStreamingRecognition(requestId);
-    public string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "") => StartSpeakText(entity, text, 1.0f, onCompletedCallback, onErrorCallback);
-    public string StartSpeakText(AndroidScriptEntity entity, string text, float speed = 1, string onCompletedCallback = "", string onErrorCallback = "")
-    {
-        string id = Guid.NewGuid().ToString("N");
-        AndroidScriptTts.Shared.Speak(text);
-        if (!string.IsNullOrWhiteSpace(onCompletedCallback)) _dispatch?.Invoke(new AndroidRuntimeEvent("realtime_voice", id, onCompletedCallback, Vector2.Zero, text, entity.Id));
-        return id;
-    }
-    public Task ResetConversationAsync() { _asr.Cancel(); AndroidScriptTts.Shared.Stop(); return Task.CompletedTask; }
-}

@@ -32,6 +32,8 @@
   </assembly>
   <!-- Published scripts are loaded after trimming and can use every public API. -->
   <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Android.Scripting" preserve="all" />
+  <assembly fullname="Zhengyan.DigitalWife.RealtimeVoice.Client" preserve="all" />
+  <assembly fullname="Zhengyan.DigitalWife.Realtime.OpenAI" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Runtime.Core" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.GameProjects.Core" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.Abstractions">

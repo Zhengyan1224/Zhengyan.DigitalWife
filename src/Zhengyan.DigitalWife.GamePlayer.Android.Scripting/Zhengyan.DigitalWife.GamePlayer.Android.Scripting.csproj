@@ -11,9 +11,13 @@
     <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Game\Zhengyan.DigitalWife.Mmd.Game.csproj" />
     <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" Aliases="MmdDesktop" />
     <ProjectReference Include="..\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.RealtimeVoice.Client\Zhengyan.DigitalWife.RealtimeVoice.Client.csproj" />
     <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeLlm.cs" Link="Shared\RuntimeLlm.cs" />
     <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeLlmSkillTools.cs" Link="Shared\RuntimeLlmSkillTools.cs" />
     <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\MainThreadDispatcher.cs" Link="Shared\MainThreadDispatcher.cs" />
+    <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeRealtimeVoice.cs" Link="Shared\RuntimeRealtimeVoice.cs" />
+    <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeRealtimeVoiceScriptEvent.cs" Link="Shared\RuntimeRealtimeVoiceScriptEvent.cs" />
+    <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\ContinuousAudioCaptureSession.cs" Link="Shared\ContinuousAudioCaptureSession.cs" />
     <InternalsVisibleTo Include="Zhengyan.DigitalWife.GamePlayer.Android" />
     <InternalsVisibleTo Include="Zhengyan.DigitalWife.AndroidRuntime.Tests" />
   </ItemGroup>

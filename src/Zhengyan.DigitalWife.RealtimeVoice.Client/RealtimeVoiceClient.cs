@@ -16,11 +16,12 @@ public sealed class RealtimeVoiceClient : IAsyncDisposable, IDisposable
 
     public RealtimeVoiceClient(
         RealtimeVoiceClientSettings settings,
-        ILogger<RealtimeVoiceClient>? logger = null)
+        ILogger<RealtimeVoiceClient>? logger = null,
+        ILogger<OpenAiRealtimeClient>? protocolLogger = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _logger = logger ?? NullLogger<RealtimeVoiceClient>.Instance;
-        _client = new OpenAiRealtimeClient(_settings.ClientOptions, NullLogger<OpenAiRealtimeClient>.Instance);
+        _client = new OpenAiRealtimeClient(_settings.ClientOptions, protocolLogger ?? NullLogger<OpenAiRealtimeClient>.Instance);
     }
 
     public OpenAiRealtimeSession Session => _settings.Session;

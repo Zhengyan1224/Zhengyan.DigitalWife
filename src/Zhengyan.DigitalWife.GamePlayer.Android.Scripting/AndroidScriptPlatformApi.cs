@@ -61,14 +61,29 @@ public interface IAndroidScriptAsr
 
 public interface IAndroidScriptRealtimeVoice
 {
+    bool Enabled { get; }
+    string BaseUrl { get; }
+    string Model { get; }
+    string Voice { get; }
     bool WakeWordEnabled { get; }
-    string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "", string onErrorCallback = "");
+    IReadOnlyList<string> WakeWords { get; }
+    bool MicrophoneInputAvailable { get; }
+    string MicrophoneUnavailableReason { get; }
+    bool IsWakeWordMonitoring { get; }
+    int? InputDeviceIndex { get; }
+    string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "wake_word_detected", string onErrorCallback = "wake_word_error");
     void StopWakeWordMonitoring();
-    string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds = 30, string onCompletedCallback = "", string onTimeoutCallback = "", string onErrorCallback = "");
+    string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds, string onCompletedCallback = "realtime_voice_transcription_completed", string onTimeoutCallback = "realtime_voice_timeout", string onErrorCallback = "realtime_voice_error");
+    string StartTranscription(AndroidScriptEntity entity, string? requestId = null, float? timeoutSeconds = null, string? onCompletedCallback = "realtime_voice_transcription_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error");
     void CancelRequest(string requestId);
-    string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "", string onCompletedCallback = "", string onErrorCallback = "");
-    string StartSpeakText(AndroidScriptEntity entity, string text, float speed = 1, string onCompletedCallback = "", string onErrorCallback = "");
+    void CancelAllRequests();
+    string StartResponse(AndroidScriptEntity entity, string text, string onDeltaCallback = "realtime_voice_delta", string onCompletedCallback = "realtime_voice_completed", string onErrorCallback = "realtime_voice_error");
+    string StartResponse(AndroidScriptEntity entity, string userText, string? requestId, string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onErrorCallback = "realtime_voice_error");
+    string StartSpeakText(AndroidScriptEntity entity, string text, float speed, string onCompletedCallback = "realtime_voice_speech_completed", string onErrorCallback = "realtime_voice_error");
+    string StartSpeakText(AndroidScriptEntity entity, string text, float? speed = null, string? requestId = null, string? onCompletedCallback = "realtime_voice_speech_completed", string? onErrorCallback = "realtime_voice_error");
+    string StartVoiceTurn(AndroidScriptEntity entity, string? requestId = null, float? timeoutSeconds = 30, string? onTranscriptionCompletedCallback = "realtime_voice_transcription_completed", string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error");
     Task ResetConversationAsync();
+    Task ResetConversationAsync(CancellationToken cancellationToken);
 }
 
 public interface IAndroidScriptRealtime
