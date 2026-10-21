@@ -15,8 +15,25 @@ Skills / Memory。编辑器和 Android 现在引用同一套强类型脚本 API�
 2026-10-21：`Scene.Asr.StartStreamingRecognition` 在原生识别器返回 `SpeechTimeout`、
 `NoMatch` 或空结果时继续收音，直到识别到问题或脚本调用 `StopStreamingRecognition`。
 对话脚本可在回复结束后保持 30 秒等待下一轮，期间无需重复唤醒；原生单次识别的静默超时
-不会提前触发脚本的错误回调。显式停止会返回最终文本（无语音时为空），网络、录音和权限
-等错误仍正常报告。此修复在 Android 播放器内，已有 `.dwgame` 包只需更新播放器即可使用。
+不会提前触发脚本的错误回调。显式停止会返回最终文本（无语音时为空），问题转写、录音和权限
+等真实错误仍正常报告。此修复在 Android 播放器内，已有 `.dwgame` 包只需更新播放器即可使用。
+
+回复期间的唤醒词监听切换到下一轮收音时，会先释放旧识别器并等待 300 毫秒；
+`RecognizerBusy` 和尚未准备好收音时的 `Client` 错误最多重试三次，不重置脚本的
+30 秒期限。取消前已排入脚本队列的 ASR 回调也会被丢弃，避免旧监听错误终止新的续聊。
+ASR 启动、静音重启、完成、重试和真实错误直接写入 `ZhengyanGamePlayer` logcat 标签，
+错误日志包含原生错误名/码、请求 ID 和回调名，不依赖脚本的 `Console.Error` 输出。
+
+Android `Scene.Asr` 当前使用系统 `SpeechRecognizer`，系统服务可能连接远端语音识别服务器，
+与 PC 使用工程内 Whisper / Sherpa 模型的实现不同。唤醒词监听（包括回复期间的打断监听）
+收到 `NetworkTimeout (1)` 或 `Network (2)` 时，以 500 毫秒至 5 秒的退避间隔继续监听，
+不触发终止回复的脚本错误回调。续聊收音在尚未检测到说话且没有部分文本时遇到网络超时，
+也保持脚本原定的 30 秒期限；检测到说话后的转写失败仍报告错误。恢复不能修复系统服务的
+网络连接，断网期间唤醒检测可能不可用，相关失败和重试仍记录为 warning。
+
+```powershell
+adb logcat -v threadtime ZhengyanGamePlayer:I '*:S'
+```
 
 直接安装或分享 Debug APK 时，构建命令需要添加 `-p:EmbedAssembliesIntoApk=true`。
 否则默认快速部署产物依赖开发工具另行推送程序集，单独安装 APK 不完整。构建仍需 JDK 21。

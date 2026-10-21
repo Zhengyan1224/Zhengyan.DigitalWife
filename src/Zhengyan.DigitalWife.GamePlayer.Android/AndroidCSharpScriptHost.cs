@@ -303,8 +303,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         RuntimeEntity entity,
         AndroidInputSnapshot input)
     {
-        void Dispatch(AndroidRuntimeEvent value) => _dispatcher.Post(() => DispatchEvent(scene, value));
-        AndroidScriptAsr.Shared.ConfigureCallbacks(Dispatch);
+        AndroidScriptAsr.Shared.ConfigureCallbacks(value => DispatchEvent(scene, value), _dispatcher.Post);
         AndroidScriptServices services = new(
             scene,
             _projectDirectory,

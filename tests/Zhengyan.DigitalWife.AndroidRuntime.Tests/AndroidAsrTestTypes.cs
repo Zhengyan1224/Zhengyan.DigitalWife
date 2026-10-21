@@ -75,7 +75,7 @@ namespace Android.OS
 
 namespace Android.Speech
 {
-    public enum SpeechRecognizerError { Network = 2, Audio = 3, SpeechTimeout = 6, NoMatch = 7, RecognizerBusy = 8, InsufficientPermissions = 9 }
+    public enum SpeechRecognizerError { NetworkTimeout = 1, Network = 2, Audio = 3, Client = 5, SpeechTimeout = 6, NoMatch = 7, RecognizerBusy = 8, InsufficientPermissions = 9 }
 
     public interface IRecognitionListener
     {
@@ -108,6 +108,8 @@ namespace Android.Speech
         public IRecognitionListener Listener { get; private set; } = null!;
         public int StopCalls { get; private set; }
         public bool Destroyed { get; private set; }
+        public static List<(string Operation, SpeechRecognizer Session, long Time)> Operations { get; } = [];
+        public bool Canceled { get; private set; }
         public static bool IsRecognitionAvailable(object context) => Available;
         public static SpeechRecognizer CreateSpeechRecognizer(object context)
         {
@@ -116,10 +118,12 @@ namespace Android.Speech
             return session;
         }
         public void SetRecognitionListener(IRecognitionListener listener) => Listener = listener;
-        public void StartListening(Content.Intent intent) { }
+        public void StartListening(Content.Intent intent) => Operations.Add(("start", this, OS.Handler.Now));
         public void StopListening() => StopCalls++;
-        public void Cancel() { }
-        public void Destroy() => Destroyed = true;
+        public void Cancel() { Canceled = true; Operations.Add(("cancel", this, OS.Handler.Now)); }
+        public void Destroy() { Destroyed = true; Operations.Add(("destroy", this, OS.Handler.Now)); }
+        public void Ready() => Listener.OnReadyForSpeech(null);
+        public void BeginSpeech() => Listener.OnBeginningOfSpeech();
         public void Complete(string text) => Listener.OnResults(new(text));
         public void Partial(string text) => Listener.OnPartialResults(new(text));
         public void Fail(SpeechRecognizerError error) => Listener.OnError(error);
