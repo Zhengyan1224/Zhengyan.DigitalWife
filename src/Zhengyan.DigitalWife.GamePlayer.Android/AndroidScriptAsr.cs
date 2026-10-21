@@ -13,6 +13,9 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     private SpeechRecognizer? _recognizer;
     private bool _listening;
     private bool _monitoring;
+    private bool _streaming;
+    private bool _stopRequested;
+    private bool _nativeActive;
     private int _generation;
     private Action<AndroidRuntimeEvent>? _dispatchEvent;
     private string _requestId = string.Empty;
@@ -49,6 +52,8 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
         _errorCallback = onErrorCallback ?? string.Empty;
         _eventType = eventType;
         _silenceSeconds = null;
+        LastText = string.Empty;
+        _streaming = true;
         return Start() ? _requestId : string.Empty;
     }
 
@@ -68,6 +73,7 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
         _eventType = "asr";
         _wakeWords = words;
         _monitoring = true;
+        LastText = string.Empty;
         // Android's recognizer owns capture chunks. Forward its supported silence
         // hint; the desktop chunk/extension parameters remain source compatible.
         _silenceSeconds = trailingSilencePaddingSeconds;
@@ -81,11 +87,12 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     {
         if (!IsAvailable)
         {
-            _monitoring = false;
+            _listening = _monitoring = _streaming = false;
             Dispatch("error", _errorCallback, error: "Android speech recognition is unavailable.", isFinal: true);
             return false;
         }
         _language = language;
+        _stopRequested = false;
         int generation = ++_generation;
         _listening = true;
         _main.Post(() => StartNative(generation));
@@ -95,6 +102,11 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     private void StartNative(int generation)
     {
         if (generation != _generation) return;
+        if (_streaming && _stopRequested)
+        {
+            CompleteStreaming(LastText);
+            return;
+        }
         try
         {
             _recognizer?.Destroy();
@@ -107,11 +119,13 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
             intent.PutExtra(RecognizerIntent.ExtraLanguage, string.IsNullOrWhiteSpace(_language) ? Java.Util.Locale.Default!.ToString() : _language);
             if (_silenceSeconds.HasValue)
                 intent.PutExtra(RecognizerIntent.ExtraSpeechInputCompleteSilenceLengthMillis, (long)(Math.Clamp(_silenceSeconds.Value, 0.1f, 10.0f) * 1000));
+            _nativeActive = true;
             _recognizer.StartListening(intent);
         }
         catch (Exception ex)
         {
-            _listening = _monitoring = false;
+            _listening = _monitoring = _streaming = _nativeActive = false;
+            ++_generation;
             Dispatch("error", _errorCallback, error: ex.Message, isFinal: true);
         }
     }
@@ -119,35 +133,50 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     public void Stop()
     {
         _monitoring = false;
+        _stopRequested = true;
         int generation = _generation;
-        _main.Post(() => { if (generation == _generation) _recognizer?.StopListening(); });
+        _main.Post(() =>
+        {
+            if (generation != _generation) return;
+            if (_nativeActive) _recognizer?.StopListening();
+            // The script's deadline can fall between native recognition sessions.
+            // Complete it now instead of restarting or leaving it waiting forever.
+            else if (_streaming) CompleteStreaming(LastText);
+        });
     }
 
     public void Cancel()
     {
         ++_generation;
-        _monitoring = _listening = false;
+        _monitoring = _listening = _streaming = _nativeActive = _stopRequested = false;
         _main.Post(() => { _recognizer?.Cancel(); _recognizer?.Destroy(); _recognizer = null; });
     }
 
     public void OnResults(Bundle? results)
     {
         _listening = false;
-        LastText = Extract(results);
+        _nativeActive = false;
+        string text = Extract(results);
         if (_monitoring)
         {
+            LastText = text;
             string normalized = Normalize(LastText);
             string? matched = _wakeWords.FirstOrDefault(word => normalized.Contains(Normalize(word), StringComparison.OrdinalIgnoreCase));
             if (matched is not null)
             {
                 _monitoring = false;
+                ++_generation;
                 Dispatch("wake_word_detected", _completedCallback, LastText, isFinal: true, wakeWord: matched);
             }
-            else RestartMonitor();
+            else RestartRecognition();
             return;
         }
-        Result?.Invoke(LastText);
-        Dispatch("completed", _completedCallback, LastText, isFinal: true);
+        if (_streaming && !_stopRequested && string.IsNullOrWhiteSpace(text))
+        {
+            RestartRecognition();
+            return;
+        }
+        CompleteStreaming(_streaming && _stopRequested && string.IsNullOrWhiteSpace(text) ? LastText : text);
     }
 
     public void OnPartialResults(Bundle? results)
@@ -162,20 +191,38 @@ public sealed class AndroidScriptAsr : Java.Lang.Object, IRecognitionListener, I
     public void OnError(SpeechRecognizerError error)
     {
         _listening = false;
-        if (_monitoring && error is SpeechRecognizerError.NoMatch or SpeechRecognizerError.SpeechTimeout)
+        _nativeActive = false;
+        if ((_monitoring || _streaming) && error is SpeechRecognizerError.NoMatch or SpeechRecognizerError.SpeechTimeout)
         {
-            RestartMonitor();
+            // These end one Android recognition session, not the script's listening
+            // window. Desktop keeps capturing until speech or an explicit stop.
+            if (_streaming && _stopRequested) CompleteStreaming(LastText);
+            else RestartRecognition();
             return;
         }
-        _monitoring = false;
+        _monitoring = _streaming = false;
+        ++_generation;
         Error?.Invoke((int)error);
         Dispatch("error", _errorCallback, error: error.ToString(), isFinal: true);
     }
 
-    private void RestartMonitor()
+    private void RestartRecognition()
     {
-        int generation = _generation;
-        _main.PostDelayed(() => { if (_monitoring && generation == _generation) Start(_language); }, 300);
+        int generation = ++_generation;
+        _listening = true;
+        _main.PostDelayed(() =>
+        {
+            if ((_monitoring || _streaming) && generation == _generation) StartNative(generation);
+        }, 300);
+    }
+
+    private void CompleteStreaming(string text)
+    {
+        _listening = _streaming = _nativeActive = false;
+        ++_generation;
+        LastText = text;
+        Result?.Invoke(text);
+        Dispatch("completed", _completedCallback, text, isFinal: true);
     }
 
     private void Dispatch(string eventName, string callback, string text = "", string error = "", bool isFinal = false, string wakeWord = "")

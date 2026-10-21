@@ -47,7 +47,9 @@ PMX 模型渲染所需的 GLSL Shader：
 
 场景天空盒贴图：
 
-- `autumn_field_puresky.jpg`
+- `autumn_field_puresky.jpg`：白天天空。
+- `dark_starry_moon.jpg`：暗色星空和带月面细节的月亮，8192 × 4096，建议曝光 `1.0`。
+- `qwantani_moonrise_puresky.jpg`：较亮的月升天空和强月光晕，8192 × 4096。
 
 供以下类型使用：
 
@@ -60,7 +62,17 @@ PMX 模型渲染所需的 GLSL Shader：
 app:Resources/Skybox/autumn_field_puresky.jpg
 ```
 
-该路径表示从程序输出目录开始查找。示例项目构建后会复制为 `bin/Debug/net10.0/Resources/Skybox/autumn_field_puresky.jpg`。图片来自 Poly Haven 的 CC0 `autumn_field_puresky` 天空全景图。
+在 GameEditor 的场景 Inspector → `Skybox` → `Skybox texture` 中，修改贴图路径即可切换天空：
+
+| 天空 | 贴图路径 |
+| --- | --- |
+| 白天 | `app:Resources/Skybox/autumn_field_puresky.jpg` |
+| 夜晚（暗色星空和月亮，推荐） | `app:Resources/Skybox/dark_starry_moon.jpg` |
+| 较亮的月升天空 | `app:Resources/Skybox/qwantani_moonrise_puresky.jpg` |
+
+`app:` 表示从程序输出目录开始查找。现有项目资源规则会自动将这些贴图复制到 GameEditor / GamePlayer 输出目录下的 `Resources/Skybox/`，Android GamePlayer 也会将其打包为内置资源。暗色夜空建议使用 `Skybox exposure = 1.0` 和白色 Tint，其天空底色已单独压暗，星星仍保持明亮。各贴图的来源、处理和许可信息见 [Skybox/README.md](Skybox/README.md)。
+
+天空贴图只改变背景；如需场景物体也呈现夜间亮度，可在 `Lighting` 中调整平行光和环境光。
 
 ### `Fonts/`
 

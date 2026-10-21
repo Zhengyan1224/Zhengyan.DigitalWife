@@ -12,6 +12,12 @@ Skills / Memory。编辑器和 Android 现在引用同一套强类型脚本 API�
 扬声器适配，读取游戏包内的 RealtimeVoice 配置；完成事件等待播放结束，错误写入
 `ZhengyanGamePlayer` 日志。HTTP / HTTPS 地址均支持，实时连接对应 WS / WSS。
 
+2026-10-21：`Scene.Asr.StartStreamingRecognition` 在原生识别器返回 `SpeechTimeout`、
+`NoMatch` 或空结果时继续收音，直到识别到问题或脚本调用 `StopStreamingRecognition`。
+对话脚本可在回复结束后保持 30 秒等待下一轮，期间无需重复唤醒；原生单次识别的静默超时
+不会提前触发脚本的错误回调。显式停止会返回最终文本（无语音时为空），网络、录音和权限
+等错误仍正常报告。此修复在 Android 播放器内，已有 `.dwgame` 包只需更新播放器即可使用。
+
 直接安装或分享 Debug APK 时，构建命令需要添加 `-p:EmbedAssembliesIntoApk=true`。
 否则默认快速部署产物依赖开发工具另行推送程序集，单独安装 APK 不完整。构建仍需 JDK 21。
 

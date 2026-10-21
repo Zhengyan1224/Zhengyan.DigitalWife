@@ -238,7 +238,17 @@ GUI 控件和加载进度条都支持 `Layout mode`。`absolute` 表示按编辑
 
 粒子 Inspector 里也提供了 `Rain Contact`、`Waterfall Contact`、`Fountain Contact` 三个快捷按钮，用来一键设置粒子系统自己的 `Enable water interaction` 和 `Kill particle on water contact`，适合和水面的预设按钮配套使用。
 
-天空盒使用等距柱状全景图（equirectangular panorama）作为 2D 纹理。场景 Inspector 的 `Skybox` 可设置是否启用、纹理路径、曝光和颜色 Tint。内置示例图来自 Poly Haven 的 CC0 资源 `autumn_field_puresky`，已放在 `assets/mmd/engine/Resources/Skybox/autumn_field_puresky.jpg`，构建时复制到 `Resources/Skybox/`。
+天空盒使用等距柱状全景图（equirectangular panorama）作为 2D 纹理。场景 Inspector 的 `Skybox` 可设置是否启用、纹理路径、曝光和颜色 Tint。内置白天和夜晚贴图放在 `assets/mmd/engine/Resources/Skybox/`，构建时自动复制到 `Resources/Skybox/`。
+
+修改 `Skybox texture` 即可切换，路径如下：
+
+| 天空 | 贴图路径 |
+| --- | --- |
+| 白天（默认） | `app:Resources/Skybox/autumn_field_puresky.jpg` |
+| 夜晚（暗色星空和月亮，推荐） | `app:Resources/Skybox/dark_starry_moon.jpg` |
+| 较亮的月升天空 | `app:Resources/Skybox/qwantani_moonrise_puresky.jpg` |
+
+暗色夜空使用 8192 × 4096 的全景 JPG，天空底色已单独压暗，星点保持明亮，月亮具有月面纹理和较弱的光晕。建议从 `Skybox exposure = 1.0`、白色 Tint 开始使用，来源和许可说明见 [Skybox/README.md](../../assets/mmd/engine/Resources/Skybox/README.md)。天空贴图只改变背景，如需物体也呈现夜间亮度，可在场景 `Lighting` 中调整平行光和环境光。
 
 ## 多相机和 Render Texture
 
