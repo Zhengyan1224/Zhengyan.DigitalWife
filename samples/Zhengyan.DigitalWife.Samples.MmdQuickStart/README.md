@@ -1,35 +1,41 @@
-﻿# Zhengyan.DigitalWife.Samples.MmdQuickStart
+# MmdQuickStart：先让 MMD 角色动起来
 
-`Zhengyan.DigitalWife.Samples.MmdQuickStart` 是最小可运行的 MMD 示例工程，目标是展示如何基于 `Zhengyan.DigitalWife.Mmd.Game` 快速拉起一个场景。
+这是学习 Mmd.Game 的入门示例。它在 C# 中直接创建场景、角色、动作、服装绑定、水面和背景音频，让你看到引擎组件如何组合。
 
-## 演示内容
-
-- 创建 `Game` 子类
-- 初始化 `OrbitCamera`
-- 加载角色 PMX、服装 PMX、场景 PMX
-- 混合两段 VMD 动作
-- 播放背景音乐
-- 添加水面和粒子效果
+想用可视化界面制作游戏，请用 [GameEditor](../../src/Zhengyan.DigitalWife.GameEditor/README.md)；本示例不读取 .dwgame。
 
 ## 运行
 
-```powershell
-dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/Zhengyan.DigitalWife.Samples.MmdQuickStart.csproj
+需要 .NET 10 SDK 和可用图形驱动。仓库根目录：
+
+```text
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdQuickStart
 ```
 
-## 自动复制的资源
+无需 AI 服务或语音模型。首次构建会复制内置素材，文件较多，等待完成后再检查窗口。
 
-构建时会自动把以下内容复制到输出目录：
+## 你会看到什么
 
-- `assets/mmd/samples/GameData/` -> `GameData/`
-- `assets/mmd/engine/Resources/` -> `Resources/`
+- Body 角色、服装和教室模型。
+- walk / run 动作层混合。
+- 相机控制、水面与场景效果。
+- 背景音乐。
+- 空格切换角色播放状态。
 
-## 适合什么场景
+资源来自 assets/mmd/samples/GameData 和 assets/mmd/engine/Resources，构建时复制为输出目录的 GameData / Resources。缺少角色或贴图时检查整个素材目录，不能只复制 PMX。
 
-- 你要新建自己的 MMD 项目模板。
-- 你不需要 ImGui 调试面板，只要最小运行骨架。
-- 你想快速理解 `GameOptions`、`OrbitCameraController`、`PmxModelComponent` 和 `MmdCharacterGroup` 的基本组合方式。
+## 如何开始改代码
 
-更详细的说明见：
+阅读本目录 [Program.cs](Program.cs)，从 LoadContent 中加载模型、AddComponent 加组件、Update 中控制动作开始。换模型时替换 ContentPath 指向的实际资源，保留模型目录内的贴图。
 
-- [QuickStart 说明](../../docs/Zhengyan.DigitalWife.Samples.MmdQuickStart.md)
+窗口图标也来自仓库 Logo。代码示例可用不表示这些素材都有统一授权；分发时自行确认模型、动作与音乐许可。
+
+## 常见问题
+
+- 无法启动：确认 .NET 10 SDK 和显卡驱动。
+- 没有音乐：检查系统输出和资源是否复制。
+- 模型不见：查看控制台的资源加载错误。
+- 想要控制面板：运行 [MmdDemo](../Zhengyan.DigitalWife.Samples.MmdDemo/README.md)。
+
+- [项目总览](../../README.md)
+- [Mmd.Game](../../src/Zhengyan.DigitalWife.Mmd.Game/README.md)

@@ -1,236 +1,123 @@
-# Zhengyan.DigitalWife.Samples.RealtimeVoice
+# RealtimeVoice：把语音推理放到服务端
 
-`Zhengyan.DigitalWife.Samples.RealtimeVoice` 是可独立部署的语音后端样例。
+这是可独立运行的语音后端示例，向 GamePlayer、DigitalHuman 等客户端提供“ASR → LLM → TTS”。前端只负责本地录音、显示和播放，较重的语音模型可放在电脑或服务器。
 
-它把 `ASR -> LLM -> TTS` 封装成 OpenAI 风格接口，供 `DigitalHuman` 或其它兼容客户端调用。当前样例同时提供：
+它不操作服务器麦克风和扬声器，也不是自动部署 LLM 的工具。LLM 仍由另一个兼容服务提供。
 
-- `GET /v1/realtime` WebSocket 对话接口
-- `POST /v1/audio/speech` 文本直出 TTS 接口
+## 先准备什么
 
-## 目标
+- .NET 10 SDK；发布后运行所需 Runtime 取决于发布方式。
+- 本地可读的 Sherpa / Whisper ASR 与 Sherpa TTS 模型。
+- 已可访问的 Chat Completions 服务。
+- 客户端与服务端能互相连接。
 
-- 把高 CPU 占用的语音链路从 3D 前端进程中剥离
-- 让前端切换供应商时尽量只改地址和配置
-- 支持 Windows / Linux / macOS 部署
+先用 CPU 配置跑通，再考虑 GPU。只是启动 3D 编辑器不需要运行本服务。
 
-## 当前后端实现
+## 1. 下载语音模型
 
-- ASR：`SherpaOnnx` / `Whisper.net`
-- LLM：OpenAI 兼容 `Chat Completions`
-- TTS：`SherpaOnnx TTS`
-
-注意：这个服务**不直接操作麦克风和扬声器**。音频输入输出设备由前端 `DigitalHuman` 本地进程负责，`RealtimeVoice` 只处理推理和协议交互。
-
-## 启动
+在仓库根目录：
 
 ```powershell
-dotnet run --project samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/Zhengyan.DigitalWife.Samples.RealtimeVoice.csproj
+./scripts/download-models.ps1
 ```
 
-如需显式指定监听地址：
+Linux / macOS 用 bash scripts/download-models.sh。下载文件不等于启动服务，检查 appsettings.json 中各模型路径与实际目录匹配。
+
+## 2. 创建本地覆盖配置
 
 ```powershell
-$env:ASPNETCORE_URLS="http://0.0.0.0:5058"
-dotnet run --project samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/Zhengyan.DigitalWife.Samples.RealtimeVoice.csproj
+Copy-Item samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/appsettings.Local.example.json samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/appsettings.Local.json
 ```
 
-## 启动预热
+已有 Local 配置请保留。填写示例中的占位值：
 
-服务启动时会主动预热：
-
-- 所有已注册的 ASR provider
-- 当前已注册的 TTS provider
-
-这样第一次真实交互时不会再把模型加载延迟暴露给用户。
-
-## 入口
-
-- `GET /`
-- `GET /healthz`
-- `GET /v1/realtime`
-- `POST /v1/audio/speech`
-
-如果配置了 `RealtimeVoice.ApiKey`，客户端需要携带：
-
-```http
-Authorization: Bearer <ApiKey>
+```json
+{
+  "RealtimeVoice": {
+    "ApiKey": "",
+    "Llm": {
+      "BaseUrl": "http://127.0.0.1:8000",
+      "ApiKey": "YOUR_LLM_KEY",
+      "Model": "YOUR_MODEL",
+      "ChatCompletionsPath": "/v1/chat/completions"
+    }
+  }
+}
 ```
 
-## `/v1/realtime`
+RealtimeVoice.ApiKey 是**客户端访问本语音服务**的密钥；Llm.ApiKey 是**本服务访问 LLM**的密钥，两者可以不同。上面的空服务密钥适合本机调试，部署时按访问范围设置鉴权。
 
-### 已支持的客户端事件
+本服务读取 appsettings.json 和 appsettings.Local.json，后者覆盖同名项。Model 使用 RealtimeVoice.Llm.Model，与 AssistantConsole 的 Demo.LlmModel 不同。
 
-- `session.update`
-- `input_audio_buffer.append`
-- `input_audio_buffer.commit`
-- `input_audio_buffer.clear`
-- `conversation.item.create`
-- `conversation.item.delete`
-- `response.create`
-- `response.cancel`
+## 3. 启动并检查
 
-### 已支持的服务端事件
+显式选定端口 5058，避免与客户端默认端口不一致：
 
-- `session.created`
-- `session.updated`
-- `input_audio_buffer.committed`
-- `input_audio_buffer.cleared`
-- `conversation.item.created`
-- `conversation.item.deleted`
-- `conversation.item.input_audio_transcription.completed`
-- `response.created`
-- `response.output_item.added`
-- `response.content_part.added`
-- `response.output_audio.delta`
-- `response.output_audio.done`
-- `response.output_audio_transcript.delta`
-- `response.output_audio_transcript.done`
-- `response.output_text.delta`
-- `response.output_text.done`
-- `response.content_part.done`
-- `response.output_item.done`
-- `response.done`
-- `error`
+```powershell
+$env:ASPNETCORE_URLS = "http://127.0.0.1:5058"
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.RealtimeVoice
+```
 
-当前实现覆盖 `DigitalHuman` 所需完整链路，但不是 OpenAI Realtime 全量特性的逐项镜像。
+Linux / macOS：
 
-## `/v1/audio/speech`
+```bash
+ASPNETCORE_URLS=http://127.0.0.1:5058 dotnet run --project samples/Zhengyan.DigitalWife.Samples.RealtimeVoice
+```
 
-这是固定提示语、唤醒应答语、超时收尾语这类“文本直出语音”接口。
+启动会预热已注册 ASR 和 TTS，首次加载可能耗时。检查模型与运行时日志，再访问 http://127.0.0.1:5058/healthz。健康入口不替代实际语音转写和 LLM 对话测试。
 
-当前支持字段：
+连接 [DigitalHuman](../Zhengyan.DigitalWife.Samples.DigitalHuman/README.md) 或在 GameEditor 配置 Scene.RealtimeVoice 后测试。
 
-- `model`
-- `input`
-- `voice`
-- `response_format`
-- `speed`
+## 提供的接口
 
-当前支持的 `response_format`：
-
-- `wav`
-- `pcm`
-
-## 配置文件
-
-- `appsettings.json`
-- `appsettings.Local.json`
-- `appsettings.Local.example.json`
-
-## 关键配置
-
-### 基础信息
-
-| 字段 | 作用 |
+| 入口 | 用途 |
 | --- | --- |
-| `ApiKey` | 服务端 Bearer Token。留空则不鉴权。 |
-| `HistoryMaxMessages` | 进入 LLM 的历史消息条数。 |
-| `UseFallbackRecognizersForTranscription` | ASR 为空时是否继续尝试后续识别器。 |
+| GET / | 服务信息 |
+| GET /healthz | 健康信息 |
+| GET /v1/realtime | WebSocket 语音/文本会话 |
+| POST /v1/audio/speech | 固定文本直接合成语音 |
 
-### LLM
+若配置服务 ApiKey，客户端携带 Authorization: Bearer。WebSocket 处理会话更新、音频缓冲提交、会话项增删、创建/取消回复，返回转写、回复文本与音频事件。
 
-| 字段 | 作用 |
+协议覆盖当前示例和引擎使用的链路，不是 OpenAI Realtime 全量协议镜像。HTTP TTS 支持 input、model、voice、response_format、speed；输出格式为 wav 或 pcm。
+
+## 哪些配置最常用
+
+| 配置 | 用途 |
 | --- | --- |
-| `Llm.BaseUrl` | OpenAI 兼容 LLM 服务地址。 |
-| `Llm.ApiKey` | LLM 鉴权密钥。 |
-| `Llm.Model` | 实际发给 `Chat Completions` 后端的模型名。 |
-| `Llm.ChatCompletionsPath` | Chat Completions 路径。 |
-| `Llm.Timeout` | 单次请求超时。 |
+| Llm.* | 外部 LLM 地址、密钥、模型和超时 |
+| Session.* | 对外会话模型、指令、输入/输出音频格式、voice |
+| RecognitionPriority | sherpa / whisper 的尝试顺序 |
+| SherpaRecognizer / WhisperRecognizer | 本地 ASR 模型 |
+| Tts | 本地合成模型、词表、词典和 vocoder |
+| Synthesis.Speed / SpeakerId | 默认声音与语速 |
+| ResponseChunking | 流式回复分句策略 |
+| HistoryMaxMessages | LLM 历史长度 |
+| UseFallbackRecognizersForTranscription | 空转写时是否回退识别 |
 
-`RealtimeVoice` 已不再使用顶层 `LlmModel`；请统一使用 `Llm.Model`。
+Session.Model 是对外的会话名称，Llm.Model 是实际请求 LLM 的模型名称，不能混为一项。ASR、TTS 权重和声码器各有自己的文件布局。
 
-### Realtime 会话默认值
+## 部署到另一台机器
 
-| 字段 | 作用 |
-| --- | --- |
-| `Session.Model` | 对外暴露的默认 Realtime 会话模型名。 |
-| `Session.Instructions` | 会话默认系统指令。 |
-| `Session.OutputModalities` | 默认输出模态。通常为 `[ "audio" ]`。 |
-| `Session.Voice` | 默认 voice。当前样例把它解释为说话人 ID 字符串。 |
-| `Session.InputAudioSampleRate` | Realtime 输入音频协议采样率。 |
-| `Session.OutputAudioSampleRate` | Realtime 输出音频协议采样率。 |
-| `Session.InputTranscriptionModel` | 输入转写模型名。 |
-| `Session.InputTranscriptionLanguage` | 输入转写语言。 |
-| `Session.MaxOutputTokens` | 回答最大输出 token 数。 |
-| `Session.Temperature` | 回答温度。 |
+先发布：
 
-### ASR
+```text
+dotnet publish samples/Zhengyan.DigitalWife.Samples.RealtimeVoice -c Release -o artifacts/realtimevoice
+```
 
-| 字段 | 作用 |
-| --- | --- |
-| `RecognitionProvider` | 兼容旧配置的默认识别器名称。 |
-| `RecognitionPriority` | 实际识别器尝试顺序。 |
-| `SherpaRecognizer` | SherpaOnnx ASR 配置。 |
-| `WhisperRecognizer` | Whisper.net ASR 配置。 |
+发布目录还要能访问配置指定的模型；模型不会仅因 dotnet publish 自动出现在正确目录。启动时配置可访问的监听地址，并检查防火墙。前端填写服务器 IP，手机上的 127.0.0.1 指手机自己。
 
-### TTS
+生产使用可通过支持 WebSocket 的反向代理提供 HTTPS / WSS，保护密钥。网络权限、模型容量、并发和超时需要按自己的部署环境评估。
 
-| 字段 | 作用 |
-| --- | --- |
-| `Tts` | SherpaOnnx TTS 模型配置。 |
-| `Synthesis.Speed` | 默认语速。 |
-| `Synthesis.SpeakerId` | 默认说话人 ID。 |
+## GPU 和排查
 
-TTS 在实际送入合成器前会先做一层文本清洗：
+- Whisper UseGpu=true 只请求 GPU，检查 loadedRuntimeLibrary 是否实际为 Cuda。
+- Sherpa Provider 传到底层，检查对应 native GPU runtime 与诊断。
+- 模型预热失败先查路径与依赖，不要仅增加 Timeout。
+- 没有转写先检查前端录音和协议采样率；本服务没有自己的录音设备。
+- 回复有文本但没声音，检查 TTS 配置、voice 与前端播放。
+- 连接失败先对齐端口、密钥与 WS / WSS 路径。
 
-- 保留中文、英文字母、数字、空格和 `,.!?`
-- 常见中文标点会先归一化成英文标点
-- 其它特殊字符会被过滤，避免模型把符号读成异常语音
-
-### 分句
-
-| 字段 | 作用 |
-| --- | --- |
-| `ResponseChunking.EnableClauseBoundaries` | 是否允许按分句边界提前开始 TTS。 |
-| `ResponseChunking.MinClauseCharacters` | 提前切句的最小字符数。 |
-| `ResponseChunking.MaxBufferedCharacters` | 长文本强制切段阈值。 |
-
-## GPU 说明
-
-### Whisper.net
-
-- `WhisperRecognizer.UseGpu = true` 会请求 GPU
-- 当前仓库已经引入 `Whisper.net.Runtime.Cuda`
-- 但是否真正加载到 CUDA，还要看部署机器和 native runtime 是否匹配
-
-启动时 `RealtimeVoice` 会打印诊断日志，重点看：
-
-- `loadedRuntimeLibrary=Cuda`
-
-### SherpaOnnx
-
-- `SherpaRecognizer.Provider` 会传到底层
-- 但是否真的走 GPU，取决于部署目录里是否具备对应的 ONNX Runtime GPU native libraries
-
-启动日志会额外打印：
-
-- `requestedProvider`
-- `cudaProviderBinaryDetected`
-
-如果你在 NVIDIA 服务器上部署，建议同时看：
-
-- `RealtimeVoice` 启动日志
-- `nvidia-smi`
-
-## 运行方式建议
-
-### 本地开发
-
-1. 复制 `appsettings.Local.example.json` 为 `appsettings.Local.json`
-2. 填写 `RealtimeVoice.Llm.*`
-3. 确认本地模型路径可访问
-4. 启动 `RealtimeVoice`
-5. 再启动 `DigitalHuman`
-
-### 远端部署
-
-推荐把这个样例单独部署到服务器：
-
-- Windows：`dotnet run` 或发布后运行
-- Linux / macOS：`dotnet publish` 后运行
-- 通过反向代理暴露 `/v1/realtime` 和 `/v1/audio/speech`
-
-## 相关文档
-
-- [DigitalHuman README](../Zhengyan.DigitalWife.Samples.DigitalHuman/README.md)
-- [OpenAI Realtime 客户端库 README](../../src/Zhengyan.DigitalWife.Realtime.OpenAI/README.md)
+- [项目总览](../../README.md)
+- [DigitalHuman 前端](../Zhengyan.DigitalWife.Samples.DigitalHuman/README.md)
+- [引擎 RealtimeVoice API](../../src/Zhengyan.DigitalWife.GameEditor/api_docs/26-realtime-voice.md)

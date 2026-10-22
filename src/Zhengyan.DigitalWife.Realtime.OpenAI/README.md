@@ -1,105 +1,60 @@
-# Zhengyan.DigitalWife.Realtime.OpenAI
+# Realtime.OpenAI：语音会话协议客户端
 
-`Zhengyan.DigitalWife.Realtime.OpenAI` 提供仓库内部共享的 OpenAI 风格 Realtime 协议模型与客户端封装。
+这个类库处理 Realtime 风格 WebSocket 会话、音频编码、对话项、转写、回复事件和 HTTP 文本转语音请求。它是协议层，不操作麦克风或扬声器。
 
-它的定位不是完整通用 SDK，而是为当前仓库里的前端样例和后端样例提供统一的协议边界：
+可连接仓库中的 [RealtimeVoice 服务](../../samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md)，也可用于实现了匹配协议的服务。这里不是对所有 Realtime 服务与全部特性的兼容承诺。
 
-- `samples/Zhengyan.DigitalWife.Samples.DigitalHuman`
-- `samples/Zhengyan.DigitalWife.Samples.RealtimeVoice`
+## 主要接口
 
-## 包含内容
+| 方法 / 类型 | 用途 |
+| --- | --- |
+| OpenAiRealtimeClientOptions | 服务根地址、路径、密钥和连接参数 |
+| ConnectAsync / UpdateSessionAsync | 建立连接与配置会话 |
+| TranscribeAsync | 音频转写 |
+| CreateConversationItemAsync | 添加用户文本等会话项 |
+| CreateResponseAsync | 读取流式回复文本 / 音频事件 |
+| DeleteConversationItemAsync / ResetConversationAsync | 管理对话上下文 |
+| SynthesizeTextAsync | 调用 HTTP audio/speech |
+| OpenAiRealtimeSession / ResponseRequest | 协议数据模型 |
 
-- `OpenAiRealtimeClient`
-- `OpenAiRealtimeClientOptions`
-- `OpenAiRealtimeSession`
-- `OpenAiRealtimeConversationItem`
-- `OpenAiRealtimeResponseRequest`
-- `OpenAiAudioSpeechRequest`
-- `OpenAiRealtimeProtocol`
+## 建立会话示例
 
-## 当前能力
-
-`OpenAiRealtimeClient` 当前覆盖：
-
-- 建立 `/v1/realtime` WebSocket 连接
-- `session.update`
-- `input_audio_buffer.append / commit`
-- `conversation.item.create / delete`
-- `response.create`
-- 流式接收转写文本
-- 流式接收回复文本和音频
-- 调用 `/v1/audio/speech` 做文本直出 TTS
-
-## 主要 API
-
-### `OpenAiRealtimeClientOptions`
-
-- `BaseUrl`
-- `RealtimePath`
-- `AudioSpeechPath`
-- `ApiKey`
-- `Model`
-- `ConnectTimeout`
-- `OutboundAudioChunkSamples`
-- `Headers`
-
-### `OpenAiRealtimeClient`
-
-- `ConnectAsync(...)`
-- `UpdateSessionAsync(...)`
-- `TranscribeAsync(...)`
-- `CreateResponseAsync(...)`
-- `CreateConversationItemAsync(...)`
-- `DeleteConversationItemAsync(...)`
-- `ResetConversationAsync(...)`
-- `SynthesizeTextAsync(...)`
-
-## 最小用法
+以下示例假定本地语音服务已启动在 5058，语音模型与 LLM 已配置：
 
 ```csharp
-OpenAiRealtimeClient client = serviceProvider.GetRequiredService<OpenAiRealtimeClient>();
+using Microsoft.Extensions.Logging.Abstractions;
+using Zhengyan.DigitalWife.Realtime.OpenAI;
 
-await client.ConnectAsync(cancellationToken);
-await client.UpdateSessionAsync(session, cancellationToken);
-
-OpenAiRealtimeTranscriptionResult transcription =
-    await client.TranscribeAsync(audio, cancellationToken: cancellationToken);
-
-await foreach (OpenAiRealtimeResponseUpdate update in client.CreateResponseAsync(cancellationToken: cancellationToken))
+await using var client = new OpenAiRealtimeClient(
+    new OpenAiRealtimeClientOptions { BaseUrl = "http://127.0.0.1:5058" },
+    NullLogger<OpenAiRealtimeClient>.Instance);
+await client.ConnectAsync();
+await client.UpdateSessionAsync(new OpenAiRealtimeSession
 {
-    if (!string.IsNullOrWhiteSpace(update.TranscriptDelta))
-    {
-        Console.Write(update.TranscriptDelta);
-    }
-
-    if (update.AudioChunk is not null)
-    {
-        // 播放或缓存音频
-    }
-}
+    Model = "zhengyan-realtime-voice",
+    Instructions = "请用简洁中文回答。"
+});
 ```
 
-## 文本直出 TTS
+后续把 IAudioSource 录到的 AudioData 交给 TranscribeAsync，或创建用户会话项再请求回复。音频播放和口型仍由前端完成。现成前端见 [DigitalHuman](../../samples/Zhengyan.DigitalWife.Samples.DigitalHuman/README.md)。
 
-如果你不需要经过 LLM 改写文本，而是只想“把这句文本直接合成语音”，可以调用：
+## 地址与音频
 
-```csharp
-AudioData audio = await client.SynthesizeTextAsync(
-    "我在，请说。",
-    new OpenAiAudioSpeechRequest
-    {
-        Model = "zhengyan-realtime-voice",
-        Voice = "0",
-        ResponseFormat = "wav"
-    },
-    cancellationToken);
+- HTTP / HTTPS 根地址分别用于 WS / WSS 会话连接。
+- 默认 WebSocket 路径是 /v1/realtime，TTS 路径是 /v1/audio/speech。
+- PCM 采样率和服务会话参数需要匹配；本地声卡采样率可以先重采样后再发送。
+- ApiKey 与 Headers 是接入服务的鉴权信息；不要写进公开示例或日志。
+- 输出事件与音频缓冲不同，收到 final 标识不等于扬声器已播完。
+
+## 构建与下一步
+
+在仓库根目录：
+
+```text
+dotnet build src/Zhengyan.DigitalWife.Realtime.OpenAI
 ```
 
-这会调用配置里的 `AudioSpeechPath`，默认是：
+如果只想在引擎中调用，不需要自己处理协议；使用 [Scene.RealtimeVoice](../Zhengyan.DigitalWife.GameEditor/api_docs/26-realtime-voice.md) 或 [RealtimeVoice.Client](../Zhengyan.DigitalWife.RealtimeVoice.Client/README.md)。
 
-- `/v1/audio/speech`
-
-## 说明
-
-- `Realtime` 和 `audio/speech` 是两条独立接口线，当前客户端同时支持这两者。
-- 如果后续接入新的 OpenAI 兼容供应商，优先在这个库里扩展兼容层，而不是让每个 sample 各自维护一套协议模型。
+- [项目总览](../../README.md)
+- [语音服务启动](../../samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md)

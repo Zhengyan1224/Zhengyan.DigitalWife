@@ -1,106 +1,47 @@
-﻿# Zhengyan.DigitalWife.Mmd
+# Mmd：MMD 模型、动作与姿态运行库
 
-`Zhengyan.DigitalWife.Mmd` 是底层 PMX / VMD 运行时。它负责：
+这个库处理 PMX 模型、VMD 动作，以及骨骼、Morph、IK、蒙皮和 PMX 物理。它提供模型数据与姿态计算，不会单独打开游戏窗口。
 
-- PMX 解析
-- VMD 解析与动画评估
-- 骨骼层级、Morph、IK
-- Bullet 物理集成
+**PMX 是模型，VMD 是动作。** 加载 PMX 时应保留它引用的贴图文件。普通游戏制作者用 [GameEditor](../Zhengyan.DigitalWife.GameEditor/README.md) 导入；想在 C# 中自行渲染角色，可从 [Mmd.Game](../Zhengyan.DigitalWife.Mmd.Game/README.md) 和 [QuickStart](../../samples/Zhengyan.DigitalWife.Samples.MmdQuickStart/README.md)开始。
 
-如果你只需要“开箱即用”的跨平台渲染和交互层，请优先看 [Zhengyan.DigitalWife.Mmd.Game](../Zhengyan.DigitalWife.Mmd.Game/README.md)。本项目更适合做底层数据处理、工具链或自定义渲染集成。
+## 核心能力
 
-## 主要 API
+- PMX / VMD 解析。
+- 模型骨骼、材质、Morph、IK 与附加变换。
+- VMD 插值、多动作层与姿态求值。
+- BDEF / SDEF / QDEF 等蒙皮路径。
+- PMX 刚体与关节物理桥接。
+- 可选计算加速和姿态诊断。
 
-### 解析层
+## 最小解析示例
 
-- `PmxParsing`
-- `VmdParsing`
-
-用于直接解析原始 PMX / VMD 文件结构。
-
-### 运行时模型
-
-- `MMDModel`
-  抽象基类。
-- `PmxModel`
-  PMX 模型运行时实现。
-- `MMDNode`
-- `MMDMorph`
-- `MMDMaterial`
-- `MMDMesh`
-- `MMDIkSolver`
-
-### 动画
-
-- `VmdAnimation`
-- `VmdNodeController`
-- `VmdMorphController`
-- `VmdIkController`
-
-### 物理
-
-- `MMDPhysics`
-- `MMDPhysicsManager`
-- `MMDRigidBody`
-- `MMDJoint`
-
-## 典型使用方式
-
-### 1. 加载 PMX 模型
+在引用本库的 .NET 10 程序中：
 
 ```csharp
 using Zhengyan.DigitalWife.Mmd;
 
-PmxModel model = new();
-bool loaded = model.Load(
-    path: "Character/Body/Body.pmx",
-    mmdDataDir: "Resources/MMD");
-
-if (!loaded)
-{
-    throw new InvalidOperationException("Failed to load PMX model.");
-}
-
-Console.WriteLine(model.GetNodes().Length);
-Console.WriteLine(model.GetMorphs().Length);
-Console.WriteLine(model.GetMaterials().Length);
+PmxParsing? model = PmxParsing.ParsingByFile("assets/character.pmx");
+if (model is null)
+    throw new InvalidOperationException("PMX 无法解析。");
+Console.WriteLine("PMX 已读取，下一步交给姿态和渲染层。");
 ```
 
-### 2. 加载 VMD 并推进动画
+这里的模型路径需要自己提供。此示例只读取模型，不显示画面。完整角色运行示例使用 `PmxModel`、`VmdAnimation` 或 `PmxPoseEvaluator`，参考源码与 QuickStart。
 
-```csharp
-using Zhengyan.DigitalWife.Mmd;
+## 与 Mmd.Core 的关系
 
-PmxModel model = new();
-model.Load("Character/Body/Body.pmx", "Resources/MMD");
+[Mmd.Core](../Zhengyan.DigitalWife.Mmd.Core/README.md)链接部分解析与姿态源码，让 Android / 共享运行时不用引用全部桌面依赖。共享求值器不意味着每个模型和 GPU 都已验证一致，复杂物理与模型特性仍需要比较。
 
-VmdAnimation animation = new();
-if (!animation.Load("Motion/basic_walk.vmd", model))
-{
-    throw new InvalidOperationException("Failed to load VMD.");
-}
+## 构建与检查
 
-model.BeginAnimation();
-model.UpdateAllAnimation(animation, vmdFrame: 30.0f, physicsElapsed: 1.0f / 60.0f);
-model.EndAnimation();
-model.Update();
+仓库根目录：
+
+```text
+dotnet build src/Zhengyan.DigitalWife.Mmd
+dotnet run --project tests/Zhengyan.DigitalWife.PmxParity.Tests -- --analyze "assets/mmd/samples/GameData/Character/Body/Body.pmx"
 ```
 
-### 3. 查找骨骼和 Morph
+原生 Bullet / 计算库的加载取决于目标平台与构建产物。模型能解析不代表原生物理或图形加速已成功初始化。
 
-```csharp
-MMDNode? head = model.FindNode(node => node.Name == "頭");
-MMDMorph? smile = model.FindMorph(morph => morph.Name == "笑い");
-
-if (smile is not null)
-{
-    smile.Weight = 1.0f;
-    model.UpdateMorphAnimation();
-}
-```
-
-## 适合什么场景
-
-- 你要自己实现渲染器，不想依赖 `Mmd.Game`。
-- 你要做 PMX / VMD 处理工具。
-- 你要在上层引擎中接入 MMD 运行时，而不是直接使用现成 Demo。
+- [项目总览](../../README.md)
+- [模型姿态对比工具](../../tests/Zhengyan.DigitalWife.PmxParity.Tests/README.md)

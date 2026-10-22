@@ -1,53 +1,45 @@
-![Zhengyan.DigitalWife Logo](../../assets/mmd/samples/GameData/Logo/logo.png)
+# MmdDemo：带控制面板的 MMD 调试场景
 
-这个示例会把同一份 logo 复制到输出目录，并在启动时写死设置为窗口图标（路径是 Resources/Logo/logo.png）。
+这是展示与调试 Mmd.Game 的桌面程序。你可以查看模型、VMD、多动作层、口型、粒子、水面和音频，适合验证新模型或引擎改动。
 
-`Zhengyan.DigitalWife.Samples.MmdDemo` 是带 ImGui 面板的完整 MMD 调试示例，用于验证模型加载、动作层、口型驱动、粒子、水面、BGM 和文件拖拽等能力。
+![MMD Demo 预览](images/demo.png)
 
-## 功能
-
-- 默认加载示例角色与基础动作
-- ImGui 控制面板
-- PMX / VMD / WAV / OGG 拖拽加载
-- 多模型管理与关系绑定
-- 动作层权重调节
-- 口型驱动与字典加载
-- 口型驱动支持日语 / 中文字典切换
-- 水面与多种粒子预设
-- 背景音乐播放控制
-
-## 预览
-
-![](./images/demo.png)
+它是代码级示例，不是 GameEditor，也不加载 .dwgame。制作工程请看[编辑器](../../src/Zhengyan.DigitalWife.GameEditor/README.md)。
 
 ## 运行
 
-```powershell
-dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdDemo/Zhengyan.DigitalWife.Samples.MmdDemo.csproj
+需要 .NET 10 SDK 和可用图形设备，在仓库根目录：
+
+```text
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdDemo
 ```
 
-也可以显式指定模型和动作：
+使用自己的模型和动作：
 
-```powershell
-dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdDemo/Zhengyan.DigitalWife.Samples.MmdDemo.csproj -- "path/to/model.pmx" "path/to/motion.vmd"
+```text
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.MmdDemo -- "D:/Models/character.pmx" "D:/Motions/walk.vmd"
 ```
 
-## 默认资源
+路径是示例，需要替换。第三个参数可指定口型字典目录。PMX、VMD 和可选字典应实际存在。
 
-启动时默认尝试加载：
+## 可以检查的内容
 
-- `GameData/Character/Body/Body.pmx`
-- `GameData/Motion/Basic/basic_walk.vmd`
-- `Resources/SpeechLipSyncDictionaries/`
+- ImGui 模型/动作控制面板与文件拖拽。
+- PMX / VMD / WAV / OGG 资源加载。
+- 多模型绑定、动作层权重和播放控制。
+- 口型与中文/日文字典。
+- 粒子、水面效果和背景音乐。
 
-## 适合什么场景
+默认资源包含 Body.pmx、basic_walk.vmd 与 SpeechLipSyncDictionaries。构建会复制素材与引擎资源；独立运行时保留这些目录。
 
-- 调试 `Mmd.Game` 能力是否完整可用
-- 查看动作层、粒子、水面和口型驱动效果
-- 做新功能开发前的验证沙箱
+口型字典是驱动 Morph 的数据，不是完整 ASR 或 TTS 模型。跑此场景不需要部署 LLM。
 
-补充文档：
+## 调试与源码入口
 
-- [MMD Game API 详细说明](../../docs/Zhengyan.DigitalWife.Mmd.Game.API.md)
-- [资源与渲染说明](../../docs/Zhengyan.DigitalWife.Mmd.Game.Rendering-And-Assets.md)
+[Program.cs](Program.cs)解析参数，[DemoGame.cs](DemoGame.cs)组织场景，[DemoOverlayComponent.cs](DemoOverlayComponent.cs)实现控制面板。
 
+看到某个模型效果异常时，先查看模型路径、动作兼容、材质与物理设置；自定义 shader 还需区分后端。
+
+- [项目总览](../../README.md)
+- [更简单的 QuickStart](../Zhengyan.DigitalWife.Samples.MmdQuickStart/README.md)
+- [渲染后端](../../docs/rendering-backends.md)

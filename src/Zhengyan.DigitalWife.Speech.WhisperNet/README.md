@@ -1,105 +1,67 @@
-# Zhengyan.DigitalWife.Speech.WhisperNet
+# Speech.WhisperNet：本地 Whisper 语音识别
 
-`Zhengyan.DigitalWife.Speech.WhisperNet` 基于 `Whisper.net` 提供 `ISpeechRecognizer` 实现。
+这个库用 Whisper.net 实现 ISpeechRecognizer，把音频转换成文本。适合 PC / 服务端本地识别，也可以作为其它识别器的回退。
 
-它适合作为：
+它不负责麦克风采集、TTS 或 LLM 回复。Android Scene.Asr 当前使用系统 SpeechRecognizer，不会因为包里有 Whisper 权重就自动运行这个库。
 
-- 高兼容、易部署的离线识别 Provider
-- `SherpaOnnx` 链路的回退识别器
-- 需要 NVIDIA CUDA 时的可选 GPU 识别后端
+## 准备模型
 
-## 主要 API
+需要 Whisper.cpp 格式的模型，例如下载脚本提供的 `models/whisper/ggml-base.bin`。它不是 ONNX 文件，也不是 TTS 权重。
 
-### `WhisperNetRecognizerOptions`
+仓库根目录：
 
-- `ModelPath`
-- `Language`
-- `TranslateToEnglish`
-- `UseGpu`
-- `Threads`
-- `SampleRate`
-
-### `ServiceCollectionExtensions`
-
-- `AddWhisperNetSpeechRecognizer(IServiceCollection services, WhisperNetRecognizerOptions options)`
-
-注册：
-
-- `WhisperNetSpeechRecognizer`
-- `ISpeechRecognizer`
-
-## 注册示例
-
-```csharp
-using Microsoft.Extensions.DependencyInjection;
-using Zhengyan.DigitalWife.Speech.WhisperNet;
-
-ServiceCollection services = new();
-services.AddWhisperNetSpeechRecognizer(new WhisperNetRecognizerOptions
-{
-    ModelPath = "models/whisper/ggml-base.bin",
-    Language = "auto",
-    TranslateToEnglish = false,
-    UseGpu = false,
-    Threads = 4,
-    SampleRate = 16000
-});
+```powershell
+./scripts/download-models.ps1 -SkipAsr -SkipWake -SkipTts
 ```
 
-## 识别文件示例
+该命令只下载 Whisper。Linux / macOS 的完整下载入口见[主 README](../../README.md#语音与-ai-如何接入)。
+
+## 识别 WAV 文件
+
+在自己的 .NET 10 程序中引用本库：
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using Zhengyan.DigitalWife.Speech;
+using Zhengyan.DigitalWife.Speech.WhisperNet;
 
-using ServiceProvider provider = services.BuildServiceProvider();
+var services = new ServiceCollection();
+services.AddWhisperNetSpeechRecognizer(new WhisperNetRecognizerOptions
+{
+    ModelPath = "models/whisper/ggml-base.bin",
+    Language = "zh",
+    UseGpu = false,
+    Threads = 4,
+    SampleRate = 16000
+});
+using var provider = services.BuildServiceProvider();
 ISpeechRecognizer recognizer = provider.GetRequiredService<ISpeechRecognizer>();
-
-SpeechRecognitionResult result = await recognizer.RecognizeFileAsync(
-    "test.wav",
-    new SpeechRecognitionOptions
-    {
-        Language = "zh",
-        EnableTimestamps = true
-    });
-
+var result = await recognizer.RecognizeFileAsync("test.wav", new SpeechRecognitionOptions { Language = "zh" });
 Console.WriteLine(result.Text);
 ```
 
-## GPU 说明
+模型路径和 test.wav 必须实际存在。首次识别还包含模型加载时间，识别语言与采样率应配合应用配置。
 
-`UseGpu = true` 会请求 `Whisper.net` 优先使用 GPU runtime。
+## 主要参数
 
-当前仓库已经引入了 `Whisper.net.Runtime.Cuda`，但是否真正加载到 CUDA 仍取决于：
+| 参数 | 含义 |
+| --- | --- |
+| ModelPath | 模型权重文件 |
+| Language | 语言，或 auto 自动检测 |
+| TranslateToEnglish | 是否翻译到英语 |
+| UseGpu | 请求 GPU runtime |
+| Threads | CPU 线程数 |
+| SampleRate | 识别音频采样率 |
 
-- 部署平台
-- NVIDIA 驱动 / CUDA 环境
-- native runtime 是否可被正确加载
+仓库引用了 CPU 和 CUDA runtime，但 UseGpu=true 不保证 CUDA 加载成功。以诊断中的 loadedRuntimeLibrary 与运行环境为准；新手先用 CPU 跑通。
 
-在 `RealtimeVoice` 服务里，启动日志会打印：
+## 构建与示例
 
-- `useGpu`
-- `loadedRuntimeLibrary`
-- `runtimeOrder`
-
-如果你希望确认是否真的在用 GPU，重点看：
-
-- `loadedRuntimeLibrary=Cuda`
-
-## 作为回退识别器
-
-`VoiceAssistantPipeline` 会按注册顺序依次尝试 `ISpeechRecognizer`。如果你想把 Whisper 作为回退识别器，可以先注册主识别器，再注册 Whisper：
-
-```csharp
-services.AddSherpaOnnxSpeechRecognizer(mainRecognizerOptions);
-services.AddWhisperNetSpeechRecognizer(new WhisperNetRecognizerOptions
-{
-    ModelPath = "models/whisper/ggml-base.bin"
-});
+```text
+dotnet build src/Zhengyan.DigitalWife.Speech.WhisperNet
 ```
 
-## 适合什么场景
+在 [AssistantConsole](../../samples/Zhengyan.DigitalWife.Samples.AssistantConsole/README.md) 中设置 RecognitionProvider，或在 [RealtimeVoice](../../samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md) 中配置识别优先级。
 
-- 需要离线识别但不想完全依赖 SherpaOnnx 模型族
-- 需要稳定的回退识别器
-- 需要在支持的环境下尝试 CUDA GPU 识别
+- [项目总览](../../README.md)
+- [Sherpa 识别 / 合成](../Zhengyan.DigitalWife.Speech.SherpaOnnx/README.md)

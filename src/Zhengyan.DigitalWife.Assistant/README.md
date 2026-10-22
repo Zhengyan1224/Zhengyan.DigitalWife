@@ -1,139 +1,63 @@
-﻿# Zhengyan.DigitalWife.Assistant
+# Assistant：把录音、识别、回复和说话串起来
 
-`Zhengyan.DigitalWife.Assistant` 是语音助手编排层。它基于 `Abstractions` 中的接口，把录音、识别、LLM、分句、TTS、播放串成一条完整链路。
+Assistant 是语音助手编排库。它连接公共接口完成“录音 → ASR → LLM → 分句 → TTS → 播放”，让应用不必重复编写整条流水线。
 
-## 命名空间
+这个类库不提供模型权重，也不创建游戏窗口。最快的运行入口是 [AssistantConsole](../../samples/Zhengyan.DigitalWife.Samples.AssistantConsole/README.md)。
 
-- `Zhengyan.DigitalWife.Assistant`
-- `Zhengyan.DigitalWife.Assistant.Conversation`
-- `Zhengyan.DigitalWife.Assistant.Text`
+## 核心组成
 
-## 主要 API
+- `VoiceAssistantPipeline.RunTurnAsync`：执行一轮语音交互。
+- `VoiceAssistantTurnOptions`：系统提示、历史、录音、识别、LLM 与 TTS 参数。
+- `VoiceAssistantTurnResult`：用户文本、回复文本和已说出的句子。
+- `SentenceChunker`：把流式文本切成适合合成语音的片段。
+- `AddDigitalWifeAssistantCore`：注册编排层。
 
-### `ServiceCollectionExtensions`
+Pipeline 接收多个识别器，按注册顺序尝试回退；语音识别成功后请求 LLM。分句让回复可以逐段合成与播放，但它不是所有模型的真正逐采样点流式推理。
 
-- `AddDigitalWifeAssistantCore(IServiceCollection services)`
+## 组合时需要哪些模块
 
-注册：
+| 环节 | 仓库中的实现 |
+| --- | --- |
+| 麦克风 | PortAudio |
+| 语音转文字 | SherpaOnnx / WhisperNet |
+| 文本回复 | Llm.OpenAI |
+| 文字转语音 | SherpaOnnx |
+| 播放 | PortAudio / OpenAL |
 
-- `SentenceChunker`
-- `VoiceAssistantPipeline`
+使用 Microsoft.Extensions.DependencyInjection 时先注册编排和各个提供者，之后获取 VoiceAssistantPipeline。服务注册不等于模型已下载或设备已成功打开。
 
-### `VoiceAssistantPipeline`
+## 调用一轮
 
-核心方法：
-
-- `Task<VoiceAssistantTurnResult> RunTurnAsync(VoiceAssistantTurnOptions options, CancellationToken cancellationToken = default)`
-
-执行流程：
-
-1. 调用 `IAudioSource.RecordUntilSilenceAsync()` 录音
-2. 用已注册的 `ISpeechRecognizer` 列表按顺序识别，空结果时自动回退
-3. 调用 `ILlmClient.StreamChatAsync()` 获取流式回答
-4. 用 `SentenceChunker` 把增量文本切成句子
-5. 对每句调用 `ITextToSpeechSynthesizer`
-6. 调用 `IAudioPlayer.PlayAsync()` 逐句播放
-
-### `VoiceAssistantTurnOptions`
-
-常用字段：
-
-- `SystemPrompt`
-- `History`
-- `LlmOptions`
-- `CaptureOptions`
-- `RecognitionOptions`
-- `SynthesisOptions`
-- `CapturedAudioPath`
-
-### `VoiceAssistantTurnResult`
-
-- `UserText`
-- `AssistantText`
-- `SpokenSentences`
-
-### `SentenceChunker`
-
-用于把 LLM 的流式输出按句子边界切块，适合“边生成、边合成、边播放”的场景。
-
-## DI 组合示例
-
-```csharp
-using Microsoft.Extensions.DependencyInjection;
-using Zhengyan.DigitalWife.Assistant;
-using Zhengyan.DigitalWife.Audio.PortAudio;
-using Zhengyan.DigitalWife.Llm.OpenAI;
-using Zhengyan.DigitalWife.Speech;
-using Zhengyan.DigitalWife.Speech.SherpaOnnx;
-
-ServiceCollection services = new();
-
-services.AddDigitalWifeAssistantCore();
-services.AddPortAudio();
-services.AddOpenAiCompatibleLlmClient(new OpenAiCompatibleLlmOptions
-{
-    BaseUrl = "http://127.0.0.1:8000",
-    ApiKey = "YOUR_KEY"
-});
-services.AddSherpaOnnxSpeechRecognizer(new SherpaOnnxRecognizerOptions
-{
-    ModelKind = SherpaOnnxRecognizerModelKind.OnlineTransducer,
-    TokensPath = "models/asr/example/tokens.txt",
-    EncoderPath = "models/asr/example/encoder.onnx",
-    DecoderPath = "models/asr/example/decoder.onnx",
-    JoinerPath = "models/asr/example/joiner.onnx"
-});
-services.AddSherpaOnnxTextToSpeech(new SherpaOnnxTtsOptions
-{
-    ModelPath = "models/tts/example/model.onnx",
-    TokensPath = "models/tts/example/tokens.txt"
-});
-```
-
-## 运行单轮语音助手
+以下片段假定 provider 已注册了上述提供者，且 myModelName 是实际 LLM 服务支持的模型名：
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using Zhengyan.DigitalWife.Assistant.Conversation;
 using Zhengyan.DigitalWife.Llm;
-using Zhengyan.DigitalWife.Speech;
 
-ServiceProvider provider = services.BuildServiceProvider();
 VoiceAssistantPipeline pipeline = provider.GetRequiredService<VoiceAssistantPipeline>();
-
 VoiceAssistantTurnResult result = await pipeline.RunTurnAsync(new VoiceAssistantTurnOptions
 {
-    SystemPrompt = "你是一个中文语音助手，请用简洁自然的语气回答。",
-    LlmOptions = new LlmRequestOptions
-    {
-        Model = "qwen2.5-14b-instruct"
-    },
-    CaptureOptions = new VoiceActivityCaptureOptions
-    {
-        SampleRate = 16000,
-        Channels = 1
-    },
-    RecognitionOptions = new SpeechRecognitionOptions
-    {
-        Language = "zh",
-        EnableTimestamps = true
-    },
-    SynthesisOptions = new SpeechSynthesisOptions
-    {
-        ModelKind = SpeechSynthesisModelKind.Vits,
-        Speed = 1.0f
-    },
-    CapturedAudioPath = "artifacts/captured/turn.wav"
+    SystemPrompt = "请用简短自然的中文回答。",
+    LlmOptions = new LlmRequestOptions { Model = myModelName }
 });
-
 Console.WriteLine(result.UserText);
 Console.WriteLine(result.AssistantText);
 ```
 
-## 适合什么场景
+录音设备、语音模型、输出播放器和历史管理都由调用方配置。唤醒词检测属于另一个接口，不会因为调用 RunTurnAsync 自动持续监听。
 
-- 你要快速拼出完整“录音 -> 识别 -> LLM -> TTS -> 播放”链路。
-- 你希望识别器支持回退策略。
-- 你希望 TTS 以句子为粒度边生成边播。
+## 运行示例与构建
 
-如果你只想依赖接口层，请参考 [Zhengyan.DigitalWife.Abstractions](../Zhengyan.DigitalWife.Abstractions/README.md)。
+仓库根目录：
+
+```text
+dotnet run --project samples/Zhengyan.DigitalWife.Samples.AssistantConsole -- --run-once
+dotnet build src/Zhengyan.DigitalWife.Assistant
+```
+
+先按示例 README 下载模型并填写本地配置，不能用未替换的服务地址启动完整对话。
+
+- [项目总览](../../README.md)
+- [公共接口](../Zhengyan.DigitalWife.Abstractions/README.md)
+- [服务端语音示例](../../samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md)

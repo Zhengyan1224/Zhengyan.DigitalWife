@@ -1,138 +1,54 @@
-# Zhengyan.DigitalWife.Abstractions
+# Abstractions：音频、语音与 LLM 公共接口
 
-`Zhengyan.DigitalWife.Abstractions` 定义整个语音子系统的公共契约。
+这个 .NET 10 类库定义不同模块之间交换的数据和接口。它不录音、不推理，也不直接调用 AI 服务；具体实现由 PortAudio、OpenAL、Sherpa、Whisper 和 LLM 客户端提供。
 
-它不包含具体模型推理、网络调用或设备驱动实现，职责是把业务层与具体 Provider 解耦。
+适合希望替换某个提供者或在自己的 C# 程序中组合语音链路的开发者。普通游戏使用者只需编辑器或播放器。
 
-## 命名空间
+## 主要概念
 
-- `Zhengyan.DigitalWife.Audio`
-- `Zhengyan.DigitalWife.Speech`
-- `Zhengyan.DigitalWife.Llm`
+| 命名空间 | 数据 / 接口 | 用途 |
+| --- | --- | --- |
+| `Zhengyan.DigitalWife.Audio` | AudioData、AudioChunk、AudioFormat | 音频样本、片段与格式 |
+| 同上 | IAudioSource、IAudioPlayer、IAudioPlaybackTiming | 录音、播放与预计输出延迟 |
+| 同上 | WaveFile | WAV 文件读写 |
+| `Zhengyan.DigitalWife.Speech` | ISpeechRecognizer | ASR：语音转文字 |
+| 同上 | ITextToSpeechSynthesizer | TTS：文字转语音 |
+| 同上 | IWakeWordDetector | 唤醒词检测 |
+| `Zhengyan.DigitalWife.Llm` | ILlmClient、LlmChatMessage、LlmRequestOptions | 对话请求与流式文本 |
+| 同上 | LlmToolDefinition、LlmToolCall | 工具定义与调用信息 |
 
-## 主要 API
+还保留旧 Android 脚本 globals 契约，用于此前导出包的兼容。新 Android 脚本使用 [Android.Scripting](../Zhengyan.DigitalWife.GamePlayer.Android.Scripting/README.md)。
 
-### 音频
+## 入门使用
 
-- `AudioEncoding`
-- `AudioFormat`
-- `AudioChunk`
-- `AudioData`
-- `AudioCaptureOptions`
-- `VoiceActivityCaptureOptions`
-- `WaveFile`
-- `IAudioSource`
-- `IAudioPlayer`
-- `IAudioPlaybackTiming`
+在自己的 .NET 10 项目中引用该库：
 
-### 语音识别 / 合成 / 唤醒词
+```text
+dotnet add MyApp/MyApp.csproj reference src/Zhengyan.DigitalWife.Abstractions/Zhengyan.DigitalWife.Abstractions.csproj
+```
 
-- `SpeechRecognitionOptions`
-- `StreamingSpeechRecognitionOptions`
-- `SpeechRecognitionSegment`
-- `SpeechRecognitionResult`
-- `SpeechRecognitionUpdate`
-- `IStreamingSpeechRecognitionSession`
-- `ISpeechRecognizer`
-- `SpeechSynthesisOptions`
-- `ITextToSpeechSynthesizer`
-- `WakeWordDetectedEventArgs`
-- `IWakeWordDetector`
-
-### LLM
-
-- `LlmChatMessage`
-- `LlmRequestOptions`
-- `LlmStreamUpdate`
-- `ILlmClient`
-
-## `WaveFile`
-
-`WaveFile` 当前支持：
-
-- `ReadAsync(string path, ...)`
-- `ReadAsync(Stream stream, ...)`
-- `WriteAsync(string path, ...)`
-- `WriteAsync(Stream stream, ...)`
-
-这意味着：
-
-- 可以直接读写本地 WAV 文件
-- 也可以直接处理 HTTP 响应流、内存流等非文件流
-- 对不可 seek 的流，内部会先做缓冲再解析
-
-## `IAudioPlaybackTiming`
-
-`IAudioPlaybackTiming` 用来让播放器暴露“预计实际出声延迟”，典型用途是：
-
-- 让口型启动更贴近真实播出时刻
-- 减少“嘴先动，声音后到”的观感
-
-当前 `PortAudio` 播放器已经实现这个接口。
-
-## 典型用法
-
-### 构造音频并切片
+构造一段 16 kHz 单声道静音：
 
 ```csharp
 using Zhengyan.DigitalWife.Audio;
 
-float[] samples = new float[16000];
-AudioFormat format = new(sampleRate: 16000, channels: 1);
-AudioData audio = new(samples, format);
-
-await foreach (AudioChunk chunk in audio.ToChunks(4096))
-{
-    Console.WriteLine($"{chunk.Offset} / {chunk.Duration} / final={chunk.IsFinal}");
-}
+AudioData silence = new(new float[16000], new AudioFormat(16000, 1));
+await WaveFile.WriteAsync("silence.wav", silence);
 ```
 
-### 以接口方式消费识别器与 LLM
+这会生成音频文件，不会播放它。想录音还需要 IAudioSource 的实现，想说话还需要 TTS 和 IAudioPlayer。
 
-```csharp
-using System.Text;
-using Zhengyan.DigitalWife.Audio;
-using Zhengyan.DigitalWife.Llm;
-using Zhengyan.DigitalWife.Speech;
+接口不是服务实例。使用依赖注入时，先注册对应实现，再用 GetRequiredService 取出接口。完整组合见 [AssistantConsole](../../samples/Zhengyan.DigitalWife.Samples.AssistantConsole/README.md)。
 
-static async Task<string> DescribeAudioAsync(
-    ISpeechRecognizer recognizer,
-    ILlmClient llm,
-    AudioData audio,
-    CancellationToken cancellationToken = default)
-{
-    SpeechRecognitionResult recognition = await recognizer.RecognizeAsync(
-        audio,
-        new SpeechRecognitionOptions
-        {
-            Language = "zh",
-            EnableTimestamps = true
-        },
-        cancellationToken);
+## 构建与下一步
 
-    List<LlmChatMessage> messages =
-    [
-        new("system", "请把用户的话整理成一句简洁摘要。"),
-        new("user", recognition.Text)
-    ];
+在仓库根目录：
 
-    StringBuilder builder = new();
-    await foreach (LlmStreamUpdate update in llm.StreamChatAsync(
-        messages,
-        new LlmRequestOptions { Model = "qwen2.5-14b-instruct" },
-        cancellationToken))
-    {
-        builder.Append(update.Delta);
-    }
-
-    return builder.ToString();
-}
+```text
+dotnet build src/Zhengyan.DigitalWife.Abstractions
 ```
 
-## 适用场景
-
-- 你只想依赖接口，不想绑定具体 Provider
-- 你希望把 `SherpaOnnx`、`Whisper.net`、OpenAI 兼容接口等实现做成可替换模块
-- 你要自己写新的音频、语音、LLM Provider
-
-如果你还需要现成的语音助手编排，请继续参考 [Zhengyan.DigitalWife.Assistant](../Zhengyan.DigitalWife.Assistant/README.md)。
+- [项目总览](../../README.md)
+- [Assistant 编排](../Zhengyan.DigitalWife.Assistant/README.md)
+- [录音与播放](../Zhengyan.DigitalWife.Audio.PortAudio/README.md)
+- [LLM 客户端](../Zhengyan.DigitalWife.Llm.OpenAI/README.md)
