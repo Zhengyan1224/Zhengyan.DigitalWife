@@ -17,7 +17,7 @@
 
 ## 开发使用
 
-本库目标是 `net10.0`，编译它不需要 Android SDK。原生 SpeechRecognizer、TextToSpeech、触摸采集等实现位于 [Android 播放器](../Zhengyan.DigitalWife.GamePlayer.Android/README.md)。
+本库目标是 `net10.0`，编译它不需要 Android SDK。本地 `AndroidScriptAsr / AndroidScriptTts` 使用工程内 Sherpa 模型；原生 AudioRecord / AudioTrack 与触摸采集适配位于 [Android 播放器](../Zhengyan.DigitalWife.GamePlayer.Android/README.md)。它们不调用系统识别或网络 TTS，LLM 是独立的远端接口。
 
 ```text
 dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android.Scripting

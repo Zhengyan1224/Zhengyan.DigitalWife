@@ -45,10 +45,14 @@ original tool-call ID, following the existing desktop protocol. See the
 for the underlying Chat Completions exchange.
 
 Android Skills commands use `/system/bin/sh` and the app's filesystem permissions.
-Desktop executables and Python installations are not supplied. Android ASR uses
-the device speech recognizer: the exported wake-word API filters recognized text,
-but desktop capture chunk settings cannot be reproduced exactly by that service.
-TTS completion callbacks wait for the Android utterance completion notification.
+Desktop executables and Python installations are not supplied. Android ASR and
+TTS use the project's local Sherpa CPU models with native AudioRecord/AudioTrack.
+Wake words are matched against local partial/final transcription. Silence before
+speech does not close the script listening window; post-speech silence endpoints
+use Asr.EndpointSilenceSeconds and SpeechRmsThreshold. Whisper and system speech
+services are not used. TTS callbacks wait for PCM playback to drain, and lip sync
+uses synthesized audio duration. Model/token/dictionary/vocoder resources must be
+packaged; runtime model loading never downloads files or falls back to cloud ASR.
 
 `Scene.RealtimeVoice` reads `Project.RealtimeVoice` and uses the desktop service
 protocol. `StartTranscription`, `StartVoiceTurn` and wake-word monitoring capture

@@ -14,7 +14,7 @@
 
 下载到 models/asr、models/tts、models/wake。模型目录里的 encoder、decoder、joiner、tokens、词典等应与所选模型类型匹配。完整步骤见 [AssistantConsole](../../samples/Zhengyan.DigitalWife.Samples.AssistantConsole/README.md)。
 
-本库用于 PC / 服务端。Android 本地 ASR/TTS 当前走系统服务，不直接把 PC 模型配置映射为 Android 推理。
+本库用于 PC、服务端和 Android 本地推理。Android 读取工程 ASR/TTS 配置，当前使用 CPU；同一模型是否能实时运行仍受手机内存与性能影响。原生录音与播放由 Android 宿主提供。
 
 ## 三组入口
 

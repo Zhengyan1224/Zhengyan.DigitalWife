@@ -1562,6 +1562,13 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         bool preloadOnSceneLoad = asr.PreloadOnSceneLoad;
+        float endpointSilence = asr.EndpointSilenceSeconds;
+        if (ImGui.DragFloat("Android local endpoint silence seconds", ref endpointSilence, .05f, .1f, 10f, "%.2f"))
+            asr.EndpointSilenceSeconds = Math.Clamp(endpointSilence, .1f, 10f);
+        float rms = asr.SpeechRmsThreshold;
+        if (ImGui.DragFloat("Android local speech RMS threshold", ref rms, .001f, .0001f, 1f, "%.4f"))
+            asr.SpeechRmsThreshold = Math.Clamp(rms, .0001f, 1f);
+        ImGui.TextWrapped("Android ASR and wake-word matching run locally with Sherpa CPU models from the project. Silence before speech does not close the script's listening window. Whisper and system recognition are not used.");
         if (ImGui.Checkbox("Preload ASR on scene load", ref preloadOnSceneLoad))
         {
             asr.PreloadOnSceneLoad = preloadOnSceneLoad;

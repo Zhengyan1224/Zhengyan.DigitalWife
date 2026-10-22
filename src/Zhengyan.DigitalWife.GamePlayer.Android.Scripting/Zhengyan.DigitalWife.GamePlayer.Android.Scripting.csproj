@@ -12,6 +12,7 @@
     <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd\Zhengyan.DigitalWife.Mmd.csproj" Aliases="MmdDesktop" />
     <ProjectReference Include="..\Zhengyan.DigitalWife.Llm.OpenAI\Zhengyan.DigitalWife.Llm.OpenAI.csproj" />
     <ProjectReference Include="..\Zhengyan.DigitalWife.RealtimeVoice.Client\Zhengyan.DigitalWife.RealtimeVoice.Client.csproj" />
+    <ProjectReference Include="..\Zhengyan.DigitalWife.Speech.SherpaOnnx\Zhengyan.DigitalWife.Speech.SherpaOnnx.csproj" />
     <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeLlm.cs" Link="Shared\RuntimeLlm.cs" />
     <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeLlmSkillTools.cs" Link="Shared\RuntimeLlmSkillTools.cs" />
     <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\MainThreadDispatcher.cs" Link="Shared\MainThreadDispatcher.cs" />

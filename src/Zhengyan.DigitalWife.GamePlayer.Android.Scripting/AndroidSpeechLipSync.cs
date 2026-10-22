@@ -30,6 +30,14 @@ internal sealed class AndroidSpeechLipSync : IDisposable
         if (!_disposed) _updater.Start(text, _period, isLoop: true);
     }
 
+    internal void MatchAudioDuration(string text, TimeSpan duration)
+    {
+        if (_disposed) return;
+        int vowels = Math.Max(1, _updater.CountRecognizedVowels(text));
+        double period = Math.Max(1, duration.TotalMilliseconds / vowels);
+        _updater.Start(text, TimeSpan.FromMilliseconds(period), isLoop: false);
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

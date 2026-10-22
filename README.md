@@ -124,7 +124,7 @@ dotnet run --project src/Zhengyan.DigitalWife.GamePlayer -- "D:/Games/MyFirstGam
 | C# 脚本 | 支持 | 支持，使用独立的 Android 预编译契约 |
 | Python 脚本 | 需要本机 Python | 不支持 |
 | Touch | Windows 原生指针、Linux/X11、macOS Cocoa；macOS 主要是触控板 | 原生 MotionEvent，多指与触控笔 |
-| ASR / TTS | 工程配置的 Whisper / Sherpa 等本地能力 | 系统语音识别和 TTS 服务；系统识别器可能依赖网络 |
+| ASR / TTS | 工程配置的 Whisper / Sherpa 等本地能力 | 工程内 Sherpa CPU 模型；ASR、TTS、唤醒词匹配完全本地，不接 Whisper 或系统语音服务 |
 | RealtimeVoice | 服务端处理语音，PC 负责采音和播放 | 使用同一服务协议，Android 原生采音和播放 |
 | 桌面精灵 / 托盘 | 平台实现；Linux 点击穿透需要 X11 | 不支持桌面窗口功能 |
 | GPU 蒙皮 | OpenGL 可选 OpenCL；Vulkan 可选 Compute | 不启用 OpenCL；Vulkan 可选 Compute，失败可回退 CPU |
@@ -135,7 +135,7 @@ dotnet run --project src/Zhengyan.DigitalWife.GamePlayer -- "D:/Games/MyFirstGam
 
 ASR 是“语音转文字”，LLM 是“生成回复”，TTS 是“文字转语音”。普通场景运行无需开启这些功能。
 
-**路线 A：在游戏工程中分别配置。** 在编辑器配置 ASR、LLM、Voice / TTS，然后用 `Scene.Asr`、`Scene.Llm`、`Entity.Speak` 编排对话。PC 的本地语音需要模型文件；LLM 地址、密钥和模型名称由你提供。
+**路线 A：在游戏工程中分别配置。** 在编辑器配置 ASR、LLM、Voice / TTS，然后用 `Scene.Asr`、`Scene.Llm`、`Entity.Speak` 编排对话。PC 和 Android 的本地语音都需要把模型文件放入工程；Android 目前支持 Sherpa CPU ASR 与 Vits/Matcha TTS，唤醒词在本机转写后匹配。录音、识别、说话不需要网络；LLM 地址、密钥和模型名称由你提供。
 
 **路线 B：连接 RealtimeVoice 服务。** 在另一进程或机器上运行[语音服务示例](samples/Zhengyan.DigitalWife.Samples.RealtimeVoice/README.md)，由它处理 ASR、LLM 和 TTS。播放器通过 `Scene.RealtimeVoice` 上传录音并播放回复，适合把较重的推理移到服务器。可以先用[DigitalHuman 示例](samples/Zhengyan.DigitalWife.Samples.DigitalHuman/README.md)验证这条链路。
 
@@ -220,7 +220,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.PmxParity.Tests
 | 模型没贴图 | PMX 与贴图是否一起导入，资源是否已保存为工程相对路径 |
 | 黑屏、Vulkan 初始化失败 | 查看启动日志，更新显卡驱动，尝试 `--graphics-backend OpenGL` |
 | 第一次对话没声音 | 是否开启 TTS，模型路径、麦克风/扬声器权限和服务地址是否正确 |
-| Android ASR 网络超时 | 系统识别服务可能连接网络；后台监听恢复不代表远端连接已修复 |
+| Android 本地语音失败 | 检查 Sherpa 模型/词表/字典/vocoder、麦克风权限和 CPU 参数；新版本不再调用系统网络识别 |
 | 手机访问不到电脑语音服务 | 手机的 `127.0.0.1` 指手机自己；使用电脑局域网 IP 或 USB `adb reverse` |
 | 新脚本 API 在旧包中不可用 | 同时更新编辑器与播放器，重新导出使用新 API 的包 |
 

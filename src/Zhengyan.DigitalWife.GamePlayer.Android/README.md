@@ -25,7 +25,7 @@
 | 脚本 | C#；PC Python 脚本不支持 |
 | 触摸 | 原生多指输入、触控笔、快速按下/释放/取消，脚本使用共用 Touch API |
 | 游戏 GUI / 软键盘 | 原生 Android View / Canvas / IME |
-| 本地 ASR / TTS | 系统 SpeechRecognizer / TextToSpeech，识别器可能依赖网络 |
+| 本地 ASR / TTS | 工程内 Sherpa CPU 推理；原生 AudioRecord / AudioTrack 采音与播放，不调用系统语音服务 |
 | RealtimeVoice | Android 原生采音/播放，服务协议与 PC 一致 |
 | 普通场景音频 | Android MediaPlayer；PC OpenAL 空间音频并非全部等价 |
 | Skills 命令 | Android shell 和应用权限；不自带桌面命令或 Python |
@@ -153,9 +153,15 @@ $adb = "$sdk/platform-tools/adb.exe"
 
 ## 语音报错与日志
 
-Android 的本地 ASR 使用系统服务，不会自动加载包内 PC Whisper / Sherpa 模型。系统识别器网络超时并不等于 LLM 服务失败。
+Android 本地语音使用包内工程配置的 Sherpa 模型，`Scene.Asr` 录音、问题转写、唤醒词匹配和 `Entity.Speak` 合成都在本机运行。LLM 仍调用工程配置的远程接口。显式使用 `Scene.RealtimeVoice` 的脚本仍是另一条服务端语音链路，不应与本地对话流程混用。
 
-后台唤醒监听遇到 NetworkTimeout / Network 会退避重启；尚未检测到说话的续聊超时保留脚本原期限。已检测到问题后的转写失败仍报告给脚本。恢复逻辑不能修复系统服务的网络，断网期间唤醒可能不可用。
+启用 `Asr.Enabled`，选择 `Provider=sherpa`、`Sherpa.Provider=cpu`；TTS 启用 `Voice.Enabled`，选择 `TtsProvider=sherpa-onnx`、`ModelKind=vits/matcha`、`InferenceProvider=cpu`。不支持 Whisper，也不会在模型缺失时自动回退系统识别。模型、tokens、词典和 Matcha vocoder 必须已打进工程；优先使用 `assets/...` 或 `project:assets/...`。已有包若已包含这些 Sherpa 文件可直接更新播放器，缺文件的包需重新导出。
+
+唤醒词用本地 ASR 文本匹配，不需要额外关键词模型。流式模型匹配 partial 时可唤醒/打断；非流式模型在一段话结束后匹配。静音不会提前关闭续聊，30 秒等期限仍由脚本控制。`Asr.EndpointSilenceSeconds`（默认 0.9）控制说话后的停顿分句，`SpeechRmsThreshold`（默认 0.008）控制人声能量阈值。常驻静音只保留短预录缓冲，不会无限积累识别音频。
+
+TTS 保留角色说话和完成回调 API，回调等待原生播放排空，取消不派发旧完成事件；口型按实际合成音频时长驱动。加载模型与推理在后台运行。CPU 模型与 3D 渲染共享手机资源，首次预热、长句合成、内存与发热需真机验证。
+
+日志会显示 `ASR local start / event`、`TTS local synthesized / playback complete` 及模型路径错误。旧版系统识别器的 `NetworkTimeout` 恢复路径已移除；本地模型不可用会明确报告，不发起网络识别或下载。
 
 查看引擎和崩溃日志：
 
@@ -189,7 +195,7 @@ APK 名称来自项目 `ApplicationTitle`，图标来自构建属性 `AndroidApp
 | 黑屏 / 图形初始化失败 | 查看 logcat、设备图形能力和包内后端设置 |
 | APK 单独安装缺程序集 | 使用 EmbedAssembliesIntoApk=true 重新构建 |
 | 16 KB 页 / 原生库警告 | 检查打包进 APK 的原生库兼容性，在目标 Android 设备验证 |
-| 语音输入不可用 | 系统权限、识别/TTS服务和它们的网络或语言资源 |
+| 语音输入不可用 | 麦克风权限、包内模型文件、CPU provider 与识别阈值 |
 | 新脚本 API 不存在 | 更新播放器并用新版编辑器重新导出 |
 
 ## 开发验证入口

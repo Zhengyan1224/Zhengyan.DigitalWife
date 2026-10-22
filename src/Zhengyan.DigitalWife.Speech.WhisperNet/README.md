@@ -2,7 +2,7 @@
 
 这个库用 Whisper.net 实现 ISpeechRecognizer，把音频转换成文本。适合 PC / 服务端本地识别，也可以作为其它识别器的回退。
 
-它不负责麦克风采集、TTS 或 LLM 回复。Android Scene.Asr 当前使用系统 SpeechRecognizer，不会因为包里有 Whisper 权重就自动运行这个库。
+它不负责麦克风采集、TTS 或 LLM 回复。Android Scene.Asr 当前只接入 Sherpa 本地推理，未接入本库；Android 工程不能选择 Whisper Provider。
 
 ## 准备模型
 

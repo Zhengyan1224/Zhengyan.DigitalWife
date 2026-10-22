@@ -39,6 +39,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly GameProjectLlmSettings _llmSettings;
     private readonly GameProjectRealtimeVoiceSettings _realtimeVoiceSettings;
     private readonly GameProjectVoiceSettings _voiceSettings;
+    private readonly AndroidScriptAsr _localAsr;
+    private readonly AndroidScriptTts _localTts;
     private RuntimeRealtimeVoice? _realtimeVoice;
     private AndroidScriptRealtimeVoice? _realtimeVoiceApi;
     private readonly MainThreadDispatcher _dispatcher = new();
@@ -101,7 +103,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         GameProjectLlmSettings? llmSettings = null,
         GameProjectLipSyncSettings? lipSyncSettings = null,
         GameProjectRealtimeVoiceSettings? realtimeVoiceSettings = null,
-        GameProjectVoiceSettings? voiceSettings = null)
+        GameProjectVoiceSettings? voiceSettings = null,
+        GameProjectAsrSettings? asrSettings = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -122,6 +125,15 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _lipSyncSettings = lipSyncSettings ?? new GameProjectLipSyncSettings();
         _realtimeVoiceSettings = realtimeVoiceSettings ?? new();
         _voiceSettings = voiceSettings ?? new() { LipSync = _lipSyncSettings };
+        AndroidLocalSpeechModels models = new(_projectDirectory,
+            AndroidBundledResourceStore.RootDirectory ?? AppContext.BaseDirectory, AndroidRuntimeLoggerFactory.Instance);
+        GameProjectAsrSettings recognition = asrSettings ?? new();
+        _localAsr = new(recognition, new AndroidRealtimeVoiceMicrophone(), () => models.CreateRecognizer(recognition),
+            () => Application.Context.CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio)
+                == global::Android.Content.PM.Permission.Granted,
+            AndroidRuntimeLoggerFactory.Instance.CreateLogger(nameof(AndroidScriptAsr)));
+        _localTts = new(_voiceSettings, () => models.CreateSynthesizer(_voiceSettings), new AndroidRealtimeVoiceSpeaker(),
+            AndroidRuntimeLoggerFactory.Instance.CreateLogger(nameof(AndroidScriptTts)));
     }
 
     public void Start(RuntimeScene scene)
@@ -143,13 +155,16 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         AndroidScriptBubbleManager.Shared.Clear();
         if (_activeScene is not null)
         {
-            AndroidScriptAsr.Shared.Cancel();
-            AndroidScriptTts.Shared.Stop();
+            _localAsr.Cancel();
+            _localTts.Stop();
         }
         foreach (AndroidScriptExecutionContext context in _executionContexts.Values)
             context.Globals.Services.Dispose();
         _executionContexts.Clear();
         _activeScene = scene;
+        _localAsr.ConfigureCallbacks(value => DispatchEvent(scene, value), _dispatcher.Post);
+        _ = _localAsr.PreloadAsync();
+        _ = _localTts.PreloadAsync();
         _loadingEntity = new RuntimeEntity(new GameEntity
         {
             Id = "__scene_loading__",
@@ -303,7 +318,6 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         RuntimeEntity entity,
         AndroidInputSnapshot input)
     {
-        AndroidScriptAsr.Shared.ConfigureCallbacks(value => DispatchEvent(scene, value), _dispatcher.Post);
         AndroidScriptServices services = new(
             scene,
             _projectDirectory,
@@ -319,9 +333,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _llmSettings,
             Path.Combine(Application.Context.FilesDir!.AbsolutePath, "saves"),
             _dispatcher,
-            AndroidScriptTts.Shared,
+            _localTts,
             AndroidScriptRealtime.Shared,
-            AndroidScriptAsr.Shared,
+            _localAsr,
             GetRealtimeVoiceApi(),
             AndroidRuntimeLoggerFactory.Instance);
         AndroidScriptInput scriptInput = new(input);
@@ -333,10 +347,11 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 (frame, playing) => _setMotionState(entity, frame, playing),
                 () => _resolvePmxModel(entity),
                 ResolveScriptAssetPath,
-                (text, callback) => _ = SpeakAsync(scene, entity, text, 1.0f, 1.0f, null, callback),
+                (text, callback) => _ = SpeakAsync(scene, entity, text, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, null, callback),
                 StopSpeech,
                 (callbackName, toolCall) => InvokeLlmToolAsync(scene, entity, callbackName, toolCall),
-                (text, speakerId, speed, volume, completed, callback) => _ = SpeakAsync(scene, entity, text, speed, volume, completed, callback)),
+                (text, speakerId, speed, volume, completed, callback) => _ = SpeakAsync(scene, entity, text, speed, volume, completed, callback, speakerId),
+                voiceSettings: _voiceSettings),
             scriptInput,
             new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying),
             0.0f,
@@ -366,15 +381,15 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         return _realtimeVoiceApi = new(_realtimeVoice);
     }
 
-    private async Task SpeakAsync(RuntimeScene scene, RuntimeEntity entity, string text, float speed, float volume, Action? completed, string callback)
+    private async Task SpeakAsync(RuntimeScene scene, RuntimeEntity entity, string text, float speed, float volume, Action? completed, string callback, int? speakerId = null)
     {
         long version = ++_speechVersion;
         _lipSync?.Dispose();
         _lipSync = null;
         try
         {
-            await AndroidScriptTts.Shared.SpeakWithProgressAsync(text, speed, volume,
-                () => _dispatcher.Post(() =>
+            await _localTts.SpeakWithProgressAsync(text, speed, volume, speakerId,
+                audio => _dispatcher.Post(() =>
                 {
                     if (_disposed || version != _speechVersion || !ReferenceEquals(scene, _activeScene) || !_lipSyncSettings.Enabled) return;
                     try
@@ -384,13 +399,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                         _speechDictionaries ??= AndroidSpeechLipSync.LoadDictionaries(_lipSyncSettings,
                             _projectDirectory, AndroidBundledResourceStore.RootDirectory ?? AppContext.BaseDirectory);
                         _lipSync = new AndroidSpeechLipSync(model, _speechDictionaries, _lipSyncSettings, text, speed);
+                        _lipSync.MatchAudioDuration(text, audio.Duration);
                     }
                     catch (Exception ex) { global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"TTS lip sync failed: {ex.Message}"); }
-                }),
-                (start, end) => _dispatcher.Post(() =>
-                {
-                    if (!_disposed && version == _speechVersion && start >= 0 && end > start && end <= text.Length)
-                        _lipSync?.SetRange(text[start..end]);
                 }), _speechLifetime.Token).ConfigureAwait(false);
             _dispatcher.Post(() =>
             {
@@ -403,7 +414,17 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             });
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Speech failed: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            global::Android.Util.Log.Error("ZhengyanGamePlayer", $"Local speech failed: {ex}");
+            _dispatcher.Post(() =>
+            {
+                if (_disposed || version != _speechVersion || !ReferenceEquals(scene, _activeScene)) return;
+                completed?.Invoke();
+                if (!string.IsNullOrWhiteSpace(callback))
+                    DispatchEvent(scene, new AndroidRuntimeEvent("speech", Guid.NewGuid().ToString("N"), callback, Vector2.Zero, text, entity.Id, Error: ex.Message));
+            });
+        }
         finally
         {
             _dispatcher.Post(() =>
@@ -420,7 +441,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         ++_speechVersion;
         _lipSync?.Dispose();
         _lipSync = null;
-        AndroidScriptTts.Shared.Stop();
+        _localTts.Stop();
     }
 
     private void Execute(
@@ -772,6 +793,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _realtimeVoice = null;
         _realtimeVoiceApi = null;
         StopSpeech();
+        _localAsr.Dispose();
+        _localTts.Dispose();
         _speechLifetime.Cancel();
         _speechLifetime.Dispose();
         _activeScene = null;

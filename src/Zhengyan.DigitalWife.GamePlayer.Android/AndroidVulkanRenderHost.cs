@@ -93,7 +93,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 llmSettings: project.Llm,
                 lipSyncSettings: project.Voice.LipSync,
                 realtimeVoiceSettings: project.RealtimeVoice,
-                voiceSettings: project.Voice);
+                voiceSettings: project.Voice,
+                asrSettings: project.Asr);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");

@@ -96,7 +96,8 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 llmSettings: project.Llm,
                 lipSyncSettings: project.Voice.LipSync,
                 realtimeVoiceSettings: project.RealtimeVoice,
-                voiceSettings: project.Voice);
+                voiceSettings: project.Voice,
+                asrSettings: project.Asr);
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
             _sceneManager.LoadInitial();

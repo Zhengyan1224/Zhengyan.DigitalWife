@@ -17,7 +17,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests
 按名称过滤：
 
 ```text
-dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android ASR"
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android local speech"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script touch"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script platform"
 ```
@@ -29,7 +29,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "
 - 预编译 C# API、脚本兼容、工程与加密/分包。
 - LLM、工具、Skills、记忆、取消和诊断。
 - RealtimeVoice 服务协议与播放完成。
-- ASR 会话、原生超时、网络恢复和旧回调隔离。
+- 本地 Sherpa ASR / TTS、唤醒词、静音期限、取消与旧回调隔离。
 - GUI 按钮目标与事件顺序、气泡布局、Touch。
 - C# / Python 平台标识和文档示例编译。
 
@@ -48,6 +48,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --verify
 | 参数格式 | 用途 |
 | --- | --- |
 | --compile-project <directory> | 用 Android 实际元数据入口编译工程脚本 |
+| --local-speech-project <directory> | 读取真实工程 Sherpa 模型，检查本地 TTS、ASR 与唤醒（PC native 推理，不请求 LLM） |
 | --physics-project <directory> <motion.vmd> | 使用实际工程比较物理时间行为 |
 | --skinning-project <directory> <motion.vmd> | 比较实际工程蒙皮与姿态 |
 | --vulkan-project-models <directory> | 检查实际工程模型的 Vulkan 运行 |

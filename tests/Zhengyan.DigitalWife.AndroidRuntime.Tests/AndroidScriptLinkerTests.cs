@@ -25,6 +25,14 @@ internal static class AndroidScriptLinkerTests
             "Zhengyan.DigitalWife.Mmd.Game.Input", "TouchPoint", ["get_X", "get_Y", "get_Phase", "get_IsActive", "get_IsEnded", "get_Kind"], []);
         Console.WriteLine("PASS Linked Android time APIs and disabled-binding serialization members");
         Console.WriteLine("PASS Linked Android script Touch APIs and platform identifiers");
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GamePlayer.Android.Scripting.dll"),
+            "Zhengyan.DigitalWife.GamePlayer.Android", "AndroidScriptAsr", ["StartStreamingRecognition", "StartWakeWordMonitoring", "Cancel", "StopStreamingRecognition"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GamePlayer.Android.Scripting.dll"),
+            "Zhengyan.DigitalWife.GamePlayer.Android", "AndroidScriptTts", ["SpeakAsync", "Stop"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Speech.SherpaOnnx.dll"),
+            "Zhengyan.DigitalWife.Speech.SherpaOnnx", "SherpaOnnxSpeechRecognizer", ["RecognizeAsync", "CreateStreamingSession"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "sherpa-onnx.dll"), "SherpaOnnx", "OfflineTts", ["Generate"], []);
+        Console.WriteLine("PASS Linked local Sherpa ASR/TTS and native binding APIs");
     }
 
     private static void VerifyMembers(string path, string ns, string name, string[] methods, string[] fields)

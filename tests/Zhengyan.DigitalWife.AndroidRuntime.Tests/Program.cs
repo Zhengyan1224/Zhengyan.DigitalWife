@@ -7,6 +7,12 @@ if (args is ["--verify-linked-script-apis", string linkedDirectory])
     return 0;
 }
 
+if (args is ["--local-speech-project", string speechProject])
+{
+    await AndroidLocalSpeechTests.ValidateProjectModelsAsync(speechProject);
+    return 0;
+}
+
 if (args is ["--skinning-project", string skinningProject, string skinningMotion])
 {
     AndroidMotionLoopTests.RunProjectPhysics(skinningProject, skinningMotion, compareSkinning: true);

@@ -165,6 +165,10 @@ public sealed class GameProjectAsrSettings
     public int? InputDeviceIndex { get; set; }
 
     public float PartialResultIntervalSeconds { get; set; } = 0.75f;
+    // Android local capture: silence before speech never closes the script's
+    // listening window. These thresholds only end an utterance after speech.
+    public float EndpointSilenceSeconds { get; set; } = 0.9f;
+    public float SpeechRmsThreshold { get; set; } = 0.008f;
 
     public GameProjectAudioCaptureSettings Capture { get; set; } = new()
     {

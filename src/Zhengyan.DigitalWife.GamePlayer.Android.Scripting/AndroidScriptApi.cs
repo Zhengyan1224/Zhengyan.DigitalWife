@@ -178,6 +178,7 @@ public sealed class AndroidScriptEntity
     private readonly Action<string, string> _speakWithCallback;
     private readonly Action _stopSpeaking;
     private readonly Action<string, int, float, float, Action?, string> _speak;
+    private readonly GameProjectVoiceSettings _voiceSettings;
     private readonly Func<string, RuntimeLlmToolCall, Task<string?>> _invokeLlmTool;
 
     internal AndroidScriptEntity(
@@ -189,7 +190,8 @@ public sealed class AndroidScriptEntity
         Action<string, string>? speakWithCallback = null,
         Action? stopSpeaking = null,
         Func<string, RuntimeLlmToolCall, Task<string?>>? invokeLlmTool = null,
-        Action<string, int, float, float, Action?, string>? speak = null)
+        Action<string, int, float, float, Action?, string>? speak = null,
+        GameProjectVoiceSettings? voiceSettings = null)
     {
         _entity = entity;
         _applyMotion = applyMotion;
@@ -200,6 +202,7 @@ public sealed class AndroidScriptEntity
         _stopSpeaking = stopSpeaking ?? (() => { });
         _invokeLlmTool = invokeLlmTool ?? ((_, _) => Task.FromResult<string?>(null));
         _speak = speak ?? ((text, _, _, _, _, callback) => _speakWithCallback(text, callback));
+        _voiceSettings = voiceSettings ?? new();
     }
 
     public string Id => _entity.Id;
@@ -449,10 +452,10 @@ public sealed class AndroidScriptEntity
     public void ClearCustomShaderUniforms() => Pmx?.ClearCustomShaderUniforms();
     public void ClearCustomShader() => Pmx?.ClearCustomShader();
 
-    public void Speak(string text, Action? onCompleted = null) => _speak(text, 0, 1.0f, 1.0f, onCompleted, string.Empty);
+    public void Speak(string text, Action? onCompleted = null) => _speak(text, _voiceSettings.DefaultSpeakerId, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, onCompleted, string.Empty);
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => _speak(text, speakerId, speed, volume, onCompleted, string.Empty);
-    public void SpeakWithCallback(string text, string callbackName) => _speak(text, 0, 1.0f, 1.0f, null, callbackName);
+    public void SpeakWithCallback(string text, string callbackName) => _speak(text, _voiceSettings.DefaultSpeakerId, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, null, callbackName);
     public void SpeakWithCallback(string text, int speakerId, float speed, float volume, string callbackName) => _speak(text, speakerId, speed, volume, null, callbackName);
     public void StopSpeaking() => _stopSpeaking();
 

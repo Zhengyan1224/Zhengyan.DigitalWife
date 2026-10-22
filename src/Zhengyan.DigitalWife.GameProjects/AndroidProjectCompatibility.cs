@@ -235,6 +235,21 @@ public static class AndroidProjectCompatibility
         GameProject project,
         ICollection<AndroidCompatibilityIssue> issues)
     {
+        if (project.Asr.Enabled && (!string.Equals(project.Asr.Provider, "sherpa", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(project.Asr.Sherpa.ModelKind, "OfflineWhisper", StringComparison.OrdinalIgnoreCase)))
+            issues.Add(new("ANDROID_LOCAL_ASR_PROVIDER", AndroidCompatibilitySeverity.Error,
+                "Android local ASR/wake monitoring requires Sherpa (Whisper is not enabled). Select a supported Sherpa model and include its files in the project."));
+        if (project.Asr.Enabled && !string.Equals(project.Asr.Sherpa.Provider, "cpu", StringComparison.OrdinalIgnoreCase))
+            issues.Add(new("ANDROID_LOCAL_ASR_CPU", AndroidCompatibilitySeverity.Error, "Android local Sherpa ASR currently requires provider=cpu."));
+        if (project.Voice.Enabled && (!string.Equals(project.Voice.TtsProvider, "sherpa-onnx", StringComparison.OrdinalIgnoreCase)
+            || (project.Voice.ModelKind.ToLowerInvariant() is not ("vits" or "matcha"))))
+            issues.Add(new("ANDROID_LOCAL_TTS_PROVIDER", AndroidCompatibilitySeverity.Error, "Android local TTS requires sherpa-onnx with a Vits or Matcha model."));
+        if (project.Voice.Enabled && !string.Equals(project.Voice.InferenceProvider, "cpu", StringComparison.OrdinalIgnoreCase))
+            issues.Add(new("ANDROID_LOCAL_TTS_CPU", AndroidCompatibilitySeverity.Error, "Android local Sherpa TTS currently requires inferenceProvider=cpu."));
+        if (project.Asr.Enabled || project.Voice.Enabled)
+            issues.Add(new("ANDROID_LOCAL_SPEECH_MODELS", AndroidCompatibilitySeverity.Warning,
+                "Android runs Sherpa ASR, wake-word text matching and TTS entirely on-device. Include the configured model/token/dictionary/vocoder files in the game project; desktop audio-device indices are ignored. Verify model memory, CPU cost and playback on the target phone."));
+
         if (string.Equals(project.ScriptRuntime.PreferredLanguage, "python", StringComparison.OrdinalIgnoreCase))
         {
             issues.Add(new AndroidCompatibilityIssue(

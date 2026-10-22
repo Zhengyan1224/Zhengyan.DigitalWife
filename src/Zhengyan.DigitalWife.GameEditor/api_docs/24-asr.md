@@ -27,6 +27,16 @@ keywords:
 
 ## API 内容
 
+## Android 本地 Sherpa ASR 与唤醒词
+
+Android 的 `Scene.Asr` 使用工程 `Asr.Sherpa` 模型和原生 AudioRecord 完成本地识别。必须启用 ASR、选择 `Provider=sherpa` / `Sherpa.Provider=cpu`，并将 tokens、encoder、decoder、joiner 或所需单文件模型放入工程。Whisper Provider / OfflineWhisper 暂不支持，不回退系统识别，不发送音频到远端。
+
+唤醒词用同一个本地模型的 partial/final 文本进行归一化匹配；流式模型可在识别到词时触发。`StartWakeWordMonitoring` 保留 PC 兼容参数，但 Android 按连续语音与停顿分段，chunk/extension/padding 参数不决定本地分句时长。无需单独关键词模型。匹配的唤醒词仍通过 `AsrWakeWord` 返回。
+
+`EndpointSilenceSeconds`（默认 0.9）控制检测到说话后的静音分句，`SpeechRmsThreshold`（默认 0.008）是收音能量阈值，编辑器 ASR 面板可配置。静音前等待不触发 error 或 completed，脚本调用 `StopStreamingRecognition` 才结束空闲窗口；检测到问题并停顿后可提前完成。Cancel/场景切换抑制旧结果。
+
+本地语音加远程 LLM 使用 `Scene.Asr -> Scene.Llm -> Entity.Speak`。显式调用 `Scene.RealtimeVoice` 的脚本仍使用语音服务器，属于另一种模式。Android 忽略 PC PortAudio 设备索引，使用系统原生录音路由。
+
 ## ASR API
 
 GamePlayer 支持从脚本调用本地麦克风录音和 ASR 识别。配置在 GameEditor 的 `Project` 标签页 `ASR` 中，也会保存到 `game.project.json` 的 `asr` 节点。

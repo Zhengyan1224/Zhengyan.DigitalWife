@@ -26,6 +26,12 @@ keywords:
 
 ## API 内容
 
+## Android 本地 TTS
+
+Android 的 `Entity.Speak / SpeakWithCallback` 读取工程 Voice 配置，用 Sherpa 在本机合成并用 AudioTrack 播放。启用 `Voice.Enabled`，选择 `TtsProvider=sherpa-onnx`、`ModelKind=vits/matcha`、`InferenceProvider=cpu`。声音模型、tokens、词典和 Matcha vocoder 都需要包含在游戏包中；缺模型不会回退系统 TTS，也不联网下载。
+
+无参数说话使用工程的默认 speaker/speed/volume，显式重载可覆盖。合成和预热在后台执行；完成回调等原生 PCM 播放完，取消/场景卸载不会误触发旧完成回调。口型按实际音频时长驱动。合成失败写入日志并返回带 Error 的 speech 完成通知，避免对话脚本永久等待。
+
 `Entity.Speak` 是非阻塞的：调用后会立即返回，音频和口型在运行时异步播放。需要播放结束后继续逻辑时，使用回调。
 
 前提条件：
