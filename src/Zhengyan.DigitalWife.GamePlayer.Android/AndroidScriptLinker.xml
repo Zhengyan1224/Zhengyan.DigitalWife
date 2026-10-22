@@ -32,6 +32,11 @@
   </assembly>
   <!-- Published scripts are loaded after trimming and can use every public API. -->
   <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Android.Scripting" preserve="all" />
+  <assembly fullname="Zhengyan.DigitalWife.Mmd.Game">
+    <type fullname="Zhengyan.DigitalWife.Mmd.Game.Input.TouchPoint" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.Mmd.Game.Input.TouchPhase" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.Mmd.Game.Input.TouchInputKind" preserve="all" />
+  </assembly>
   <assembly fullname="Zhengyan.DigitalWife.RealtimeVoice.Client" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.Realtime.OpenAI" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.GamePlayer.Runtime.Core" preserve="all" />

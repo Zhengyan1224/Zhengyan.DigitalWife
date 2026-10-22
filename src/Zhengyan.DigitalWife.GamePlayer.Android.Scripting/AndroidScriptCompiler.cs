@@ -85,6 +85,7 @@ public static class AndroidScriptCompiler
             + "using Zhengyan.DigitalWife.GamePlayer.Runtime;\n"
             + "using Zhengyan.DigitalWife.GamePlayer.Android;\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n\n"
+            + "using Zhengyan.DigitalWife.Mmd.Game.Input;\n"
             + "#line 1 \"" + path.Replace('\\', '/').Replace("\"", "\\\"") + "\"\n"
             + compilationBody;
         CSharpParseOptions parseOptions = new(LanguageVersion.Latest, kind: SourceCodeKind.Script);

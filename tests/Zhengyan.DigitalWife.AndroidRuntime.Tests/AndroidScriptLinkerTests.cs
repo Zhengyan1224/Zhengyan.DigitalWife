@@ -15,7 +15,16 @@ internal static class AndroidScriptLinkerTests
             ["FromSeconds", "get_TotalSeconds"], []);
         VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GameProjects.Core.dll"),
             "Zhengyan.DigitalWife.GameProjects", "ScriptBinding", ["get_Enabled", "set_Enabled"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GamePlayer.Android.dll"),
+            "Zhengyan.DigitalWife.GamePlayer.Android", "AndroidScriptInput", ["get_Touches", "get_TouchTransitions", "get_IsTouchAvailable"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GamePlayer.Android.Scripting.dll"),
+            "Zhengyan.DigitalWife.GamePlayer.Android", "AndroidScriptInputApi", ["TryGetTouch", "get_PrimaryTouch", "get_ActiveTouchCount"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Abstractions.dll"),
+            "Zhengyan.DigitalWife.GameProjects", "AndroidScriptGlobalsContract", ["get_PlatformName", "get_IsAndroid", "get_IsWindows", "get_IsLinux", "get_IsMacOS"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Mmd.Game.dll"),
+            "Zhengyan.DigitalWife.Mmd.Game.Input", "TouchPoint", ["get_X", "get_Y", "get_Phase", "get_IsActive", "get_IsEnded", "get_Kind"], []);
         Console.WriteLine("PASS Linked Android time APIs and disabled-binding serialization members");
+        Console.WriteLine("PASS Linked Android script Touch APIs and platform identifiers");
     }
 
     private static void VerifyMembers(string path, string ns, string name, string[] methods, string[] fields)

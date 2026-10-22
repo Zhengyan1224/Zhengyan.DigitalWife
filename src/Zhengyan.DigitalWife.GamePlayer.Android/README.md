@@ -2,6 +2,12 @@
 
 本项目是 Zhengyan DigitalWife 共享运行时的 Android 原生主机，目前提供以下能力：
 
+2026-10-22：C# 脚本 `Input` 已暴露原生多点 Touch 快照、稳定 ID、像素位移和按下/释放/取消
+记录，与 PC 共用 `TouchPoint / TouchPhase`。`TouchTransitions` 保留两帧之间快速点击的事件顺序，
+`Touches` 用于持续移动。平台可通过全局 `PlatformName / IsAndroid / IsWindows / IsLinux / IsMacOS`
+判断。新增 API 的脚本需使用新版编辑器重新导出，并更新播放器。
+示例见 [Input 文档](../Zhengyan.DigitalWife.GameEditor/api_docs/09-input.md)。
+
 2026-09-28：GLES / Vulkan 已接入 PC 共用加载画面、C# 加载脚本，以及 LLM 流式工具调用、
 Skills / Memory。编辑器和 Android 现在引用同一套强类型脚本 API，导出时不再使用全 dynamic
 的替代接口。升级后请同时更新 Android 播放器并重新导出 `.dwgame`。

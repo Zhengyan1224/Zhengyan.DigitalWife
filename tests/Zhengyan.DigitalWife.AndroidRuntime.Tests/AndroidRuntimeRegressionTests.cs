@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -56,6 +57,10 @@ internal static class AndroidRuntimeRegressionTests
             ("Android GUI quick taps preserve native event ordering", AndroidGuiEventTests.TestQuickTap),
             ("Android GUI releases, cancellation and scene changes", AndroidGuiEventTests.TestReleaseAndCancellation),
             ("Android GUI targets match desktop fallback", AndroidGuiEventTests.TestTargets),
+            ("Script touch Android native multi-point input and quick transitions", TouchScriptTests.TestAndroidInput),
+            ("Script touch desktop quick transitions and cancellation", TouchScriptTests.TestDesktopTransitions),
+            ("Script platform globals and touch docs compile on desktop and Android", TestScriptPlatformsAndDocs),
+            ("Script platform Python worker globals and touch transition snapshots", TestPythonPlatform),
             ("Android in-memory script references include default imports", AndroidScriptMetadataTests.TestDefaultImports),
             ("Android script portability for params collections and spans", AndroidScriptPortabilityTests.TestParamsAndSpans),
             ("Android script portability detects older package InlineArrays", AndroidScriptPortabilityTests.TestOldPackageDetection),
@@ -135,6 +140,91 @@ internal static class AndroidRuntimeRegressionTests
         Check(legacyVoice.RealtimeVoiceDelta == "reply delta" && legacyVoice.RealtimeVoiceAccumulatedText == "full reply", "Legacy globals lost voice event fields.");
         fixture.Globals.Update(0.1f, false, null);
         Check(!fixture.Globals.IsRealtimeVoiceEvent && fixture.Globals.RealtimeVoiceEvent is null && fixture.Globals.RealtimeVoiceDelta == "", "Voice event leaked into the next frame.");
+    }
+
+    private static void TestScriptPlatformsAndDocs()
+    {
+        using ScriptFixture fixture = new("return PlatformName == \"Android\" && IsAndroid && !IsWindows && !IsLinux && !IsMacOS;");
+        Check(fixture.Execute() is true, "Android compiled globals inherited the export host's platform.");
+        var legacy = (AndroidScriptGlobalsContract)fixture.Globals;
+        Check(legacy.IsAndroid && legacy.PlatformName == "Android", "Legacy globals have different platform identifiers.");
+        Type desktopGlobals = Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "Zhengyan.DigitalWife.GamePlayer.dll"))
+            .GetType("Zhengyan.DigitalWife.GamePlayer.CSharpScriptGlobals")!;
+        object desktop = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(desktopGlobals);
+        string expected = OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsLinux() ? "Linux"
+            : OperatingSystem.IsMacOS() ? "MacOS" : "Unknown";
+        Check((string)desktopGlobals.GetProperty("PlatformName")!.GetValue(desktop)! == expected
+            && desktopGlobals.GetProperty("PlatformName")!.SetMethod is null, "Desktop globals do not identify the runtime OS or are writable.");
+        foreach (string flag in new[] { "IsWindows", "IsLinux", "IsMacOS", "IsAndroid" })
+            Check((bool)desktopGlobals.GetProperty(flag)!.GetValue(desktop)! == (flag[2..] == expected), "Desktop platform flags disagree.");
+
+        string docs = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScriptDocs", "09-input.md"));
+        string newTouchExamples = docs[..docs.IndexOf("### 触屏射线与 Sprite 示例", StringComparison.Ordinal)];
+        string platformDocs = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScriptDocs", "03-system-api.md"));
+        string[] sources = Regex.Matches(newTouchExamples, "```csharp\\r?\\n([\\s\\S]*?)```")
+            .Select(match => match.Groups[1].Value)
+            .Concat(Regex.Matches(platformDocs, "```csharp\\r?\\n([\\s\\S]*?)```").Take(1).Select(match => match.Groups[1].Value))
+            .ToArray();
+        // Compile the three common gesture examples plus the platform example.
+        sources = sources.Where(source => source.Contains("TouchTransitions") || source.Contains("class TouchGestureState")
+            || source.Contains("class TwoFingerState") || source.Contains("PlatformName")).ToArray();
+        Check(sources.Length == 4, "Touch/platform documentation sample selection changed.");
+        GameProject project = new() { Scene = fixture.CoreScene.Definition };
+        for (int i = 0; i < sources.Length; i++)
+        {
+            string name = $"doc-{i}.csx";
+            string path = Path.Combine(fixture.Root, name);
+            File.WriteAllText(path, sources[i]);
+            _ = AndroidScriptCompiler.Compile(path);
+            _ = AndroidScriptCompiler.Compile(path, AndroidScriptMetadata.GetReferences());
+            project.Scene.Entities[0].Scripts.Add(new() { Path = name, Language = "csharp" });
+        }
+        GameProjectStore.Save(fixture.Root, project);
+        Check(DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 4,
+            "Common gesture snippets do not compile against the desktop exported globals.");
+    }
+
+    private static void TestPythonPlatform()
+    {
+        using ScriptFixture fixture = new();
+        Type workerType = Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "Zhengyan.DigitalWife.GamePlayer.dll"))
+            .GetType("Zhengyan.DigitalWife.GamePlayer.PythonScriptInstance")!;
+        string worker = (string)workerType.GetMethod("BuildWorkerSource", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null)!;
+        string workerPath = Path.Combine(fixture.Root, "worker.py");
+        string scriptPath = Path.Combine(fixture.Root, "platform.py");
+        File.WriteAllText(workerPath, worker);
+        File.WriteAllText(scriptPath, """
+            assert platform_name == "Windows" and is_windows and not is_linux and not is_macos and not is_android
+            def update(entity, scene, input, audio, delta_seconds):
+                assert [t.phase for t in input.touch_transitions] == ["started", "ended"]
+                assert input.touch_transitions[0].id == input.touch_transitions[1].id == 9
+                assert input.is_touch_started and input.is_touch_ended and not input.is_touch_down
+                print("PYTHON_PLATFORM_TOUCH_OK", flush=True)
+            """);
+        ProcessStartInfo start = new("python")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        // Simulate a Windows player host independently of the test runner OS.
+        foreach (string arg in new[] { "-u", workerPath, scriptPath, fixture.SaveRoot, "Windows" }) start.ArgumentList.Add(arg);
+        using Process process = Process.Start(start)!;
+        Task<string> output = process.StandardOutput.ReadToEndAsync();
+        Task<string> errors = process.StandardError.ReadToEndAsync();
+        process.StandardInput.WriteLine(JsonSerializer.Serialize(new
+        {
+            @event = "update", deltaSeconds = .016,
+            input = new
+            {
+                isTouchStarted = true, isTouchEnded = true, isTouchDown = false,
+                touchTransitions = new[] { new { id = 9, phase = "Started" }, new { id = 9, phase = "Ended" } }
+            }
+        }));
+        process.StandardInput.Close();
+        if (!process.WaitForExit(10_000)) { process.Kill(true); throw new TimeoutException("Python input worker did not finish."); }
+        string error = errors.GetAwaiter().GetResult();
+        Check(process.ExitCode == 0 && error.Length == 0 && output.GetAwaiter().GetResult().Contains("PYTHON_PLATFORM_TOUCH_OK"),
+            "Python global/platform input snapshot failed: " + error);
     }
 
     private static void TestLlmHttpStreaming()
@@ -499,7 +589,7 @@ internal static class AndroidRuntimeRegressionTests
         private readonly AndroidScriptServices _services;
         private readonly Func<object?[], Task<object?>> _factory;
 
-        public ScriptFixture()
+        public ScriptFixture(string? source = null)
         {
             Directory.CreateDirectory(Root);
             CoreScene = new("scenes/main.scene.json", new() { Entities = [new() { Id = "entity", Name = "actor", Type = "empty" }], GuiControls = [new() { Name = "status" }] }, p => Path.Combine(Root, p));
@@ -517,7 +607,7 @@ internal static class AndroidRuntimeRegressionTests
                 speak: (text, speaker, speed, volume, completed, callback) => { SpeechStarts++; PendingSpeech = completed; });
             Globals = new(Scene, Entity, new EmptyInput(), new(_ => true, _ => true, _ => true), 0, false, false, services: _services);
             string path = Path.Combine(Root, "script.csx");
-            File.WriteAllText(path, """
+            File.WriteAllText(path, source ?? """
                 RuntimeLlmChatMessage message = new("user", "ABI test");
                 if (IsStart) Entity.Speak("hello", () => Scene.GetGuiControl("status").SetValue("spoken"));
                 if (IsLoadingEvent) Scene.GetGuiControl("status").SetValue(LoadingEventName + ":" + LoadingProgress.ToString("F2", CultureInfo.InvariantCulture));

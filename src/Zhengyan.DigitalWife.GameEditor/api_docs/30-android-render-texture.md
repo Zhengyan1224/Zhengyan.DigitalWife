@@ -1,4 +1,31 @@
+---
+id: 30-android-render-texture
+title: Android RenderTexture / GLES Shader
+category: 渲染
+objects:
+  - Services
+  - AndroidGlesShaderContract
+keywords:
+  - Android
+  - RenderTexture
+  - GLES
+  - shader
+---
+
 # Android RenderTexture API
+
+## 结构化索引
+
+| 项 | 内容 |
+| --- | --- |
+| 模块 | Android RenderTexture / GLES Shader |
+| 分类 | 渲染 |
+| 主要对象 | `Services`, `AndroidGlesShaderContract` |
+| C# 入口 | `Services.GetRenderTextures, Services.ConfigureRenderTexture, Services.RefreshRenderTexture` |
+| Python 入口 | Android 不支持 Python 脚本。 |
+| 说明 | Android RenderTexture 查询与刷新，以及 GLES 自定义 shader 约定。 |
+
+## API 内容
 
 Android GamePlayer 的 C# 脚本通过 `Services` 访问当前场景的 RenderTexture：
 

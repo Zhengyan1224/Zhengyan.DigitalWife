@@ -19,11 +19,27 @@ namespace Java.Util
 
 namespace Android.App
 {
-    public static class Application { public static object Context { get; } = new(); }
+    public static class Application { public static Content.Context Context { get; } = new(); }
 }
 
 namespace Android.Content
 {
+    public sealed class Context
+    {
+        public const string ClipboardService = "clipboard";
+        public object? GetSystemService(string name) => null;
+    }
+    public sealed class ClipboardManager
+    {
+        public bool HasPrimaryClip => PrimaryClip is not null;
+        public ClipData? PrimaryClip { get; set; }
+    }
+    public sealed class ClipData
+    {
+        public static ClipData NewPlainText(string label, string text) => new();
+        public Item GetItemAt(int index) => new();
+        public sealed class Item { public string CoerceToText(Context context) => ""; }
+    }
     public sealed class Intent
     {
         public Intent(string action) { }

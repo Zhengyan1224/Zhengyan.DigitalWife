@@ -307,6 +307,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
         startInfo.ArgumentList.Add(WorkerScriptPath.Value);
         startInfo.ArgumentList.Add(scriptPath);
         startInfo.ArgumentList.Add(saveDirectory);
+        startInfo.ArgumentList.Add(OperatingSystem.IsWindows() ? "Windows"
+            : OperatingSystem.IsMacOS() ? "MacOS" : OperatingSystem.IsLinux() ? "Linux" : "Unknown");
 
         Process process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start python process.");
@@ -378,6 +380,11 @@ internal sealed class PythonScriptInstance : IScriptInstance
                module.statistics = statistics
                module.subprocess = subprocess
                module.time = time
+               module.platform_name = sys.argv[3]
+               module.is_windows = module.platform_name == "Windows"
+               module.is_linux = module.platform_name == "Linux"
+               module.is_macos = module.platform_name == "MacOS"
+               module.is_android = False  # Android GamePlayer supports C# scripts only.
 
                spec.loader.exec_module(module)
 
@@ -3279,6 +3286,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.is_touch_started = bool(data.get("isTouchStarted", False))
                        self.is_touch_ended = bool(data.get("isTouchEnded", False))
                        self.touches = [TouchPoint(item) for item in data.get("touches", [])]
+                       self.touch_transitions = [TouchPoint(item) for item in data.get("touchTransitions", [])]
                        primary_touch = data.get("primaryTouch", None)
                        self.primary_touch = TouchPoint(primary_touch) if primary_touch is not None else None
                        self.clipboard_text = str(data.get("clipboardText", "") or "")
@@ -6114,6 +6122,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public bool IsTouchEnded { get; set; }
 
         public PythonTouchPoint[] Touches { get; set; } = [];
+        public PythonTouchPoint[] TouchTransitions { get; set; } = [];
 
         public PythonTouchPoint? PrimaryTouch { get; set; }
 
@@ -6162,6 +6171,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 IsTouchStarted = input.IsTouchStarted,
                 IsTouchEnded = input.IsTouchEnded,
                 Touches = input.Touches.Select(PythonTouchPoint.FromRuntime).ToArray(),
+                TouchTransitions = input.TouchTransitions.Select(PythonTouchPoint.FromRuntime).ToArray(),
                 PrimaryTouch = input.PrimaryTouch is { } primaryTouch
                     ? PythonTouchPoint.FromRuntime(primaryTouch)
                     : null,

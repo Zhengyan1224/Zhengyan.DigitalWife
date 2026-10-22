@@ -1,5 +1,6 @@
 using Android.Views;
 using System.Numerics;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -21,6 +22,7 @@ public readonly record struct AndroidTouchPoint(
     AndroidTouchPhase Phase,
     bool IsPrimary)
 {
+    public TouchInputKind Kind { get; init; } = TouchInputKind.Touch;
     public bool IsActive => Phase is AndroidTouchPhase.Began
         or AndroidTouchPhase.Moved
         or AndroidTouchPhase.Stationary;
@@ -184,6 +186,14 @@ internal sealed class AndroidTouchState
         }
 
         int id = motionEvent.GetPointerId(pointerIndex);
+        TouchInputKind kind = motionEvent.GetToolType(pointerIndex) switch
+        {
+            MotionEventToolType.Finger => TouchInputKind.Touch,
+            MotionEventToolType.Stylus or MotionEventToolType.Eraser => TouchInputKind.Pen,
+            _ => TouchInputKind.Unknown
+        };
+        // SurfaceView also receives mouse events; they belong to mouse input.
+        if (kind == TouchInputKind.Unknown) return;
         Vector2 position = new(motionEvent.GetX(pointerIndex), motionEvent.GetY(pointerIndex));
         if (!_touches.TryGetValue(id, out TouchState? state))
         {
@@ -194,7 +204,11 @@ internal sealed class AndroidTouchState
         state.Delta += position - state.PixelPosition;
         state.PixelPosition = position;
         state.Pressure = Math.Clamp(motionEvent.GetPressure(pointerIndex), 0.0f, 1.0f);
-        state.Phase = phase;
+        state.Kind = kind;
+        state.Phase = phase == AndroidTouchPhase.Moved
+            ? state.StartedThisFrame ? AndroidTouchPhase.Began
+                : state.Delta.LengthSquared() > 0.000001f ? AndroidTouchPhase.Moved : AndroidTouchPhase.Stationary
+            : phase;
         if (phase == AndroidTouchPhase.Began)
         {
             state.StartedThisFrame = true;
@@ -220,6 +234,7 @@ internal sealed class AndroidTouchState
         public Vector2 Delta { get; set; }
 
         public float Pressure { get; set; } = 1.0f;
+        public TouchInputKind Kind { get; set; } = TouchInputKind.Touch;
 
         public AndroidTouchPhase Phase { get; set; } = AndroidTouchPhase.Began;
 
@@ -240,7 +255,7 @@ internal sealed class AndroidTouchState
                 Delta,
                 Pressure,
                 Phase,
-                isPrimary);
+                isPrimary) { Kind = Kind };
         }
     }
 }

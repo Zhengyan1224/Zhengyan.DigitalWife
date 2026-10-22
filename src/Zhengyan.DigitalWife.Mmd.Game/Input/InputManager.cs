@@ -12,6 +12,7 @@ public sealed class InputManager : IDisposable
     private readonly HashSet<ButtonName> _gamepadButtonsDown = [];
     private readonly Dictionary<int, TouchState> _activeTouches = [];
     private readonly List<TouchPoint> _touches = [];
+    private readonly List<TouchPoint> _touchTransitions = [];
     private readonly ITouchInputSource _touchInputSource;
     private Vector2 _pendingScrollDelta;
     private Vector2 _pendingMouseDelta;
@@ -83,6 +84,7 @@ public sealed class InputManager : IDisposable
     public IReadOnlyCollection<ButtonName> GamepadButtonsDown => _gamepadButtonsDown;
 
     public IReadOnlyList<TouchPoint> Touches => _touches;
+    public IReadOnlyList<TouchPoint> TouchTransitions => _touchTransitions;
 
     public TouchPoint? PrimaryTouch { get; private set; }
 
@@ -287,6 +289,7 @@ public sealed class InputManager : IDisposable
 
     private void CaptureTouchState()
     {
+        _touchTransitions.Clear();
         foreach (TouchState state in _activeTouches.Values)
         {
             state.DeltaX = 0.0f;
@@ -308,6 +311,7 @@ public sealed class InputManager : IDisposable
                 state.Phase = TouchPhase.Cancelled;
                 state.Pressure = 0.0f;
                 state.RemoveAfterFrame = true;
+                _touchTransitions.Add(state.ToTouchPoint());
             }
         }
 
@@ -320,8 +324,8 @@ public sealed class InputManager : IDisposable
         }
 
         ActiveTouchCount = _touches.Count(static touch => touch.IsActive);
-        IsTouchStarted = _touches.Any(static touch => touch.Phase == TouchPhase.Started);
-        IsTouchEnded = _touches.Any(static touch => touch.IsEnded);
+        IsTouchStarted = _touchTransitions.Any(static touch => touch.Phase == TouchPhase.Started);
+        IsTouchEnded = _touchTransitions.Any(static touch => touch.IsEnded);
         PrimaryTouch = _touches.Count == 0 ? null : _touches[0];
 
         foreach (int id in _activeTouches
@@ -380,6 +384,8 @@ public sealed class InputManager : IDisposable
             default:
                 break;
         }
+        if (touchEvent.Phase is TouchPhase.Started or TouchPhase.Ended or TouchPhase.Cancelled)
+            _touchTransitions.Add(state.ToTouchPoint());
     }
 
     private sealed class TouchState(int id, float x, float y, TouchInputKind kind)

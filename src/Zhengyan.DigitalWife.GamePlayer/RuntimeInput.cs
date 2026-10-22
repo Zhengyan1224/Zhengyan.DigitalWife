@@ -91,6 +91,7 @@ public sealed class RuntimeInput
     public bool IsTouchEnded => _game.Input.IsTouchEnded;
 
     public IReadOnlyList<TouchPoint> Touches => _game.Input.Touches;
+    public IReadOnlyList<TouchPoint> TouchTransitions => _game.Input.TouchTransitions;
 
     public TouchPoint? PrimaryTouch => _game.Input.PrimaryTouch;
 

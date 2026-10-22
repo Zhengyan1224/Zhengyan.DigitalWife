@@ -1,9 +1,34 @@
+using Zhengyan.DigitalWife.Mmd.Game.Input;
+
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 // These platform contracts are also the editor's compilation surface. Native
 // implementations live in the Android application, never in published scripts.
 public abstract class AndroidScriptInputApi
 {
+    public virtual bool IsTouchAvailable => false;
+    public bool HasTouch => TouchCount > 0;
+    public int TouchCount => Touches.Count;
+    public int ActiveTouchCount => Touches.Count(touch => touch.IsActive);
+    public bool IsTouchDown => ActiveTouchCount > 0;
+    public virtual bool IsTouchStarted => TouchTransitions.Any(touch => touch.Phase == TouchPhase.Started);
+    public virtual bool IsTouchEnded => TouchTransitions.Any(touch => touch.IsEnded);
+    public virtual IReadOnlyList<TouchPoint> Touches => Array.Empty<TouchPoint>();
+    public virtual IReadOnlyList<TouchPoint> TouchTransitions => Touches;
+    public TouchPoint? PrimaryTouch => Touches.Count == 0 ? null
+        : Touches.OrderBy(touch => touch.IsActive ? 0 : 1).ThenBy(touch => touch.Id).First();
+    public bool TryGetTouch(int id, out TouchPoint touch)
+    {
+        foreach (TouchPoint point in Touches)
+        {
+            if (point.Id != id) continue;
+            touch = point;
+            return true;
+        }
+        touch = default;
+        return false;
+    }
+
     public abstract bool IsKeyDown(string key);
     public abstract bool IsKeyPressed(string key);
     public abstract bool IsKeyReleased(string key);

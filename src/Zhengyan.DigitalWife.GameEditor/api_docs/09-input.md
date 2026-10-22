@@ -15,6 +15,11 @@ keywords:
   - clipboard
   - cursor
   - ray
+  - Android
+  - 多点触控
+  - 滑动
+  - 长按
+  - TouchTransitions
 ---
 
 # Input 输入
@@ -33,7 +38,16 @@ keywords:
 
 `Input` 是当前帧输入状态快照。C# 脚本通过全局 `Input` 访问 `RuntimeInput`；Python 脚本通过事件参数 `input` 访问同一份快照。鼠标位置、触点位置、GUI/Sprite 命中测试和相机射线都使用窗口像素坐标：左上角为 `(0, 0)`，`X` 向右，`Y` 向下。
 
-按键、鼠标按钮、手柄按钮和触点状态表示“当前这一帧是否处于某状态”。如果脚本需要“刚按下/刚松开”这样的单次触发，可以保存上一帧状态自行比较。触屏相关 API 在所有平台上名称一致：Windows 使用 `WM_POINTER`，Linux/X11 使用 XInput2 touch events，macOS 使用 Cocoa touch events；Wayland 暂时返回 `IsTouchAvailable == false` / `input.is_touch_available == False`。
+触屏相关 API 在 PC 与 Android 的 C# 脚本中名称和 `TouchPoint` 类型一致，读取各自平台的原生触摸输入。Android 使用 `MotionEvent`，不是用鼠标坐标模拟多指触摸。Python 只支持 PC。
+
+| 运行平台 | 原生输入来源 | 限制 |
+| --- | --- | --- |
+| Windows | `WM_POINTER`，触屏/笔输入 | 需要窗口后端支持原生句柄及设备输入。 |
+| Linux / X11 | XInput2 TouchBegin / TouchUpdate / TouchEnd | Wayland 暂未接入，`IsTouchAvailable == false`。 |
+| macOS | Cocoa `NSTouch` | 主要来自触控板，将归一化触点映射到窗口像素；不等同于 Windows 的直接屏幕触摸。 |
+| Android | SurfaceView 的 `MotionEvent` 和稳定的 pointer ID | GLES / Vulkan 共用输入采集；系统取消触摸时返回 `Cancelled`。 |
+
+`IsTouchAvailable` 表示引擎接入了当前窗口的触摸来源，不保证设备一定有触屏，也不表示此刻有手指按下。是否有人触摸用 `IsTouchDown`。普通鼠标点击不应被当作 Touch；Android 系统也可能生成兼容鼠标/GUI事件，避免同一个操作在鼠标与 Touch 分支中执行两次。
 
 ### C# 快速总览
 ```csharp
@@ -359,7 +373,11 @@ def update(entity, scene, input, audio, delta_seconds):
 
 ## 触屏 Touch
 
-触屏 API 和鼠标一样使用窗口像素坐标。`Touches` / `input.touches` 包含当前帧的触点快照，并且会把 `Ended` / `Cancelled` 的触点保留一帧，方便脚本捕捉松手或取消。`PrimaryTouch` / `input.primary_touch` 优先返回仍处于活动状态的触点，再按触点 id 排序。
+触屏 API 和鼠标一样使用窗口像素坐标：左上角 `(0, 0)`，X 向右，Y 向下。Android 原生层的归一化坐标不会直接作为脚本 X/Y；脚本得到 SurfaceView 的像素坐标。
+
+`Touches` / `input.touches` 包含当前帧的最终触点快照，并且会把 `Ended` / `Cancelled` 的触点保留一帧。`PrimaryTouch` 优先选择活动触点，再按 ID 选择；增加或移除手指可能改变主触点。需要持续跟踪同一个手指时，保存 `Id` 并调用 `TryGetTouch`，不要保存数组下标。
+
+`TouchTransitions` / `input.touch_transitions` 按原始顺序保留本帧的按下、释放和取消。同一手指在两帧之间完成点击时，`Touches` 只剩 `Ended`，但 `TouchTransitions` 中仍有 `Started` 和 `Ended`。`IsTouchStarted` 与 `IsTouchEnded` 此时可同时为 true。移动使用 `Touches` 的 `DeltaX/DeltaY`，它们是本帧累计像素位移，不是每秒速度，通常不要再乘 `DeltaSeconds`。
 
 | C# | Python | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -372,6 +390,7 @@ def update(entity, scene, input, audio, delta_seconds):
 | `Input.IsTouchEnded` | `input.is_touch_ended` | `bool` | 当前帧是否有结束或取消的触点。 |
 | `Input.PrimaryTouch` | `input.primary_touch` | `TouchPoint?` | 当前主触点；没有触点时为 `null` / `None`。 |
 | `Input.Touches` | `input.touches` | `IReadOnlyList<TouchPoint>` / `list[TouchPoint]` | 当前帧所有触点快照。 |
+| `Input.TouchTransitions` | `input.touch_transitions` | `IReadOnlyList<TouchPoint>` / `list[TouchPoint]` | 当前帧按下、释放、取消的有序记录；不包含连续移动。 |
 | `Input.TryGetTouch(id, out touch)` | `input.get_touch(touch_id)` | `bool` / `TouchPoint or None` | 按触点 id 查找当前帧触点。 |
 
 `TouchPoint` 字段：
@@ -397,7 +416,146 @@ def update(entity, scene, input, audio, delta_seconds):
 - `Ended`：触点正常抬起，只保留当前帧。
 - `Cancelled`：窗口失焦或系统取消触点，只保留当前帧。
 
-### 触屏射线与 Sprite 示例
+### Android / PC：按下、移动、按住、释放、取消
+
+以下 C# 示例可直接用于 PC / Android。`TouchPoint` / `TouchPhase` 已默认导入，也可显式 `using Zhengyan.DigitalWife.Mmd.Game.Input;`。在 `IsUpdate` 中处理原始 Touch，避免在每个 GUI / TTS / LLM 回调中重复消费同一帧。
+
+```csharp
+if (IsUpdate)
+{
+    foreach (TouchPoint touch in Input.TouchTransitions)
+    {
+        if (touch.Phase == TouchPhase.Started)
+            Console.WriteLine($"按下 ID={touch.Id}, 像素=({touch.X}, {touch.Y})");
+        else if (touch.Phase == TouchPhase.Ended)
+            Console.WriteLine($"释放 ID={touch.Id}");
+        else if (touch.Phase == TouchPhase.Cancelled)
+            Console.WriteLine($"取消 ID={touch.Id}，清理拖动/长按状态");
+    }
+
+    foreach (TouchPoint touch in Input.Touches)
+    {
+        if (!touch.IsActive) continue;
+        if (touch.Phase == TouchPhase.Moved)
+            Console.WriteLine($"移动 ID={touch.Id}, 位移=({touch.DeltaX}, {touch.DeltaY})");
+        // Stationary 仍然是按住，适合持续移动、虚拟摇杆等逻辑。
+    }
+}
+```
+
+### 点击、长按、滑动与拖动（跟踪每个触点 ID）
+
+状态使用静态类跨帧保存，在 `IsStart` 时清空。示例阈值为 12 像素点击容差、80 像素滑动距离、0.6 秒长按，可按界面尺寸调整；快速点击也会被识别。`Cancelled` 只清理状态，不当作点击。示例只记录结果，按需要在对应分支执行游戏操作。
+
+```csharp
+static class TouchGestureState
+{
+    public sealed class Finger
+    {
+        public Vector2 Start;
+        public double Seconds;
+        public bool Dragged;
+        public bool LongPressed;
+    }
+    public static readonly Dictionary<int, Finger> Fingers = new();
+}
+
+if (IsStart) TouchGestureState.Fingers.Clear();
+
+if (IsUpdate)
+{
+    foreach (TouchPoint touch in Input.TouchTransitions)
+    {
+        Vector2 position = new(touch.X, touch.Y);
+        if (touch.Phase == TouchPhase.Started)
+        {
+            TouchGestureState.Fingers[touch.Id] = new TouchGestureState.Finger { Start = position };
+        }
+        else if (TouchGestureState.Fingers.Remove(touch.Id, out var finger)
+            && touch.Phase == TouchPhase.Ended)
+        {
+            Vector2 offset = position - finger.Start;
+            if (offset.Length() >= 80.0f)
+            {
+                string direction = MathF.Abs(offset.X) >= MathF.Abs(offset.Y)
+                    ? (offset.X > 0 ? "右" : "左") : (offset.Y > 0 ? "下" : "上");
+                Console.WriteLine($"滑动：{direction}");
+            }
+            else if (!finger.Dragged && !finger.LongPressed && offset.Length() <= 12.0f)
+            {
+                Console.WriteLine("点击");
+            }
+        }
+    }
+
+    foreach (TouchPoint touch in Input.Touches)
+    {
+        if (!touch.IsActive || !TouchGestureState.Fingers.TryGetValue(touch.Id, out var finger)) continue;
+        finger.Seconds += DeltaSeconds;
+        finger.Dragged |= Vector2.Distance(finger.Start, new Vector2(touch.X, touch.Y)) > 12.0f;
+        if (finger.Dragged && (touch.DeltaX != 0 || touch.DeltaY != 0))
+            Console.WriteLine($"拖动 ID={touch.Id}，位移 {touch.DeltaX}, {touch.DeltaY}");
+        if (!finger.Dragged && !finger.LongPressed && finger.Seconds >= 0.6)
+        {
+            finger.LongPressed = true;
+            Console.WriteLine("长按，只触发一次");
+        }
+    }
+}
+```
+
+### 双指缩放与平移
+
+只使用活动触点；两指 ID 变化时重置基准，避免第三根手指加入或原手指抬起后跳变。缩放按两指距离比值调整角色大小，平移示例调整角色 X/Y。Android 的 editor/custom 相机本身也会处理单指旋转、双指平移/缩放；此示例操控角色，编写相机手势时需避免与默认相机控制重复执行。
+
+```csharp
+static class TwoFingerState
+{
+    public static int FirstId = -1;
+    public static int SecondId = -1;
+    public static float Distance;
+    public static Vector2 Center;
+}
+
+if (IsStart) { TwoFingerState.FirstId = -1; TwoFingerState.SecondId = -1; }
+
+if (IsUpdate)
+{
+    TouchPoint[] active = Input.Touches.Where(t => t.IsActive).OrderBy(t => t.Id).Take(2).ToArray();
+    if (active.Length == 2)
+    {
+        Vector2 a = new(active[0].X, active[0].Y);
+        Vector2 b = new(active[1].X, active[1].Y);
+        float distance = Vector2.Distance(a, b);
+        Vector2 center = (a + b) * 0.5f;
+        if (TwoFingerState.FirstId == active[0].Id && TwoFingerState.SecondId == active[1].Id
+            && TwoFingerState.Distance > 1.0f && distance > 1.0f)
+        {
+            float ratio = Math.Clamp(distance / TwoFingerState.Distance, 0.8f, 1.25f);
+            Vector3 scale = Entity.Scale * ratio;
+            Entity.SetScale(Math.Clamp(scale.X, 0.1f, 10.0f), Math.Clamp(scale.Y, 0.1f, 10.0f), Math.Clamp(scale.Z, 0.1f, 10.0f));
+            Vector2 delta = center - TwoFingerState.Center;
+            Vector3 position = Entity.Position;
+            Entity.SetPosition(position.X + delta.X * 0.005f, position.Y - delta.Y * 0.005f, position.Z);
+        }
+        TwoFingerState.FirstId = active[0].Id;
+        TwoFingerState.SecondId = active[1].Id;
+        TwoFingerState.Distance = distance;
+        TwoFingerState.Center = center;
+    }
+    else { TwoFingerState.FirstId = -1; TwoFingerState.SecondId = -1; }
+}
+```
+
+### Android 原始 Touch 与 GUI 按钮事件
+
+普通按钮优先用 `IsGuiEvent` 与 `GuiEventName == "pressed" / "released" / "clicked"`。Android 的按钮释放会回到原来按下的按钮，滑出按钮或系统取消时也会清理按下状态，不产生正常点击。原始 Touch 适合手势、拖动、虚拟摇杆等；它仍包含触摸 GUI 的手指，应由脚本按触点 ID 记录归属并过滤，避免点击按钮同时拖动场景。手指离开当前 GUI 边界后不能立即取消其归属，应在 `Ended/Cancelled` 时清理。
+
+平台分支可直接用全局 `IsAndroid / IsWindows / IsLinux / IsMacOS / PlatformName`，详见“基础系统 API”。同样的 Touch 手势逻辑通常不需要区分平台。
+
+### 触屏射线与 Sprite 示例（PC）
+
+本节使用 PC 的相机/Sprite 便捷方法；上方的原始 Touch 与手势示例可在 Android 使用。
 ```csharp
 if (IsUpdate && Input.IsTouchAvailable && Input.PrimaryTouch is { IsActive: true } touch)
 {

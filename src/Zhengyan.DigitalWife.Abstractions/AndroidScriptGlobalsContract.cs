@@ -5,6 +5,13 @@ namespace Zhengyan.DigitalWife.GameProjects;
 // Its implementation still fills this base contract for older DLLs.
 public class AndroidScriptGlobalsContract
 {
+    // Identify the runtime contract even when exporting on a desktop host.
+    public string PlatformName => "Android";
+    public bool IsAndroid => true;
+    public bool IsWindows => false;
+    public bool IsLinux => false;
+    public bool IsMacOS => false;
+
     public dynamic? Scene { get; protected set; }
     public dynamic? Entity { get; protected set; }
     public dynamic? Input { get; protected set; }

@@ -1,16 +1,42 @@
 using Android.App;
 using Android.Content;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 public sealed class AndroidScriptInput : AndroidScriptInputApi
 {
-    private AndroidInputSnapshot _snapshot;
+    private AndroidInputSnapshot _snapshot = AndroidInputSnapshot.Empty;
     private bool _cursorVisible = true;
 
-    internal AndroidScriptInput(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
+    private IReadOnlyList<TouchPoint> _touches = Array.Empty<TouchPoint>();
+    private IReadOnlyList<TouchPoint> _touchTransitions = Array.Empty<TouchPoint>();
 
-    internal void Update(AndroidInputSnapshot snapshot) => _snapshot = snapshot;
+    internal AndroidScriptInput(AndroidInputSnapshot snapshot) => Update(snapshot);
+
+    internal void Update(AndroidInputSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        _touches = Array.AsReadOnly(snapshot.Touches.Select(ToScriptTouch).ToArray());
+        _touchTransitions = Array.AsReadOnly(snapshot.TouchTransitions.Select(ToScriptTouch).ToArray());
+    }
+
+    public override bool IsTouchAvailable => true;
+    public override bool IsTouchStarted => _snapshot.IsTouchStarted;
+    public override bool IsTouchEnded => _snapshot.IsTouchEnded;
+    public override IReadOnlyList<TouchPoint> Touches => _touches;
+    public override IReadOnlyList<TouchPoint> TouchTransitions => _touchTransitions;
+
+    private static TouchPoint ToScriptTouch(AndroidTouchPoint touch) => new(
+        touch.Id, touch.PixelPosition.X, touch.PixelPosition.Y, touch.Delta.X, touch.Delta.Y,
+        touch.Phase switch
+        {
+            AndroidTouchPhase.Began => TouchPhase.Started,
+            AndroidTouchPhase.Moved => TouchPhase.Moved,
+            AndroidTouchPhase.Stationary => TouchPhase.Stationary,
+            AndroidTouchPhase.Ended => TouchPhase.Ended,
+            _ => TouchPhase.Cancelled
+        }, touch.Kind, touch.Pressure);
 
     public override bool IsKeyDown(string key)
         => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);

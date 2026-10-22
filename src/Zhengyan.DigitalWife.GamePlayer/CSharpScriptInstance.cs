@@ -44,6 +44,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
                 "System.Threading",
                 "System.Threading.Tasks",
                 "Zhengyan.DigitalWife.Mmd.Game.Pmx",
+                "Zhengyan.DigitalWife.Mmd.Game.Input",
                 "Zhengyan.DigitalWife.GamePlayer");
     }
 

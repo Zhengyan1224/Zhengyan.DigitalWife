@@ -121,6 +121,7 @@ internal static class DesktopCSharpScriptPrecompiler
             + "using System.Threading.Tasks;\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n"
             + "using Zhengyan.DigitalWife.GamePlayer;\n"
+            + "using Zhengyan.DigitalWife.Mmd.Game.Input;\n"
             + "\n"
             + compilationBody;
         SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(

@@ -2,6 +2,13 @@ namespace Zhengyan.DigitalWife.GamePlayer;
 
 public sealed class CSharpScriptGlobals
 {
+    public bool IsAndroid => OperatingSystem.IsAndroid();
+    public bool IsWindows => OperatingSystem.IsWindows();
+    public bool IsLinux => !IsAndroid && OperatingSystem.IsLinux();
+    public bool IsMacOS => OperatingSystem.IsMacOS();
+    public string PlatformName => IsAndroid ? "Android" : IsWindows ? "Windows"
+        : IsLinux ? "Linux" : IsMacOS ? "MacOS" : "Unknown";
+
     public required RuntimeEntity Entity { get; init; }
 
     public required RuntimeScene Scene { get; init; }

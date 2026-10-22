@@ -351,6 +351,7 @@
       <section class="hero">
         <h2>GameEditor / GamePlayer 脚本 API</h2>
         <p>根 Markdown 已拆分为模块文档。左侧检索后点击模块，可在这里查看该对象的属性表、方法参数说明和示例。通过本地文件直接打开时，页面使用 <code>api_manifest.js</code> 离线快照；通过 HTTP 服务打开时，会优先读取对应的 <code>api_docs/*.md</code> 文件。</p>
+        <p>触屏示例：搜索 <code>TouchTransitions</code>、<code>长按</code> 或 <code>双指</code>，查看 PC / Android 共用的多点触控、滑动与按下/释放处理。平台判断可搜索 <code>PlatformName</code> 或 <code>IsAndroid</code>。</p>
       </section>
       <section class="content-card">
         <div id="docView" class="doc-content"></div>
@@ -502,14 +503,16 @@
     function filteredDocs() {
       const query = searchInput.value.trim().toLowerCase();
       return docs.filter(doc => {
-        const categoryOk = activeCategory === "全部" || doc.category === activeCategory;
+        const categoryOk = activeCategory === "全部" || String(doc.category ?? "").trim() === activeCategory;
         const queryOk = !query || docSearchText(doc).includes(query);
         return categoryOk && queryOk;
       });
     }
 
     function renderFilters() {
-      const categories = ["全部", ...Array.from(new Set(docs.map(doc => doc.category))).sort()];
+      const categories = ["全部", ...Array.from(new Set(docs
+        .map(doc => String(doc.category ?? "").trim())
+        .filter(category => category && category !== "全部"))).sort()];
       filtersEl.innerHTML = categories.map(category =>
         `<button class="chip ${category === activeCategory ? "active" : ""}" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>`
       ).join("");
