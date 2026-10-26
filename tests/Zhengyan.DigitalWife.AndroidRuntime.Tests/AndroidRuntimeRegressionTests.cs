@@ -60,7 +60,8 @@ internal static class AndroidRuntimeRegressionTests
             ("Script touch Android native multi-point input and quick transitions", TouchScriptTests.TestAndroidInput),
             ("Script touch desktop quick transitions and cancellation", TouchScriptTests.TestDesktopTransitions),
             ("Script platform globals and touch docs compile on desktop and Android", TestScriptPlatformsAndDocs),
-            ("Script platform Python worker globals and touch transition snapshots", TestPythonPlatform),
+            ("Script current time compiles and runs on desktop and Android", TestScriptTime),
+            ("Script platform Python worker globals, current time and touch transition snapshots", TestPythonPlatform),
             ("Android in-memory script references include default imports", AndroidScriptMetadataTests.TestDefaultImports),
             ("Android script portability for params collections and spans", AndroidScriptPortabilityTests.TestParamsAndSpans),
             ("Android script portability detects older package InlineArrays", AndroidScriptPortabilityTests.TestOldPackageDetection),
@@ -184,6 +185,68 @@ internal static class AndroidRuntimeRegressionTests
             "Common gesture snippets do not compile against the desktop exported globals.");
     }
 
+    private static void TestScriptTime()
+    {
+        const string source = """
+            long first = Time.UnixTimeMilliseconds;
+            await Task.Delay(30);
+            return new object[] { Time.Now, Time.UtcNow, Time.UnixTimeSeconds,
+                Time.UnixTimeMilliseconds, Time.UnixTimeMilliseconds > first };
+            """;
+        using ScriptFixture fixture = new(source);
+        Validate(fixture.Execute);
+        var legacy = (AndroidScriptGlobalsContract)fixture.Globals;
+        Check(ReferenceEquals(legacy.Time, fixture.Globals.Time), "Android legacy and typed globals use different clocks.");
+        string path = Path.Combine(fixture.Root, "script.csx");
+        var androidFactory = Factory(AndroidScriptCompiler.Compile(path, AndroidScriptMetadata.GetReferences()));
+        Validate(() => androidFactory([fixture.Globals, null]).GetAwaiter().GetResult());
+
+        string docs = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScriptDocs", "03-system-api.md"));
+        string example = Regex.Matches(docs, "```csharp\\r?\\n([\\s\\S]*?)```")
+            .Select(match => match.Groups[1].Value).Single(value => value.Contains("Time.Now"));
+        string examplePath = Path.Combine(fixture.Root, "time-doc.csx");
+        File.WriteAllText(examplePath, example);
+        _ = AndroidScriptCompiler.Compile(examplePath, AndroidScriptMetadata.GetReferences());
+        GameProject project = new() { Scene = fixture.CoreScene.Definition };
+        project.Scene.Entities[0].Scripts.Add(new() { Path = "script.csx", Language = "csharp" });
+        project.Scene.Entities[0].Scripts.Add(new() { Path = "time-doc.csx", Language = "csharp" });
+        GameProjectStore.Save(fixture.Root, project);
+        var compiled = DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project);
+        Check(compiled.Entries.Count == 2, "Desktop export omitted the time script or documentation example.");
+        Type desktopGlobals = Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "Zhengyan.DigitalWife.GamePlayer.dll"))
+            .GetType("Zhengyan.DigitalWife.GamePlayer.CSharpScriptGlobals")!;
+        object desktop = Activator.CreateInstance(desktopGlobals)!;
+        Check(desktopGlobals.GetProperty("Time")!.SetMethod is null, "Desktop clock global is writable.");
+        Type instanceType = desktopGlobals.Assembly.GetType("Zhengyan.DigitalWife.GamePlayer.CSharpScriptInstance")!;
+        var references = (IEnumerable<Assembly>)instanceType.GetMethod("GetScriptReferences", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, null)!;
+        var liveScript = Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.Create<object?>(source,
+            Microsoft.CodeAnalysis.Scripting.ScriptOptions.Default.WithReferences(references).WithImports("System", "System.Threading.Tasks"),
+            desktopGlobals);
+        Validate(() => liveScript.RunAsync(desktop).GetAwaiter().GetResult().ReturnValue);
+        var entry = compiled.Entries.Single(value => value.Source == "script.csx");
+        var desktopFactory = Factory(File.ReadAllBytes(Path.Combine(fixture.Root, entry.Assembly)));
+        Validate(() => desktopFactory([desktop, null]).GetAwaiter().GetResult());
+
+        void Validate(Func<object?> execute)
+        {
+            long before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            object[] values = (object[])execute()!;
+            long after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            DateTime local = (DateTime)values[0], utc = (DateTime)values[1];
+            long seconds = (long)values[2], milliseconds = (long)values[3];
+            Check(local.Kind == DateTimeKind.Local && utc.Kind == DateTimeKind.Utc, "Script time lost its local/UTC kind.");
+            Check(new DateTimeOffset(local).ToUnixTimeMilliseconds() >= before
+                && new DateTimeOffset(local).ToUnixTimeMilliseconds() <= after
+                && new DateTimeOffset(utc).ToUnixTimeMilliseconds() >= before
+                && new DateTimeOffset(utc).ToUnixTimeMilliseconds() <= after,
+                "Script clock does not reflect the device time.");
+            Check(seconds >= before / 1000 && seconds <= after / 1000 && milliseconds >= before && milliseconds <= after,
+                "Script Unix timestamps have incorrect units or epoch.");
+            Check(values[4] is true, "Script time is frozen at the start of an event.");
+        }
+    }
+
     private static void TestPythonPlatform()
     {
         using ScriptFixture fixture = new();
@@ -195,7 +258,22 @@ internal static class AndroidRuntimeRegressionTests
         File.WriteAllText(workerPath, worker);
         File.WriteAllText(scriptPath, """
             assert platform_name == "Windows" and is_windows and not is_linux and not is_macos and not is_android
+            assert callable(time.time)  # Preserve the existing standard-library time module.
+            def check_time():
+                before = time.time_ns() // 1_000_000
+                local, utc = current_time.now, current_time.utc_now
+                seconds, milliseconds = current_time.unix_time_seconds, current_time.unix_time_milliseconds
+                after = time.time_ns() // 1_000_000
+                assert local.tzinfo is not None and utc.utcoffset() == datetime.timedelta(0)
+                assert before <= int(local.timestamp() * 1000) <= after
+                assert before <= int(utc.timestamp() * 1000) <= after
+                assert before // 1000 <= seconds <= after // 1000 and before <= milliseconds <= after
+                first = current_time.unix_time_milliseconds
+                time.sleep(0.03)
+                assert current_time.unix_time_milliseconds > first
+            check_time()  # Available even while the user module is loading.
             def update(entity, scene, input, audio, delta_seconds):
+                check_time()
                 assert [t.phase for t in input.touch_transitions] == ["started", "ended"]
                 assert input.touch_transitions[0].id == input.touch_transitions[1].id == 9
                 assert input.is_touch_started and input.is_touch_ended and not input.is_touch_down

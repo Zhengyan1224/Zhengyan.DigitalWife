@@ -20,7 +20,9 @@ internal static class AndroidScriptLinkerTests
         VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GamePlayer.Android.Scripting.dll"),
             "Zhengyan.DigitalWife.GamePlayer.Android", "AndroidScriptInputApi", ["TryGetTouch", "get_PrimaryTouch", "get_ActiveTouchCount"], []);
         VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Abstractions.dll"),
-            "Zhengyan.DigitalWife.GameProjects", "AndroidScriptGlobalsContract", ["get_PlatformName", "get_IsAndroid", "get_IsWindows", "get_IsLinux", "get_IsMacOS"], []);
+            "Zhengyan.DigitalWife.GameProjects", "AndroidScriptGlobalsContract", ["get_PlatformName", "get_IsAndroid", "get_IsWindows", "get_IsLinux", "get_IsMacOS", "get_Time"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Abstractions.dll"),
+            "Zhengyan.DigitalWife.Scripting", "ScriptTime", ["get_Now", "get_UtcNow", "get_UnixTimeSeconds", "get_UnixTimeMilliseconds"], []);
         VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Mmd.Game.dll"),
             "Zhengyan.DigitalWife.Mmd.Game.Input", "TouchPoint", ["get_X", "get_Y", "get_Phase", "get_IsActive", "get_IsEnded", "get_Kind"], []);
         Console.WriteLine("PASS Linked Android time APIs and disabled-binding serialization members");

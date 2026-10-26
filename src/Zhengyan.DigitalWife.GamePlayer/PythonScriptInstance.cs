@@ -386,6 +386,25 @@ internal sealed class PythonScriptInstance : IScriptInstance
                module.is_macos = module.platform_name == "MacOS"
                module.is_android = False  # Android GamePlayer supports C# scripts only.
 
+               class ScriptTime:
+                   @property
+                   def now(self):
+                       return datetime.datetime.now().astimezone()
+
+                   @property
+                   def utc_now(self):
+                       return datetime.datetime.now(datetime.timezone.utc)
+
+                   @property
+                   def unix_time_seconds(self):
+                       return time.time_ns() // 1_000_000_000
+
+                   @property
+                   def unix_time_milliseconds(self):
+                       return time.time_ns() // 1_000_000
+
+               module.current_time = ScriptTime()
+
                spec.loader.exec_module(module)
 
                def resolve_save_path(file_name):

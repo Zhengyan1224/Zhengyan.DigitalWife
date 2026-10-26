@@ -87,6 +87,7 @@ C# 全局变量：
 | `Scene` | `RuntimeScene` | 当前场景运行时对象。 |
 | `Input` | `RuntimeInput` | 当前帧输入快照。 |
 | `Audio` | `RuntimeAudio` | 音频源控制器。 |
+| `Time` | `ScriptTime` | PC / Android 当前系统时间，只读且每次访问获取最新值。详见[基础系统 API](03-system-api.md)。 |
 | `DeltaSeconds` | `double` | 本帧间隔秒数，仅 `IsUpdate` 时有意义。 |
 | `IsStart` | `bool` | 实体脚本启动事件。 |
 | `IsUpdate` | `bool` | 每帧更新事件。 |

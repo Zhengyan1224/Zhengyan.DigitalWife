@@ -11,7 +11,7 @@
 | 总览 | 基础 | ``CSharpScriptGlobals``, ``Python event functions`` | [api_docs/00-overview.md](./api_docs/00-overview.md) |
 | 路径规则 | 基础 | ``GameProjectPath`` | [api_docs/01-paths.md](./api_docs/01-paths.md) |
 | 脚本类型 | 基础 | ``C# .csx``, ``Python .py`` | [api_docs/02-script-types.md](./api_docs/02-script-types.md) |
-| 基础系统 API | 基础 | ``System``, ``Python stdlib`` | [api_docs/03-system-api.md](./api_docs/03-system-api.md) |
+| 基础系统 API | 基础 | ``Time``, ``current_time``, ``System``, ``Python stdlib`` | [api_docs/03-system-api.md](./api_docs/03-system-api.md) |
 | 生命周期 | 事件 | ``CSharpScriptGlobals``, ``Python event functions`` | [api_docs/04-lifecycle.md](./api_docs/04-lifecycle.md) |
 | Entity API | 对象 | ``RuntimeEntity``, ``entity`` | [api_docs/05-entity.md](./api_docs/05-entity.md) |
 | PMX 动作与材质 | 对象 | ``RuntimeEntity PMX``, ``PmxNodeState`` | [api_docs/06-pmx.md](./api_docs/06-pmx.md) |

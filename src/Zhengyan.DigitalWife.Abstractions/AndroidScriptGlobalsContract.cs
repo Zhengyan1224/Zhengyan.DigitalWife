@@ -1,3 +1,5 @@
+using Zhengyan.DigitalWife.Scripting;
+
 namespace Zhengyan.DigitalWife.GameProjects;
 
 /// <summary>Legacy globals contract retained for previously published Android scripts.</summary>
@@ -5,6 +7,8 @@ namespace Zhengyan.DigitalWife.GameProjects;
 // Its implementation still fills this base contract for older DLLs.
 public class AndroidScriptGlobalsContract
 {
+    public ScriptTime Time { get; } = new();
+
     // Identify the runtime contract even when exporting on a desktop host.
     public string PlatformName => "Android";
     public bool IsAndroid => true;

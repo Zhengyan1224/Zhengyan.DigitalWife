@@ -5,6 +5,8 @@ category: 基础
 objects:
   - System
   - Python stdlib
+  - Time
+  - current_time
 keywords:
   - system
   - stdlib
@@ -17,6 +19,10 @@ keywords:
   - IsLinux
   - IsMacOS
   - 平台判断
+  - 当前时间
+  - UtcNow
+  - UnixTimeSeconds
+  - UnixTimeMilliseconds
 ---
 
 # 基础系统 API
@@ -27,10 +33,10 @@ keywords:
 | --- | --- |
 | 模块 | 基础系统 API |
 | 分类 | 基础 |
-| 主要对象 | ``System``, ``Python stdlib`` |
-| C# 入口 | `string, Math, Regex, JsonSerializer, Task` |
-| Python 入口 | `str, math, re, json, datetime` |
-| 说明 | 基础语言能力、受信任脚本边界、常用标准库和示例。 |
+| 主要对象 | ``System``, ``Python stdlib``, ``Time``, ``current_time`` |
+| C# 入口 | `Time, string, Math, Regex, JsonSerializer, Task` |
+| Python 入口 | `current_time, str, math, re, json, datetime` |
+| 说明 | 当前时间、平台判断、基础语言能力、常用标准库和示例。 |
 
 ## API 内容
 
@@ -68,7 +74,42 @@ def start(entity, scene, input, audio):
         print("Linux / macOS 播放器")
 ```
 
-新增 Touch / 平台标识后，需要更新 GamePlayer、Android 播放器和 GameEditor；使用新 API 的 `.dwgame` 需重新导出，旧包仍可由新版播放器运行。
+新增 Touch / 平台标识 / Time 后，需要更新 GamePlayer、Android 播放器和 GameEditor；使用新 API 的 `.dwgame` 需重新导出，旧包仍可由新版播放器运行。
+
+## 当前时间（PC / Android）
+
+C# `.csx` 在 PC 和 Android 上都可直接访问只读全局对象 `Time`，类型为 `Zhengyan.DigitalWife.Scripting.ScriptTime`。PC Python 使用预置对象 `current_time`；已有的标准库 `time` 和 `datetime` 仍可正常使用。
+
+| C# 属性 | 类型 | Python 属性（PC） | 说明 |
+| --- | --- | --- | --- |
+| `Time.Now` | `DateTime` | `current_time.now` | 设备当前本地日期时间。C# 的 `Kind` 为 `Local`；Python 返回包含本地时区偏移的 `datetime`。 |
+| `Time.UtcNow` | `DateTime` | `current_time.utc_now` | 设备当前 UTC 日期时间。C# 的 `Kind` 为 `Utc`；Python 返回包含 UTC 时区的 `datetime`。 |
+| `Time.UnixTimeSeconds` | `long` | `current_time.unix_time_seconds` | 从 1970-01-01 00:00:00 UTC 起的整秒数。Python 返回 `int`。 |
+| `Time.UnixTimeMilliseconds` | `long` | `current_time.unix_time_milliseconds` | 从同一 UTC 起点起的整毫秒数。Python 返回 `int`。 |
+
+这些属性在 Start、Update、GUI、加载和异步回调等事件中都可使用，每次读取都会查询系统时钟，不是事件开始时的快照。设备时区影响本地时间的显示；Unix 时间戳与时区无关。系统时间被手动调整或校时时，读数也会随之改变。帧间隔仍使用 `DeltaSeconds`，PC 游戏运行时长可使用 `Scene.Performance.TotalSeconds`。
+
+```csharp
+if (IsStart)
+{
+    DateTime now = Time.Now;
+    Console.WriteLine($"本地时间：{now:yyyy-MM-dd HH:mm:ss}");
+    Console.WriteLine($"UTC 时间：{Time.UtcNow:O}");
+    Console.WriteLine($"Unix 秒：{Time.UnixTimeSeconds}，毫秒：{Time.UnixTimeMilliseconds}");
+
+    int hour = now.Hour;
+    string greeting = hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
+    Console.WriteLine(greeting);
+}
+```
+
+```python
+def start(entity, scene, input, audio):
+    now = current_time.now
+    print(now.strftime("%Y-%m-%d %H:%M:%S"))
+    print(current_time.utc_now.isoformat())
+    print(current_time.unix_time_seconds, current_time.unix_time_milliseconds)
+```
 
 脚本层已经支持基础语言和系统 API。字符串、数值、集合、日期时间、正则、JSON、数学函数等不需要额外的引擎封装，可以直接使用 C# / Python 自身能力。
 

@@ -256,6 +256,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             typeof(System.Net.Http.HttpClient).Assembly,
             typeof(System.Net.Sockets.TcpClient).Assembly,
             typeof(System.Numerics.Vector3).Assembly,
+            typeof(Zhengyan.DigitalWife.Scripting.ScriptTime).Assembly,
             typeof(Zhengyan.DigitalWife.Llm.OpenAI.OpenAiCompatibleLlmClient).Assembly,
             typeof(RuntimeEntity).Assembly
         ];

@@ -6,7 +6,7 @@
 
 ## 主要职责
 
-- `AndroidScriptGlobals`：Entity、Scene、Input、Audio 和各类事件字段。
+- `AndroidScriptGlobals`：Entity、Scene、Input、Audio、Time 和各类事件字段。`Time` 提供当前本地时间、UTC 时间及 Unix 秒/毫秒时间戳，每次访问查询设备系统时钟。
 - `AndroidScriptEntity / Scene`：映射到共享实体和场景对象。
 - `AndroidScriptInputApi`：键鼠、手柄、Touch 与剪贴板平台契约。
 - `AndroidScriptServices`：语音、LLM、存档、网络、Render Texture 等服务入口。

@@ -180,6 +180,7 @@ internal static class DesktopCSharpScriptPrecompiler
             typeof(System.Net.Http.HttpClient).Assembly,
             typeof(System.Net.Sockets.TcpClient).Assembly,
             typeof(Vector3).Assembly,
+            typeof(Zhengyan.DigitalWife.Scripting.ScriptTime).Assembly,
             globalsType.Assembly,
             typeof(GameProject).Assembly
         ];

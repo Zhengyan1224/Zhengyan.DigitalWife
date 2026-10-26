@@ -1,7 +1,11 @@
+using Zhengyan.DigitalWife.Scripting;
+
 namespace Zhengyan.DigitalWife.GamePlayer;
 
 public sealed class CSharpScriptGlobals
 {
+    public ScriptTime Time { get; } = new();
+
     public bool IsAndroid => OperatingSystem.IsAndroid();
     public bool IsWindows => OperatingSystem.IsWindows();
     public bool IsLinux => !IsAndroid && OperatingSystem.IsLinux();
