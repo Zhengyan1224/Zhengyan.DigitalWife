@@ -38,6 +38,10 @@ internal static class AndroidRuntimeRegressionTests
             ("PMX slow frames keep animation and physics synchronized", AndroidMotionLoopTests.TestSlowFrames),
             ("PMX slow frames preserve loop reset and pause behavior", AndroidMotionLoopTests.TestSlowFrameLoopReset),
             ("Published script ABI, lambda and event fields", TestPublishedScript),
+            ("Audio Android one-shot overlap, volume and native cleanup", AudioOneShotTests.TestAndroidOverlapAndCleanup),
+            ("Audio desktop one-shot overlap and clip cleanup", AudioOneShotTests.TestDesktopOverlapAndCleanup),
+            ("Audio C# one-shot scripts and docs compile on desktop and Android", TestAudioScripts),
+            ("Audio Python one-shot worker and desktop dispatch", AudioOneShotTests.TestPythonDispatch),
             ("Android LLM HTTP streaming and native diagnostics", TestLlmHttpStreaming),
             ("Android LLM failures preserve callback and inner exception logs", TestLlmFailureDiagnostics),
             ("Android LLM cleartext network policy", TestLlmNetworkPolicy),
@@ -183,6 +187,37 @@ internal static class AndroidRuntimeRegressionTests
         GameProjectStore.Save(fixture.Root, project);
         Check(DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 4,
             "Common gesture snippets do not compile against the desktop exported globals.");
+    }
+
+    private static void TestAudioScripts()
+    {
+        const string source = """
+            Audio.PlayOneShot("ClickSfx");
+            Audio.PlayOneShot("ClickSfx", volumeScale: 0.5f);
+            return null;
+            """;
+        List<(string Name, float Scale)> calls = [];
+        AndroidScriptAudio audio = new(_ => true, _ => true, _ => true,
+            playOneShot: (name, scale) => { calls.Add((name, scale)); return true; });
+        using ScriptFixture fixture = new(source, audio);
+        fixture.Execute();
+        Check(calls.SequenceEqual([("ClickSfx", 1.0f), ("ClickSfx", .5f)]), "Android script lost default or explicit one-shot parameters.");
+        string scriptPath = Path.Combine(fixture.Root, "script.csx");
+        var factory = Factory(AndroidScriptCompiler.Compile(scriptPath, AndroidScriptMetadata.GetReferences()));
+        _ = factory([fixture.Globals, null]).GetAwaiter().GetResult();
+        Check(calls.Count == 4, "Published Android script could not dispatch one-shot calls.");
+        string docs = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScriptDocs", "10-audio.md"));
+        string example = Regex.Matches(docs, "```csharp\\r?\\n([\\s\\S]*?)```")
+            .Select(match => match.Groups[1].Value).Single(value => value.Contains("PlayOneShot"));
+        string examplePath = Path.Combine(fixture.Root, "audio-doc.csx");
+        File.WriteAllText(examplePath, example);
+        _ = AndroidScriptCompiler.Compile(examplePath, AndroidScriptMetadata.GetReferences());
+        GameProject project = new() { Scene = fixture.CoreScene.Definition };
+        project.Scene.Entities[0].Scripts.Add(new() { Path = "script.csx", Language = "csharp" });
+        project.Scene.Entities[0].Scripts.Add(new() { Path = "audio-doc.csx", Language = "csharp" });
+        GameProjectStore.Save(fixture.Root, project);
+        Check(DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 2,
+            "One-shot calls or documentation did not compile for desktop export.");
     }
 
     private static void TestScriptTime()
@@ -667,7 +702,7 @@ internal static class AndroidRuntimeRegressionTests
         private readonly AndroidScriptServices _services;
         private readonly Func<object?[], Task<object?>> _factory;
 
-        public ScriptFixture(string? source = null)
+        public ScriptFixture(string? source = null, AndroidScriptAudio? audio = null)
         {
             Directory.CreateDirectory(Root);
             CoreScene = new("scenes/main.scene.json", new() { Entities = [new() { Id = "entity", Name = "actor", Type = "empty" }], GuiControls = [new() { Name = "status" }] }, p => Path.Combine(Root, p));
@@ -683,7 +718,7 @@ internal static class AndroidRuntimeRegressionTests
                     return Execute() as string;
                 }),
                 speak: (text, speaker, speed, volume, completed, callback) => { SpeechStarts++; PendingSpeech = completed; });
-            Globals = new(Scene, Entity, new EmptyInput(), new(_ => true, _ => true, _ => true), 0, false, false, services: _services);
+            Globals = new(Scene, Entity, new EmptyInput(), audio ?? new(_ => true, _ => true, _ => true), 0, false, false, services: _services);
             string path = Path.Combine(Root, "script.csx");
             File.WriteAllText(path, source ?? """
                 RuntimeLlmChatMessage message = new("user", "ABI test");

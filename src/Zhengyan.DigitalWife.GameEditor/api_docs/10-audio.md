@@ -10,6 +10,7 @@ keywords:
   - bgm
   - volume
   - loop
+  - play_one_shot
 ---
 
 # Audio 音频 / 背景音乐
@@ -21,8 +22,8 @@ keywords:
 | 模块 | Audio 音频 / 背景音乐 |
 | 分类 | 音频 |
 | 主要对象 | ``RuntimeAudio``, ``audio`` |
-| C# 入口 | `Audio.Play/Pause/Stop/SetVolume` |
-| Python 入口 | `audio.play/pause/stop/set_volume` |
+| C# 入口 | `Audio.Play/PlayOneShot/Pause/Stop/SetVolume` |
+| Python 入口 | `audio.play/play_one_shot/pause/stop/set_volume` |
 | 说明 | 音频播放、暂停、停止、音量和循环控制。 |
 
 ## API 内容
@@ -42,6 +43,7 @@ keywords:
 | C# | Python | 说明 |
 | --- | --- | --- |
 | `Audio.Play(nameOrPath)` | `audio.play(name)` | 播放音频。 |
+| `Audio.PlayOneShot(nameOrPath, volumeScale = 1.0f)` | `audio.play_one_shot(name, volume_scale=1.0)` | 创建独立实例播放一次，同一个音效可重叠播放。C# 支持 PC 和 Android；Python 支持 PC。 |
 | `Audio.Pause(nameOrPath)` | `audio.pause(name)` | 暂停音频。 |
 | `Audio.Stop(nameOrPath)` | `audio.stop(name)` | 停止音频。 |
 | `Audio.SetVolume(nameOrPath, volume)` | `audio.set_volume(name, volume)` | 设置音量，通常 `0.0` 到 `1.0`。 |
@@ -106,15 +108,21 @@ def update(entity, scene, input, audio, delta_seconds):
 ```csharp
 if (IsGuiEvent && GuiEventName == "clicked")
 {
-    Audio.Play("ClickSfx");
+    Audio.PlayOneShot("ClickSfx");
 }
 ```
 
 ```python
 def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name == "clicked":
-        audio.play("ClickSfx")
+        audio.play_one_shot("ClickSfx")
 ```
+
+`PlayOneShot` 每次都会从头播放一个独立实例，不影响正在播放的背景音乐或同一音效的其他实例，也不受资源 `Loop` 设置影响。实例结束后自动释放，切换场景或退出时会清理仍在播放的实例。
+
+`volumeScale` 默认 `1.0`，范围限制在 `0.0` 到 `1.0`，乘以该资源当前的运行时音量。例如 `Audio.PlayOneShot("ClickSfx", 0.5f)` 使用当前音量的一半。`SetVolume` 会影响之后创建的实例，不会修改已经开始播放的实例。
+
+`Play/Pause/Stop/SetLoop` 继续控制该资源的普通播放实例，不会控制 `PlayOneShot` 创建的独立实例。需要快速重复触发音效时使用 `PlayOneShot`；背景音乐使用 `Play` 和 `SetLoop`。
 
 运行时切换循环：
 
@@ -143,3 +151,4 @@ def gui_event(entity, scene, input, audio, control_id, control_name, event_name)
 - 脚本可以修改当前运行时 `Loop` 状态；它不会回写到 `game.project.json`。
 - 脚本不能修改 `PlayOnStart`；这是场景加载时行为，在编辑器里配置。
 - `Play(name)` 找不到名称时会静默忽略，不会抛异常。
+- `PlayOneShot(name)` 也只能使用当前场景登记的音频资源；找不到资源时 PC 静默忽略，Android 返回 `false`。

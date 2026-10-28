@@ -56,7 +56,7 @@
 | .NET 10 SDK | 编译 C# |
 | .NET Android workload | 让 dotnet 能编译 Android |
 | Android SDK | 平台 API、Build-Tools 和 adb |
-| JDK 21 | Android 打包工具需要的 Java 开发环境 |
+| JDK 17 或 21 | Android 打包工具需要的 Java 开发环境；当前已使用 JDK 17.0.14 验证构建 |
 | adb | 安装 APK、查看设备和 logcat |
 
 Android Studio 可用于安装 SDK 和模拟器，但不是本项目的代码构建入口。C# 项目仍由 dotnet、Visual Studio 或 Rider 构建。
@@ -120,7 +120,9 @@ dotnet workload list
 
 三个系统都可通过 Android Studio 的 SDK Manager 安装 SDK，或从 [Android Command-line Tools](https://developer.android.com/studio#command-tools)下载对应系统的命令行工具。
 
-仓库当前使用过的构建组合为 JDK 21、Android API 36 和 Build-Tools 36.0.0；具体所需版本以已安装 .NET Android workload 的构建提示为准。
+当前 .NET Android workload（36.1.69）的最低要求是 JDK 17，JDK 21 也在支持范围内。Windows 开发机已使用 JDK 17.0.14、Android API 36 和 Build-Tools 36.0.0 完整构建，本机 Android SDK Command-line Tools 19.0 也已在 JDK 17 下验证运行。
+
+下面的安装示例以 JDK 17 为准；已安装 JDK 21 时也可以使用其实际路径。具体所需版本以已安装 .NET Android workload 和 Android SDK 命令行工具的版本要求为准。
 
 在 SDK Manager 中安装 `Android SDK Platform 36`、`Android SDK Build-Tools 36.0.0`、`Android SDK Platform-Tools` 和 `Android SDK Command-line Tools (latest)`，并记下界面显示的 **Android SDK Location**。手动解压命令行工具时，按 [sdkmanager 官方说明](https://developer.android.com/tools/sdkmanager)整理为以下结构，避免多套一层 `cmdline-tools`：
 
@@ -136,7 +138,7 @@ dotnet workload list
 
 #### Windows：SDK / JDK 路径
 
-在 Windows 上，SDK 常在 `%LOCALAPPDATA%/Android/Sdk`。JDK 必须指向实际安装的 JDK 21，下面路径只是示例，不能假设它已经存在：
+在 Windows 上，SDK 常在 `%LOCALAPPDATA%/Android/Sdk`。JDK 路径应指向实际安装的 JDK 17 或 21，下面路径只是示例，不能假设它已经存在：
 
 ```powershell
 $sdk = "$env:LOCALAPPDATA/Android/Sdk"
@@ -146,7 +148,7 @@ Test-Path "$jdk/bin/java.exe"
 & "$jdk/bin/java.exe" -version
 ```
 
-前两项应为 True，Java 版本应为 21。若 JDK 安装在其它位置，修改 `$jdk`。
+前两项应为 True，Java 版本应为 17 或 21。若 JDK 安装在其它位置，修改 `$jdk`。
 
 使用命令行 SDK Manager 时，确认目录为 `cmdline-tools/latest/bin/` 后执行：
 
@@ -157,31 +159,31 @@ $sdkManager = "$sdk/cmdline-tools/latest/bin/sdkmanager.bat"
 & $sdkManager "--sdk_root=$sdk" --licenses
 ```
 
-#### Linux：安装 JDK 21 并配置路径
+#### Linux：安装 JDK 17 并配置路径
 
 Ubuntu 24.04 / Linux Mint 22 可执行：
 
 ```bash
-sudo apt-get install -y openjdk-21-jdk
+sudo apt-get install -y openjdk-17-jdk
 sdk="$HOME/Android/Sdk"
-jdk="/usr/lib/jvm/java-21-openjdk-amd64"
+jdk="/usr/lib/jvm/java-17-openjdk-amd64"
 ```
 
-`$HOME/Android/Sdk` 是 Android Studio 常用路径；手动安装 SDK 时使用自己选择的目录。上面的 JDK 路径适用于 x86_64 的 Debian / Ubuntu 包，使用其它架构、发行版或 JDK 发行包时，将 `jdk` 改为实际 JDK 21 根目录。
+`$HOME/Android/Sdk` 是 Android Studio 常用路径；手动安装 SDK 时使用自己选择的目录。上面的 JDK 路径适用于 x86_64 的 Debian / Ubuntu 包，使用其它架构、发行版或 JDK 发行包时，将 `jdk` 改为实际 JDK 17 或 21 根目录。
 
-#### macOS：安装 JDK 21 并配置路径
+#### macOS：安装 JDK 17 并配置路径
 
-可安装 [Eclipse Temurin 21](https://adoptium.net/temurin/releases/?version=21) 的 macOS JDK；已经安装 Homebrew 的开发机也可使用 [temurin@21](https://formulae.brew.sh/cask/temurin@21)：
+可安装 [Eclipse Temurin 17](https://adoptium.net/temurin/releases/?version=17) 的 macOS JDK；已经安装 Homebrew 的开发机也可使用 [temurin@17](https://formulae.brew.sh/cask/temurin@17)：
 
 ```bash
-brew install --cask temurin@21
+brew install --cask temurin@17
 ```
 
-安装后配置路径，`java_home` 会定位已注册的 JDK 21：
+安装后配置路径，`java_home` 会定位已注册的 JDK 17；使用 JDK 21 时将 `-v 17` 改为 `-v 21`：
 
 ```bash
 sdk="$HOME/Library/Android/sdk"
-jdk="$(/usr/libexec/java_home -v 21)"
+jdk="$(/usr/libexec/java_home -v 17)"
 ```
 
 SDK 路径以 Android Studio 的 **Android SDK Location** 或手动安装目录为准。`jdk` 应指向包含 `bin/java` 和 `bin/javac` 的 JDK 根目录。
@@ -209,7 +211,7 @@ test -d "$sdk/build-tools/36.0.0"
 "$sdk/platform-tools/adb" version
 ```
 
-`test` 成功时无输出，退出码为 0；失败时先修正路径或补装对应工具再继续。Java 版本应为 21，最后应显示 adb 版本。根据提示逐项阅读并接受许可。模拟器与系统镜像仅在需要模拟器时安装。
+`test` 成功时无输出，退出码为 0；失败时先修正路径或补装对应工具再继续。Java 版本应为 17 或 21，最后应显示 adb 版本。根据提示逐项阅读并接受许可。模拟器与系统镜像仅在需要模拟器时安装。
 
 上面的环境变量只对当前终端有效。需要长期使用时，将实际 SDK/JDK 路径以及 `JAVA_HOME`、`ANDROID_HOME`、`PATH` 配置加入 Linux 的 `~/.bashrc` 或 macOS zsh 的 `~/.zshrc`；重新打开终端后仍需设置构建命令中的 `sdk="$ANDROID_HOME"`、`jdk="$JAVA_HOME"`。
 
@@ -223,6 +225,8 @@ Windows PowerShell：
 dotnet restore src/Zhengyan.DigitalWife.GamePlayer.Android -r android-arm64 -p:Configuration=Release -p:AndroidSdkDirectory="$sdk" -p:JavaSdkDirectory="$jdk"
 
 dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android -c Release -r android-arm64 -t:SignAndroidPackage -p:AndroidPackageFormats=apk -p:EmbedAssembliesIntoApk=true -p:AndroidSdkDirectory="$sdk" -p:JavaSdkDirectory="$jdk" --no-restore
+
+dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj -c Release -p:AndroidSdkDirectory="$sdk" -p:JavaSdkDirectory="$jdk"
 ```
 
 Linux / macOS：
@@ -234,6 +238,8 @@ dotnet restore src/Zhengyan.DigitalWife.GamePlayer.Android -r android-arm64 \
 dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android -c Release -r android-arm64 \
   -t:SignAndroidPackage -p:AndroidPackageFormats=apk -p:EmbedAssembliesIntoApk=true \
   -p:AndroidSdkDirectory="$sdk" -p:JavaSdkDirectory="$jdk" --no-restore
+
+dotnet build src/Zhengyan.DigitalWife.GamePlayer.Android/Zhengyan.DigitalWife.GamePlayer.Android.csproj -c Release -p:AndroidSdkDirectory="$sdk" -p:JavaSdkDirectory="$jdk"
 ```
 
 产物：
@@ -342,7 +348,7 @@ APK 名称来自项目 `ApplicationTitle`，图标来自构建属性 `AndroidApp
 | --- | --- |
 | NETSDK1147 | 安装 Android workload |
 | XA5300 / 找不到 SDK | 检查路径并显式传入 AndroidSdkDirectory |
-| 找不到 Java / JDK 版本不符 | 确认 JDK 21 并传入 JavaSdkDirectory |
+| 找不到 Java / JDK 版本不符 | 确认 JDK 17 或 21，检查所用工具链的版本要求，并传入实际 JavaSdkDirectory |
 | adb unauthorized | 解锁手机并允许 USB 调试 |
 | Linux adb no permissions | 配置 plugdev 用户组与 udev 规则，重新登录并插拔手机 |
 | INSTALL_FAILED_NO_MATCHING_ABIS | 选择与手机/模拟器匹配的 RuntimeIdentifier |

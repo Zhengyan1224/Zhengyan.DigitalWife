@@ -8,9 +8,11 @@
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidRenderPolicy.cs" Link="AndroidRenderPolicy.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidPmxPlaybackSync.cs" Link="AndroidPmxPlaybackSync.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidTouchState.cs" Link="AndroidTouchState.cs" />
+    <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidAudioHost.cs" Link="AndroidAudioHost.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidScriptInput.cs" Link="AndroidScriptInput.cs" />
     <None Include="..\..\src\Zhengyan.DigitalWife.GameEditor\api_docs\09-input.md" Link="ScriptDocs\09-input.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\Zhengyan.DigitalWife.GameEditor\api_docs\03-system-api.md" Link="ScriptDocs\03-system-api.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Zhengyan.DigitalWife.GameEditor\api_docs\10-audio.md" Link="ScriptDocs\10-audio.md" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidRuntimeLoggerFactory.cs" Link="AndroidRuntimeLoggerFactory.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidScriptRealtimeVoice.cs" Link="AndroidScriptRealtimeVoice.cs" />
     <None Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidManifest.xml" Link="AndroidNetwork\AndroidManifest.xml" CopyToOutputDirectory="PreserveNewest" />

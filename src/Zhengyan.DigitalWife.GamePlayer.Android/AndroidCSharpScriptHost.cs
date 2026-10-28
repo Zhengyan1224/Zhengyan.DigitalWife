@@ -36,6 +36,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, float, bool> _setAudioVolume;
     private readonly Func<string, bool, bool> _setAudioLoop;
     private readonly Func<string, bool> _isAudioPlaying;
+    private readonly Func<RuntimeScene, string, float, bool> _playOneShot;
     private readonly GameProjectLlmSettings _llmSettings;
     private readonly GameProjectRealtimeVoiceSettings _realtimeVoiceSettings;
     private readonly GameProjectVoiceSettings _voiceSettings;
@@ -104,7 +105,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         GameProjectLipSyncSettings? lipSyncSettings = null,
         GameProjectRealtimeVoiceSettings? realtimeVoiceSettings = null,
         GameProjectVoiceSettings? voiceSettings = null,
-        GameProjectAsrSettings? asrSettings = null)
+        GameProjectAsrSettings? asrSettings = null,
+        Func<RuntimeScene, string, float, bool>? playOneShot = null)
     {
         _projectDirectory = projectDirectory;
         _requestSceneChange = requestSceneChange;
@@ -121,6 +123,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _setAudioVolume = setAudioVolume ?? ((_, _) => false);
         _setAudioLoop = setAudioLoop ?? ((_, _) => false);
         _isAudioPlaying = isAudioPlaying ?? (_ => false);
+        _playOneShot = playOneShot ?? ((_, _, _) => false);
         _llmSettings = llmSettings ?? new GameProjectLlmSettings();
         _lipSyncSettings = lipSyncSettings ?? new GameProjectLipSyncSettings();
         _realtimeVoiceSettings = realtimeVoiceSettings ?? new();
@@ -353,7 +356,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 (text, speakerId, speed, volume, completed, callback) => _ = SpeakAsync(scene, entity, text, speed, volume, completed, callback, speakerId),
                 voiceSettings: _voiceSettings),
             scriptInput,
-            new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying),
+            new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying,
+                (name, volumeScale) => _playOneShot(scene, name, volumeScale)),
             0.0f,
             false,
             false,

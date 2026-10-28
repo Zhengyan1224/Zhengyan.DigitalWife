@@ -1053,7 +1053,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 EnqueueLoadingStep("Preloading ASR...", () => _runtimeAsr.Preload());
             }
 
-            _runtimeAudio = new RuntimeAudio(_audioSources);
+            _runtimeAudio = new RuntimeAudio(_audioSources, Audio);
             RuntimeCameraControllerComponent cameraController = _cameraController
                 ?? throw new InvalidOperationException("Runtime camera controller is not initialized.");
             RuntimeDebugDrawComponent debugDraw = _debugDraw
@@ -1865,6 +1865,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         foreach (AudioClip clip in _audioClips.Values.ToHashSet())
         {
+            Audio?.StopOneShots(clip);
             clip.Dispose();
         }
 
@@ -1886,6 +1887,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         {
             if (!_audioClips.Values.Any(item => ReferenceEquals(item, clip)))
             {
+                Audio?.StopOneShots(clip);
                 clip.Dispose();
             }
         }

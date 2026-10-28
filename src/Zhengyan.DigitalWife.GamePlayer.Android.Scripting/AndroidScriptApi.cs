@@ -479,8 +479,9 @@ public sealed class AndroidScriptAudio
     private readonly Func<string, float, bool> _setVolume;
     private readonly Func<string, bool, bool> _setLoop;
     private readonly Func<string, bool> _isPlaying;
+    private readonly Func<string, float, bool> _playOneShot;
 
-    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop, Func<string, float, bool>? setVolume = null, Func<string, bool, bool>? setLoop = null, Func<string, bool>? isPlaying = null)
+    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop, Func<string, float, bool>? setVolume = null, Func<string, bool, bool>? setLoop = null, Func<string, bool>? isPlaying = null, Func<string, float, bool>? playOneShot = null)
     {
         _play = play;
         _pause = pause;
@@ -488,9 +489,11 @@ public sealed class AndroidScriptAudio
         _setVolume = setVolume ?? ((_, _) => false);
         _setLoop = setLoop ?? ((_, _) => false);
         _isPlaying = isPlaying ?? (_ => false);
+        _playOneShot = playOneShot ?? ((_, _) => false);
     }
 
     public bool Play(string idOrName) => _play(idOrName);
+    public bool PlayOneShot(string idOrName, float volumeScale = 1.0f) => _playOneShot(idOrName, volumeScale);
     public bool Pause(string idOrName) => _pause(idOrName);
     public bool Stop(string idOrName) => _stop(idOrName);
     public bool SetVolume(string idOrName, float volume) => _setVolume(idOrName, volume);

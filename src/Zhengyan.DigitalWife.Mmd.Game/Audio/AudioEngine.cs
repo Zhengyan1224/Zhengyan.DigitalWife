@@ -116,15 +116,36 @@ public sealed unsafe class AudioEngine : IDisposable
     public AudioSource PlayOneShot(AudioClip clip, float volume = 1.0f, Vector3? position = null)
     {
         AudioSource source = CreateSource(clip);
-        source.Volume = volume;
-        if (position is Vector3 value)
+        try
         {
-            source.Position = value;
-        }
+            source.Volume = volume;
+            if (position is Vector3 value)
+            {
+                source.Position = value;
+            }
 
-        source.Play();
-        _oneShotSources.Add(source);
-        return source;
+            source.Play();
+            _oneShotSources.Add(source);
+            return source;
+        }
+        catch
+        {
+            source.Dispose();
+            throw;
+        }
+    }
+
+    public void StopOneShots(AudioClip? clip = null)
+    {
+        for (int i = _oneShotSources.Count - 1; i >= 0; i--)
+        {
+            AudioSource source = _oneShotSources[i];
+            if (clip is null || ReferenceEquals(source.Clip, clip))
+            {
+                source.Dispose();
+                _oneShotSources.RemoveAt(i);
+            }
+        }
     }
 
     public void Update()
@@ -149,12 +170,7 @@ public sealed unsafe class AudioEngine : IDisposable
 
         _disposed = true;
 
-        foreach (AudioSource source in _oneShotSources)
-        {
-            source.Dispose();
-        }
-
-        _oneShotSources.Clear();
+        StopOneShots();
         _al.Dispose();
         _context.Dispose();
         GC.SuppressFinalize(this);

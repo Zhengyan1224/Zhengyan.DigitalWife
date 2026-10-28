@@ -3373,6 +3373,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def play(self, name):
                        self._commands.append({"target": "audio", "action": "play", "name": name})
 
+                   def play_one_shot(self, name, volume_scale=1.0):
+                       self._commands.append({"target": "audio", "action": "play_one_shot", "name": name, "volume": volume_scale})
+
                    def pause(self, name):
                        self._commands.append({"target": "audio", "action": "pause", "name": name})
 
@@ -4262,6 +4265,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
         {
             case "play":
                 audio.Play(command.Name);
+                break;
+            case "play_one_shot":
+                audio.PlayOneShot(command.Name, (float)(command.Volume ?? 1.0));
                 break;
             case "pause":
                 audio.Pause(command.Name);

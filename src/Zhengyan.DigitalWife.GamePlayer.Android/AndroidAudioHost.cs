@@ -12,6 +12,10 @@ internal sealed class AndroidAudioHost : IDisposable
     private readonly Dictionary<string, MediaPlayer> _players = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _paused = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _aliases = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, float> _volumes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _oneShotSync = new();
+    private readonly HashSet<MediaPlayer> _oneShotPlayers = [];
+    private bool _disposed;
 
     public AndroidAudioHost(string projectDirectory) => _projectDirectory = projectDirectory;
 
@@ -31,6 +35,37 @@ internal sealed class AndroidAudioHost : IDisposable
         return asset is not null && Play(asset);
     }
 
+    public bool PlayOneShot(RuntimeScene scene, string idOrName, float volumeScale = 1.0f)
+    {
+        AudioAsset? asset = scene.Definition.Audio.FirstOrDefault(audio =>
+            string.Equals(audio.Name, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(audio.Path, idOrName, StringComparison.OrdinalIgnoreCase));
+        if (asset is null) return false;
+
+        lock (_oneShotSync)
+        {
+            if (_disposed) return false;
+            MediaPlayer? player = null;
+            try
+            {
+                string path = GameProjectPath.ToAbsolute(_projectDirectory, asset.Path);
+                float volume = _volumes.TryGetValue(asset.Name, out float currentVolume) ? currentVolume : asset.Volume;
+                player = CreatePlayer(path, Math.Clamp(volume, 0.0f, 1.0f) * Math.Clamp(volumeScale, 0.0f, 1.0f), loop: false);
+                player.Completion += OnOneShotCompleted;
+                player.Error += OnOneShotError;
+                _oneShotPlayers.Add(player);
+                player.Start();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (player is not null) ReleaseOneShot(player);
+                Log.Warn(LogTag, $"Android one-shot audio failed '{asset.Name}': {ex.GetBaseException().Message}");
+                return false;
+            }
+        }
+    }
+
     public bool Stop(string idOrName)
     {
         string key = ResolveKey(idOrName);
@@ -38,9 +73,9 @@ internal sealed class AndroidAudioHost : IDisposable
         {
             return false;
         }
-        try { player.Stop(); } catch { }
-        player.Dispose();
+        ReleasePlayer(player);
         _paused.Remove(key);
+        _volumes.Remove(key);
         foreach (string alias in _aliases.Where(pair => string.Equals(pair.Value, key, StringComparison.OrdinalIgnoreCase)).Select(pair => pair.Key).ToArray())
         {
             _aliases.Remove(alias);
@@ -76,7 +111,7 @@ internal sealed class AndroidAudioHost : IDisposable
         string key = ResolveKey(idOrName);
         if (!_players.TryGetValue(key, out MediaPlayer? player)) return false;
         float value = Math.Clamp(volume, 0.0f, 1.0f);
-        try { player.SetVolume(value, value); return true; } catch { return false; }
+        try { player.SetVolume(value, value); _volumes[key] = value; return true; } catch { return false; }
     }
 
     public bool SetLoop(string idOrName, bool loop)
@@ -106,8 +141,17 @@ internal sealed class AndroidAudioHost : IDisposable
 
     public void LoadAsset(AudioAsset asset)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_players.ContainsKey(asset.Name)) return;
         string path = GameProjectPath.ToAbsolute(_projectDirectory, asset.Path);
+        MediaPlayer player = CreatePlayer(path, asset.Volume, asset.Loop);
+        _players[asset.Name] = player;
+        _volumes[asset.Name] = Math.Clamp(asset.Volume, 0.0f, 1.0f);
+        RegisterAliases(asset);
+    }
+
+    private static MediaPlayer CreatePlayer(string path, float volume, bool loop)
+    {
         if (!File.Exists(path)) throw new FileNotFoundException("Android audio file not found.", path);
 
         MediaPlayer player = new();
@@ -118,16 +162,15 @@ internal sealed class AndroidAudioHost : IDisposable
                 .SetUsage(AudioUsageKind.Game)!
                 .Build());
             player.SetDataSource(path);
-            player.Looping = asset.Loop;
-            float volume = Math.Clamp(asset.Volume, 0.0f, 1.0f);
-            player.SetVolume(volume, volume);
+            player.Looping = loop;
+            float value = Math.Clamp(volume, 0.0f, 1.0f);
+            player.SetVolume(value, value);
             player.Prepare();
-            _players[asset.Name] = player;
-            RegisterAliases(asset);
+            return player;
         }
         catch
         {
-            player.Dispose();
+            ReleasePlayer(player);
             throw;
         }
     }
@@ -152,14 +195,55 @@ internal sealed class AndroidAudioHost : IDisposable
     }
     public void StopAll()
     {
+        MediaPlayer[] oneShots;
+        lock (_oneShotSync)
+        {
+            oneShots = _oneShotPlayers.ToArray();
+            _oneShotPlayers.Clear();
+        }
+        foreach (MediaPlayer player in oneShots) DisposeOneShot(player);
         foreach (MediaPlayer player in _players.Values)
         {
-            try { player.Stop(); } catch { }
-            player.Dispose();
+            ReleasePlayer(player);
         }
         _players.Clear();
         _paused.Clear();
         _aliases.Clear();
+        _volumes.Clear();
+    }
+
+    private void OnOneShotCompleted(object? sender, EventArgs args)
+    {
+        if (sender is MediaPlayer player) ReleaseOneShot(player);
+    }
+
+    private void OnOneShotError(object? sender, MediaPlayer.ErrorEventArgs args)
+    {
+        args.Handled = true;
+        if (sender is MediaPlayer player) ReleaseOneShot(player);
+    }
+
+    private void ReleaseOneShot(MediaPlayer player)
+    {
+        lock (_oneShotSync)
+        {
+            if (!_oneShotPlayers.Remove(player)) return;
+        }
+        DisposeOneShot(player);
+    }
+
+    private void DisposeOneShot(MediaPlayer player)
+    {
+        player.Completion -= OnOneShotCompleted;
+        player.Error -= OnOneShotError;
+        ReleasePlayer(player);
+    }
+
+    private static void ReleasePlayer(MediaPlayer player)
+    {
+        try { player.Stop(); } catch { }
+        try { player.Release(); } catch { }
+        player.Dispose();
     }
 
     private string ResolveKey(string idOrName) => _aliases.TryGetValue(idOrName, out string? key) ? key : idOrName;
@@ -173,5 +257,13 @@ internal sealed class AndroidAudioHost : IDisposable
         }
     }
 
-    public void Dispose() => StopAll();
+    public void Dispose()
+    {
+        lock (_oneShotSync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
+        StopAll();
+    }
 }
