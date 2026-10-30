@@ -6,6 +6,7 @@ objects:
   - RuntimeInput
   - input
   - TouchPoint
+  - PointerClickGesture
 keywords:
   - input
   - keyboard
@@ -20,6 +21,8 @@ keywords:
   - 滑动
   - 长按
   - TouchTransitions
+  - TouchSlopPixels
+  - PointerClickGesture
 ---
 
 # Input 输入
@@ -451,6 +454,8 @@ if (IsUpdate)
 状态对象需要跨帧保存，并在 `IsStart` 时调用 `Reset()`。`isBlocked` 用于排除 GUI 和 Sprite；在 GUI 内按下的操作离开边界后仍被排除，同一帧的触摸和兼容鼠标输入也不会重复触发。每帧只更新一次，只在 `IsUpdate` 中读取。
 
 ```csharp
+using System.Numerics;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 static PointerClickGesture sceneClick = new();
 if (IsStart) sceneClick.Reset();
 if (IsUpdate && sceneClick.Update(
@@ -684,7 +689,9 @@ def update(entity, scene, input, audio, delta_seconds):
 
 ## 常见组合
 
-### 鼠标优先，触屏兜底
+### 分别读取鼠标与触屏的原始射线
+
+下面示例只演示如何分别读取原始 Mouse / Touch 射线。需要把两者合并为一次点击并避免拖动、多指或 GUI 误触时，请使用上面的 `PointerClickGesture` 示例；NavMesh 点击寻路的完整版本见 NavMesh API。
 ```csharp
 if (IsUpdate)
 {

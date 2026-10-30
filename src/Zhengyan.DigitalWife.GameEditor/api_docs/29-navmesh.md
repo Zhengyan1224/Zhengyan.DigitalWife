@@ -12,6 +12,7 @@ keywords:
   - pathfinding
   - mesh collider
   - walkable
+  - PointerClickGesture
 ---
 
 # NavMesh API
@@ -76,7 +77,7 @@ keywords:
 
 1. 在 `IsStart` 中调用一次 `Scene.Navigation.Bake(...)`。
 2. 输出 `TriangleCount` 和 `EdgeCount`，确认 NavMesh 是否真的被烘焙出来。
-3. 鼠标点击时，用 `Scene.Camera.MousePointToRay(Input)` 生成射线。
+3. 用 `PointerClickGesture` 将鼠标左键和 Android 单指轻点转换为屏幕坐标，再用 `Scene.Camera.ScreenPointToRay(...)` 生成射线。
 4. 用 `Scene.Physics.Raycast(...)` 命中地面，得到目标世界坐标。
 5. 用 `Scene.Navigation.TryFindPath(Entity.Position, hit.Point, out path)` 查询路径。
 6. 每帧让人物朝当前路径点移动。
@@ -133,65 +134,65 @@ keywords:
 
 ### C#：点击目标点后沿 NavMesh 移动
 
-下面示例假设脚本绑定在人物实体上，并且场景地面模型已经添加了可行走 MeshCollider。
+下面示例假设脚本绑定在人物实体上，并且场景地面模型已经添加了可行走 MeshCollider。鼠标左键和 Android 单指轻点共用同一套点击识别；拖动、多指、长按和 GUI / Sprite 触点不会触发寻路。
 
 ```csharp
 using System.Numerics;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 
 static List<Vector3> path = [];
 static int pathIndex = 0;
 static bool baked = false;
-static bool leftMouseWasDown = false;
+static PointerClickGesture click = new();
 
 const float MoveSpeed = 2.4f;
 const float StopDistance = 0.06f;
 const float FootOffset = 0.02f;
 
-if (IsStart && !baked)
+if (IsStart)
 {
-    RuntimeNavigationBakeResult bake = Scene.Navigation.Bake(
-        maxSlopeDegrees: 55.0f,
-        maxStepHeight: 0.45f,
-        maxStepHorizontalDistance: 0.35f);
-    Console.WriteLine($"NavMesh triangles={bake.TriangleCount}, edges={bake.EdgeCount}");
-    baked = true;
+    click.Reset();
+    path.Clear();
+    pathIndex = 0;
+    if (!baked)
+    {
+        RuntimeNavigationBakeResult bake = Scene.Navigation.Bake(maxSlopeDegrees: 0.1f,
+            maxStepHeight: 2.2f,
+            maxStepHorizontalDistance: 0.35f);
+        Console.WriteLine($"NavMesh triangles={bake.TriangleCount}, edges={bake.EdgeCount}");
+        baked = true;
+    }
 }
 
-if (IsUpdate)
+if (IsUpdate && click.Update(
+    Input.IsMouseButtonDown("left"), new Vector2(Input.MouseX, Input.MouseY),
+    Input.Touches, Input.TouchTransitions, DeltaSeconds, out Vector2 screenPoint,
+    movementThreshold: Input.TouchSlopPixels,
+    isBlocked: point => Scene.IsScreenPointOverGui(point.X, point.Y)))
 {
-    bool leftMouseDown = Input.IsMouseButtonDown("left");
-
-    if (leftMouseDown && !leftMouseWasDown)
+    RuntimeRay ray = Scene.Camera.ScreenPointToRay(screenPoint.X, screenPoint.Y);
+    if (Scene.Physics.Raycast(ray, out RuntimeRaycastHit hit, maxDistance: 200.0f, ignoredEntity: Entity))
     {
-        RuntimeRay ray = Scene.Camera.MousePointToRay(Input);
-        if (Scene.Physics.Raycast(ray, out RuntimeRaycastHit hit, maxDistance: 200.0f, ignoredEntity: Entity))
+        if (Scene.Navigation.TryFindPath(Entity.Position, hit.Point,
+            out RuntimeNavigationPath navPath, maxSnapDistance: 5.0f))
         {
-            if (Scene.Navigation.TryFindPath(
-                Entity.Position,
-                hit.Point,
-                out RuntimeNavigationPath navPath,
-                maxSnapDistance: 5.0f))
-            {
-                path = navPath.Points.ToList();
-                pathIndex = path.Count > 1 ? 1 : 0;
-                Console.WriteLine($"Path points={path.Count}, length={navPath.Length:0.00}");
-            }
-            else
-            {
-                path.Clear();
-                pathIndex = 0;
-                RuntimeNavigationDebugInfo debug = Scene.Navigation.LastDebugInfo;
-                Console.WriteLine(
-                    $"No NavMesh path found. status={debug.Status}, " +
-                    $"startCandidates={debug.StartCandidateCount}, endCandidates={debug.EndCandidateCount}, " +
-                    $"startComponent={debug.StartComponentId}/{debug.StartComponentSize}, " +
-                    $"endComponent={debug.EndComponentId}/{debug.EndComponentSize}, " +
-                    $"startSnap={debug.StartSnapDistance:0.00}, endSnap={debug.EndSnapDistance:0.00}");
-            }
+            path = navPath.Points.ToList();
+            pathIndex = path.Count > 1 ? 1 : 0;
+            Console.WriteLine($"Path points={path.Count}, length={navPath.Length:0.00}");
+        }
+        else
+        {
+            path.Clear();
+            pathIndex = 0;
+            RuntimeNavigationDebugInfo debug = Scene.Navigation.LastDebugInfo;
+            Console.WriteLine(
+                $"No NavMesh path found. status={debug.Status}, " +
+                $"startCandidates={debug.StartCandidateCount}, endCandidates={debug.EndCandidateCount}, " +
+                $"startComponent={debug.StartComponentId}/{debug.StartComponentSize}, " +
+                $"endComponent={debug.EndComponentId}/{debug.EndComponentSize}, " +
+                $"startSnap={debug.StartSnapDistance:0.00}, endSnap={debug.EndSnapDistance:0.00}");
         }
     }
-
-    leftMouseWasDown = leftMouseDown;
 }
 
 if (IsUpdate && pathIndex < path.Count)
@@ -199,27 +200,21 @@ if (IsUpdate && pathIndex < path.Count)
     Vector3 current = Entity.Position;
     Vector3 target = path[pathIndex];
     Vector3 flatDelta = new(target.X - current.X, 0.0f, target.Z - current.Z);
-
-    if (flatDelta.Length() <= StopDistance)
+    float distance = flatDelta.Length();
+    if (distance <= StopDistance)
     {
         pathIndex++;
     }
     else
     {
-        Vector3 direction = Vector3.Normalize(flatDelta);
-        Vector3 next = current + (direction * MoveSpeed * (float)DeltaSeconds);
-
-        if (Scene.Physics.SampleGround(
-            next.X,
-            next.Z,
-            out RuntimeRaycastHit ground,
-            originY: current.Y + 10.0f,
-            maxDistance: 30.0f,
-            ignoredEntity: Entity))
+        Vector3 direction = flatDelta / distance;
+        float step = Math.Min(distance, MoveSpeed * Math.Max((float)DeltaSeconds, 0.0f));
+        Vector3 next = current + direction * step;
+        if (Scene.Physics.SampleGround(next.X, next.Z, out RuntimeRaycastHit ground,
+            originY: current.Y + 10.0f, maxDistance: 30.0f, ignoredEntity: Entity))
         {
             next.Y = ground.Point.Y + FootOffset;
         }
-
         Entity.SetPosition(next.X, next.Y, next.Z);
         Entity.LookAt(next.X + direction.X, next.Y, next.Z + direction.Z);
     }
