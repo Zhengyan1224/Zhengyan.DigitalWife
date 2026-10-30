@@ -8,11 +8,16 @@ public sealed class AndroidScriptInput : AndroidScriptInputApi
 {
     private AndroidInputSnapshot _snapshot = AndroidInputSnapshot.Empty;
     private bool _cursorVisible = true;
+    private readonly float _displayDensity;
 
     private IReadOnlyList<TouchPoint> _touches = Array.Empty<TouchPoint>();
     private IReadOnlyList<TouchPoint> _touchTransitions = Array.Empty<TouchPoint>();
 
-    internal AndroidScriptInput(AndroidInputSnapshot snapshot) => Update(snapshot);
+    internal AndroidScriptInput(AndroidInputSnapshot snapshot, float displayDensity = 1.0f)
+    {
+        _displayDensity = float.IsFinite(displayDensity) ? Math.Max(displayDensity, 0.1f) : 1;
+        Update(snapshot);
+    }
 
     internal void Update(AndroidInputSnapshot snapshot)
     {
@@ -22,6 +27,7 @@ public sealed class AndroidScriptInput : AndroidScriptInputApi
     }
 
     public override bool IsTouchAvailable => true;
+    public override float TouchSlopPixels => 12.0f * _displayDensity;
     public override bool IsTouchStarted => _snapshot.IsTouchStarted;
     public override bool IsTouchEnded => _snapshot.IsTouchEnded;
     public override IReadOnlyList<TouchPoint> Touches => _touches;

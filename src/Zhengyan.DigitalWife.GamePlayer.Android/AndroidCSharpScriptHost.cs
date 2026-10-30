@@ -22,6 +22,8 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 internal sealed class AndroidCSharpScriptHost : IDisposable
 {
     private readonly string _projectDirectory;
+    private readonly Func<Vector2>? _getSurfaceSize;
+    private readonly GameWindowSettings? _windowSettings;
     private readonly Action<string> _requestSceneChange;
     private readonly Func<RuntimeScene, string, bool> _playAudio;
     private readonly Func<string, bool> _pauseAudio;
@@ -106,9 +108,13 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         GameProjectRealtimeVoiceSettings? realtimeVoiceSettings = null,
         GameProjectVoiceSettings? voiceSettings = null,
         GameProjectAsrSettings? asrSettings = null,
-        Func<RuntimeScene, string, float, bool>? playOneShot = null)
+        Func<RuntimeScene, string, float, bool>? playOneShot = null,
+        Func<Vector2>? getSurfaceSize = null,
+        GameWindowSettings? windowSettings = null)
     {
         _projectDirectory = projectDirectory;
+        _getSurfaceSize = getSurfaceSize;
+        _windowSettings = windowSettings;
         _requestSceneChange = requestSceneChange;
         _playAudio = playAudio;
         _pauseAudio = pauseAudio;
@@ -341,9 +347,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _localAsr,
             GetRealtimeVoiceApi(),
             AndroidRuntimeLoggerFactory.Instance);
-        AndroidScriptInput scriptInput = new(input);
+        AndroidScriptInput scriptInput = new(input, Application.Context.Resources?.DisplayMetrics?.Density ?? 1.0f);
         AndroidScriptGlobals globals = new(
-            new AndroidScriptScene(scene, _projectDirectory, _requestSceneChange, () => _fps, services),
+            new AndroidScriptScene(scene, _projectDirectory, _requestSceneChange, () => _fps, services,
+                _getSurfaceSize, _windowSettings),
             new AndroidScriptEntity(
                 entity,
                 path => _applyMotion(scene, entity, path),

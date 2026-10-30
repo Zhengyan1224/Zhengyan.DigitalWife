@@ -61,14 +61,20 @@ public sealed class AndroidScriptScene
     private readonly RuntimeScene _scene;
     private readonly Action<string> _requestSceneChange;
     private readonly Func<double> _getFps;
+    private readonly Func<Vector2> _getSurfaceSize;
+    private readonly GameWindowSettings _windowSettings;
 
-    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory, Action<string> requestSceneChange, Func<double> getFps, AndroidScriptServices services)
+    internal AndroidScriptScene(RuntimeScene scene, string projectDirectory, Action<string> requestSceneChange,
+        Func<double> getFps, AndroidScriptServices services, Func<Vector2>? getSurfaceSize = null,
+        GameWindowSettings? windowSettings = null)
     {
         _scene = scene;
         _requestSceneChange = requestSceneChange;
         _getFps = getFps;
         Services = services;
-        Camera = new AndroidScriptCamera(scene, projectDirectory);
+        _windowSettings = windowSettings ?? new();
+        _getSurfaceSize = getSurfaceSize ?? (() => new(_windowSettings.Width, _windowSettings.Height));
+        Camera = new AndroidScriptCamera(scene, projectDirectory, _getSurfaceSize, _windowSettings);
     }
 
     public string Name => _scene.Name;
@@ -83,6 +89,13 @@ public sealed class AndroidScriptScene
     public IAndroidScriptRealtimeVoice RealtimeVoice => Services.RealtimeVoice;
     public AndroidScriptBubbleManager Bubble => Services.Bubble;
     public RuntimeScenePhysics Physics => _scene.Physics;
+    public bool IsScreenPointOverGui(float x, float y)
+    {
+        Vector2 size = _getSurfaceSize();
+        return GuiPointerHitTest.Contains(_scene.Definition, x, y,
+            Math.Max(size.X, 1), Math.Max(size.Y, 1),
+            Math.Max(_windowSettings.Width, 1), Math.Max(_windowSettings.Height, 1));
+    }
     public RuntimeSceneNavigation Navigation => _scene.Navigation;
     public RuntimeDebug Debug => _scene.Debug;
     public IEnumerable<RuntimeGuiControl> GuiControls => _scene.Definition.GuiControls.Select(control => new RuntimeGuiControl(control));
@@ -171,6 +184,8 @@ public sealed class AndroidScriptSprite
 public sealed class AndroidScriptEntity
 {
     private readonly RuntimeEntity _entity;
+
+    public static implicit operator RuntimeEntity?(AndroidScriptEntity? entity) => entity?._entity;
     private readonly Action<string> _applyMotion;
     private readonly Action<float?, bool?> _setMotionState;
     private readonly Func<PmxModelComponent?> _resolvePmxModel;
@@ -505,11 +520,16 @@ public sealed class AndroidScriptCamera
 {
     private readonly RuntimeScene _scene;
     private readonly string _projectDirectory;
+    private readonly Func<Vector2> _getSurfaceSize;
+    private readonly GameWindowSettings _windowSettings;
 
-    internal AndroidScriptCamera(RuntimeScene scene, string projectDirectory)
+    internal AndroidScriptCamera(RuntimeScene scene, string projectDirectory,
+        Func<Vector2>? getSurfaceSize = null, GameWindowSettings? windowSettings = null)
     {
         _scene = scene;
         _projectDirectory = projectDirectory;
+        _windowSettings = windowSettings ?? new();
+        _getSurfaceSize = getSurfaceSize ?? (() => new(_windowSettings.Width, _windowSettings.Height));
     }
 
     public void SetCameraVmd(string cameraName, string path, bool loop = true, float playbackSpeed = 1.0f, bool play = true)
@@ -547,20 +567,53 @@ public sealed class AndroidScriptCamera
 
     public RuntimeRay ScreenPointToRay(float screenX, float screenY)
     {
+        Vector2 size = _getSurfaceSize();
+        int width = Math.Max((int)size.X, 1);
+        int height = Math.Max((int)size.Y, 1);
+        RuntimeViewport viewport = _scene.MainCamera.ResolveViewport(width, height,
+            _windowSettings.Width, _windowSettings.Height);
+        int top = height - viewport.Y - viewport.Height;
+        return ViewportPointToRay((screenX - viewport.X) / viewport.Width,
+            (screenY - top) / viewport.Height);
+    }
+
+    public RuntimeRay MousePointToRay(AndroidScriptInputApi input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        return ScreenPointToRay(input.MouseX, input.MouseY);
+    }
+
+    public RuntimeRay TouchPointToRay(Zhengyan.DigitalWife.Mmd.Game.Input.TouchPoint touch)
+        => ScreenPointToRay(touch.X, touch.Y);
+
+    public RuntimeRay ViewportPointToRay(float viewportX, float viewportY)
+    {
         CameraSettings settings = _scene.MainCamera.Settings;
-        float width = Math.Max(_scene.MainCamera.Definition.Viewport.Width, 1.0f);
-        float height = Math.Max(_scene.MainCamera.Definition.Viewport.Height, 1.0f);
+        Vector2 size = _getSurfaceSize();
+        RuntimeViewport viewport = _scene.MainCamera.ResolveViewport(Math.Max((int)size.X, 1),
+            Math.Max((int)size.Y, 1), _windowSettings.Width, _windowSettings.Height);
         Vector3 position = settings.Position.ToVector3();
         Vector3 target = settings.Target.ToVector3();
         if (Vector3.DistanceSquared(position, target) < 1e-8f) target = position - Vector3.UnitZ;
         Vector3 forward = Vector3.Normalize(target - position);
-        Vector3 right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
+        Vector3 preferredUp = settings.VmdHasUp ? settings.VmdUp.ToVector3() : Vector3.UnitY;
+        if (!float.IsFinite(preferredUp.LengthSquared()) || preferredUp.LengthSquared() < 1e-8f)
+            preferredUp = Vector3.UnitY;
+        Vector3 cross = Vector3.Cross(forward, preferredUp);
+        if (cross.LengthSquared() < 1e-8f)
+            cross = Vector3.Cross(forward, Math.Abs(forward.Y) > 0.9f ? Vector3.UnitZ : Vector3.UnitY);
+        Vector3 right = Vector3.Normalize(cross);
         Vector3 up = Vector3.Normalize(Vector3.Cross(right, forward));
-        float aspect = width / height;
+        float aspect = viewport.Width / (float)viewport.Height;
+        float nx = viewportX * 2.0f - 1.0f;
+        float ny = 1.0f - viewportY * 2.0f;
+        if (string.Equals(settings.ProjectionMode, "orthographic", StringComparison.OrdinalIgnoreCase))
+        {
+            float halfHeight = Math.Max(settings.OrthographicSize, 0.0005f);
+            return new RuntimeRay(position + right * nx * aspect * halfHeight + up * ny * halfHeight, forward);
+        }
         float tan = MathF.Tan(Math.Clamp(settings.Fov, 1, 179) * MathF.PI / 360.0f);
-        float nx = (screenX / width * 2.0f - 1.0f) * aspect * tan;
-        float ny = (1.0f - screenY / height * 2.0f) * tan;
-        return new RuntimeRay(position, Vector3.Normalize(forward + right * nx + up * ny));
+        return new RuntimeRay(position, Vector3.Normalize(forward + right * nx * aspect * tan + up * ny * tan));
     }
 
     public bool RaycastEntity(RuntimeRay ray, out RuntimeRaycastHit hit, float fallbackRadius = 0.5f)

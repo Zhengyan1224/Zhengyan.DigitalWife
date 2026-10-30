@@ -25,6 +25,8 @@ internal static class AndroidScriptLinkerTests
             "Zhengyan.DigitalWife.Scripting", "ScriptTime", ["get_Now", "get_UtcNow", "get_UnixTimeSeconds", "get_UnixTimeMilliseconds"], []);
         VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Mmd.Game.dll"),
             "Zhengyan.DigitalWife.Mmd.Game.Input", "TouchPoint", ["get_X", "get_Y", "get_Phase", "get_IsActive", "get_IsEnded", "get_Kind"], []);
+        VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.Mmd.Game.dll"),
+            "Zhengyan.DigitalWife.Mmd.Game.Input", "PointerClickGesture", [".ctor", "Update", "Reset", "get_MaxTapSeconds"], []);
         Console.WriteLine("PASS Linked Android time APIs and disabled-binding serialization members");
         Console.WriteLine("PASS Linked Android script Touch APIs and platform identifiers");
         VerifyMembers(Path.Combine(linkedDirectory, "Zhengyan.DigitalWife.GamePlayer.Android.Scripting.dll"),

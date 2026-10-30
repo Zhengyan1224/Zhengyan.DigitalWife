@@ -32,6 +32,8 @@ keywords:
 
 相机支持多相机、主相机、投影参数、相机控制模式、射线、Render Texture 绑定。
 
+C# 的 `ScreenPointToRay(x, y)`、`ViewportPointToRay(x, y)`、`MousePointToRay(Input)` 和 `TouchPointToRay(touch)` 在 PC / Android 均可使用。屏幕坐标以显示区域左上角为原点；视口坐标为主相机视口内的归一化坐标。Android 射线使用实际 Surface 尺寸和主相机视口，支持窗口尺寸变化、透视/正交投影及 VMD 相机方向。是否有鼠标或触点由 `Input` 判断；跨平台点击示例见“输入 API”。
+
 ## VMD 相机动画
 
 每台场景相机都能独立绑定一个 VMD。GameEditor 在 `Cameras -> <camera> -> VMD animation` 中设置路径、播放、循环、速度和当前帧。VMD 以 30 FPS 推进，相机位置、目标点、FOV 和透视/正交标记会随动作更新。

@@ -31,6 +31,8 @@ keywords:
 
 ## API 内容
 
+C# 的 `Raycast` 与 `SampleGround` 在 PC / Android 都支持 `ignoredEntity: Entity`。Android 脚本实体会转换为同一底层运行时实体，因此忽略自身 Collider 的语义一致。
+
 `Scene.Physics` / `scene.physics` 用于做场景级物理查询。当前实现基于实体 Collider，不是完整刚体物理，也不会自动推动角色；脚本仍然负责移动实体，只是在移动后用 `SampleGround` 修正高度。
 
 适合场景：

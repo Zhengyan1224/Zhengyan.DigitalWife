@@ -78,6 +78,8 @@ public sealed class RuntimeInput
 
     public bool IsTouchAvailable => _game.Input.IsTouchAvailable;
 
+    public float TouchSlopPixels => 12.0f;
+
     public bool HasTouch => _game.Input.HasTouch;
 
     public int TouchCount => _game.Input.TouchCount;

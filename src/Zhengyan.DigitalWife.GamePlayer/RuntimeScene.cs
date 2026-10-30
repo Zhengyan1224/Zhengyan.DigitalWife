@@ -87,6 +87,10 @@ public sealed class RuntimeScene
 
     public RuntimeWindowControl Window => _window;
 
+    public bool IsScreenPointOverGui(float x, float y) => GuiPointerHitTest.Contains(_scene, x, y,
+        Math.Max(_window.ActualWidth, 1), Math.Max(_window.ActualHeight, 1),
+        Math.Max(_window.Width, 1), Math.Max(_window.Height, 1));
+
     public RuntimeProjectControl Runtime => _runtime;
 
     public RuntimeCamera Camera => _camera;

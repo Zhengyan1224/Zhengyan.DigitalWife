@@ -89,6 +89,7 @@ Input.RightTrigger;
 Input.IsGamepadButtonDown("A");
 
 Input.IsTouchAvailable;
+Input.TouchSlopPixels;
 Input.HasTouch;
 Input.TouchCount;
 Input.ActiveTouchCount;
@@ -442,6 +443,29 @@ if (IsUpdate)
     }
 }
 ```
+
+### 统一鼠标点击与触屏轻点（PC / Android）
+
+`PointerClickGesture` 把鼠标左键点击和单指轻点转换为一次屏幕坐标选择，在释放时返回 `true`。轻点默认最多持续 `0.3` 秒；拖动、多指操作、长按和 `Cancelled` 不触发选择。`Input.TouchSlopPixels` 在 Android 使用 `12 × 屏幕密度` 像素，在 PC 使用 12 个窗口坐标单位。
+
+状态对象需要跨帧保存，并在 `IsStart` 时调用 `Reset()`。`isBlocked` 用于排除 GUI 和 Sprite；在 GUI 内按下的操作离开边界后仍被排除，同一帧的触摸和兼容鼠标输入也不会重复触发。每帧只更新一次，只在 `IsUpdate` 中读取。
+
+```csharp
+static PointerClickGesture sceneClick = new();
+if (IsStart) sceneClick.Reset();
+if (IsUpdate && sceneClick.Update(
+    Input.IsMouseButtonDown("left"), new Vector2(Input.MouseX, Input.MouseY),
+    Input.Touches, Input.TouchTransitions, DeltaSeconds, out Vector2 point,
+    movementThreshold: Input.TouchSlopPixels,
+    isBlocked: p => Scene.IsScreenPointOverGui(p.X, p.Y)))
+{
+    RuntimeRay ray = Scene.Camera.ScreenPointToRay(point.X, point.Y);
+    if (Scene.Physics.Raycast(ray, out RuntimeRaycastHit hit, maxDistance: 200, ignoredEntity: Entity))
+        Console.WriteLine($"选择地面位置：{hit.Point}");
+}
+```
+
+完整的导航、贴地移动示例见编辑器输出目录的 `samples/click-to-move.csx`。Android 默认相机保持单指旋转、双指平移/缩放，并排除在 GUI / Sprite 上开始的触点。Mouse 与 Touch 原始输入仍可分别读取；Android 的 Mouse 表示实际外接鼠标。
 
 ### 点击、长按、滑动与拖动（跟踪每个触点 ID）
 

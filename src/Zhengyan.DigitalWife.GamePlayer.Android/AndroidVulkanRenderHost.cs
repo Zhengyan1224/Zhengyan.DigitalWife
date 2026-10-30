@@ -19,6 +19,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private RuntimeSceneManager? _sceneManager;
     private AndroidCSharpScriptHost? _scriptHost;
     private readonly AndroidGuiPointerEvents _guiPointerEvents = new();
+    private readonly AndroidCameraTouchInput _cameraTouchInput = new();
     private AndroidAudioHost? _audioHost;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
@@ -95,7 +96,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 realtimeVoiceSettings: project.RealtimeVoice,
                 voiceSettings: project.Voice,
                 asrSettings: project.Asr,
-                playOneShot: (scene, name, volumeScale) => _audioHost?.PlayOneShot(scene, name, volumeScale) == true);
+                playOneShot: (scene, name, volumeScale) => _audioHost?.PlayOneShot(scene, name, volumeScale) == true,
+                getSurfaceSize: () => new(_width, _height), windowSettings: project.Window);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -158,7 +160,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             _scriptHost?.PumpCallbacks();
             if (inputScene is not null && _scriptsStarted && IsReady) DispatchTouchEvents(inputScene, input);
             _sceneManager?.Update(_scriptsStarted && IsReady ? (float)deltaSeconds : 0.0f,
-                _scriptsStarted && IsReady ? ToCameraInput(input) : RuntimeCameraInput.None);
+                _scriptsStarted && IsReady ? _cameraTouchInput.GetInput(inputScene, input, _width, _height,
+                    _project!.Window.Width, _project.Window.Height) : RuntimeCameraInput.None);
             RuntimeScene? scene = _sceneManager?.Current;
             if (scene is not null)
             {
@@ -416,22 +419,6 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _game?.Dispose();
         _game = null;
         ResetFrameClock();
-    }
-
-    private static RuntimeCameraInput ToCameraInput(AndroidInputSnapshot input)
-    {
-        if (input.ActiveTouchCount == 0) return RuntimeCameraInput.None;
-        AndroidTouchPoint[] active = input.Touches.Where(point => point.IsActive).ToArray();
-        if (active.Length == 1) return new RuntimeCameraInput(active[0].Delta, Vector2.Zero, 0.0f);
-
-        Vector2 currentA = active[0].PixelPosition;
-        Vector2 currentB = active[1].PixelPosition;
-        Vector2 previousA = currentA - active[0].Delta;
-        Vector2 previousB = currentB - active[1].Delta;
-        float currentDistance = Vector2.Distance(currentA, currentB);
-        float previousDistance = Vector2.Distance(previousA, previousB);
-        Vector2 pan = (active[0].Delta + active[1].Delta) * 0.5f;
-        return new RuntimeCameraInput(Vector2.Zero, pan, (previousDistance - currentDistance) * 0.01f);
     }
 
     private void DispatchTouchEvents(RuntimeScene scene, AndroidInputSnapshot input)

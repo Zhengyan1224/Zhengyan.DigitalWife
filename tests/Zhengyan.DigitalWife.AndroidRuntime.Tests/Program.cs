@@ -1,5 +1,15 @@
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.GameEditor;
+
+if (args is ["--precompile-project", string exportProjectDirectory])
+{
+    GameProject project = GameProjectStore.Load(exportProjectDirectory);
+    var android = AndroidCSharpScriptPrecompiler.Precompile(exportProjectDirectory, project);
+    var desktop = DesktopCSharpScriptPrecompiler.Precompile(exportProjectDirectory, project);
+    Console.WriteLine($"PASS project precompile: Android={android.Entries.Count}, desktop={desktop.Entries.Count}");
+    return 0;
+}
 
 if (args is ["--verify-linked-script-apis", string linkedDirectory])
 {

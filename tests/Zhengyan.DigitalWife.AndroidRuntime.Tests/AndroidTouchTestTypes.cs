@@ -30,7 +30,7 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android
     public sealed record AndroidDeviceInputSnapshot
     {
         public static AndroidDeviceInputSnapshot Empty { get; } = new();
-        public System.Numerics.Vector2 MousePosition => default;
+        public System.Numerics.Vector2 MousePosition { get; init; }
         public System.Numerics.Vector2 MouseDelta => default;
         public System.Numerics.Vector2 ScrollDelta => default;
         public IReadOnlySet<int> PressedMouseButtons { get; } = new HashSet<int>();

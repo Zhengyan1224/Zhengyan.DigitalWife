@@ -7,6 +7,7 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 public abstract class AndroidScriptInputApi
 {
     public virtual bool IsTouchAvailable => false;
+    public virtual float TouchSlopPixels => 12.0f;
     public bool HasTouch => TouchCount > 0;
     public int TouchCount => Touches.Count;
     public int ActiveTouchCount => Touches.Count(touch => touch.IsActive);

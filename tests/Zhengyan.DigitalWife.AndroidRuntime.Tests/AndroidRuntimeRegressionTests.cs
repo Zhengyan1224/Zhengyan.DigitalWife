@@ -63,6 +63,11 @@ internal static class AndroidRuntimeRegressionTests
             ("Android GUI targets match desktop fallback", AndroidGuiEventTests.TestTargets),
             ("Script touch Android native multi-point input and quick transitions", TouchScriptTests.TestAndroidInput),
             ("Script touch desktop quick transitions and cancellation", TouchScriptTests.TestDesktopTransitions),
+            ("Pointer clicks distinguish taps, dragging, multi-touch and GUI capture", PointerClickTests.TestGestures),
+            ("Pointer camera rays match mouse, touch, viewport and surface resize", PointerClickTests.TestCameraRays),
+            ("Pointer camera preserves GUI capture while dragging", PointerClickTests.TestCameraGuiCapture),
+            ("Pointer physics ignores Android script entity wrappers", PointerClickTests.TestIgnoredEntity),
+            ("Pointer click-to-move desktop and Android package exports", TestPointerExports),
             ("Script platform globals and touch docs compile on desktop and Android", TestScriptPlatformsAndDocs),
             ("Script current time compiles and runs on desktop and Android", TestScriptTime),
             ("Script platform Python worker globals, current time and touch transition snapshots", TestPythonPlatform),
@@ -170,10 +175,10 @@ internal static class AndroidRuntimeRegressionTests
             .Select(match => match.Groups[1].Value)
             .Concat(Regex.Matches(platformDocs, "```csharp\\r?\\n([\\s\\S]*?)```").Take(1).Select(match => match.Groups[1].Value))
             .ToArray();
-        // Compile the three common gesture examples plus the platform example.
+        // Compile the four common gesture examples plus the platform example.
         sources = sources.Where(source => source.Contains("TouchTransitions") || source.Contains("class TouchGestureState")
             || source.Contains("class TwoFingerState") || source.Contains("PlatformName")).ToArray();
-        Check(sources.Length == 4, "Touch/platform documentation sample selection changed.");
+        Check(sources.Length == 5, "Touch/platform documentation sample selection changed.");
         GameProject project = new() { Scene = fixture.CoreScene.Definition };
         for (int i = 0; i < sources.Length; i++)
         {
@@ -185,7 +190,7 @@ internal static class AndroidRuntimeRegressionTests
             project.Scene.Entities[0].Scripts.Add(new() { Path = name, Language = "csharp" });
         }
         GameProjectStore.Save(fixture.Root, project);
-        Check(DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 4,
+        Check(DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 5,
             "Common gesture snippets do not compile against the desktop exported globals.");
     }
 
@@ -218,6 +223,44 @@ internal static class AndroidRuntimeRegressionTests
         GameProjectStore.Save(fixture.Root, project);
         Check(DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 2,
             "One-shot calls or documentation did not compile for desktop export.");
+    }
+
+    private static void TestPointerExports()
+    {
+        const string legacy = """
+            RuntimeRay ray = Scene.Camera.MousePointToRay(Input);
+            Scene.Physics.Raycast(ray, out RuntimeRaycastHit hit, maxDistance: 200, ignoredEntity: Entity);
+            Scene.Physics.SampleGround(0, 0, out hit, originY: 10, maxDistance: 30, ignoredEntity: Entity);
+            return null;
+            """;
+        using ScriptFixture fixture = new(legacy);
+        fixture.Execute();
+        string sample = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScriptSamples", "click-to-move.csx"));
+        using ScriptFixture movement = new(sample);
+        movement.Run(isStart: true);
+        movement.Run(isStart: false);
+        GameProject project = new() { Scene = fixture.CoreScene.Definition };
+        project.Scene.Entities[0].Scripts = [new() { Path = "script.csx", Language = "csharp" },
+            new() { Path = "click-to-move.csx", Language = "csharp" }];
+        File.WriteAllText(Path.Combine(fixture.Root, "click-to-move.csx"), sample);
+        string inputDocs = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScriptDocs", "09-input.md"));
+        string clickExample = Regex.Matches(inputDocs, "```csharp\\r?\\n([\\s\\S]*?)```")
+            .Select(match => match.Groups[1].Value).Single(value => value.Contains("static PointerClickGesture"));
+        File.WriteAllText(Path.Combine(fixture.Root, "click-doc.csx"), clickExample);
+        project.Scene.Entities[0].Scripts.Add(new() { Path = "click-doc.csx", Language = "csharp" });
+        GameProjectStore.Save(fixture.Root, project);
+        AndroidScriptPrecompileResult android = AndroidCSharpScriptPrecompiler.Precompile(fixture.Root, project);
+        Check(android.Entries.Count == 3 && DesktopCSharpScriptPrecompiler.Precompile(fixture.Root, project).Entries.Count == 3,
+            "Legacy physics calls or click-to-move sample failed desktop/Android export.");
+        GameProjectPackageBuildResult package = GameProjectPackage.Create(fixture.Root,
+            new() { OutputPath = Path.Combine(fixture.Root, "pointer.dwgame"), Password = "test-only" });
+        using GameProjectPackageSession opened = GameProjectPackage.OpenOrExtract(package.OutputPath,
+            new() { Password = "test-only", TempRootDirectory = Path.Combine(fixture.Root, "extract"),
+                SaveDirectory = fixture.SaveRoot, UsePersistentCache = false });
+        foreach (AndroidScriptPrecompileEntry entry in android.Entries)
+            Check(File.Exists(Path.Combine(opened.ProjectDirectory, entry.Assembly)), "Package lost an Android pointer script.");
+        string legacyAssembly = android.Entries.Single(entry => entry.Source == "script.csx").Assembly;
+        Factory(File.ReadAllBytes(Path.Combine(opened.ProjectDirectory, legacyAssembly)))([fixture.Globals, null]).GetAwaiter().GetResult();
     }
 
     private static void TestScriptTime()

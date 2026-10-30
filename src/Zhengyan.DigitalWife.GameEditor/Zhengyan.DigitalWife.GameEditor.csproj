@@ -21,6 +21,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <None Update="samples\click-to-move.csx" CopyToOutputDirectory="PreserveNewest" />
         <None Include="$(DigitalWifeMmdEngineAssetsDir)**\*">
             <Link>Resources\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
