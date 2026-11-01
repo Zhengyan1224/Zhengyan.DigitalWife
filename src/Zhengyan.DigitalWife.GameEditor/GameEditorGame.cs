@@ -771,7 +771,8 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         long splitPartSizeBytes = 0,
         bool includeSaves = false,
         bool precompileAndroid = true,
-        bool precompileDesktop = true)
+        bool precompileDesktop = true,
+        bool precompileWeb = true)
     {
         SaveProject();
         AndroidScriptPrecompileResult precompile = precompileAndroid
@@ -780,6 +781,9 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         DesktopScriptPrecompileResult desktopPrecompile = precompileDesktop
             ? DesktopCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project)
             : new DesktopScriptPrecompileResult([]);
+        WebScriptPrecompileResult webPrecompile = precompileWeb
+            ? WebCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project)
+            : new WebScriptPrecompileResult([]);
         GameProjectPackageBuildResult result = GameProjectPackage.Create(
             ProjectDirectory,
             new GameProjectPackageBuildOptions
@@ -796,7 +800,10 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         string precompileWarning = precompile.Errors.Count == 0
             ? string.Empty
             : $"\nAndroid precompile warnings: {precompile.Errors.Count} (see compiled/android/manifest.json)";
-        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nPrecompiled Android C# scripts: {precompile.Entries.Count}\nPrecompiled desktop C# scripts: {desktopPrecompile.Entries.Count}\nTotal bytes: {result.TotalBytes:N0}{precompileWarning}");
+        string webPrecompileWarning = webPrecompile.Errors.Count == 0
+            ? string.Empty
+            : $"\nWeb precompile warnings: {webPrecompile.Errors.Count} (see compiled/web/manifest.json)";
+        UpdateStatus($"Exported package: {outputSummary}\nEncrypted: {result.Encrypted}\nPrecompiled Android C# scripts: {precompile.Entries.Count}\nPrecompiled desktop C# scripts: {desktopPrecompile.Entries.Count}\nPrecompiled Web C# scripts: {webPrecompile.Entries.Count}\nTotal bytes: {result.TotalBytes:N0}{precompileWarning}{webPrecompileWarning}");
         return result;
     }
 

@@ -1,0 +1,141 @@
+﻿@page "/"
+@implements IAsyncDisposable
+@inject WebRuntimeHost RuntimeHost
+
+<PageTitle>Zhengyan Web GamePlayer</PageTitle>
+
+<main class="web-runtime-page">
+    <header class="web-runtime-header">
+        <div>
+            <p class="eyebrow">Zhengyan.DigitalWife</p>
+            <h1>Web GamePlayer</h1>
+            <p class="subtitle">阶段 4/5：内存包、IndexedDB 和预编译 Web 脚本</p>
+        </div>
+        <span class="runtime-badge @(RuntimeHost.Snapshot.IsRunning ? "running" : "idle")">
+            @RuntimeHost.Snapshot.Status
+        </span>
+    </header>
+
+    <section class="web-runtime-shell" aria-label="Web 游戏运行时">
+        <div class="canvas-frame @(RuntimeHost.Snapshot.RendererReady ? "renderer-ready" : "")">
+            <canvas @ref="_canvas" id="game-canvas" aria-label="游戏画布"></canvas>
+            <canvas @ref="_overlayCanvas" id="game-overlay" aria-hidden="true"></canvas>
+            <div class="canvas-placeholder">
+                <strong>正在初始化 WebGL2</strong>
+                <span>如果浏览器不支持 WebGL2，错误会显示在右侧面板。</span>
+            </div>
+        </div>
+
+        <aside class="runtime-panel">
+            <h2>运行时状态</h2>
+            <div class="loading-progress" aria-label="资源加载进度">
+                <div class="loading-progress-track"><span style="width:@(RuntimeHost.Snapshot.LoadingProgress * 100):0.##%"></span></div>
+                <small>@RuntimeHost.Snapshot.LoadingStage：@RuntimeHost.Snapshot.LoadingMessage</small>
+            </div>
+            <label class="package-picker">
+                打开 .dwgame 内存包
+                <InputFile accept=".dwgame,application/octet-stream" OnChange="OnPackageSelected" />
+            </label>
+            @if (!string.IsNullOrWhiteSpace(_packageError))
+            {
+                <div class="runtime-error" role="alert"><strong>包加载错误</strong><span>@_packageError</span></div>
+            }
+            <dl>
+                <div>
+                    <dt>主循环</dt>
+                    <dd>@(RuntimeHost.Snapshot.IsRunning ? "requestAnimationFrame" : "未启动")</dd>
+                </div>
+                <div>
+                    <dt>渲染器</dt>
+                    <dd>@RuntimeHost.Snapshot.RendererName</dd>
+                </div>
+                <div>
+                    <dt>场景</dt>
+                    <dd>@(RuntimeHost.Snapshot.SceneReady ? RuntimeHost.Snapshot.SceneName : "未加载")</dd>
+                </div>
+                <div>
+                    <dt>实体</dt>
+                    <dd>@RuntimeHost.Snapshot.SceneEntityCount</dd>
+                </div>
+                <div>
+                    <dt>PMX 网格</dt>
+                    <dd>@(RuntimeHost.Snapshot.PmxMeshReady ? $"{RuntimeHost.Snapshot.PmxEntityCount} 个模型，{RuntimeHost.Snapshot.PmxModelName} ({RuntimeHost.Snapshot.PmxVertexCount} 顶点)" : "未加载")</dd>
+                </div>
+                <div>
+                    <dt>帧数</dt>
+                    <dd>@RuntimeHost.Snapshot.FrameCount</dd>
+                </div>
+                <div>
+                    <dt>Canvas</dt>
+                    <dd>@RuntimeHost.Snapshot.CanvasWidth × @RuntimeHost.Snapshot.CanvasHeight</dd>
+                </div>
+                <div>
+                    <dt>设备像素比</dt>
+                    <dd>@RuntimeHost.Snapshot.DevicePixelRatio.ToString("0.##")</dd>
+                </div>
+                <div>
+                    <dt>最近帧间隔</dt>
+                    <dd>@RuntimeHost.Snapshot.LastDeltaSeconds.ToString("0.000") s</dd>
+                </div>
+            </dl>
+
+            @if (!string.IsNullOrWhiteSpace(RuntimeHost.Snapshot.LastError))
+            {
+                <div class="runtime-error" role="alert">
+                    <strong>错误</strong>
+                    <span>@RuntimeHost.Snapshot.LastError</span>
+                </div>
+            }
+        </aside>
+    </section>
+
+    <p class="runtime-note">
+        阶段 4/5 已接入未加密 .dwgame 内存包、IndexedDB 缓存、manifest 校验和 Web 脚本 ABI；阶段 3 的 PMX/VMD、材质和输入能力继续复用。
+    </p>
+</main>
+
+@code {
+    private ElementReference _canvas;
+    private ElementReference _overlayCanvas;
+    private string _packageError = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        RuntimeHost.Changed += OnRuntimeChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await RuntimeHost.StartAsync(_canvas, _overlayCanvas);
+        }
+    }
+
+    private void OnRuntimeChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnPackageSelected(InputFileChangeEventArgs args)
+    {
+        _packageError = string.Empty;
+        try
+        {
+            using Stream source = args.File.OpenReadStream(maxAllowedSize: 1024L * 1024L * 1024L);
+            using MemoryStream buffer = new();
+            await source.CopyToAsync(buffer);
+            await RuntimeHost.LoadDwGameAsync(buffer.ToArray(), _canvas, _overlayCanvas);
+        }
+        catch (Exception exception)
+        {
+            _packageError = exception.GetBaseException().Message;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        RuntimeHost.Changed -= OnRuntimeChanged;
+        await RuntimeHost.StopAsync();
+    }
+}

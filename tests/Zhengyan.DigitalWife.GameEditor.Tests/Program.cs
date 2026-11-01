@@ -187,6 +187,22 @@ static void ExportAndCheck(string projectDirectory, string outputPath)
         }
         Check(actualScripts.SetEquals(expectedScripts), $"{platform} precompile omitted a scene's scripts.");
     }
+    using (JsonDocument webManifest = JsonDocument.Parse(File.ReadAllText(
+        Path.Combine(extracted.ProjectDirectory, "compiled", "web", "manifest.json"))))
+    {
+        HashSet<string> webScripts = new(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonElement entry in webManifest.RootElement.GetProperty("scripts").EnumerateArray())
+        {
+            string source = entry.GetProperty("Source").GetString()!;
+            webScripts.Add(source);
+            string assemblyPath = Path.Combine(extracted.ProjectDirectory, entry.GetProperty("Assembly").GetString()!);
+            Check(File.Exists(assemblyPath), $"Missing precompiled web assembly: {assemblyPath}");
+        }
+        Check(webManifest.RootElement.TryGetProperty("errors", out JsonElement errors), "Web precompile manifest omitted diagnostics.");
+        Check(webScripts.Count <= expectedScripts.Count, "Web precompile emitted more scripts than the project contains.");
+        Check(errors.GetArrayLength() == 0 || webScripts.Count < expectedScripts.Count,
+            "Web precompile reported errors without identifying an omitted script.");
+    }
     Console.WriteLine($"Export verified: {roundTrip.Scenes.Count} scenes, {expectedScripts.Count} scripts per platform, {result.TotalBytes:N0} bytes.");
 }
 

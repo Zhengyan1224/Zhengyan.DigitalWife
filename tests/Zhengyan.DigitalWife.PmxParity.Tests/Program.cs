@@ -1,19 +1,30 @@
 using System.Globalization;
 using System.Numerics;
+using System.Text;
+using System.Text.Json;
+using System.Security.Cryptography;
 using Zhengyan.DigitalWife.Mmd;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
+using Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
 
 return args.Length switch
 {
     0 => RunSelfTests(),
     2 when args[0] == "--analyze" => AnalyzePmx(args[1]),
+    3 when args[0] == "--export-web" => ExportWeb(args[1], args[2]),
     2 => CompareSnapshots(args[0], args[1], 1e-4f),
     3 when float.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float tolerance)
         => CompareSnapshots(args[0], args[1], tolerance),
     _ => Usage()
 };
 
+static int ExportWeb(string source, string output)
+{
+    WebGamePackageResult result = WebGamePackageExporter.Publish(source, output);
+    Console.WriteLine($"Web package exported: {result.AssetCount} assets, {result.ScriptCount} scripts, {result.TotalBytes} bytes");
+    return 0;
+}
 static int AnalyzePmx(string path)
 {
     PmxParsing? pmx = File.Exists(path) ? PmxParsing.ParsingByFile(path) : null;
@@ -64,9 +75,157 @@ static int RunSelfTests()
 
     RunRuntimeSceneLifecycleTests();
     RunAnimationTimingTests();
+    RunPmxPoseEvaluatorTests();
+    RunMemoryAssetStoreTests();
+    RunWebPackageExporterTests();
+    RunWebDwGamePackageTests();
+    RunWebManifestSignatureTests();
 
     Console.WriteLine("PMX/VMD parity self-tests passed.");
     return 0;
+}
+
+static void RunPmxPoseEvaluatorTests()
+{
+    string fixture = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Zhengyan.DigitalWife.GamePlayer.Web", "wwwroot", "web-game", "assets", "models", "minimal.pmx");
+    fixture = Path.GetFullPath(fixture);
+    if (!File.Exists(fixture)) return;
+    PmxParsing parsing = PmxParsing.ParsingByFile(fixture) ?? throw new InvalidDataException("PMX fixture failed to parse.");
+    using PmxPoseEvaluator evaluator = new(parsing, [], physicsEnabled: false, gravity: -Vector3.UnitY, resetPhysicsOnLoop: true);
+    float[] vertices = new float[parsing.Vertices.Length * 8];
+    evaluator.Update(0.0, 1.0f, true, vertices, 1.0f / 30.0f);
+    if (vertices.Any(value => !float.IsFinite(value)) || evaluator.GlobalPose.Count != parsing.Bones.Length)
+        throw new InvalidOperationException("Web PMX pose evaluator produced invalid output.");
+}
+static void RunWebPackageExporterTests()
+{
+    string source = Path.Combine(Path.GetTempPath(), "zhengyan-web-export-source-" + Guid.NewGuid().ToString("N"));
+    string output = Path.Combine(Path.GetTempPath(), "zhengyan-web-export-output-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        GameProject project = new() { Name = "Web exporter test", Scenes = ["scenes/main.scene.json"], DefaultScene = "scenes/main.scene.json", EditorScene = "scenes/main.scene.json" };
+        GameProjectScene exportScene = new() { Name = "Export scene" };
+        exportScene.Entities.Add(new GameEntity
+        {
+            Id = "avatar",
+            Name = "Avatar",
+            Scripts = [new ScriptBinding { Path = "scripts/body.csx", Language = "csharp" }]
+        });
+        project.Scene = exportScene;
+        GameProjectStore.Save(source, project);
+        Directory.CreateDirectory(Path.Combine(source, "assets", "models"));
+        File.WriteAllBytes(Path.Combine(source, "assets", "models", "marker.bin"), [1, 2, 3, 4]);
+        Directory.CreateDirectory(Path.Combine(source, "scripts"));
+        File.WriteAllText(Path.Combine(source, "scripts", "body.csx"), "// source placeholder");
+        Directory.CreateDirectory(Path.Combine(source, "compiled", "web", "scripts"));
+        File.WriteAllBytes(Path.Combine(source, "compiled", "web", "scripts", "body.dll"), [0x4D, 0x5A, 0x01]);
+        WebGamePackageResult result = WebGamePackageExporter.Publish(source, output);
+        if (result.AssetCount < 3 || !File.Exists(Path.Combine(output, "web.manifest.json")))
+            throw new InvalidOperationException("Web package exporter did not produce the manifest and project assets.");
+        string manifest = File.ReadAllText(Path.Combine(output, "web.manifest.json"));
+        if (manifest.Contains(":\\\\", StringComparison.Ordinal) || manifest.Contains("D:\\", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Web package manifest contains a Windows absolute path.");
+        if (!File.Exists(Path.Combine(output, "assets", "models", "marker.bin")))
+            throw new InvalidOperationException("Web package exporter did not copy binary assets.");
+        using JsonDocument document = JsonDocument.Parse(manifest);
+        JsonElement scripts = document.RootElement.GetProperty("scripts");
+        if (scripts.GetArrayLength() != 1
+            || scripts[0].GetProperty("entity").GetString() != "avatar"
+            || scripts[0].GetProperty("assembly").GetString() != "compiled/web/scripts/body.dll")
+        {
+            throw new InvalidOperationException("Web package exporter did not preserve the entity script binding.");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(source)) Directory.Delete(source, recursive: true);
+        if (Directory.Exists(output)) Directory.Delete(output, recursive: true);
+    }
+}
+static void RunMemoryAssetStoreTests()
+{
+    MemoryAssetStore store = new();
+    store.Add("scenes/main.json", Encoding.UTF8.GetBytes("{}"));
+    if (store.Count != 1
+        || !store.ExistsAsync("scenes/main.json").GetAwaiter().GetResult()
+        || store.GetUriAsync("scenes/main.json").GetAwaiter().GetResult() != "memory:///scenes/main.json")
+    {
+        throw new InvalidOperationException("Memory asset store registration failed.");
+    }
+
+    byte[] first = store.ReadAllBytesAsync("scenes/main.json").GetAwaiter().GetResult();
+    first[0] = (byte)'x';
+    byte[] second = store.ReadAllBytesAsync("scenes/main.json").GetAwaiter().GetResult();
+    if (second[0] != (byte)'{')
+    {
+        throw new InvalidOperationException("Memory asset store did not isolate returned bytes.");
+    }
+
+    try
+    {
+        store.ReadAllBytesAsync("../outside.bin").GetAwaiter().GetResult();
+        throw new InvalidOperationException("Memory asset store accepted a traversal path.");
+    }
+    catch (InvalidDataException)
+    {
+        // Expected: path normalization is part of the asset-store contract.
+    }
+}
+
+static void RunWebDwGamePackageTests()
+{
+    string source = Path.Combine(Path.GetTempPath(), "zhengyan-web-package-source-" + Guid.NewGuid().ToString("N"));
+    string package = Path.Combine(Path.GetTempPath(), "zhengyan-web-package-" + Guid.NewGuid().ToString("N") + ".dwgame");
+    try
+    {
+        GameProject project = new()
+        {
+            Name = "Web package test",
+            Scenes = ["scenes/main.scene.json"],
+            DefaultScene = "scenes/main.scene.json",
+            EditorScene = "scenes/main.scene.json",
+            Scene = new GameProjectScene { Name = "Package scene" }
+        };
+        GameProjectStore.Save(source, project);
+        Directory.CreateDirectory(Path.Combine(source, "assets"));
+        File.WriteAllBytes(Path.Combine(source, "assets", "marker.bin"), [7, 8, 9]);
+        GameProjectPackage.Create(source, new GameProjectPackageBuildOptions { OutputPath = package });
+        WebPackageLoadResult loaded = WebDwGamePackageLoader.LoadAsync(File.ReadAllBytes(package)).GetAwaiter().GetResult();
+        if (!loaded.Store.ExistsAsync("game.project.json").GetAwaiter().GetResult()
+            || !loaded.Store.ExistsAsync("assets/marker.bin").GetAwaiter().GetResult()
+            || loaded.Manifest.EntryScene != "scenes/main.scene.json"
+            || loaded.Manifest.Assets.Count < 3)
+        {
+            throw new InvalidOperationException("Web .dwgame memory loader did not populate the manifest and assets.");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(source)) Directory.Delete(source, recursive: true);
+        if (File.Exists(package)) File.Delete(package);
+    }
+}
+
+static void RunWebManifestSignatureTests()
+{
+    WebAssetManifest manifest = new()
+    {
+        EntryScene = "scenes/main.scene.json",
+        Assets =
+        [
+            new WebAssetEntry { Path = "scenes/main.scene.json", Kind = "json", Size = 2, Sha256 = "" }
+        ],
+        KeyId = "test"
+    };
+    using RSA rsa = RSA.Create(2048);
+    manifest.PublicKey = rsa.ExportSubjectPublicKeyInfoPem();
+    manifest.SignatureAlgorithm = "RSA-SHA256";
+    manifest.Signature = Convert.ToBase64String(rsa.SignData(WebManifestSignature.CanonicalBytes(manifest), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+    if (!WebManifestSignature.Verify(manifest, requireSignature: true))
+        throw new InvalidOperationException("Web manifest RSA signature verification failed.");
+    manifest.EntryScene = "scenes/tampered.scene.json";
+    if (WebManifestSignature.Verify(manifest))
+        throw new InvalidOperationException("Web manifest accepted a tampered signature.");
 }
 
 static void RunAnimationTimingTests()
@@ -257,6 +416,6 @@ static void AssertNear(float expected, float actual, float tolerance, string des
 
 static int Usage()
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Zhengyan.DigitalWife.PmxParity.Tests [--analyze model.pmx | expected.pose actual.pose [tolerance]]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Zhengyan.DigitalWife.PmxParity.Tests [--analyze model.pmx | --export-web project output | expected.pose actual.pose [tolerance]]");
     return 2;
 }

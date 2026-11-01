@@ -974,7 +974,20 @@ public class PmxParsing
 
     public static PmxParsing? ParsingByFile(string path)
     {
-        using BinaryReader binaryReader = new(File.OpenRead(path));
+        using FileStream stream = File.OpenRead(path);
+        return ParsingByStream(stream);
+    }
+
+    public static PmxParsing? ParsingByBytes(ReadOnlyMemory<byte> bytes)
+    {
+        using MemoryStream stream = new(bytes.ToArray(), writable: false);
+        return ParsingByStream(stream);
+    }
+
+    public static PmxParsing? ParsingByStream(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using BinaryReader binaryReader = new(stream, Encoding.UTF8, leaveOpen: true);
 
         PmxHeader header = ReadHeader(binaryReader);
 

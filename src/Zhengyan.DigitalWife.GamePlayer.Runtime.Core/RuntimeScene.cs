@@ -1,5 +1,6 @@
 using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
+using Zhengyan.DigitalWife.Mmd;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
@@ -19,14 +20,15 @@ public sealed class RuntimeScene : IDisposable
         Func<string, string> resolvePath,
         Func<string, bool>? resetPmxPhysics = null,
         Func<string, ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null,
-        Func<string, string, Matrix4x4?>? nodeWorldResolver = null)
+        Func<string, string, Matrix4x4?>? nodeWorldResolver = null,
+        Func<string, VmdParsing?>? animationLoader = null)
     {
         ScenePath = scenePath;
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         NormalizeCameras(definition);
         Cameras = definition.Cameras.Select(camera => new RuntimeCamera(camera)).ToArray();
         Lighting = new RuntimeLighting(definition.Lighting);
-        _animations = new RuntimeSceneAnimationController(resolvePath);
+        _animations = new RuntimeSceneAnimationController(resolvePath, animationLoader);
         _resetPmxPhysics = resetPmxPhysics;
         _meshColliderResolver = meshColliderResolver;
         _nodeWorldResolver = nodeWorldResolver;

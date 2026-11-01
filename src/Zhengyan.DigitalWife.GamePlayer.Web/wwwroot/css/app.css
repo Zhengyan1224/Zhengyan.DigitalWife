@@ -1,0 +1,239 @@
+﻿:root {
+    color-scheme: dark;
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #0b1020;
+    color: #e6edf7;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background:
+        radial-gradient(circle at 25% 0%, rgba(47, 96, 155, 0.26), transparent 34rem),
+        #0b1020;
+}
+
+.web-runtime-page {
+    width: min(1180px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 2.5rem 0 3rem;
+}
+
+.web-runtime-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.eyebrow {
+    margin: 0 0 0.35rem;
+    color: #8fb9e8;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+    margin-top: 0;
+}
+
+h1 {
+    margin-bottom: 0.45rem;
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    line-height: 1;
+}
+
+.subtitle {
+    margin-bottom: 0;
+    color: #aebdd2;
+}
+
+.runtime-badge {
+    border: 1px solid #40516c;
+    border-radius: 999px;
+    padding: 0.5rem 0.8rem;
+    color: #aebdd2;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.runtime-badge.running {
+    border-color: #2e9b73;
+    color: #86e2b8;
+}
+
+.web-runtime-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18rem;
+    gap: 1rem;
+}
+
+.canvas-frame {
+    position: relative;
+    position: relative;
+    min-height: 28rem;
+    overflow: hidden;
+    border: 1px solid #273854;
+    border-radius: 1rem;
+    background: #111a2c;
+    box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.28);
+}
+
+#game-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+#game-canvas {
+    touch-action: none;
+}
+
+#game-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 28rem;
+    background: #111a2c;
+}
+
+.canvas-placeholder {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    gap: 0.5rem;
+    pointer-events: none;
+    color: #aebdd2;
+    text-align: center;
+}
+
+.canvas-placeholder strong {
+    color: #e6edf7;
+    font-size: 1.15rem;
+}
+
+.canvas-placeholder span {
+    font-size: 0.9rem;
+}
+
+.runtime-panel {
+    border: 1px solid #273854;
+    border-radius: 1rem;
+    padding: 1.25rem;
+    background: rgba(17, 26, 44, 0.86);
+}
+
+.runtime-panel h2 {
+    margin-bottom: 1.25rem;
+    font-size: 1rem;
+}
+
+dl {
+    display: grid;
+    gap: 0.85rem;
+    margin: 0;
+}
+
+dl div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid rgba(64, 81, 108, 0.45);
+    padding-bottom: 0.65rem;
+}
+
+dt {
+    color: #8d9db4;
+    font-size: 0.8rem;
+}
+
+dd {
+    margin: 0;
+    color: #e6edf7;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.runtime-error {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 1.2rem;
+    border: 1px solid #9a4c4c;
+    border-radius: 0.6rem;
+    padding: 0.75rem;
+    color: #ffb4b4;
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+}
+
+.package-picker {
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+    margin: .75rem 0;
+    color: #cbd5e1;
+    font-size: .85rem;
+}
+
+.package-picker input {
+    width: 100%;
+}
+
+.runtime-error strong {
+    color: #ff8585;
+}
+
+.runtime-note {
+    margin: 1rem 0 0;
+    color: #8d9db4;
+    font-size: 0.85rem;
+}
+
+@media (max-width: 760px) {
+    .web-runtime-page {
+        width: min(100% - 1rem, 42rem);
+        padding-top: 1.25rem;
+    }
+
+    .web-runtime-header {
+        display: block;
+    }
+
+    .runtime-badge {
+        display: inline-block;
+        margin-top: 1rem;
+    }
+
+    .web-runtime-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .canvas-frame,
+    #game-canvas {
+        min-height: 20rem;
+    }
+}
+.canvas-frame.renderer-ready .canvas-placeholder {
+    display: none;
+}
+
+.canvas-frame.renderer-ready #game-canvas {
+    background: #090e1a;
+}
+
+.loading-progress { margin: 0 0 1rem; color: #b7c6dd; }
+.loading-progress-track { height: 6px; border-radius: 999px; background: #1c2b40; overflow: hidden; margin-bottom: .45rem; }
+.loading-progress-track span { display: block; height: 100%; background: linear-gradient(90deg,#45b4ff,#7ce0b4); transition: width .2s ease; }

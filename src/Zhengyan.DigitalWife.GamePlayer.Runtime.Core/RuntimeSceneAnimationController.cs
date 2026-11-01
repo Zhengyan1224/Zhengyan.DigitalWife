@@ -7,12 +7,17 @@ namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 internal sealed class RuntimeSceneAnimationController : IDisposable
 {
     private readonly Func<string, string> _resolvePath;
+    private readonly Func<string, VmdParsing?> _loadAnimation;
     private readonly Dictionary<string, Track> _cameraTracks = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Track _lightTrack = new();
+    private readonly Track _lightTrack;
 
-    public RuntimeSceneAnimationController(Func<string, string> resolvePath)
+    public RuntimeSceneAnimationController(
+        Func<string, string> resolvePath,
+        Func<string, VmdParsing?>? loadAnimation = null)
     {
         _resolvePath = resolvePath;
+        _loadAnimation = loadAnimation ?? LoadFromFile;
+        _lightTrack = new Track(_loadAnimation);
     }
 
     public void Update(GameProjectScene scene, float deltaSeconds)
@@ -25,7 +30,7 @@ internal sealed class RuntimeSceneAnimationController : IDisposable
             active.Add(id);
             if (!_cameraTracks.TryGetValue(id, out Track? track))
             {
-                track = new Track();
+                track = new Track(_loadAnimation);
                 _cameraTracks[id] = track;
             }
 
@@ -63,6 +68,13 @@ internal sealed class RuntimeSceneAnimationController : IDisposable
 
     private string Resolve(string path) => string.IsNullOrWhiteSpace(path) ? string.Empty : _resolvePath(path);
 
+    private static VmdParsing? LoadFromFile(string path)
+    {
+        return string.IsNullOrWhiteSpace(path) || !File.Exists(path)
+            ? null
+            : VmdParsing.ParsingByFile(path);
+    }
+
     private static void Advance(VmdPlaybackSettings settings, float deltaSeconds, int maxFrame)
     {
         if (!settings.IsPlaying || maxFrame <= 0) return;
@@ -83,12 +95,18 @@ internal sealed class RuntimeSceneAnimationController : IDisposable
 
     private sealed class Track
     {
+        private readonly Func<string, VmdParsing?> _loadAnimation;
         private string _path = string.Empty;
         private bool _attempted;
         private VmdParsing? _vmd;
 
         public int CameraMaxFrame { get; private set; }
         public int LightMaxFrame { get; private set; }
+
+        public Track(Func<string, VmdParsing?> loadAnimation)
+        {
+            _loadAnimation = loadAnimation;
+        }
 
         public bool Load(string path)
         {
@@ -98,10 +116,10 @@ internal sealed class RuntimeSceneAnimationController : IDisposable
             _vmd = null;
             CameraMaxFrame = 0;
             LightMaxFrame = 0;
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+            if (string.IsNullOrWhiteSpace(path)) return false;
             try
             {
-                _vmd = VmdParsing.ParsingByFile(path);
+                _vmd = _loadAnimation(path);
                 if (_vmd is null) return false;
                 Array.Sort(_vmd.Cameras, static (left, right) => left.Frame.CompareTo(right.Frame));
                 Array.Sort(_vmd.Lights, static (left, right) => left.Frame.CompareTo(right.Frame));

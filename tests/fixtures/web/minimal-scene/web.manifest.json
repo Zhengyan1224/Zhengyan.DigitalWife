@@ -1,0 +1,40 @@
+{
+  "formatVersion": 1,
+  "runtime": "web",
+  "renderer": "webgl2",
+  "apiVersion": "1.0",
+  "entryScene": "scenes/main.scene.json",
+  "assets": [
+    {
+      "path": "assets/models/minimal.pmx",
+      "kind": "pmx",
+      "size": 487,
+      "sha256": "18e271879f5a5df2ad2f9516386f8d8d27f9825d700f13a8a9a75a27b9732380"
+    },
+    {
+      "path": "assets/motions/minimal.vmd",
+      "kind": "vmd",
+      "size": 196,
+      "sha256": "1120d9b6286c853cf567c3310b2ed0c8a6b031ea5a0e0a39188f6d9219a8de8c"
+    },
+    {
+      "path": "game.project.json",
+      "kind": "json",
+      "size": 426,
+      "sha256": "8ca3e6321ddc496c77e487bf5293f66fec1752b86077574ebdf285e4ee54a57a"
+    },
+    {
+      "path": "scenes/main.scene.json",
+      "kind": "json",
+      "size": 1785,
+      "sha256": "81125475b592aefb42050ff215265ea71c558b331c916dec0de2f484e9a60f1e"
+    }
+  ],
+  "scripts": [],
+  "capabilities": [
+    "scene",
+    "pmx-static",
+    "vmd-camera",
+    "webgl2"
+  ]
+}

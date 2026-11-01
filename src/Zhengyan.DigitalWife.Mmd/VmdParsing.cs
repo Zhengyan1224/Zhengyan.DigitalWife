@@ -143,7 +143,20 @@ public class VmdParsing
 
     public static VmdParsing? ParsingByFile(string path)
     {
-        using BinaryReader binaryReader = new(File.OpenRead(path));
+        using FileStream stream = File.OpenRead(path);
+        return ParsingByStream(stream);
+    }
+
+    public static VmdParsing? ParsingByBytes(ReadOnlyMemory<byte> bytes)
+    {
+        using MemoryStream stream = new(bytes.ToArray(), writable: false);
+        return ParsingByStream(stream);
+    }
+
+    public static VmdParsing? ParsingByStream(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using BinaryReader binaryReader = new(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
         VmdHeader header = ReadHeader(binaryReader);
 

@@ -1,0 +1,20 @@
+{
+  "name": "Web Minimal PMX",
+  "version": "0.3.0",
+  "defaultScene": "scenes/main.scene.json",
+  "editorScene": "scenes/main.scene.json",
+  "scenes": [
+    "scenes/main.scene.json"
+  ],
+  "runtime": {
+    "graphicsBackend": "WebGL2",
+    "useOpenCL": false,
+    "useVulkanCompute": false
+  },
+  "scriptRuntime": {
+    "preferredLanguage": "csharp",
+    "scriptSearchPaths": [
+      "scripts"
+    ]
+  }
+}
