@@ -1,6 +1,10 @@
 using System.Numerics;
 
+#if GAMEPLAYER_RUNTIME_CORE
+namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
+#else
 namespace Zhengyan.DigitalWife.GamePlayer;
+#endif
 
 public sealed record RuntimeNavigationBakeResult(int TriangleCount, int EdgeCount);
 
@@ -20,7 +24,7 @@ public sealed record RuntimeNavigationDebugInfo(
     float StartSnapDistance,
     float EndSnapDistance);
 
-public sealed class RuntimeSceneNavigation
+public sealed partial class RuntimeSceneNavigation
 {
     private readonly Func<IEnumerable<RuntimeEntity>> _getEntities;
     private readonly List<RuntimeNavNode> _nodes = [];

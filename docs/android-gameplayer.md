@@ -632,6 +632,14 @@ colliders available and falls back gracefully when a runtime mesh is unavailable
 Debug lines are rendered by the Vulkan line renderer and expire automatically
 after their requested duration.
 
+Navigation in the shared runtime compiles the desktop navigation implementation
+directly: walkable triangle winding and slope limits, edge/step adjacency,
+finite-triangle snapping, connected endpoint selection and route diagnostics all
+use the desktop rules. This also preserves repeated click-to-move queries after
+arrival. Android script `Entity.LookAt` matches desktop's horizontal, +Z-forward
+heading and leaves the rotation unchanged for vertically aligned or coincident
+targets.
+
 ## Android external input
 
 `Input` in Android scripts now exposes external keyboard, mouse, wheel and

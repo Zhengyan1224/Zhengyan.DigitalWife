@@ -20,6 +20,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android local speech"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script touch"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script platform"
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android navigation"
 ```
 
 ## 覆盖范围
@@ -31,6 +32,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "
 - RealtimeVoice 服务协议与播放完成。
 - 本地 Sherpa ASR / TTS、唤醒词、静音期限、取消与旧回调隔离。
 - GUI 按钮目标与事件顺序、气泡布局、Touch。
+- 对照 PC 的角色朝向、三角形采样、台阶连通、连续寻路和导航诊断。
 - C# / Python 平台标识和文档示例编译。
 
 ## Release 裁剪检查
@@ -48,6 +50,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --verify
 | 参数格式 | 用途 |
 | --- | --- |
 | --compile-project <directory> | 用 Android 实际元数据入口编译工程脚本 |
+| --navigation-project <directory> | 只读 DemoGame04 的模型与脚本，在临时 dwgame 包中对照 PC 验证连续触摸寻路和转向 |
 | --local-speech-project <directory> | 读取真实工程 Sherpa 模型，检查本地 TTS、ASR 与唤醒（PC native 推理，不请求 LLM） |
 | --physics-project <directory> <motion.vmd> | 使用实际工程比较物理时间行为 |
 | --skinning-project <directory> <motion.vmd> | 比较实际工程蒙皮与姿态 |

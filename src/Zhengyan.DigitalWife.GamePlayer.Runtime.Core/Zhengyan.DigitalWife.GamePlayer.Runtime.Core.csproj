@@ -4,9 +4,11 @@
         <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
+        <DefineConstants>$(DefineConstants);GAMEPLAYER_RUNTIME_CORE</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Include="..\Zhengyan.DigitalWife.GamePlayer\RuntimeSceneNavigation.cs" Link="RuntimeSceneNavigation.cs" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.Mmd.Core\Zhengyan.DigitalWife.Mmd.Core.csproj" />
     </ItemGroup>

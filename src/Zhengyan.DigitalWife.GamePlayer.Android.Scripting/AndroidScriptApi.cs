@@ -310,11 +310,12 @@ public sealed class AndroidScriptEntity
     public void LookAt(Vector3 target)
     {
         Vector3 direction = target - Position;
-        if (direction.LengthSquared() < 1e-8f) return;
+        direction.Y = 0.0f;
+        if (direction.LengthSquared() <= 0.000001f) return;
         direction = Vector3.Normalize(direction);
         RotationDegrees = new Vector3(
-            MathF.Atan2(direction.Y, MathF.Sqrt(direction.X * direction.X + direction.Z * direction.Z)) * 180.0f / MathF.PI,
-            MathF.Atan2(direction.X, -direction.Z) * 180.0f / MathF.PI,
+            0.0f,
+            MathF.Atan2(direction.X, direction.Z) * 180.0f / MathF.PI,
             0.0f);
     }
     public void ApplyMotion(string motionPath)

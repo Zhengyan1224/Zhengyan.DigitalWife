@@ -2,6 +2,12 @@ using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GameEditor;
 
+if (args is ["--navigation-project", string navigationProject])
+{
+    AndroidNavigationTests.RunProject(navigationProject);
+    return 0;
+}
+
 if (args is ["--precompile-project", string exportProjectDirectory])
 {
     GameProject project = GameProjectStore.Load(exportProjectDirectory);
