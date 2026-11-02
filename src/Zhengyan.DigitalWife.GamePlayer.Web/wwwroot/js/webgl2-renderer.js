@@ -69,6 +69,12 @@ uniform mat4 u_lightViewProjection;
 uniform mat4 u_model;
 void main() { gl_Position = u_lightViewProjection * u_model * vec4(a_position, 1.0); }`;
 
+const SHADOW_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+void main() {
+    // The depth attachment of the shadow framebuffer receives the fragment depth.
+}`;
+
 const PARTICLE_VERTEX_SHADER_SOURCE = `#version 300 es
 in vec3 a_position;
 in vec4 a_color;
@@ -110,11 +116,14 @@ function compileShader(gl, type, source, label) {
 
 function createShadowProgram(gl) {
     const vertex = compileShader(gl, gl.VERTEX_SHADER, SHADOW_VERTEX_SHADER_SOURCE, "WebGL2 shadow vertex shader");
+    const fragment = compileShader(gl, gl.FRAGMENT_SHADER, SHADOW_FRAGMENT_SHADER_SOURCE, "WebGL2 shadow fragment shader");
     const program = gl.createProgram();
     if (!program) throw new Error("WebGL2 could not allocate the shadow program.");
     gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
     gl.linkProgram(program);
     gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
         const infoLog = gl.getProgramInfoLog(program) || "no driver log";
         gl.deleteProgram(program);
@@ -211,10 +220,10 @@ async function loadTexture(gl, uri, reportError) {
 }
 
 function createMeshResources(gl, payload, locations, defaultTexture, reportError) {
-    const positions = new Float32Array(payload.positions || []);
-    const normals = new Float32Array(payload.normals || []);
-    const uvs = new Float32Array(payload.uvs || []);
-    const indices = new Uint32Array(payload.indices || []);
+    const positions = new Float32Array(toEntryArray(payload.positions ?? payload.Positions));
+    const normals = new Float32Array(toEntryArray(payload.normals ?? payload.Normals));
+    const uvs = new Float32Array(toEntryArray(payload.uvs ?? payload.Uvs));
+    const indices = new Uint32Array(toEntryArray(payload.indices ?? payload.Indices));
     const vertexCount = positions.length / 3;
     const interleaved = new Float32Array(vertexCount * 8);
     for (let i = 0; i < vertexCount; i++) {
@@ -248,7 +257,7 @@ function createMeshResources(gl, payload, locations, defaultTexture, reportError
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
-    const groups = (payload.materials || []).map(material => ({
+    const groups = toEntryArray(payload.materials ?? payload.Materials).map(material => ({
         ...material,
         texture: null,
         texturePromise: loadTexture(gl, material.textureUri, reportError)
@@ -258,9 +267,9 @@ function createMeshResources(gl, payload, locations, defaultTexture, reportError
 }
 
 function updateMeshResources(gl, mesh, payload) {
-    const positions = new Float32Array(payload.positions || []);
-    const normals = new Float32Array(payload.normals || []);
-    const uvs = new Float32Array(payload.uvs || []);
+    const positions = new Float32Array(toEntryArray(payload.positions ?? payload.Positions));
+    const normals = new Float32Array(toEntryArray(payload.normals ?? payload.Normals));
+    const uvs = new Float32Array(toEntryArray(payload.uvs ?? payload.Uvs));
     for (let i = 0; i < mesh.vertexCount; i++) {
         const p = i * 3, v = i * 8, uv = i * 2;
         mesh.interleaved[v] = positions[p] ?? mesh.interleaved[v];
@@ -285,6 +294,20 @@ function deleteMeshResources(gl, mesh) {
     for (const group of mesh.groups || []) if (group.texture) gl.deleteTexture(group.texture);
 }
 
+function toEntryArray(value) {
+    if (Array.isArray(value)) return value;
+    if (value && Array.isArray(value.$values)) return value.$values;
+    if (value && typeof value[Symbol.iterator] === "function") return Array.from(value);
+    if (value && typeof value === "object") {
+        if ("mesh" in value || "Mesh" in value) return [value];
+        const keys = Object.keys(value);
+        if (keys.every(key => /^\d+$/.test(key))) {
+            return keys.sort((left, right) => Number(left) - Number(right)).map(key => value[key]);
+        }
+        return Object.values(value);
+    }
+    return [];
+}
 export function createWebGl2Renderer(canvas, reportError) {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: true, depth: true });
     if (!gl) throw new Error("This browser does not provide WebGL2.");
@@ -401,7 +424,7 @@ export function createWebGl2Renderer(canvas, reportError) {
             if (disposed) return;
             const nextMeshes = new Map();
             const pending = [];
-            for (const entry of entries || []) {
+            for (const entry of toEntryArray(entries)) {
                 const key = String(entry?.id ?? entry?.Id ?? "").trim();
                 const payload = entry?.mesh ?? entry?.Mesh;
                 if (!key || !payload) continue;
@@ -422,7 +445,7 @@ export function createWebGl2Renderer(canvas, reportError) {
         },
         updateMeshes(entries) {
             if (disposed) return;
-            for (const entry of entries || []) {
+            for (const entry of toEntryArray(entries)) {
                 const key = String(entry?.id ?? entry?.Id ?? "").trim();
                 const payload = entry?.mesh ?? entry?.Mesh;
                 const mesh = meshes.get(key);

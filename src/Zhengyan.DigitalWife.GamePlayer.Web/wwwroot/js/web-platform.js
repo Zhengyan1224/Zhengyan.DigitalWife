@@ -70,6 +70,32 @@ export function closeWebSocket() {
 
 export async function registerServiceWorker(path = "sw.js") {
     if (!navigator.serviceWorker) return false;
-    await navigator.serviceWorker.register(path, { scope: "./" });
-    return true;
+
+    // Do not let a development Service Worker pin old fingerprinted assets.
+    // Production HTTPS deployments still use the cache-first asset strategy.
+    const localHost = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
+    if (localHost) {
+        try {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map(registration => registration.unregister()));
+            if (globalThis.caches) {
+                const keys = await caches.keys();
+                await Promise.all(keys
+                    .filter(key => key.startsWith("zhengyan-web-runtime-"))
+                    .map(key => caches.delete(key)));
+            }
+        } catch {
+            // Service Worker cleanup is optional during local development.
+        }
+        return false;
+    }
+
+    try {
+        const registration = await navigator.serviceWorker.register(path, { scope: "./", updateViaCache: "none" });
+        await registration.update();
+        return true;
+    } catch {
+        // Offline cache is an enhancement; it must not prevent the game from starting.
+        return false;
+    }
 }
