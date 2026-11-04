@@ -47,10 +47,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private RuntimeRealtimeVoice? _realtimeVoice;
     private AndroidScriptRealtimeVoice? _realtimeVoiceApi;
     private readonly MainThreadDispatcher _dispatcher = new();
-    private readonly Dictionary<string, AndroidCompiledScript> _runners = new(StringComparer.OrdinalIgnoreCase);
+    // Cache immutable bytecode, never factories whose static fields outlive a scene.
+    private readonly Dictionary<string, AndroidCompiledScript> _scripts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FailedScriptVersion> _failedScripts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<ScriptExecutionKey, AndroidScriptExecutionContext> _executionContexts = [];
-    private readonly HashSet<string> _started = new(StringComparer.OrdinalIgnoreCase);
     private RuntimeEntity? _loadingEntity;
     private IReadOnlyList<ScriptBinding> _loadingBindings = [];
     private double _fps;
@@ -168,8 +168,9 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             _localTts.Stop();
         }
         foreach (AndroidScriptExecutionContext context in _executionContexts.Values)
-            context.Globals.Services.Dispose();
+            context.Dispose();
         _executionContexts.Clear();
+        _failedScripts.Clear();
         _activeScene = scene;
         _localAsr.ConfigureCallbacks(value => DispatchEvent(scene, value), _dispatcher.Post);
         _ = _localAsr.PreloadAsync();
@@ -210,7 +211,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     {
         foreach (ScriptExecutionKey key in _executionContexts.Keys.Where(key => ReferenceEquals(key.Entity, _loadingEntity)).ToArray())
         {
-            _executionContexts[key].Globals.Services.Dispose();
+            _executionContexts[key].Dispose();
             _executionContexts.Remove(key);
         }
     }
@@ -249,7 +250,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         {
             target = AndroidGuiEventRouting.ResolveTarget(scene, runtimeEvent.TargetEntity,
                 entity => entity.Definition.Scripts.Where(IsSupported)
-                    .Any(binding => _runners.ContainsKey(GameProjectPath.ToAbsolute(_projectDirectory, binding.Path))));
+                    .Any(binding => _scripts.ContainsKey(GameProjectPath.ToAbsolute(_projectDirectory, binding.Path))));
             if (target is null)
             {
                 global::Android.Util.Log.Warn("ZhengyanGamePlayer",
@@ -296,17 +297,17 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         foreach (ScriptBinding binding in bindings.Where(IsSupported))
         {
             string path = GameProjectPath.ToAbsolute(_projectDirectory, binding.Path);
-            if (!_runners.TryGetValue(path, out AndroidCompiledScript? runner)) continue;
+            if (!_scripts.TryGetValue(path, out AndroidCompiledScript? runner) || runner.IsNoOp) continue;
             ScriptExecutionKey key = new(scene, target, path);
-            if (!_executionContexts.TryGetValue(key, out AndroidScriptExecutionContext? context))
-            {
-                context = CreateExecutionContext(scene, target, AndroidInputSnapshot.Empty);
-                _executionContexts[key] = context;
-            }
-            context.Update(0.0f, false, runtimeEvent, AndroidInputSnapshot.Empty);
             try
             {
-                object? result = runner.ExecuteResult(context.Globals, context.SubmissionArray);
+                if (!_executionContexts.TryGetValue(key, out AndroidScriptExecutionContext? context))
+                {
+                    context = CreateExecutionContext(scene, target, AndroidInputSnapshot.Empty, runner);
+                    _executionContexts[key] = context;
+                }
+                context.Update(0.0f, false, runtimeEvent, AndroidInputSnapshot.Empty);
+                object? result = context.Script!.ExecuteResult(context.Globals);
                 if (result is null) continue;
                 return result switch
                 {
@@ -325,7 +326,8 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private AndroidScriptExecutionContext CreateExecutionContext(
         RuntimeScene scene,
         RuntimeEntity entity,
-        AndroidInputSnapshot input)
+        AndroidInputSnapshot input,
+        AndroidCompiledScript? script = null)
     {
         AndroidScriptServices services = new(
             scene,
@@ -370,7 +372,16 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             false,
             null,
             services);
-        return new AndroidScriptExecutionContext(globals, scriptInput);
+        try
+        {
+            return new AndroidScriptExecutionContext(globals, scriptInput,
+                script is null ? null : new AndroidScriptInstance(script.Image));
+        }
+        catch
+        {
+            services.Dispose();
+            throw;
+        }
     }
 
     private AndroidScriptRealtimeVoice GetRealtimeVoiceApi()
@@ -465,7 +476,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         AndroidInputSnapshot? input = null)
     {
         string path = GameProjectPath.ToAbsolute(_projectDirectory, binding.Path);
-        if (_runners.TryGetValue(path, out AndroidCompiledScript? cachedRunner))
+        if (_scripts.TryGetValue(path, out AndroidCompiledScript? cachedRunner))
         {
             try { ExecuteCached(cachedRunner, path, scene, entity, deltaSeconds, isStart, runtimeEvent, input); }
             catch (Exception ex) { RecordScriptFailure(path, ex); }
@@ -483,7 +494,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
             }
 
             _failedScripts.Remove(path);
-            _runners.Remove(path);
+            _scripts.Remove(path);
         }
 
         try
@@ -505,7 +516,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 runner = Compile(path);
             }
 
-            _runners[path] = runner;
+            _scripts[path] = runner;
             ExecuteCached(runner, path, scene, entity, deltaSeconds, isStart, runtimeEvent, input);
         }
         catch (Exception ex)
@@ -516,7 +527,13 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     private void RecordScriptFailure(string path, Exception error)
     {
-        _runners.Remove(path);
+        _scripts.Remove(path);
+        foreach (ScriptExecutionKey key in _executionContexts.Keys.Where(key =>
+            string.Equals(key.Path, path, StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            _executionContexts[key].Dispose();
+            _executionContexts.Remove(key);
+        }
         FileInfo source = new(path);
         _failedScripts[path] = new(source.LastWriteTimeUtc.Ticks, source.Exists ? source.Length : 0);
         global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Android C# script failed '{path}': {error}");
@@ -543,12 +560,12 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         ScriptExecutionKey key = new(scene, entity, path);
         if (!_executionContexts.TryGetValue(key, out AndroidScriptExecutionContext? context))
         {
-            context = CreateExecutionContext(scene, entity, input ?? AndroidInputSnapshot.Empty);
+            context = CreateExecutionContext(scene, entity, input ?? AndroidInputSnapshot.Empty, runner);
             _executionContexts.Add(key, context);
         }
 
         context.Update(deltaSeconds, isStart, runtimeEvent, input ?? AndroidInputSnapshot.Empty);
-        runner.Execute(context.Globals, context.SubmissionArray);
+        _ = context.Script!.ExecuteResult(context.Globals);
     }
 
     private string ResolveScriptAssetPath(string value)
@@ -569,7 +586,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         string source = File.ReadAllText(path);
         if (string.IsNullOrWhiteSpace(source)) return AndroidCompiledScript.NoOp;
         byte[] image = AndroidScriptCompiler.Compile(path, AndroidScriptMetadata.GetReferences());
-        return CreateCompiledScript(Assembly.Load(image), AnalyzeScriptPhases(source));
+        return new AndroidCompiledScript(image, AnalyzeScriptPhases(source));
     }
 
     private AndroidCompiledScript? TryLoadPrecompiled(string sourcePath)
@@ -587,21 +604,16 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                     $"Precompiled Android script references desktop InlineArray types; compiling compatible source once: '{sourcePath}'. Re-export the game package with the updated editor.");
                 return null;
             }
-            return CreateCompiledScript(Assembly.Load(image), AnalyzeScriptPhases(File.ReadAllText(sourcePath)));
+            // Keep the source fallback for assemblies with a missing/invalid factory.
+            // Validation owns no scene state and is released immediately.
+            using AndroidScriptInstance validation = new(image);
+            return new AndroidCompiledScript(image, AnalyzeScriptPhases(File.ReadAllText(sourcePath)));
         }
         catch (Exception ex)
         {
             global::Android.Util.Log.Warn("ZhengyanGamePlayer", $"Precompiled Android C# script could not be loaded '{assemblyPath}': {ex.Message}");
             return null;
         }
-    }
-    private static AndroidCompiledScript CreateCompiledScript(Assembly assembly, ScriptExecutionPhases phases)
-    {
-        Type scriptType = assembly.GetType("Script")
-            ?? throw new InvalidOperationException("Android C# script did not produce a Script type.");
-        MethodInfo factory = scriptType.GetMethod("<Factory>", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Android C# script did not produce an execution factory.");
-        return new AndroidCompiledScript(factory, phases);
     }
 
     private static ScriptExecutionPhases AnalyzeScriptPhases(string source)
@@ -724,51 +736,30 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     }
 
 
-    private sealed class AndroidCompiledScript
+    private sealed class AndroidCompiledScript(byte[] image, ScriptExecutionPhases phases)
     {
-        private readonly Func<object?[], Task<object?>>? _factory;
-
-        public static AndroidCompiledScript NoOp { get; } = new(null, ScriptExecutionPhases.None);
-
-        public AndroidCompiledScript(MethodInfo? factory, ScriptExecutionPhases phases)
-        {
-            _factory = factory is null
-                ? null
-                : factory.CreateDelegate<Func<object?[], Task<object?>>>();
-            Phases = phases;
-        }
-
-        public bool IsNoOp => _factory is null;
-        public ScriptExecutionPhases Phases { get; }
-
-        public object? ExecuteResult(AndroidScriptGlobals globals, object?[] submissionArray)
-        {
-            if (_factory is null)
-            {
-                return null;
-            }
-
-            submissionArray[0] = globals;
-            submissionArray[1] = null;
-            Task<object?> task = _factory(submissionArray);
-            return task.GetAwaiter().GetResult();
-        }
-
-        public void Execute(AndroidScriptGlobals globals, object?[] submissionArray)
-        {
-            _ = ExecuteResult(globals, submissionArray);
-        }
+        public static AndroidCompiledScript NoOp { get; } = new([], ScriptExecutionPhases.None);
+        public byte[] Image { get; } = image;
+        public bool IsNoOp => Image.Length == 0;
+        public ScriptExecutionPhases Phases { get; } = phases;
     }
 
-    private sealed class AndroidScriptExecutionContext(AndroidScriptGlobals globals, AndroidScriptInput input)
+    private sealed class AndroidScriptExecutionContext(
+        AndroidScriptGlobals globals, AndroidScriptInput input, AndroidScriptInstance? script) : IDisposable
     {
         public AndroidScriptGlobals Globals { get; } = globals;
-        public object?[] SubmissionArray { get; } = new object?[2];
+        public AndroidScriptInstance? Script { get; } = script;
 
         public void Update(float deltaSeconds, bool isStart, AndroidRuntimeEvent? runtimeEvent, AndroidInputSnapshot snapshot)
         {
             input.Update(snapshot);
             Globals.Update(deltaSeconds, isStart, runtimeEvent);
+        }
+
+        public void Dispose()
+        {
+            try { Globals.Services.Dispose(); }
+            finally { Script?.Dispose(); }
         }
     }
 
@@ -811,11 +802,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         _activeScene = null;
         _loadingEntity = null;
         _loadingBindings = [];
-        _runners.Clear();
+        _scripts.Clear();
         _failedScripts.Clear();
         foreach (AndroidScriptExecutionContext context in _executionContexts.Values)
-            context.Globals.Services.Dispose();
+            context.Dispose();
         _executionContexts.Clear();
-        _started.Clear();
     }
 }

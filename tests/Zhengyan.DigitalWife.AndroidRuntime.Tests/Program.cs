@@ -2,6 +2,12 @@ using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GameEditor;
 
+if (args is ["--scene-script-project", string sceneScriptProject])
+{
+    AndroidMotionLoopTests.RunProjectSceneScript(sceneScriptProject);
+    return 0;
+}
+
 if (args is ["--navigation-project", string navigationProject])
 {
     AndroidNavigationTests.RunProject(navigationProject);

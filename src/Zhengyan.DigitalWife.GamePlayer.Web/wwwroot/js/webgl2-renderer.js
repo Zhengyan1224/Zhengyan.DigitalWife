@@ -230,8 +230,10 @@ function createTextureSampler(gl) {
     if (!sampler) throw new Error("WebGL2 could not allocate the texture sampler.");
     gl.samplerParameteri(sampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.samplerParameteri(sampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    // PMX UVs can tile beyond [0, 1]. Match the desktop material sampler;
+    // clamping stretches the classroom atlas edges over floors and walls.
+    gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_T, gl.REPEAT);
     return sampler;
 }
 
@@ -367,45 +369,83 @@ function decodeDdsBc3Block(bytes, offset, output, width, height, blockX, blockY)
     }
 }
 
-function decodeDds(arrayBuffer) {
+export function decodeDds(arrayBuffer) {
     const bytes = new Uint8Array(arrayBuffer);
     if (bytes.length < 128 || String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== "DDS ") {
         throw new Error("Invalid DDS header.");
     }
     const view = new DataView(arrayBuffer);
+    if (view.getUint32(4, true) !== 124 || view.getUint32(76, true) !== 32) {
+        throw new Error("Invalid DDS header size.");
+    }
     const width = view.getUint32(16, true);
     const height = view.getUint32(12, true);
+    if (!width || !height) throw new Error("Invalid DDS texture dimensions.");
+    if (view.getUint32(112, true) & (0x200 | 0x200000)) {
+        throw new Error("DDS cube and volume textures are not supported as 2D material textures.");
+    }
+    const headerFlags = view.getUint32(8, true);
     const pitchOrLinearSize = view.getUint32(20, true);
     const pixelFlags = view.getUint32(80, true);
     const fourCc = readDdsFourCc(view);
-    const rgbBits = view.getUint32(88, true);
-    const redMask = view.getUint32(92, true);
-    const greenMask = view.getUint32(96, true);
-    const blueMask = view.getUint32(100, true);
-    const alphaMask = view.getUint32(104, true);
-    const output = new Uint8Array(width * height * 4);
+    let rgbBits = view.getUint32(88, true);
+    let redMask = view.getUint32(92, true);
+    let greenMask = view.getUint32(96, true);
+    let blueMask = view.getUint32(100, true);
+    let alphaMask = view.getUint32(104, true);
     let dataOffset = 128;
     let format = fourCc;
     if (fourCc === "DX10") {
         if (bytes.length < 148) throw new Error("DDS DX10 header is truncated.");
         const dxgiFormat = view.getUint32(128, true);
+        if (view.getUint32(132, true) !== 3 || view.getUint32(140, true) !== 1 || (view.getUint32(136, true) & 4)) {
+            throw new Error("Only single DDS DX10 2D textures are supported.");
+        }
         dataOffset = 148;
         format = {
-            28: "RGBA8",
+            28: "RGBA8", 29: "RGBA8",
+            87: "BGRA8", 91: "BGRA8",
+            88: "BGRX8", 93: "BGRX8",
             71: "DXT1", 72: "DXT1",
             74: "DXT3", 75: "DXT3",
-            77: "DXT5", 78: "DXT5",
-            80: "BC4", 81: "BC4",
-            83: "BC5", 84: "BC5"
-        }[dxgiFormat] || "";
+            77: "DXT5", 78: "DXT5"
+        }[dxgiFormat];
+        if (!format) throw new Error(`Unsupported DDS DXGI format: ${dxgiFormat}.`);
+        // DX10 stores the format in its extended header, not in the legacy
+        // bit-count and channel masks (which are normally all zero).
+        if (format === "RGBA8" || format === "BGRA8" || format === "BGRX8") {
+            rgbBits = 32;
+            redMask = format === "RGBA8" ? 0x000000ff : 0x00ff0000;
+            greenMask = 0x0000ff00;
+            blueMask = format === "RGBA8" ? 0x00ff0000 : 0x000000ff;
+            alphaMask = format === "BGRX8" ? 0 : 0xff000000;
+            format = "RGB";
+        }
     }
     if (format === "") {
         format = (pixelFlags & 0x40) !== 0 ? "RGB" : "";
     }
 
-    if (format === "RGB" || format === "RGBA8") {
-        const bytesPerPixel = Math.max(1, Math.ceil(rgbBits / 8));
-        const rowPitch = pitchOrLinearSize || width * bytesPerPixel;
+    const uncompressed = format === "RGB";
+    const bytesPerPixel = rgbBits / 8;
+    const rowSize = width * bytesPerPixel;
+    const rowPitch = (headerFlags & 0x8) !== 0 ? pitchOrLinearSize : rowSize;
+    const blockWidth = Math.ceil(width / 4);
+    const blockHeight = Math.ceil(height / 4);
+    const blockBytes = format === "DXT1" ? 8 : format === "DXT3" || format === "DXT5" ? 16 : 0;
+    if (uncompressed) {
+        if (![16, 24, 32].includes(rgbBits)) throw new Error(`Unsupported DDS RGB bit count: ${rgbBits}.`);
+        if (rowPitch < rowSize) throw new Error("Invalid DDS row pitch.");
+    } else if (!blockBytes) {
+        throw new Error(`Unsupported DDS format: ${fourCc || "unknown"}.`);
+    }
+    const requiredBytes = uncompressed
+        ? (height - 1) * rowPitch + rowSize
+        : blockWidth * blockHeight * blockBytes;
+    if (dataOffset + requiredBytes > bytes.length) throw new Error("DDS texture data is truncated.");
+    const output = new Uint8Array(width * height * 4);
+
+    if (uncompressed) {
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const offset = dataOffset + y * rowPitch + x * bytesPerPixel;
@@ -421,10 +461,6 @@ function decodeDds(arrayBuffer) {
             }
         }
     } else {
-        const blockWidth = Math.max(1, Math.ceil(width / 4));
-        const blockHeight = Math.max(1, Math.ceil(height / 4));
-        const blockBytes = format === "DXT1" ? 8 : format === "DXT3" || format === "DXT5" ? 16 : 0;
-        if (!blockBytes) throw new Error(`Unsupported DDS format: ${fourCc || "unknown"}.`);
         for (let blockY = 0; blockY < blockHeight; blockY++) {
             for (let blockX = 0; blockX < blockWidth; blockX++) {
                 const offset = dataOffset + (blockY * blockWidth + blockX) * blockBytes;
@@ -440,38 +476,52 @@ function decodeDds(arrayBuffer) {
 
 async function loadTexture(gl, uri, reportError) {
     if (!uri) return null;
+    let texture = null;
+    let bitmap = null;
     try {
         const response = await fetch(uri, { cache: "force-cache" });
         if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${uri}`);
-        const isDds = /\.dds(?:$|[?#])/i.test(uri);
-        const texture = gl.createTexture();
+        const blob = await response.blob();
+        const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+        const isDds = /\.dds(?:$|[?#])/i.test(uri)
+            || (signature[0] === 0x44 && signature[1] === 0x44 && signature[2] === 0x53 && signature[3] === 0x20);
+        const dds = isDds ? decodeDds(await blob.arrayBuffer()) : null;
+        if (!dds) {
+            // ImageBitmap ignores UNPACK_FLIP_Y_WEBGL. Bake the flip into the
+            // bitmap to match the flipped PMX UVs and the DDS upload path.
+            bitmap = await createImageBitmap(blob, { imageOrientation: "flipY", premultiplyAlpha: "none" });
+        }
+        // Decode first. No await may separate binding a texture from uploading
+        // it: other loads and render frames share this WebGL context.
+        texture = gl.createTexture();
         if (!texture) throw new Error(`Could not allocate texture for ${uri}`);
+        gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, isDds ? 0 : 1);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        if (isDds) {
-            const dds = decodeDds(await response.arrayBuffer());
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        if (dds) {
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, dds.width, dds.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, dds.data);
         } else {
-            const blob = await response.blob();
-            const bitmap = await createImageBitmap(blob);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-            bitmap.close?.();
         }
         gl.generateMipmap(gl.TEXTURE_2D);
         gl.bindTexture(gl.TEXTURE_2D, null);
         return texture;
     }
     catch (error) {
-        reportError?.(`Texture load failed for ${uri}: ${error?.message || String(error)}`);
+        if (texture) gl.deleteTexture(texture);
+        reportError?.(`Texture load failed for ${uri}: ${error?.message || String(error)}`, false);
         return null;
+    }
+    finally {
+        bitmap?.close();
     }
 }
 
-function createMeshResources(gl, payload, locations, defaultTexture, reportError) {
+function createMeshResources(gl, payload, locations, reportError) {
     const positions = new Float32Array(toEntryArray(payload.positions ?? payload.Positions));
     const normals = new Float32Array(toEntryArray(payload.normals ?? payload.Normals));
     const uvs = new Float32Array(toEntryArray(payload.uvs ?? payload.Uvs));
@@ -484,9 +534,9 @@ function createMeshResources(gl, payload, locations, defaultTexture, reportError
         interleaved[v] = positions[p];
         interleaved[v + 1] = positions[p + 1];
         interleaved[v + 2] = positions[p + 2];
-        interleaved[v + 3] = normals[p] || 0;
-        interleaved[v + 4] = normals[p + 1] || 1;
-        interleaved[v + 5] = normals[p + 2] || 0;
+        interleaved[v + 3] = normals[p] ?? 0;
+        interleaved[v + 4] = normals[p + 1] ?? 1;
+        interleaved[v + 5] = normals[p + 2] ?? 0;
         const uv = i * 2;
         interleaved[v + 6] = uvs[uv] || 0;
         interleaved[v + 7] = uvs[uv + 1] || 0;
@@ -509,16 +559,39 @@ function createMeshResources(gl, payload, locations, defaultTexture, reportError
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
-    const groups = toEntryArray(payload.materials ?? payload.Materials).map(material => ({
-        ...material,
-        texture: null,
-        texturePromise: loadTexture(gl, material.textureUri, reportError)
-            .then(texture => { if (texture) material.texture = texture; return texture; })
-    }));
-    return { vao, vertexBuffer, indexBuffer, indexCount: indices.length, vertexCount, groups, interleaved };
+    const mesh = { vao, vertexBuffer, indexBuffer, indexCount: indices.length, vertexCount, groups: [], interleaved, textures: new Set(), disposed: false };
+    const texturePromises = new Map();
+    mesh.groups = toEntryArray(payload.materials ?? payload.Materials).map(material => {
+        const group = { ...material, texture: null };
+        const uri = material.textureUri ?? material.TextureUri;
+        if (!texturePromises.has(uri)) {
+            texturePromises.set(uri, loadTexture(gl, uri, reportError).then(texture => {
+                if (texture && mesh.disposed) { gl.deleteTexture(texture); return null; }
+                if (texture) mesh.textures.add(texture);
+                return texture;
+            }));
+        }
+        group.texturePromise = texturePromises.get(uri).then(texture => {
+            group.texture = texture;
+            return texture;
+        });
+        return group;
+    });
+    return mesh;
 }
 
 function updateMeshResources(gl, mesh, payload) {
+    const vertexBytes = payload.vertices ?? payload.Vertices;
+    if (vertexBytes) {
+        const bytes = vertexBytes instanceof Uint8Array ? vertexBytes : new Uint8Array(toEntryArray(vertexBytes));
+        if (bytes.byteLength !== mesh.vertexCount * 32) throw new Error("The PMX vertex update has an invalid byte length.");
+        const aligned = bytes.byteOffset % 4 === 0 ? bytes : bytes.slice();
+        mesh.interleaved = new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4);
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.vertexBuffer);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, aligned);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        return;
+    }
     const positions = new Float32Array(toEntryArray(payload.positions ?? payload.Positions));
     const normals = new Float32Array(toEntryArray(payload.normals ?? payload.Normals));
     const uvs = new Float32Array(toEntryArray(payload.uvs ?? payload.Uvs));
@@ -540,10 +613,12 @@ function updateMeshResources(gl, mesh, payload) {
 
 function deleteMeshResources(gl, mesh) {
     if (!mesh) return;
+    mesh.disposed = true;
     gl.deleteVertexArray(mesh.vao);
     gl.deleteBuffer(mesh.vertexBuffer);
     gl.deleteBuffer(mesh.indexBuffer);
-    for (const group of mesh.groups || []) if (group.texture) gl.deleteTexture(group.texture);
+    for (const texture of mesh.textures) gl.deleteTexture(texture);
+    mesh.textures.clear();
 }
 
 function toEntryArray(value) {
@@ -703,7 +778,7 @@ export function createWebGl2Renderer(canvas, reportError) {
         },
         async uploadMesh(payload) {
             if (disposed) return;
-            const nextMesh = createMeshResources(gl, payload, locations, defaultTexture, reportError);
+            const nextMesh = createMeshResources(gl, payload, locations, reportError);
             for (const existing of meshes.values()) deleteMeshResources(gl, existing);
             meshes.clear();
             meshes.set("default", nextMesh);
@@ -717,7 +792,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                 const key = String(entry?.id ?? entry?.Id ?? "").trim();
                 const payload = entry?.mesh ?? entry?.Mesh;
                 if (!key || !payload) continue;
-                const nextMesh = createMeshResources(gl, payload, locations, defaultTexture, reportError);
+                const nextMesh = createMeshResources(gl, payload, locations, reportError);
                 nextMeshes.set(key, nextMesh);
                 pending.push(...nextMesh.groups.map(group => group.texturePromise));
             }
@@ -845,11 +920,16 @@ export function createWebGl2Renderer(canvas, reportError) {
                     gl.uniform1i(locations.receiveShadow, group.receiveShadow && meshFrame.receiveShadow !== false ? 1 : 0);
                     if (group.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
                     if ((features.edges ?? true) && meshFrame.edgeEnabled !== false && group.enableEdge && group.edgeSize > 0) {
+                        // The expanded outline must draw only back faces even
+                        // when the material itself is double-sided. Otherwise
+                        // its black front shell occludes the textured surface.
+                        gl.enable(gl.CULL_FACE);
                         gl.cullFace(gl.FRONT);
                         gl.uniform1i(locations.edgePass, 1);
                         gl.uniform1f(locations.edgeSize, group.edgeSize * 0.01);
                         gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
                         gl.cullFace(gl.BACK);
+                        if (group.doubleSided) gl.disable(gl.CULL_FACE);
                     }
                     gl.uniform1i(locations.edgePass, 0);
                     gl.uniform1f(locations.edgeSize, 0);
@@ -859,7 +939,10 @@ export function createWebGl2Renderer(canvas, reportError) {
                     gl.bindSampler(0, sampler);
                     gl.uniform1i(locations.texture, 0);
                     gl.uniform1i(locations.hasTexture, group.texture ? 1 : 0);
-                    if (diffuse[3] < 0.999) gl.enable(gl.BLEND); else gl.disable(gl.BLEND);
+                    // PMX skin/hair overlays can have an opaque material color
+                    // and translucent texture pixels. Match the desktop pass
+                    // by blending textured materials as well.
+                    if (group.texture || diffuse[3] < 0.999) gl.enable(gl.BLEND); else gl.disable(gl.BLEND);
                     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
                     gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
                 }

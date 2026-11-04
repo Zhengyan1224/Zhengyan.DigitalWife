@@ -14,6 +14,114 @@ using Mmd = MmdDesktop::Zhengyan.DigitalWife.Mmd;
 
 internal static class AndroidMotionLoopTests
 {
+    internal static void RunProjectSceneScript(string inputPath)
+    {
+        using GameProjectPackageSession package = GameProjectPackage.OpenOrExtract(inputPath,
+            new GameProjectPackageOpenOptions
+            {
+                TempRootDirectory = Path.GetFullPath(Path.Combine("temp", "scene-script-project", Guid.NewGuid().ToString("N")))
+            });
+        string root = package.ProjectDirectory;
+        GameProject project = GameProjectStore.Load(root);
+        string scenePath = project.Scenes.First(path => Path.GetFileName(path).StartsWith("next.scene", StringComparison.OrdinalIgnoreCase));
+        GameProjectScene scene = GameProjectStore.LoadScene(root, scenePath);
+        string scriptPath = scene.Entities.SelectMany(entity => entity.Scripts)
+            .First(binding => Path.GetFileName(binding.Path) == "Body1.csx").Path;
+        string sourcePath = GameProjectPath.ToAbsolute(root, scriptPath);
+        byte[] sourceImage = AndroidScriptCompiler.Compile(sourcePath, AndroidScriptMetadata.GetReferences());
+        string precompiledPath = Path.Combine(root, "compiled", "android", Path.ChangeExtension(scriptPath, ".dll"));
+        List<(string Name, byte[] Image)> images = [("source", sourceImage)];
+        if (File.Exists(precompiledPath)) images.Add(("precompiled", File.ReadAllBytes(precompiledPath)));
+        using var services = new AndroidRuntimeRegressionTests.ScriptFixture("return null;",
+            realtimeVoice: DispatchProxy.Create<IAndroidScriptRealtimeVoice, DisabledVoice>());
+        foreach (var (name, image) in images)
+        {
+            for (int visit = 0; visit < 5; visit++)
+            {
+                using Fixture model = new(resolveAssetPath: path => GameProjectPath.ToAbsolute(root, path));
+                using AndroidScriptInstance script = new(image);
+                AndroidScriptGlobals globals = new(services.Scene, model.Entity, services.Globals.Input,
+                    services.Globals.Audio, 0, true, false, services: services.Globals.Services);
+                script.ExecuteResult(globals);
+                model.ActivateLayers();
+                Check(model.Model.MotionLayerCount == 2, $"{name} Body1 skipped motion setup on visit {visit + 1}.");
+                globals.Update(1.0f / 30, false, null);
+                script.ExecuteResult(globals);
+                model.Tick(20);
+                Check(model.Model.AnimationTimeSeconds > 0, $"{name} Body1 did not play standing motion.");
+                Check(model.Model.GetMotionLayers().Select(layer => layer.Weight).SequenceEqual([1.0f, 0.0f]),
+                    $"{name} Body1 standing/waiting weights were incorrect.");
+            }
+            Console.WriteLine($"PASS DemoGame01 next scene Body1 ({name}): 5 visits restored and advanced standing/waiting layers.");
+        }
+    }
+
+    public class DisabledVoice : DispatchProxy
+    {
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+            => targetMethod?.Name == "get_WakeWordEnabled" ? false
+                : throw new InvalidOperationException("This animation regression must not start voice capture.");
+    }
+
+    internal static void TestSceneReloadScripts()
+    {
+        // Same initialization guard and layer setup as DemoGame01/Body1.csx.
+        const string source = """
+            static class VoiceState
+            {
+                public static bool MotionBlendReady;
+                public static bool WakeWordMonitorStarted;
+                public static int Updates;
+            }
+            if (IsStart && !VoiceState.MotionBlendReady)
+            {
+                Entity.SetMotionLayers(new[]
+                {
+                    new MotionLayerDefinition("stand.vmd", 1.0f, false),
+                    new MotionLayerDefinition("wait.vmd", 0.0f, false)
+                });
+                Entity.LoopMotion = true;
+                Entity.PlayMotion();
+                VoiceState.MotionBlendReady = true;
+                VoiceState.WakeWordMonitorStarted = true;
+            }
+            if (IsUpdate) VoiceState.Updates++;
+            return VoiceState.Updates;
+            """;
+        using var services = new AndroidRuntimeRegressionTests.ScriptFixture(source);
+        byte[] image = AndroidScriptCompiler.Compile(Path.Combine(services.Root, "script.csx"));
+        // Reproduce the previous host: a cached factory is reused with a new entity.
+        using (AndroidScriptInstance reused = new(image))
+        {
+            for (int visit = 0; visit < 2; visit++)
+            {
+                using Fixture model = new();
+                AndroidScriptGlobals globals = new(services.Scene, model.Entity, services.Globals.Input,
+                    services.Globals.Audio, 0, true, false, services: services.Globals.Services);
+                reused.ExecuteResult(globals);
+                model.ActivateLayers();
+                Check(model.Model.MotionLayerCount == (visit == 0 ? 2 : 0),
+                    "The regression fixture did not reproduce the cached-factory initialization bug.");
+            }
+        }
+        for (int visit = 0; visit < 5; visit++)
+        {
+            using Fixture model = new();
+            using AndroidScriptInstance script = new(image);
+            AndroidScriptGlobals globals = new(services.Scene, model.Entity, services.Globals.Input,
+                services.Globals.Audio, 0, true, false, services: services.Globals.Services);
+            Check(script.ExecuteResult(globals) is 0, "A fresh scene inherited the previous visit's script state.");
+            model.ActivateLayers();
+            Check(model.Model.MotionLayerCount == 2, "Re-entering the scene skipped the standing/waiting layer initialization.");
+            model.Tick(20);
+            Check(model.Model.AnimationTimeSeconds > 0, "The restored motion did not advance.");
+            Check(model.Model.GetMotionLayers().Select(layer => layer.Weight).SequenceEqual([1.0f, 0.0f]),
+                "Standing/waiting blend weights changed during loading.");
+            globals.Update(0.1f, false, null);
+            Check(script.ExecuteResult(globals) is 1, "Updates did not retain the current scene's script instance.");
+        }
+    }
+
     internal static void TestScriptLayers()
     {
         using Fixture fixture = new();
@@ -217,7 +325,7 @@ internal static class AndroidMotionLoopTests
         private double _elapsed;
         private readonly Game? _game;
 
-        public Fixture(bool resetDefault = true, AnimationTimingMode? timing = null)
+        public Fixture(bool resetDefault = true, AnimationTimingMode? timing = null, Func<string, string>? resolveAssetPath = null)
         {
             string root = Path.GetFullPath(Path.Combine("temp", "android-motion-loop-tests", Guid.NewGuid().ToString("N")));
             Directory.CreateDirectory(root);
@@ -230,7 +338,7 @@ internal static class AndroidMotionLoopTests
             }
             Definition = new() { Id = "actor", Type = "pmx_model", EnablePhysics = true, LoopMotion = true, ResetPhysicsOnMotionLoop = resetDefault };
             RuntimeEntity coreEntity = new(Definition, _ => { Model.ResetPhysics(); return true; });
-            Entity = new(coreEntity, _ => { }, (_, _) => { }, () => Model, path => Path.Combine(root, path));
+            Entity = new(coreEntity, _ => { }, (_, _) => { }, () => Model, resolveAssetPath ?? (path => Path.Combine(root, path)));
             AndroidPmxPlaybackSync.Apply(Definition, Model, initialize: true);
         }
 

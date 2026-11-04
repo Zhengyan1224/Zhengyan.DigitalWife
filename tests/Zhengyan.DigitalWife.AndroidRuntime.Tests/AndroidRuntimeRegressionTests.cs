@@ -35,6 +35,10 @@ internal static class AndroidRuntimeRegressionTests
             ("Android motion loops preserve script physics settings", AndroidMotionLoopTests.TestScriptLayers),
             ("Android motion loops preserve mixed layer physics settings", AndroidMotionLoopTests.TestMixedLayers),
             ("Android motion loops honor explicit global physics settings", AndroidMotionLoopTests.TestGlobalSetting),
+            ("Android script scene reload restores standing and waiting layers", AndroidMotionLoopTests.TestSceneReloadScripts),
+            ("Android script bindings isolate statics and initializers", AndroidScriptLifecycleTests.TestBindings),
+            ("Android script stale callbacks cannot modify a new scene", AndroidScriptLifecycleTests.TestStaleCallbacks),
+            ("Android script disposed assemblies can be collected", AndroidScriptLifecycleTests.TestUnload),
             ("PMX slow frames keep animation and physics synchronized", AndroidMotionLoopTests.TestSlowFrames),
             ("PMX slow frames preserve loop reset and pause behavior", AndroidMotionLoopTests.TestSlowFrameLoopReset),
             ("Published script ABI, lambda and event fields", TestPublishedScript),
@@ -732,7 +736,7 @@ internal static class AndroidRuntimeRegressionTests
         }
     }
 
-    private sealed class ScriptFixture : IDisposable
+    internal sealed class ScriptFixture : IDisposable
     {
         public string Root { get; } = Path.GetFullPath(Path.Combine("temp", "android-runtime-tests", Guid.NewGuid().ToString("N")));
         public string SaveRoot => Path.Combine(Root, "saves");
@@ -750,12 +754,12 @@ internal static class AndroidRuntimeRegressionTests
         private readonly AndroidScriptServices _services;
         private readonly Func<object?[], Task<object?>> _factory;
 
-        public ScriptFixture(string? source = null, AndroidScriptAudio? audio = null)
+        public ScriptFixture(string? source = null, AndroidScriptAudio? audio = null, IAndroidScriptRealtimeVoice? realtimeVoice = null)
         {
             Directory.CreateDirectory(Root);
             CoreScene = new("scenes/main.scene.json", new() { Entities = [new() { Id = "entity", Name = "actor", Type = "empty" }], GuiControls = [new() { Name = "status" }] }, p => Path.Combine(Root, p));
             _services = new(CoreScene, Root, _ => { }, _ => true, _ => true, _ => true, _ => false, (_, _, _) => false,
-                _ => null, () => [], _ => { }, new(), SaveRoot, Dispatcher, null!, null!, null!, null!);
+                _ => null, () => [], _ => { }, new(), SaveRoot, Dispatcher, null!, null!, null!, realtimeVoice!);
             Scene = new(CoreScene, Root, _ => { }, () => 60, _services);
             Entity = new(CoreScene.Entities.Single(), _ => { }, (_, _) => { }, () => null,
                 invokeLlmTool: (callback, call) => Dispatcher.InvokeAsync(() =>

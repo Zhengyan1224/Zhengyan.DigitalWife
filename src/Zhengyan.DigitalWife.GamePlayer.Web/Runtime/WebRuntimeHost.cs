@@ -53,6 +53,7 @@ public sealed class WebRuntimeHost(
         try
         {
             _projectLoader.SpeechRequestHandler = QueueSpeechRequest;
+            SetSnapshot(Snapshot with { LastError = null, Status = "Initializing WebGL2" });
             _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-runtime.js");
             _dotNetReference = DotNetObjectReference.Create(this);
             await _module.InvokeVoidAsync("start", canvas, overlayCanvas, _dotNetReference);
@@ -65,7 +66,7 @@ public sealed class WebRuntimeHost(
                 ? $"WebGPU capability detected: {gpu.Name}"
                 : $"WebGPU unavailable: {gpu.Reason}");
 
-            Progress<WebLoadProgress> progress = new(value => SetSnapshot(Snapshot with
+            IProgress<WebLoadProgress> progress = new LoadProgressReporter(value => SetSnapshot(Snapshot with
             {
                 LoadingProgress = value.Value,
                 LoadingStage = value.Stage,
@@ -82,7 +83,10 @@ public sealed class WebRuntimeHost(
                     .Select(asset => new WebPmxMeshInstance(asset.Entity.Id, asset.Mesh))
                     .Concat(loadedProject.SceneMeshes.Select(item => new WebPmxMeshInstance(item.Key, item.Value)))
                     .ToArray();
-                await _module.InvokeVoidAsync("loadPmxMeshes", meshes);
+                // A reference-type array is also object[]: without this cast
+                // params expands it into separate JS arguments, so the JS
+                // loader receives only the first model as its meshes argument.
+                await _module.InvokeVoidAsync("loadPmxMeshes", (object)meshes);
                 await UpdateRendererStateAsync(loadedProject);
             }
             await UpdateOverlayStateAsync(loadedProject);
@@ -105,8 +109,7 @@ public sealed class WebRuntimeHost(
                 LoadingMessage = "Web scene ready",
                 ScriptDiagnosticCount = loadedProject.Scripts.Diagnostics.Count,
                 PhysicsBackend = firstAsset?.PhysicsBackend ?? "disabled",
-                Status = "Web runtime running",
-                LastError = null
+                Status = "Web runtime running"
             });
         }
         catch (Exception exception)
@@ -169,12 +172,21 @@ public sealed class WebRuntimeHost(
     }
 
     [JSInvokable]
-    public async Task OnAnimationFrame(double timestampMilliseconds)
+    public Task OnAnimationFrame(double timestampMilliseconds) => OnAnimationFrameWithInput(timestampMilliseconds, null);
+
+    [JSInvokable]
+    public async Task OnAnimationFrameWithInput(double timestampMilliseconds, WebPointerFrameInput? pointerInput)
     {
-        if (_disposed || !_started || _loadedProject is null) return;
-        double deltaSeconds = double.IsNaN(_lastTimestampMilliseconds)
+        if (_disposed || !_started || !Snapshot.IsRunning || _loadedProject is null) return;
+        if (pointerInput is not null)
+        {
+            AccumulatePointerInput(pointerInput.LookX, pointerInput.LookY, pointerInput.PanX, pointerInput.PanY,
+                pointerInput.Zoom, pointerInput.PointerX, pointerInput.PointerY, pointerInput.Buttons);
+        }
+        double frameIntervalSeconds = double.IsNaN(_lastTimestampMilliseconds)
             ? 0.0
-            : Math.Clamp((timestampMilliseconds - _lastTimestampMilliseconds) / 1000.0, 0.0, 0.25);
+            : Math.Max((timestampMilliseconds - _lastTimestampMilliseconds) / 1000.0, 0.0);
+        double deltaSeconds = Math.Min(frameIntervalSeconds, 0.25);
         _lastTimestampMilliseconds = timestampMilliseconds;
         RuntimeCameraInput input = ConsumeInput();
         ApplyKeyboardCameraMotion((float)deltaSeconds);
@@ -199,7 +211,7 @@ public sealed class WebRuntimeHost(
         {
             FrameCount = Snapshot.FrameCount + 1,
             ElapsedSeconds = timestampMilliseconds / 1000.0,
-            LastDeltaSeconds = deltaSeconds,
+            LastDeltaSeconds = frameIntervalSeconds,
             ScriptDiagnosticCount = _loadedProject.Scripts.Diagnostics.Count,
             PhysicsBackend = firstAsset?.PhysicsBackend ?? "disabled",
             Status = Snapshot.RendererReady ? "WebGL2 renderer running" : Snapshot.Status
@@ -221,6 +233,12 @@ public sealed class WebRuntimeHost(
         float pointerY = 0.0f,
         int buttons = 0)
     {
+        AccumulatePointerInput(lookX, lookY, panX, panY, zoom, pointerX, pointerY, buttons);
+        return Task.CompletedTask;
+    }
+
+    private void AccumulatePointerInput(float lookX, float lookY, float panX, float panY, float zoom, float pointerX, float pointerY, int buttons)
+    {
         _pendingInput = new RuntimeCameraInput(
             _pendingInput.LookDelta + new Vector2(lookX, lookY),
             _pendingInput.PanDelta + new Vector2(panX, panY),
@@ -228,7 +246,6 @@ public sealed class WebRuntimeHost(
         _pointerDelta += new Vector2(lookX + panX, lookY + panY);
         _pointerPosition = new Vector2(pointerX, pointerY);
         _pointerButtons = buttons;
-        return Task.CompletedTask;
     }
 
     [JSInvokable]
@@ -375,6 +392,7 @@ public sealed class WebRuntimeHost(
     {
         SetSnapshot(Snapshot with
         {
+            IsRunning = false,
             RendererReady = false,
             RendererName = "Unavailable",
             Status = "Browser or WebGL2 error",
@@ -386,6 +404,13 @@ public sealed class WebRuntimeHost(
     private void QueueSpeechRequest(string entityId, RuntimeSpeechRequest request)
     {
         _speechRequests.Enqueue((entityId, request));
+    }
+
+    [JSInvokable]
+    public Task OnBrowserWarning(string message)
+    {
+        SetSnapshot(Snapshot with { LastError = message });
+        return Task.CompletedTask;
     }
 
     private async Task ProcessScriptCommandsAsync()
@@ -696,6 +721,11 @@ public sealed class WebRuntimeHost(
     {
         Snapshot = snapshot;
         Changed?.Invoke();
+    }
+
+    private sealed class LoadProgressReporter(Action<WebLoadProgress> report) : IProgress<WebLoadProgress>
+    {
+        public void Report(WebLoadProgress value) => report(value);
     }
 
     public async ValueTask DisposeAsync()

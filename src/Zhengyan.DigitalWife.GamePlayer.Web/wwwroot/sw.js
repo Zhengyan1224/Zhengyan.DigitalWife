@@ -1,4 +1,4 @@
-const CACHE_NAME = "zhengyan-web-runtime-v4";
+const CACHE_NAME = "zhengyan-web-runtime-v5";
 const CORE_ASSETS = ["./", "./index.html", "./css/app.css", "./js/web-runtime.js", "./js/webgl2-renderer.js", "./js/web-storage.js", "./js/web-audio.js", "./js/web-platform.js"];
 
 self.addEventListener("install", event => {
@@ -11,17 +11,24 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
     if (event.request.method !== "GET") return;
+    const url = new URL(event.request.url);
+    if (url.origin !== self.location.origin || event.request.cache === "no-store" || url.pathname.includes("/_framework/debug/")) return;
+
+    // These modules keep their URL across builds. Revalidate them so a cached
+    // decoder or input bridge cannot survive a runtime update indefinitely.
+    const runtimeAsset = CORE_ASSETS.some(asset => new URL(asset, self.location.href).href === url.href);
 
     // Always check the network for the HTML entry point so a new deployment
     // can publish a new fingerprinted WebAssembly/JavaScript file immediately.
-    if (event.request.mode === "navigate") {
+    if (event.request.mode === "navigate" || runtimeAsset) {
         event.respondWith(fetch(event.request).then(response => {
             if (response.ok) {
                 const clone = response.clone();
-                caches.open(CACHE_NAME).then(cache => cache.put("./index.html", clone));
+                const cacheKey = event.request.mode === "navigate" ? "./index.html" : event.request;
+                caches.open(CACHE_NAME).then(cache => cache.put(cacheKey, clone));
             }
             return response;
-        }).catch(() => caches.match("./index.html")));
+        }).catch(() => caches.match(event.request.mode === "navigate" ? "./index.html" : event.request)));
         return;
     }
 

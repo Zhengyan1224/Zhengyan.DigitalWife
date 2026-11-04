@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.InteropServices;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd;
 
@@ -187,12 +188,16 @@ public sealed class WebPmxAsset : IDisposable
 
 public sealed record WebPmxMeshInstance(string Id, WebPmxMesh Mesh);
 
-public sealed record WebPmxMeshUpdate(float[] Positions, float[] Normals, float[] Uvs);
+// Blazor transfers byte[] through its binary interop path. Serializing three
+// large float arrays as JSON on every frame stalls the browser's main thread.
+public sealed record WebPmxMeshUpdate(byte[] Vertices);
 
 public sealed record WebPmxMeshUpdateInstance(string Id, WebPmxMeshUpdate Mesh);
 
 public sealed class WebPmxMesh
 {
+    private float[]? _interleavedVertices;
+
     public WebPmxMesh(
         float[] positions,
         float[] normals,
@@ -221,7 +226,21 @@ public sealed class WebPmxMesh
     public Vector3 BoundsMax { get; }
     public string ModelName { get; }
     public IReadOnlyList<WebPmxMaterial> Materials { get; }
-    public WebPmxMeshUpdate CreateUpdate() => new(Positions, Normals, Uvs);
+    public WebPmxMeshUpdate CreateUpdate()
+    {
+        if (_interleavedVertices is null)
+        {
+            int vertexCount = Positions.Length / 3;
+            _interleavedVertices = new float[vertexCount * 8];
+            for (int i = 0; i < vertexCount; i++)
+            {
+                Positions.AsSpan(i * 3, 3).CopyTo(_interleavedVertices.AsSpan(i * 8, 3));
+                Normals.AsSpan(i * 3, 3).CopyTo(_interleavedVertices.AsSpan(i * 8 + 3, 3));
+                Uvs.AsSpan(i * 2, 2).CopyTo(_interleavedVertices.AsSpan(i * 8 + 6, 2));
+            }
+        }
+        return new(MemoryMarshal.AsBytes(_interleavedVertices.AsSpan()).ToArray());
+    }
 
     public void UpdateFromInterleaved(ReadOnlySpan<float> vertices)
     {
@@ -230,6 +249,9 @@ public sealed class WebPmxMesh
         {
             throw new ArgumentException("The PMX vertex buffer is too small.", nameof(vertices));
         }
+
+        _interleavedVertices ??= new float[vertexCount * 8];
+        vertices[.._interleavedVertices.Length].CopyTo(_interleavedVertices);
 
         for (int i = 0; i < vertexCount; i++)
         {
@@ -244,6 +266,7 @@ public sealed class WebPmxMesh
             int uv = i * 2;
             Uvs[uv] = vertices[source + 6];
             Uvs[uv + 1] = 1.0f - vertices[source + 7];
+            _interleavedVertices[source + 7] = Uvs[uv + 1];
         }
     }
 

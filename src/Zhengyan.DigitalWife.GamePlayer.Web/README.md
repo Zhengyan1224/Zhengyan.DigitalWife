@@ -161,9 +161,35 @@ dotnet build src/Zhengyan.DigitalWife.GamePlayer.Web/Zhengyan.DigitalWife.GamePl
 
 看到 `Build succeeded` 并且错误数为 0，就表示 .NET 部分编译成功。
 
-### 5.4 启动开发服务器
+### 5.4 启动 Web Player
 
-最简单的启动方式：
+验证真实 PMX 模型的镜头和动画性能时，使用 AOT 构建。首次准备环境执行：
+
+```powershell
+dotnet workload install wasm-tools
+```
+
+在仓库根目录执行：
+
+```powershell
+.\scripts\run-web-player.ps1
+```
+
+脚本执行 `dotnet publish -c Release`，生成 `artifacts/web-player/wwwroot`，并使用 Python 3 标准库在 `http://127.0.0.1:5052/` 启动本地预览。首次 AOT 编译需要较长时间，后续构建会复用编译缓存。只预览已有产物时使用：
+
+```powershell
+.\scripts\run-web-player.ps1 -SkipPublish
+```
+
+发布到自己的静态网站时，也可以直接执行：
+
+```powershell
+dotnet publish src/Zhengyan.DigitalWife.GamePlayer.Web/Zhengyan.DigitalWife.GamePlayer.Web.csproj -c Release -o artifacts/web-player
+```
+
+Release 发布默认启用 AOT，把姿态、IK、物理回退和蒙皮计算编译为 WebAssembly。项目同时保留游戏数据与共享脚本 API 的反射元数据，供 JSON 加载与预编译 Web 脚本使用。AOT 的机制和构建要求见[微软官方说明](https://learn.microsoft.com/en-us/aspnet/core/blazor/webassembly-build-tools-and-aot?view=aspnetcore-10.0)。
+
+调试界面、加载流程与脚本时，可以使用开发服务器：
 
 ```powershell
 dotnet run --project src/Zhengyan.DigitalWife.GamePlayer.Web/Zhengyan.DigitalWife.GamePlayer.Web.csproj
@@ -185,6 +211,8 @@ dotnet watch --project src/Zhengyan.DigitalWife.GamePlayer.Web/Zhengyan.DigitalW
 
 修改 `.razor`、C# 或部分静态资源后，开发服务器会尝试刷新页面。修改 JavaScript 模块后如果浏览器仍使用旧内容，请按 `Ctrl+F5` 强制刷新。
 
+`dotnet run` 和 `dotnet watch` 的开发构建通过 .NET 解释器执行代码，大型模型的姿态计算会明显拖慢浏览器主线程。镜头与动画性能测试请使用上面的 AOT 发布产物。
+
 ### 5.5 启动后应该看到什么
 
 默认页面会从 `wwwroot/web-game` 加载内置示例。右侧状态面板应该逐步显示：
@@ -198,13 +226,24 @@ dotnet watch --project src/Zhengyan.DigitalWife.GamePlayer.Web/Zhengyan.DigitalW
 
 在左侧 Canvas 中可以尝试：
 
-- 鼠标按住拖动：旋转相机；
-- 鼠标中键或对应拖动方式：平移相机；
+- 鼠标左键拖动：旋转相机；
+- 鼠标右键拖动：平移相机；
 - 鼠标滚轮：缩放；
 - `W`、`A`、`S`、`D` 或方向键：移动相机；
 - 手机或平板：使用触摸操作。
 
 如果场景没有显示，先看右侧“错误”区域，再打开浏览器开发者工具的 Console。资源缺失、哈希不一致、WebGL2 不可用和脚本加载错误都会被转换为诊断信息。
+
+### 5.6 纹理与输入回归验证
+
+Web 纹理加载支持 RGB/RGBA DDS、BC1/BC2/BC3 和 DX10 RGBA/BGRA 格式，并根据文件头识别内存包中的 DDS。不同贴图可以并发解码，上传时统一完成纹理绑定，PMX UV 与图像方向保持一致。可运行以下检查：
+
+```powershell
+node --experimental-default-type=module --test tests/web-renderer.test.mjs tests/web-runtime-input.test.mjs
+dotnet run --project tests/Zhengyan.DigitalWife.WebRuntime.Tests/Zhengyan.DigitalWife.WebRuntime.Tests.csproj
+```
+
+检查覆盖音乐教室的 24 张 DDS、透明通道、并发上传、内存包纹理、二进制顶点更新、高频鼠标输入、GUI 捕获及运行时重启。
 
 ## 6. 使用自己的 Web 游戏资源
 

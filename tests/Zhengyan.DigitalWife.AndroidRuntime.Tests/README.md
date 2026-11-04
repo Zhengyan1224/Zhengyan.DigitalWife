@@ -21,6 +21,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script touch"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script platform"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android navigation"
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android script"
 ```
 
 ## 覆盖范围
@@ -49,6 +50,7 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --verify
 
 | 参数格式 | 用途 |
 | --- | --- |
+| --scene-script-project <directory-or-dwgame> | 只读 DemoGame01 的 Body1 源码及 Android 预编译脚本，各重建人物 5 次，验证站立/等待动作初始化与播放；使用内存动画和禁用语音的替身，不启动 Android 渲染器 |
 | --compile-project <directory> | 用 Android 实际元数据入口编译工程脚本 |
 | --navigation-project <directory> | 只读 DemoGame04 的模型与脚本，在临时 dwgame 包中对照 PC 验证连续触摸寻路和转向 |
 | --local-speech-project <directory> | 读取真实工程 Sherpa 模型，检查本地 TTS、ASR 与唤醒（PC native 推理，不请求 LLM） |

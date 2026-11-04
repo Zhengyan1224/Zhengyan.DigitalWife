@@ -7,9 +7,9 @@ import { detectWebGpu as detectGpu } from "./web-gpu.js";
 let runtime = null;
 const overlayImages = new Map();
 
-function reportError(message) {
+function reportError(message, fatal = true) {
     if (!runtime?.dotNetReference || isBenignBrowserError(message)) return;
-    runtime.dotNetReference.invokeMethodAsync("OnBrowserError", message).catch(() => {});
+    runtime.dotNetReference.invokeMethodAsync(fatal ? "OnBrowserError" : "OnBrowserWarning", message).catch(() => {});
 }
 
 function invoke(method, ...args) {
@@ -53,6 +53,30 @@ function isBenignBrowserError(message) {
     return normalized.includes("resizeobserver loop completed")
         || normalized.includes("resizeobserver loop limit exceeded");
 }
+
+function queuePointerInput(lookX, lookY, panX, panY, zoom, pointerX, pointerY, buttons) {
+    if (!runtime || runtime.inputCaptured) return;
+    const input = runtime.pendingPointerInput ??= { lookX: 0, lookY: 0, panX: 0, panY: 0, zoom: 0, pointerX: 0, pointerY: 0, buttons: 0 };
+    input.lookX += lookX;
+    input.lookY += lookY;
+    input.panX += panX;
+    input.panY += panY;
+    input.zoom += zoom;
+    input.pointerX = pointerX;
+    input.pointerY = pointerY;
+    input.buttons = buttons;
+}
+
+function resetInput() {
+    if (!runtime) return;
+    const input = runtime.pendingPointerInput;
+    runtime.pendingPointerInput = { lookX: 0, lookY: 0, panX: 0, panY: 0, zoom: 0, pointerX: input?.pointerX || 0, pointerY: input?.pointerY || 0, buttons: 0 };
+    runtime.lastPointerButtons = 0;
+    runtime.pointers.clear();
+    for (const key of runtime.pressedKeys) invoke("OnKeyInput", key, false);
+    runtime.pressedKeys.clear();
+}
+
 function installInputHandlers() {
     const canvas = runtime.canvas;
     const canvasPoint = event => {
@@ -88,44 +112,63 @@ function installInputHandlers() {
         runtime.guiPointerActive = overlayHit(event);
         runtime.spritePointerActive = !runtime.guiPointerActive && spriteHit(event);
         const [downX, downY] = canvasPoint(event);
-        if (!runtime.inputCaptured && !runtime.guiPointerActive && !runtime.spritePointerActive) invoke("OnPointerInput", 0, 0, 0, 0, 0, event.pointerType || "mouse", true, downX, downY, event.buttons || 1);
+        if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, downX, downY, event.buttons || 1);
     };
     runtime.onPointerMove = event => {
+        const active = runtime.pointers.has(event.pointerId);
         const previous = runtime.pointers.get(event.pointerId) || { x: event.clientX, y: event.clientY };
         const dx = event.clientX - previous.x;
         const dy = event.clientY - previous.y;
-        runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-        const buttons = event.buttons || runtime.lastPointerButtons || 0;
+        if (active || event.buttons) runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const buttons = event.pointerType === "touch" && active
+            ? (event.buttons || 1)
+            : (event.buttons || 0);
+        runtime.lastPointerButtons = buttons;
         const look = buttons & 1 ? 1 : 0;
         const pan = buttons & 2 || event.pointerType === "touch" ? 1 : 0;
         const [moveX, moveY] = canvasPoint(event);
-        if (!runtime.inputCaptured && !runtime.guiPointerActive && !runtime.spritePointerActive) invoke("OnPointerInput", dx * look, dy * look, dx * pan, dy * pan, 0, event.pointerType || "mouse", false, moveX, moveY, event.buttons || 0);
+        if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(dx * look, dy * look, dx * pan, dy * pan, 0, moveX, moveY, buttons);
     };
     runtime.onPointerUp = event => {
         const [x, y] = canvasPoint(event);
         if (runtime.guiPointerActive) invoke("OnGuiPointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
         if (runtime.spritePointerActive) invoke("OnSpritePointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
-        runtime.pointers.delete(event.pointerId);
-        canvas.releasePointerCapture?.(event.pointerId);
-        runtime.lastPointerButtons = 0;
-        if (!runtime.inputCaptured && runtime.guiPointerActive === false && runtime.spritePointerActive === false) invoke("OnPointerInput", 0, 0, 0, 0, 0, event.pointerType || "mouse", false, x, y, 0);
+        const buttons = event.type === "pointercancel" || event.pointerType === "touch" ? 0 : (event.buttons || 0);
+        if (buttons) runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        else { runtime.pointers.delete(event.pointerId); canvas.releasePointerCapture?.(event.pointerId); }
+        runtime.lastPointerButtons = buttons;
+        if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, x, y, buttons);
         runtime.guiPointerActive = false;
         runtime.spritePointerActive = false;
     };
     runtime.onWheel = event => {
         event.preventDefault();
         const [wheelX, wheelY] = canvasPoint(event);
-        if (!runtime.inputCaptured) invoke("OnPointerInput", 0, 0, 0, 0, event.deltaY * 0.01, "wheel", false, wheelX, wheelY, 0);
+        queuePointerInput(0, 0, 0, 0, event.deltaY * 0.01, wheelX, wheelY, runtime.lastPointerButtons);
     };
-    runtime.onKeyDown = event => { unlockAudio().catch(() => {}); if (!runtime.inputCaptured) invoke("OnKeyInput", event.code || event.key || "", true); };
-    runtime.onKeyUp = event => { if (!runtime.inputCaptured) invoke("OnKeyInput", event.code || event.key || "", false); };
+    runtime.onContextMenu = event => event.preventDefault();
+    runtime.onKeyDown = event => {
+        unlockAudio().catch(() => {});
+        const key = event.code || event.key || "";
+        if (!runtime.inputCaptured && !runtime.pressedKeys.has(key)) {
+            runtime.pressedKeys.add(key);
+            invoke("OnKeyInput", key, true);
+        }
+    };
+    runtime.onKeyUp = event => {
+        const key = event.code || event.key || "";
+        if (runtime.pressedKeys.delete(key)) invoke("OnKeyInput", key, false);
+    };
+    runtime.onBlur = resetInput;
     canvas.addEventListener("pointerdown", runtime.onPointerDown, { passive: true });
     canvas.addEventListener("pointermove", runtime.onPointerMove, { passive: true });
     canvas.addEventListener("pointerup", runtime.onPointerUp, { passive: true });
     canvas.addEventListener("pointercancel", runtime.onPointerUp, { passive: true });
     canvas.addEventListener("wheel", runtime.onWheel, { passive: false });
+    canvas.addEventListener("contextmenu", runtime.onContextMenu);
     window.addEventListener("keydown", runtime.onKeyDown, { passive: true });
     window.addEventListener("keyup", runtime.onKeyUp, { passive: true });
+    window.addEventListener("blur", runtime.onBlur);
 }
 
 function removeInputHandlers() {
@@ -136,15 +179,22 @@ function removeInputHandlers() {
     canvas.removeEventListener("pointerup", runtime.onPointerUp);
     canvas.removeEventListener("pointercancel", runtime.onPointerUp);
     canvas.removeEventListener("wheel", runtime.onWheel);
+    canvas.removeEventListener("contextmenu", runtime.onContextMenu);
     window.removeEventListener("keydown", runtime.onKeyDown);
     window.removeEventListener("keyup", runtime.onKeyUp);
+    window.removeEventListener("blur", runtime.onBlur);
 }
 
 function frame(timestamp) {
     if (!runtime?.running) return;
-    runtime.dotNetReference.invokeMethodAsync("OnAnimationFrame", timestamp)
+    const current = runtime;
+    const input = current.pendingPointerInput;
+    current.pendingPointerInput = null;
+    // Sample the accumulated gesture once per frame, in the same call that
+    // advances the scene. High-rate mouse events never queue .NET callbacks.
+    current.dotNetReference.invokeMethodAsync("OnAnimationFrameWithInput", timestamp, input)
         .then(() => {
-            if (!runtime?.running) return;
+            if (runtime !== current || !current.running) return;
             try { runtime.renderer?.render(timestamp); }
             catch (error) {
                 const message = error?.message || String(error);
@@ -155,7 +205,11 @@ function frame(timestamp) {
             renderOverlay();
             if (runtime?.running) runtime.frameHandle = window.requestAnimationFrame(frame);
         })
-        .catch(() => { if (runtime) runtime.running = false; });
+        .catch(error => {
+            if (runtime !== current) return;
+            current.running = false;
+            reportError(`Web runtime frame failed: ${error?.message || String(error)}`);
+        });
 }
 
 export function start(canvas, overlayCanvas, dotNetReference) {
@@ -165,7 +219,7 @@ export function start(canvas, overlayCanvas, dotNetReference) {
         canvas, overlayCanvas, dotNetReference, running: true, renderer: null, frameHandle: 0,
         resizeObserver: null, resizeTarget: null, resizeFrameHandle: 0,
         onWindowResize: null, onError: null, onUnhandledRejection: null,
-        pointers: new Map(), lastPointerButtons: 0, guiPointerActive: false, spritePointerActive: false, inputCaptured: false, overlayState: {}
+        pointers: new Map(), pressedKeys: new Set(), lastPointerButtons: 0, pendingPointerInput: null, guiPointerActive: false, spritePointerActive: false, inputCaptured: false, overlayState: {}
     };
     updateCanvasMetrics();
     installInputHandlers();
@@ -226,7 +280,9 @@ export function setFrameState(frameState) {
 }
 
 export function setInputCapture(captured) {
-    if (runtime) runtime.inputCaptured = !!captured;
+    if (!runtime) return;
+    runtime.inputCaptured = !!captured;
+    if (captured) resetInput();
 }
 
 export function setOverlayState(state) {

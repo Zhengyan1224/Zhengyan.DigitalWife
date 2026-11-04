@@ -80,7 +80,6 @@ h1 {
 
 .canvas-frame {
     position: relative;
-    position: relative;
     min-height: 28rem;
     overflow: hidden;
     border: 1px solid #273854;
@@ -237,3 +236,7 @@ dd {
 .loading-progress { margin: 0 0 1rem; color: #b7c6dd; }
 .loading-progress-track { height: 6px; border-radius: 999px; background: #1c2b40; overflow: hidden; margin-bottom: .45rem; }
 .loading-progress-track span { display: block; height: 100%; background: linear-gradient(90deg,#45b4ff,#7ce0b4); transition: width .2s ease; }
+
+#blazor-error-ui {
+    display: none;
+}
