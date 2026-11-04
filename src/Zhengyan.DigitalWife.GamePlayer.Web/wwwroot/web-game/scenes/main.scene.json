@@ -1,59 +1,257 @@
 {
-  "name": "Web Minimal PMX Scene",
+  "name": "Main Scene",
   "camera": {
     "position": {
       "x": 0,
-      "y": 0,
-      "z": 4
+      "y": 2,
+      "z": 8
     },
     "target": {
       "x": 0,
-      "y": 0,
+      "y": 1.2,
       "z": 0
     },
     "controlMode": "editor",
+    "targetEntity": "",
+    "subjectEntity": "",
+    "distance": 5,
+    "height": 1.5,
+    "shoulderOffset": 0,
+    "smoothing": 12,
+    "moveSpeed": 5,
+    "mouseSensitivity": 0.15,
+    "safeRadius": 0.25,
+    "autoOrbitSpeed": 30,
+    "enableMouseLook": true,
+    "requireRightMouseForMouseLook": true,
     "projectionMode": "perspective",
     "fov": 45,
+    "orthographicSize": 5,
     "nearClipPlane": 0.1,
-    "farClipPlane": 100
+    "farClipPlane": 1000,
+    "vmd": {
+      "path": "",
+      "isPlaying": false,
+      "loop": true,
+      "playbackSpeed": 1,
+      "frame": 0
+    }
   },
   "mainCamera": "Main Camera",
   "cameras": [
     {
+      "id": "fe2c467cb6004beebe2816e8b25b26db",
       "name": "Main Camera",
       "isMain": true,
+      "enabled": true,
       "camera": {
         "position": {
           "x": 0,
-          "y": 0,
-          "z": 4
+          "y": 2,
+          "z": 8
         },
         "target": {
           "x": 0,
-          "y": 0,
+          "y": 1.2,
           "z": 0
         },
         "controlMode": "editor",
+        "targetEntity": "",
+        "subjectEntity": "",
+        "distance": 5,
+        "height": 1.5,
+        "shoulderOffset": 0,
+        "smoothing": 12,
+        "moveSpeed": 5,
+        "mouseSensitivity": 0.15,
+        "safeRadius": 0.25,
+        "autoOrbitSpeed": 30,
+        "enableMouseLook": true,
+        "requireRightMouseForMouseLook": true,
         "projectionMode": "perspective",
         "fov": 45,
+        "orthographicSize": 5,
         "nearClipPlane": 0.1,
-        "farClipPlane": 100,
+        "farClipPlane": 1000,
         "vmd": {
-          "path": "assets/motions/minimal.vmd",
-          "isPlaying": true,
+          "path": "",
+          "isPlaying": false,
           "loop": true,
-          "playbackSpeed": 1.0,
+          "playbackSpeed": 1,
           "frame": 0
         }
+      },
+      "viewport": {
+        "enabled": false,
+        "layoutMode": "relative",
+        "x": 0,
+        "y": 0,
+        "width": 1280,
+        "height": 720
       }
     }
   ],
+  "renderTextures": [],
+  "lighting": {
+    "lightColor": {
+      "x": 0.39382237,
+      "y": 0.39382237,
+      "z": 0.39382237
+    },
+    "lightDirection": {
+      "x": -0.5,
+      "y": -1,
+      "z": -0.5
+    },
+    "ambientColor": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "ambientStrength": 1.295,
+    "shadowColor": {
+      "x": 0.17,
+      "y": 0.17,
+      "z": 0.17,
+      "w": 0.7
+    },
+    "clearColor": {
+      "x": 0.08,
+      "y": 0.09,
+      "z": 0.12,
+      "w": 1
+    },
+    "vmd": {
+      "path": "",
+      "isPlaying": false,
+      "loop": true,
+      "playbackSpeed": 1,
+      "frame": 0
+    }
+  },
+  "skybox": {
+    "enabled": true,
+    "texturePath": "",
+    "exposure": 1,
+    "tint": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  "loadingScreen": {
+    "backgroundColor": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+    },
+    "backgroundImagePath": "",
+    "backgroundImageOpacity": 1,
+    "progressBar": {
+      "visible": true,
+      "layoutMode": "relative",
+      "x": 346,
+      "y": 342,
+      "width": 588,
+      "height": 36,
+      "backgroundColor": {
+        "x": 0.1,
+        "y": 0.15,
+        "z": 0.22,
+        "w": 0.92
+      },
+      "trackColor": {
+        "x": 0.02,
+        "y": 0.04,
+        "z": 0.07,
+        "w": 1
+      },
+      "fillColor": {
+        "x": 0.3,
+        "y": 0.62,
+        "z": 1,
+        "w": 1
+      },
+      "borderColor": {
+        "x": 0.14,
+        "y": 0.2,
+        "z": 0.3,
+        "w": 0.95
+      },
+      "borderThickness": 2,
+      "rounding": 0,
+      "padding": 10
+    }
+  },
+  "loadingScripts": [],
+  "guiControls": [
+    {
+      "id": "4a5be628c99b42ad8a76061b7d3d0784",
+      "name": "button_dance",
+      "type": "button",
+      "text": "\u8DF3\u821E",
+      "multiline": false,
+      "x": 24,
+      "y": 24,
+      "width": 130,
+      "height": 43,
+      "layoutMode": "relative",
+      "visible": true,
+      "targetEntity": "5b0246dda51c4055abe0d7d10d99d478",
+      "eventName": "clicked",
+      "wordWrap": true,
+      "checked": false,
+      "progress": 0,
+      "items": [],
+      "selectedIndex": 0,
+      "style": {
+        "backgroundColor": {
+          "x": 0.1,
+          "y": 0.31,
+          "z": 0.58,
+          "w": 0.88
+        },
+        "hoverColor": {
+          "x": 0.14,
+          "y": 0.4,
+          "z": 0.74,
+          "w": 0.95
+        },
+        "activeColor": {
+          "x": 0.08,
+          "y": 0.24,
+          "z": 0.46,
+          "w": 1
+        },
+        "textColor": {
+          "x": 1,
+          "y": 1,
+          "z": 1,
+          "w": 1
+        },
+        "borderColor": {
+          "x": 0.54,
+          "y": 0.77,
+          "z": 1,
+          "w": 0.95
+        },
+        "borderThickness": 1.5,
+        "rounding": 6,
+        "fontSize": 30,
+        "horizontalAlignment": "center",
+        "verticalAlignment": "middle"
+      }
+    }
+  ],
+  "contextMenus": [],
+  "sprites": [],
   "entities": [
     {
-      "id": "minimal-pmx",
-      "name": "Minimal PMX",
+      "id": "e904b56eb3464b65b407c3012a9b99ae",
+      "name": "musicclassroom",
       "type": "pmx_model",
-      "assetPath": "assets/models/minimal.pmx",
+      "assetPath": "assets/models/musicclassroom/musicclassroom.pmx",
       "transform": {
         "position": {
           "x": 0,
@@ -66,25 +264,439 @@
           "z": 0
         },
         "scale": {
+          "x": 0.2,
+          "y": 0.2,
+          "z": 0.2
+        }
+      },
+      "isPlaying": true,
+      "enableEdge": true,
+      "enableShadow": true,
+      "receiveShadow": true,
+      "receiveShadowMode": "smooth",
+      "drawShadowInMainPass": false,
+      "playbackSpeed": 1,
+      "loopMotion": true,
+      "resetPhysicsOnMotionLoop": true,
+      "enablePhysics": true,
+      "physicsGravityDirection": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "physicsGravityMagnitude": 98,
+      "particle": {
+        "preset": "sakura",
+        "castShadows": false,
+        "enableWaterInteraction": false,
+        "killOnWaterContact": false,
+        "enableColliderCollision": false,
+        "collisionBounce": 0.25,
+        "collisionDamping": 0.85,
+        "killOnColliderContact": false,
+        "particleCount": 420,
+        "spawnBoxHalfExtents": {
+          "x": 20,
+          "y": 4,
+          "z": 20
+        },
+        "baseVelocity": {
+          "x": -0.25,
+          "y": -1.15,
+          "z": 0.1
+        },
+        "velocityJitter": {
+          "x": 0.75,
+          "y": 0.4,
+          "z": 0.75
+        },
+        "acceleration": {
+          "x": 0,
+          "y": -0.1,
+          "z": 0
+        },
+        "minLifetime": 6,
+        "maxLifetime": 10,
+        "minSize": 0.16,
+        "maxSize": 0.34,
+        "startSizeScale": 1,
+        "endSizeScale": 1,
+        "widthScale": 1,
+        "heightScale": 1,
+        "minRotationSpeedRadians": -2.5,
+        "maxRotationSpeedRadians": 2.5,
+        "startColor": {
+          "x": 1,
+          "y": 0.88,
+          "z": 0.94,
+          "w": 0.88
+        },
+        "endColor": {
+          "x": 1,
+          "y": 0.72,
+          "z": 0.84,
+          "w": 0.22
+        },
+        "randomizeInitialAge": true,
+        "blendMode": "alpha",
+        "orientationMode": "billboard",
+        "texturePreset": "softCircle",
+        "useTextureColor": true,
+        "preventDarkening": false,
+        "simulationSpeed": 1,
+        "opacity": 1
+      },
+      "water": {
+        "size": 20,
+        "alpha": 0.55,
+        "animationSpeed": 0.03,
+        "normalTiling": 100,
+        "gerstnerWavesEnabled": true,
+        "gerstnerMeshResolution": 96,
+        "gerstnerWaveCount": 4,
+        "gerstnerAmplitude": 0.18,
+        "gerstnerWavelength": 8,
+        "gerstnerSpeed": 1.1,
+        "gerstnerSteepness": 0.45,
+        "gerstnerDirectionDegrees": 35,
+        "deepColor": {
+          "x": 0.02,
+          "y": 0.1,
+          "z": 0.22
+        },
+        "reflectionTint": {
+          "x": 0.56,
+          "y": 0.7,
+          "z": 0.9
+        },
+        "skyReflectionStrength": 0.85,
+        "mirrorReflectionEnabled": true,
+        "underwaterEffectEnabled": true,
+        "underwaterTint": {
+          "x": 0.58,
+          "y": 0.88,
+          "z": 0.95
+        },
+        "underwaterFogColor": {
+          "x": 0.02,
+          "y": 0.2,
+          "z": 0.28
+        },
+        "underwaterFogDensity": 0.75,
+        "underwaterVisibilityDistance": 18,
+        "underwaterDistortionStrength": 0.01,
+        "underwaterCausticsStrength": 0.28,
+        "underwaterBubbleStrength": 0.18,
+        "enableInteraction": false,
+        "interactionRadius": 0.8,
+        "interactionStrength": 0.8,
+        "particleRippleMinIntervalSeconds": 0.12,
+        "particleRippleMergeDistance": 0.6,
+        "rippleLifetimeSeconds": 2.8,
+        "rippleWaveSpeed": 12,
+        "rippleFrequency": 16,
+        "rippleNormalStrength": 0.65
+      },
+      "plane": {
+        "texturePath": "",
+        "width": 2,
+        "height": 2,
+        "billboard": false,
+        "opacity": 1,
+        "tint": {
+          "x": 1,
+          "y": 1,
+          "z": 1,
+          "w": 1
+        },
+        "receiveShadow": true,
+        "mirrorReflectionEnabled": false,
+        "mirrorReflectionStrength": 1
+      },
+      "pointLight": {
+        "enabled": true,
+        "color": {
           "x": 1,
           "y": 1,
           "z": 1
+        },
+        "intensity": 1,
+        "range": 8,
+        "castShadows": false
+      },
+      "spotLight": {
+        "enabled": true,
+        "color": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "intensity": 1,
+        "range": 12,
+        "innerConeAngleDegrees": 18,
+        "outerConeAngleDegrees": 28,
+        "castShadows": false
+      },
+      "relation": {
+        "enabled": false,
+        "relationEntity": "",
+        "bindComponentTransform": true,
+        "bindLighting": false
+      },
+      "collision": {
+        "enabled": false,
+        "shape": "capsule",
+        "center": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "radius": 0.5,
+        "height": 2,
+        "axis": "y"
+      },
+      "colliders": [],
+      "motionLayers": [],
+      "scripts": [
+        {
+          "language": "csharp",
+          "path": "scripts/musicclassroom.csx",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "5b0246dda51c4055abe0d7d10d99d478",
+      "name": "Nene_r2328_kihon_natsu_e511",
+      "type": "pmx_model",
+      "assetPath": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_kihon_natsu_e511.pmx",
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "rotationDegrees": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.2,
+          "y": 0.2,
+          "z": 0.2
         }
       },
-      "isPlaying": false,
-      "enableEdge": false,
-      "enableShadow": false,
-      "receiveShadow": false,
-      "enablePhysics": false,
-      "motionLayers": []
+      "isPlaying": true,
+      "enableEdge": true,
+      "enableShadow": true,
+      "receiveShadow": true,
+      "receiveShadowMode": "smooth",
+      "drawShadowInMainPass": false,
+      "playbackSpeed": 1,
+      "loopMotion": true,
+      "resetPhysicsOnMotionLoop": true,
+      "enablePhysics": true,
+      "physicsGravityDirection": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "physicsGravityMagnitude": 98,
+      "particle": {
+        "preset": "sakura",
+        "castShadows": false,
+        "enableWaterInteraction": false,
+        "killOnWaterContact": false,
+        "enableColliderCollision": false,
+        "collisionBounce": 0.25,
+        "collisionDamping": 0.85,
+        "killOnColliderContact": false,
+        "particleCount": 420,
+        "spawnBoxHalfExtents": {
+          "x": 20,
+          "y": 4,
+          "z": 20
+        },
+        "baseVelocity": {
+          "x": -0.25,
+          "y": -1.15,
+          "z": 0.1
+        },
+        "velocityJitter": {
+          "x": 0.75,
+          "y": 0.4,
+          "z": 0.75
+        },
+        "acceleration": {
+          "x": 0,
+          "y": -0.1,
+          "z": 0
+        },
+        "minLifetime": 6,
+        "maxLifetime": 10,
+        "minSize": 0.16,
+        "maxSize": 0.34,
+        "startSizeScale": 1,
+        "endSizeScale": 1,
+        "widthScale": 1,
+        "heightScale": 1,
+        "minRotationSpeedRadians": -2.5,
+        "maxRotationSpeedRadians": 2.5,
+        "startColor": {
+          "x": 1,
+          "y": 0.88,
+          "z": 0.94,
+          "w": 0.88
+        },
+        "endColor": {
+          "x": 1,
+          "y": 0.72,
+          "z": 0.84,
+          "w": 0.22
+        },
+        "randomizeInitialAge": true,
+        "blendMode": "alpha",
+        "orientationMode": "billboard",
+        "texturePreset": "softCircle",
+        "useTextureColor": true,
+        "preventDarkening": false,
+        "simulationSpeed": 1,
+        "opacity": 1
+      },
+      "water": {
+        "size": 20,
+        "alpha": 0.55,
+        "animationSpeed": 0.03,
+        "normalTiling": 100,
+        "gerstnerWavesEnabled": true,
+        "gerstnerMeshResolution": 96,
+        "gerstnerWaveCount": 4,
+        "gerstnerAmplitude": 0.18,
+        "gerstnerWavelength": 8,
+        "gerstnerSpeed": 1.1,
+        "gerstnerSteepness": 0.45,
+        "gerstnerDirectionDegrees": 35,
+        "deepColor": {
+          "x": 0.02,
+          "y": 0.1,
+          "z": 0.22
+        },
+        "reflectionTint": {
+          "x": 0.56,
+          "y": 0.7,
+          "z": 0.9
+        },
+        "skyReflectionStrength": 0.85,
+        "mirrorReflectionEnabled": true,
+        "underwaterEffectEnabled": true,
+        "underwaterTint": {
+          "x": 0.58,
+          "y": 0.88,
+          "z": 0.95
+        },
+        "underwaterFogColor": {
+          "x": 0.02,
+          "y": 0.2,
+          "z": 0.28
+        },
+        "underwaterFogDensity": 0.75,
+        "underwaterVisibilityDistance": 18,
+        "underwaterDistortionStrength": 0.01,
+        "underwaterCausticsStrength": 0.28,
+        "underwaterBubbleStrength": 0.18,
+        "enableInteraction": false,
+        "interactionRadius": 0.8,
+        "interactionStrength": 0.8,
+        "particleRippleMinIntervalSeconds": 0.12,
+        "particleRippleMergeDistance": 0.6,
+        "rippleLifetimeSeconds": 2.8,
+        "rippleWaveSpeed": 12,
+        "rippleFrequency": 16,
+        "rippleNormalStrength": 0.65
+      },
+      "plane": {
+        "texturePath": "",
+        "width": 2,
+        "height": 2,
+        "billboard": false,
+        "opacity": 1,
+        "tint": {
+          "x": 1,
+          "y": 1,
+          "z": 1,
+          "w": 1
+        },
+        "receiveShadow": true,
+        "mirrorReflectionEnabled": false,
+        "mirrorReflectionStrength": 1
+      },
+      "pointLight": {
+        "enabled": true,
+        "color": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "intensity": 1,
+        "range": 8,
+        "castShadows": false
+      },
+      "spotLight": {
+        "enabled": true,
+        "color": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "intensity": 1,
+        "range": 12,
+        "innerConeAngleDegrees": 18,
+        "outerConeAngleDegrees": 28,
+        "castShadows": false
+      },
+      "relation": {
+        "enabled": false,
+        "relationEntity": "",
+        "bindComponentTransform": true,
+        "bindLighting": false
+      },
+      "collision": {
+        "enabled": false,
+        "shape": "capsule",
+        "center": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "radius": 0.5,
+        "height": 2,
+        "axis": "y"
+      },
+      "colliders": [],
+      "motionLayers": [],
+      "scripts": [
+        {
+          "language": "csharp",
+          "path": "scripts/Nene_r2328_kihon_natsu_e511.csx",
+          "enabled": true
+        }
+      ]
     }
   ],
-  "lighting": {
-    "clearColor": {
-      "x": 0.035,
-      "y": 0.055,
-      "z": 0.1,
-      "w": 1
+  "audio": [
+    {
+      "name": "Lamb",
+      "path": "assets/audio/Lamb.ogg",
+      "loop": true,
+      "volume": 0.8,
+      "playOnStart": false
     }
-  }
+  ],
+  "motions": [
+    {
+      "name": "Lamb",
+      "path": "assets/motions/Lamb.vmd"
+    }
+  ]
 }

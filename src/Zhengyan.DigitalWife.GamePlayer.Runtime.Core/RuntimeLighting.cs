@@ -29,6 +29,13 @@ public sealed class RuntimeLighting
         }
     }
 
+    public Vector3 LightColor { get => DirectionalColor; set => DirectionalColor = value; }
+    public Vector3 LightDirection { get => DirectionalDirection; set => DirectionalDirection = value; }
+
+    public void SetDirectionalColor(float red, float green, float blue) => DirectionalColor = new Vector3(red, green, blue);
+    public void SetDirectionalDirection(float x, float y, float z) => DirectionalDirection = new Vector3(x, y, z);
+    public void SetAmbientColor(float red, float green, float blue) => AmbientColor = new Vector3(red, green, blue);
+
     public Vector3 AmbientColor
     {
         get => Settings.AmbientColor.ToVector3();
@@ -67,6 +74,15 @@ public sealed class RuntimeLighting
     public void PauseVmd() => Settings.Vmd.IsPlaying = false;
 
     public void SeekVmd(float frame) => Settings.Vmd.Frame = Math.Max(frame, 0.0f);
+
+    public void SetVmdLoop(bool loop) => Settings.Vmd.Loop = loop;
+    public void SetVmdPlaybackSpeed(float playbackSpeed) => Settings.Vmd.PlaybackSpeed = Math.Max(playbackSpeed, 0.0f);
+    public void ClearVmd()
+    {
+        Settings.Vmd.Path = string.Empty;
+        Settings.Vmd.IsPlaying = false;
+        Settings.Vmd.Frame = 0.0f;
+    }
 
     private static Vector3 ValidateColor(Vector3 value)
     {

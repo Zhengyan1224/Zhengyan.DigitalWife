@@ -73,6 +73,23 @@ public sealed class RuntimeCamera
 
     public void SeekVmd(float frame) => Settings.Vmd.Frame = Math.Max(frame, 0.0f);
 
+    public RuntimeRay ScreenPointToRay(float screenX, float screenY, float viewportWidth = 1280.0f, float viewportHeight = 720.0f)
+    {
+        float width = Math.Max(viewportWidth, 1.0f);
+        float height = Math.Max(viewportHeight, 1.0f);
+        float x = screenX / width * 2.0f - 1.0f;
+        float y = 1.0f - screenY / height * 2.0f;
+        Matrix4x4 viewProjection = CreateView() * CreateProjection(width / height);
+        if (!Matrix4x4.Invert(viewProjection, out Matrix4x4 inverse))
+        {
+            return new RuntimeRay(Position, Vector3.Normalize(Target - Position));
+        }
+
+        Vector3 near = TransformClipPoint(new Vector3(x, y, -1.0f), inverse);
+        Vector3 far = TransformClipPoint(new Vector3(x, y, 1.0f), inverse);
+        return new RuntimeRay(near, far - near).Normalized;
+    }
+
     public Matrix4x4 CreateView()
     {
         Vector3 position = Settings.Position.ToVector3();
@@ -247,6 +264,14 @@ public sealed class RuntimeCamera
     }
 
     private static bool IsFinite(Vector3 value) => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+    private static Vector3 TransformClipPoint(Vector3 point, Matrix4x4 inverse)
+    {
+        Vector4 transformed = Vector4.Transform(new Vector4(point, 1.0f), inverse);
+        return MathF.Abs(transformed.W) < 1e-6f
+            ? new Vector3(transformed.X, transformed.Y, transformed.Z)
+            : new Vector3(transformed.X, transformed.Y, transformed.Z) / transformed.W;
+    }
 
     private static Vector3 RequireFinite(Vector3 value, string parameterName)
     {

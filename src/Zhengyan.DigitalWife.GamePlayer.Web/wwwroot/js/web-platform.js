@@ -13,6 +13,18 @@ export function speak(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1)
     window.speechSynthesis.speak(utterance);
 }
 
+export function speakWithCallback(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1, dotNetReference, entityId = "", callbackName = "") {
+    if (!window.speechSynthesis) throw new Error("SpeechSynthesis is not available.");
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text || "");
+    utterance.lang = language;
+    utterance.rate = Math.max(.1, Math.min(10, rate));
+    utterance.pitch = Math.max(0, Math.min(2, pitch));
+    utterance.volume = Math.max(0, Math.min(1, volume));
+    utterance.onend = () => dotNetReference?.invokeMethodAsync("OnSpeechCompleted", entityId, callbackName).catch(() => {});
+    window.speechSynthesis.speak(utterance);
+}
+
 export function stopSpeaking() {
     window.speechSynthesis?.cancel();
 }

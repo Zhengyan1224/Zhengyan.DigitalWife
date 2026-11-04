@@ -13,8 +13,20 @@ public sealed class WebAudioService(IJSRuntime jsRuntime) : IAsyncDisposable
     public async ValueTask PlayAsync(string key, string uri, bool loop = false, float volume = 1.0f)
         => await (await ModuleAsync()).InvokeVoidAsync("play", key, uri, loop, volume);
 
+    public async ValueTask PlayOneShotAsync(string uri, float volume = 1.0f)
+        => await (await ModuleAsync()).InvokeVoidAsync("playOneShot", uri, volume);
+
+    public async ValueTask PauseAsync(string key)
+        => await (await ModuleAsync()).InvokeVoidAsync("pause", key);
+
     public async ValueTask StopAsync(string key)
         => await (await ModuleAsync()).InvokeVoidAsync("stop", key);
+
+    public async ValueTask SetVolumeAsync(string key, float volume)
+        => await (await ModuleAsync()).InvokeVoidAsync("setVolume", key, volume);
+
+    public async ValueTask SetLoopAsync(string key, bool loop)
+        => await (await ModuleAsync()).InvokeVoidAsync("setLoop", key, loop);
 
     public async ValueTask StopAllAsync()
         => await (await ModuleAsync()).InvokeVoidAsync("stopAll");

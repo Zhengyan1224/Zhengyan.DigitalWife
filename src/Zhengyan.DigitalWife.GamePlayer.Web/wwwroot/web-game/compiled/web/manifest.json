@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "apiVersion": "1.0",
+  "targetFramework": "net10.0-browser",
+  "scripts": [
+    {
+      "Source": "scripts/musicclassroom.csx",
+      "Assembly": "compiled/web/scripts/musicclassroom.dll",
+      "Sha256": "69C52C82C7AEF41A73286A423A16A3FF1FBA79D2B98ACDB38C34A0ABF1CED389",
+      "ApiVersion": "1.0"
+    },
+    {
+      "Source": "scripts/Nene_r2328_kihon_natsu_e511.csx",
+      "Assembly": "compiled/web/scripts/Nene_r2328_kihon_natsu_e511.dll",
+      "Sha256": "049B484D85B8C5C874C3D65E65FB4F947D5C2C6F8512773EDEDA4BB3807E5C27",
+      "ApiVersion": "1.0"
+    }
+  ],
+  "errors": []
+}

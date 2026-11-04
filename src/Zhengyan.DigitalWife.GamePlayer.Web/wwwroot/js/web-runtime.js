@@ -1,13 +1,14 @@
-﻿import { createWebGl2Renderer } from "./webgl2-renderer.js";
+import { createWebGl2Renderer } from "./webgl2-renderer.js";
 
 import { unlock as unlockAudio } from "./web-audio.js";
 import { registerServiceWorker as registerSw } from "./web-platform.js";
 import { detectWebGpu as detectGpu } from "./web-gpu.js";
 
 let runtime = null;
+const overlayImages = new Map();
 
 function reportError(message) {
-    if (!runtime?.dotNetReference) return;
+    if (!runtime?.dotNetReference || isBenignBrowserError(message)) return;
     runtime.dotNetReference.invokeMethodAsync("OnBrowserError", message).catch(() => {});
 }
 
@@ -22,6 +23,12 @@ function updateCanvasMetrics() {
     const devicePixelRatio = Math.max(window.devicePixelRatio || 1, 1);
     const width = Math.max(Math.round(rect.width * devicePixelRatio), 1);
     const height = Math.max(Math.round(rect.height * devicePixelRatio), 1);
+    const changed = runtime.canvas.width !== width
+        || runtime.canvas.height !== height
+        || runtime.devicePixelRatio !== devicePixelRatio;
+    if (!changed && runtime.hasMeasuredCanvas) return;
+    runtime.hasMeasuredCanvas = true;
+    runtime.devicePixelRatio = devicePixelRatio;
     if (runtime.canvas.width !== width) runtime.canvas.width = width;
     if (runtime.canvas.height !== height) runtime.canvas.height = height;
     runtime.renderer?.resize(width, height);
@@ -32,14 +39,56 @@ function updateCanvasMetrics() {
     invoke("OnCanvasResized", width, height, devicePixelRatio);
 }
 
+function scheduleCanvasMetrics() {
+    if (!runtime || runtime.resizeFrameHandle) return;
+    runtime.resizeFrameHandle = window.requestAnimationFrame(() => {
+        if (!runtime) return;
+        runtime.resizeFrameHandle = 0;
+        updateCanvasMetrics();
+    });
+}
+
+function isBenignBrowserError(message) {
+    const normalized = String(message || "").toLowerCase();
+    return normalized.includes("resizeobserver loop completed")
+        || normalized.includes("resizeobserver loop limit exceeded");
+}
 function installInputHandlers() {
     const canvas = runtime.canvas;
+    const canvasPoint = event => {
+        const rect = canvas.getBoundingClientRect();
+        return [
+            (event.clientX - rect.left) * (canvas.width / Math.max(rect.width, 1)),
+            (event.clientY - rect.top) * (canvas.height / Math.max(rect.height, 1))
+        ];
+    };
+    const overlayHit = event => {
+        const [x, y] = canvasPoint(event);
+        return (runtime.overlayState?.controls || []).some(control =>
+            control.visible !== false
+            && x >= (control.x || 0)
+            && x < (control.x || 0) + (control.width || 120)
+            && y >= (control.y || 0)
+            && y < (control.y || 0) + (control.height || 32));
+    };
+    const spriteHit = event => {
+        const [x, y] = canvasPoint(event);
+        return (runtime.overlayState?.sprites || []).some(sprite =>
+            sprite.visible !== false
+            && x >= (sprite.x || 0)
+            && x < (sprite.x || 0) + (sprite.width || 128)
+            && y >= (sprite.y || 0)
+            && y < (sprite.y || 0) + (sprite.height || 128));
+    };
     runtime.onPointerDown = event => {
         unlockAudio().catch(() => {});
         canvas.setPointerCapture?.(event.pointerId);
         runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         runtime.lastPointerButtons = event.buttons || 1;
-        if (!runtime.inputCaptured) invoke("OnPointerInput", 0, 0, 0, 0, 0, event.pointerType || "mouse", true);
+        runtime.guiPointerActive = overlayHit(event);
+        runtime.spritePointerActive = !runtime.guiPointerActive && spriteHit(event);
+        const [downX, downY] = canvasPoint(event);
+        if (!runtime.inputCaptured && !runtime.guiPointerActive && !runtime.spritePointerActive) invoke("OnPointerInput", 0, 0, 0, 0, 0, event.pointerType || "mouse", true, downX, downY, event.buttons || 1);
     };
     runtime.onPointerMove = event => {
         const previous = runtime.pointers.get(event.pointerId) || { x: event.clientX, y: event.clientY };
@@ -49,17 +98,24 @@ function installInputHandlers() {
         const buttons = event.buttons || runtime.lastPointerButtons || 0;
         const look = buttons & 1 ? 1 : 0;
         const pan = buttons & 2 || event.pointerType === "touch" ? 1 : 0;
-        if (!runtime.inputCaptured) invoke("OnPointerInput", dx * look, dy * look, dx * pan, dy * pan, 0, event.pointerType || "mouse", false);
+        const [moveX, moveY] = canvasPoint(event);
+        if (!runtime.inputCaptured && !runtime.guiPointerActive && !runtime.spritePointerActive) invoke("OnPointerInput", dx * look, dy * look, dx * pan, dy * pan, 0, event.pointerType || "mouse", false, moveX, moveY, event.buttons || 0);
     };
     runtime.onPointerUp = event => {
+        const [x, y] = canvasPoint(event);
+        if (runtime.guiPointerActive) invoke("OnGuiPointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
+        if (runtime.spritePointerActive) invoke("OnSpritePointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
         runtime.pointers.delete(event.pointerId);
         canvas.releasePointerCapture?.(event.pointerId);
         runtime.lastPointerButtons = 0;
-        if (!runtime.inputCaptured) invoke("OnPointerInput", 0, 0, 0, 0, 0, event.pointerType || "mouse", false);
+        if (!runtime.inputCaptured && runtime.guiPointerActive === false && runtime.spritePointerActive === false) invoke("OnPointerInput", 0, 0, 0, 0, 0, event.pointerType || "mouse", false, x, y, 0);
+        runtime.guiPointerActive = false;
+        runtime.spritePointerActive = false;
     };
     runtime.onWheel = event => {
         event.preventDefault();
-        if (!runtime.inputCaptured) invoke("OnPointerInput", 0, 0, 0, 0, event.deltaY * 0.01, "wheel", false);
+        const [wheelX, wheelY] = canvasPoint(event);
+        if (!runtime.inputCaptured) invoke("OnPointerInput", 0, 0, 0, 0, event.deltaY * 0.01, "wheel", false, wheelX, wheelY, 0);
     };
     runtime.onKeyDown = event => { unlockAudio().catch(() => {}); if (!runtime.inputCaptured) invoke("OnKeyInput", event.code || event.key || "", true); };
     runtime.onKeyUp = event => { if (!runtime.inputCaptured) invoke("OnKeyInput", event.code || event.key || "", false); };
@@ -107,19 +163,31 @@ export function start(canvas, overlayCanvas, dotNetReference) {
     stop();
     runtime = {
         canvas, overlayCanvas, dotNetReference, running: true, renderer: null, frameHandle: 0,
-        resizeObserver: null, onWindowResize: null, onError: null, onUnhandledRejection: null,
-        pointers: new Map(), lastPointerButtons: 0, inputCaptured: false, overlayState: {}
+        resizeObserver: null, resizeTarget: null, resizeFrameHandle: 0,
+        onWindowResize: null, onError: null, onUnhandledRejection: null,
+        pointers: new Map(), lastPointerButtons: 0, guiPointerActive: false, spritePointerActive: false, inputCaptured: false, overlayState: {}
     };
     updateCanvasMetrics();
     installInputHandlers();
     if (typeof ResizeObserver !== "undefined") {
-        runtime.resizeObserver = new ResizeObserver(updateCanvasMetrics);
-        runtime.resizeObserver.observe(canvas);
+        runtime.resizeObserver = new ResizeObserver(scheduleCanvasMetrics);
+        // Observe the layout container instead of the canvas itself. Changing
+        // canvas.width/height updates its backing buffer and can otherwise
+        // feed the observer with a self-induced size change.
+        runtime.resizeTarget = canvas.parentElement || canvas;
+        runtime.resizeObserver.observe(runtime.resizeTarget);
     }
-    runtime.onWindowResize = updateCanvasMetrics;
+    runtime.onWindowResize = scheduleCanvasMetrics;
     window.addEventListener("resize", runtime.onWindowResize, { passive: true });
-    runtime.onError = event => reportError(event?.error?.message || event?.message || "Unhandled browser exception");
-    runtime.onUnhandledRejection = event => reportError(event?.reason?.message || String(event?.reason || "Unhandled Promise rejection"));
+    runtime.onError = event => {
+        const message = event?.error?.message || event?.message || "Unhandled browser exception";
+        if (isBenignBrowserError(message)) return;
+        reportError(message);
+    };
+    runtime.onUnhandledRejection = event => {
+        const message = event?.reason?.message || String(event?.reason || "Unhandled Promise rejection");
+        if (!isBenignBrowserError(message)) reportError(message);
+    };
     window.addEventListener("error", runtime.onError);
     window.addEventListener("unhandledrejection", runtime.onUnhandledRejection);
     runtime.frameHandle = window.requestAnimationFrame(frame);
@@ -162,7 +230,15 @@ export function setInputCapture(captured) {
 }
 
 export function setOverlayState(state) {
-    if (runtime) runtime.overlayState = state || {};
+    if (!runtime) return;
+    runtime.overlayState = state || {};
+    for (const sprite of runtime.overlayState.sprites || []) {
+        if (!sprite.uri || overlayImages.has(sprite.uri)) continue;
+        const image = new Image();
+        image.onload = () => { overlayImages.set(sprite.uri, image); };
+        image.onerror = () => { overlayImages.set(sprite.uri, null); };
+        image.src = sprite.uri;
+    }
 }
 
 export async function registerServiceWorker(path = "sw.js") {
@@ -180,11 +256,26 @@ function renderOverlay() {
     if (!context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
     const state = runtime.overlayState || {};
-    for (const sprite of state.sprites || []) {
+    for (const sprite of (state.sprites || []).slice().sort((a, b) => (a.drawOrder || 0) - (b.drawOrder || 0))) {
         if (sprite.visible === false) continue;
+        context.save();
         context.globalAlpha = sprite.opacity ?? 1;
-        context.fillStyle = sprite.color || "rgba(255,255,255,.75)";
-        context.fillRect(sprite.x || 0, sprite.y || 0, sprite.width || 16, sprite.height || 16);
+        const x = sprite.x || 0;
+        const y = sprite.y || 0;
+        const width = sprite.width || 16;
+        const height = sprite.height || 16;
+        context.translate(x + width * 0.5, y + height * 0.5);
+        context.rotate((sprite.rotation || 0) * Math.PI / 180);
+        const image = sprite.uri ? overlayImages.get(sprite.uri) : null;
+        if (image) {
+            const sourceWidth = sprite.sourceWidth > 0 ? sprite.sourceWidth : image.naturalWidth;
+            const sourceHeight = sprite.sourceHeight > 0 ? sprite.sourceHeight : image.naturalHeight;
+            context.drawImage(image, sprite.sourceX || 0, sprite.sourceY || 0, sourceWidth, sourceHeight, -width * 0.5, -height * 0.5, width, height);
+        } else {
+            context.fillStyle = sprite.color || "rgba(255,255,255,.75)";
+            context.fillRect(-width * 0.5, -height * 0.5, width, height);
+        }
+        context.restore();
     }
     context.globalAlpha = 1;
     for (const control of state.controls || []) {
@@ -195,7 +286,14 @@ function renderOverlay() {
         context.strokeRect(control.x || 0, control.y || 0, control.width || 120, control.height || 32);
         context.fillStyle = control.color || "#f8fafc";
         context.font = `${control.fontSize || 14}px sans-serif`;
-        context.fillText(control.text || "", (control.x || 0) + 8, (control.y || 0) + (control.height || 32) * .65);
+        const text = control.type === "checkbox"
+            ? `${control.checkedValue ? "[x]" : "[ ]"} ${control.text || ""}`
+            : control.type === "dropdown" && (control.items || []).length > 0
+                ? (control.items[control.selectedIndex || 0] || control.text || "")
+                : control.type === "progress_bar"
+                    ? (control.text || `${Math.round((control.progress || 0) * 100)}%`)
+                    : (control.text || "");
+        context.fillText(text, (control.x || 0) + 8, (control.y || 0) + (control.height || 32) * .65);
     }
     for (const bubble of state.bubbles || []) {
         context.fillStyle = "rgba(15,23,42,.88)";
@@ -216,6 +314,8 @@ export function stop() {
     runtime.renderer?.dispose();
     runtime.renderer = null;
     runtime.resizeObserver?.disconnect();
+    if (runtime.resizeFrameHandle) window.cancelAnimationFrame(runtime.resizeFrameHandle);
+
     if (runtime.onWindowResize) window.removeEventListener("resize", runtime.onWindowResize);
     if (runtime.onError) window.removeEventListener("error", runtime.onError);
     if (runtime.onUnhandledRejection) window.removeEventListener("unhandledrejection", runtime.onUnhandledRejection);

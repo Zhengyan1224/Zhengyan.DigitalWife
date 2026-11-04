@@ -13,10 +13,10 @@ if (typeof createWebGl2Renderer !== "function") throw new Error("Missing WebGL2 
 for (const name of ["putAsset", "getAsset", "removeAsset", "clearAssets"]) {
     if (typeof storage[name] !== "function") throw new Error(`Missing IndexedDB export: ${name}`);
 }
-for (const name of ["unlock", "play", "stop", "stopAll", "dispose"]) {
+for (const name of ["unlock", "play", "playOneShot", "pause", "stop", "setVolume", "setLoop", "stopAll", "dispose"]) {
     if (typeof audio[name] !== "function") throw new Error(`Missing audio export: ${name}`);
 }
-for (const name of ["speak", "stopSpeaking", "recordMicrophone", "stopMicrophone", "fetchJson", "connectWebSocket", "sendWebSocket", "closeWebSocket", "registerServiceWorker"]) {
+for (const name of ["speak", "speakWithCallback", "stopSpeaking", "recordMicrophone", "stopMicrophone", "fetchJson", "connectWebSocket", "sendWebSocket", "closeWebSocket", "registerServiceWorker"]) {
     if (typeof platform[name] !== "function") throw new Error(`Missing platform export: ${name}`);
 }
 if (typeof gpu.detectWebGpu !== "function") throw new Error("Missing WebGPU capability export.");

@@ -6,35 +6,411 @@
   "entryScene": "scenes/main.scene.json",
   "assets": [
     {
-      "path": "assets/models/minimal.pmx",
-      "kind": "pmx",
-      "size": 487,
-      "sha256": "18e271879f5a5df2ad2f9516386f8d8d27f9825d700f13a8a9a75a27b9732380"
-    },
-    {
-      "path": "assets/motions/minimal.vmd",
-      "kind": "vmd",
-      "size": 196,
-      "sha256": "1120d9b6286c853cf567c3310b2ed0c8a6b031ea5a0e0a39188f6d9219a8de8c"
-    },
-    {
       "path": "game.project.json",
       "kind": "json",
-      "size": 426,
-      "sha256": "8ca3e6321ddc496c77e487bf5293f66fec1752b86077574ebdf285e4ee54a57a"
+      "size": 5433,
+      "sha256": "849494ADFD74971F1DCBD8EC12760832FB264267BC396D0036722E4499BDE823"
     },
     {
       "path": "scenes/main.scene.json",
       "kind": "json",
-      "size": 1785,
-      "sha256": "81125475b592aefb42050ff215265ea71c558b331c916dec0de2f484e9a60f1e"
+      "size": 16692,
+      "sha256": "3FC05B5338680A5B6F894DCA19789EB7CE04B020FE5225E6E14B52A855E74D5E"
+    },
+    {
+      "path": "scripts/musicclassroom.csx",
+      "kind": "binary",
+      "size": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "path": "scripts/Nene_r2328_kihon_natsu_e511.csx",
+      "kind": "binary",
+      "size": 1169,
+      "sha256": "0CAA5630B4C41F3CC5596F60FCA24BF5236FECE5D381BFEAD4852FF890AD79F1"
+    },
+    {
+      "path": "assets/audio/Lamb.ogg",
+      "kind": "binary",
+      "size": 3330802,
+      "sha256": "EEA2E4A7F951DF63DA6D2CA7EECF98DEFCFA2F0D99ADC6CB983528279DBB7736"
+    },
+    {
+      "path": "assets/motions/Lamb.vmd",
+      "kind": "vmd",
+      "size": 1718255,
+      "sha256": "98934AAC5067F815E7B46CC5AAAB36E846C4064E2EA6171CAE969C6CB3EE36B9"
+    },
+    {
+      "path": "compiled/android/manifest.json",
+      "kind": "json",
+      "size": 641,
+      "sha256": "6C4A7148D0A45F880F86097A80AA876DF6CA2A1DC91A33B618F37D3B1F20074D"
+    },
+    {
+      "path": "compiled/desktop/manifest.json",
+      "kind": "json",
+      "size": 606,
+      "sha256": "A5290F39F24CF2A2F9831D622F1E959587FE81337D7B83A6AC4C2F482FA5C772"
+    },
+    {
+      "path": "compiled/web/manifest.json",
+      "kind": "json",
+      "size": 621,
+      "sha256": "08735AC2ED62AEB50221B73B5F543BA03E1BDC52E2728A273666B8831B760218"
+    },
+    {
+      "path": "assets/models/musicclassroom/02EF9840.DDS",
+      "kind": "texture",
+      "size": 65664,
+      "sha256": "47B44112BF81364DF7A5A83C1F66E2B01AE6A26AB2D6206133C8AEBF4FCC7DD2"
+    },
+    {
+      "path": "assets/models/musicclassroom/0D2FB461.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "B47DD057461D28C98EF25EFC68F3150CD2A8DCAA7114F76595EBD78E264A1FCD"
+    },
+    {
+      "path": "assets/models/musicclassroom/0DE1DC33.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "A013424719C951235023A753D6931E0361AC395AAC9082E4D59669BBC2063580"
+    },
+    {
+      "path": "assets/models/musicclassroom/1404978E.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "C2C226438C9F33A37384126947E65DCCEB34A5DD5B73054DC70266E2DE6D2487"
+    },
+    {
+      "path": "assets/models/musicclassroom/33AC858A.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "7C3397F5294F3FD3BD69925F4632DBB50720971C00F612CF7BE07E2201E22195"
+    },
+    {
+      "path": "assets/models/musicclassroom/34160726.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "5607F47FA12C4C70C0912AA360954F3F354E9112E9A430007E972B601DE39E0B"
+    },
+    {
+      "path": "assets/models/musicclassroom/3461BC27.DDS",
+      "kind": "texture",
+      "size": 131200,
+      "sha256": "BC397DE9DFD273E8A2A68611250A5362466AEA55A6424D9AA9A28E68877F3F1C"
+    },
+    {
+      "path": "assets/models/musicclassroom/35A6E8A0.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "997245F23AC6729CA071CDFAC26C106B23AA1F8BA2A25189900A8AC1B133F0D5"
+    },
+    {
+      "path": "assets/models/musicclassroom/46088DB7.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "C82A0067BC3ED522A24FEE59527E7146CA4D0FDAD56E7AB4B62112A7C51A75F5"
+    },
+    {
+      "path": "assets/models/musicclassroom/5ACEBB14.DDS",
+      "kind": "texture",
+      "size": 65664,
+      "sha256": "AD930FD2075095E86042C27A5D3AF639059A9E184A09E17CFC8D4CE226576A53"
+    },
+    {
+      "path": "assets/models/musicclassroom/6EFA9785.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "0090070C40A81B107AC956F87E5C98664FBEFF8BCE4F3F7150CE1450E5F8010D"
+    },
+    {
+      "path": "assets/models/musicclassroom/6F6E19AD.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "3531420A00A9EACAED469A8071D6F57346F15C9DBB9C0D60C73B3B964CD9295E"
+    },
+    {
+      "path": "assets/models/musicclassroom/75430BCC.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "64D09F03752ADB604C884C03B887DE7B1AF7B2ABA261D303B2DC4F5359546994"
+    },
+    {
+      "path": "assets/models/musicclassroom/7DE14728.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "3988F2655C8211C385588DC7BEF80D02634E44B04B4275C9236AB5502A685C79"
+    },
+    {
+      "path": "assets/models/musicclassroom/A133E2BA.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "0F368DF83DCC929721123100C6A5339331FD96FA2DBD5FB533FECF46E1DD532E"
+    },
+    {
+      "path": "assets/models/musicclassroom/C406987D.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "DF5A536243D28A955BA7593C944124B6A0712376ABCAF2C53D742D56C83100A4"
+    },
+    {
+      "path": "assets/models/musicclassroom/C9FAD742.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "DD130B662B778010A8EDFAA7043F9106A210C2397276D5603C6B558B9B0CFF30"
+    },
+    {
+      "path": "assets/models/musicclassroom/D2DF15C7.DDS",
+      "kind": "texture",
+      "size": 192,
+      "sha256": "AD15EB10B08D117C1CD951C067BD6A4A824C6B3DD305BDC1600313F138BC7694"
+    },
+    {
+      "path": "assets/models/musicclassroom/E29C8807.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "66D300381BA27F3198310AC697A3D0B688742E848C3986A9EABFCAFD73F5552C"
+    },
+    {
+      "path": "assets/models/musicclassroom/E597BF87.DDS",
+      "kind": "texture",
+      "size": 1152,
+      "sha256": "D5B12567A6AC1E6702A8D10BF9E1DB5713FC6194956D107937AE6A5589740971"
+    },
+    {
+      "path": "assets/models/musicclassroom/E64906A5.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "237677D4C3C8C5CDE207D650DF170947CF53DE71A25A468D47893A50D54D91B4"
+    },
+    {
+      "path": "assets/models/musicclassroom/ED612319.DDS",
+      "kind": "texture",
+      "size": 262272,
+      "sha256": "12CA0C05E31ECC5F5B1F473F076DA1B63A42CBFB9DC80887ECD5736763B100F9"
+    },
+    {
+      "path": "assets/models/musicclassroom/F8890DE7.DDS",
+      "kind": "texture",
+      "size": 192,
+      "sha256": "FF0EEB9F0CDA2E02B1353628DA94E45F6AF9312FB0F5DE700A278138291908DE"
+    },
+    {
+      "path": "assets/models/musicclassroom/FF09997F.DDS",
+      "kind": "texture",
+      "size": 16512,
+      "sha256": "2B2E43669E366ECC96895BA7C2E6C0485C867DFD36402E6A93B98FCF891BBD37"
+    },
+    {
+      "path": "assets/models/musicclassroom/musicclassroom.pmx",
+      "kind": "pmx",
+      "size": 819008,
+      "sha256": "104CEA35776AE62028BCC035240A2DDD625C741FCB8F89AB7549F3D6F49276FA"
+    },
+    {
+      "path": "assets/models/musicclassroom/musicclassroom.x",
+      "kind": "binary",
+      "size": 2355863,
+      "sha256": "89878678DD3D65E2D93C77DC06D9EBE140CD365E307F8F9DD9C44DC125794928"
+    },
+    {
+      "path": "assets/models/musicclassroom/rename.sh",
+      "kind": "binary",
+      "size": 523,
+      "sha256": "90230BFB299C44F4B565E02C2FFFD557970281BC32E167F2F2527B34F9D243A8"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/face0ne_mayu.png",
+      "kind": "texture",
+      "size": 9403,
+      "sha256": "E000B110951DE1C2676C556A71F1892B0603087E50EBA029B58907C341437434"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/face0ne_mouth.png",
+      "kind": "texture",
+      "size": 16989,
+      "sha256": "A4EB3EE747FBD79E626BBFC2DD344BC30D15F437126AA913BE8B36C9F757F62F"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/face0ne_skinalpha.png",
+      "kind": "texture",
+      "size": 39102,
+      "sha256": "2335C4DC3D745D01353DB86D3C4136A4A1736372CEC82DBD84B1E06869E4C32E"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/hair_f0ne_mugen.png",
+      "kind": "texture",
+      "size": 97286,
+      "sha256": "F542F903D1E2D8CE4C6566328ECB9E804E7B056172B0DA058A9948260D3C8B4D"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/hair_f1ne_mugen.png",
+      "kind": "texture",
+      "size": 84084,
+      "sha256": "068ADB7CDCCCB5515191FE4BCA59D60EF512A1DF5351D6343CEA9D3218BF8B71"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/hair_r0ne_mugen.png",
+      "kind": "texture",
+      "size": 141780,
+      "sha256": "C3CD6CE5362BB821646D60B8133FEC92BA0C34CDE559EFB22CF176AC430F93CD"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/hair_r1ne_mugen.png",
+      "kind": "texture",
+      "size": 83228,
+      "sha256": "61831307F831A1309D9A52093EAFF2B33FFB81FE62531918E37994D41DD6C884"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_kihon_natsu_e511.pmx",
+      "kind": "pmx",
+      "size": 2547034,
+      "sha256": "C89BE3FCC6FD0E67128B031E79B5BB7F3A43C4F6599A8237F162FDCADF32C303"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_seiso_natsu_e51.pmx",
+      "kind": "pmx",
+      "size": 2313106,
+      "sha256": "D0BCA00777ADFF8676902ACE88A81F44A338A3C08A4D89C1E25698E0B858CAFA"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_revive2202_eye_UV.png",
+      "kind": "texture",
+      "size": 229856,
+      "sha256": "F53B7A067C5C6FDEC4861BC66AC43D16F2D301D235712B8E3B9F75A37D760419"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_revive2274_body_UV.png",
+      "kind": "texture",
+      "size": 142037,
+      "sha256": "9AF29B516D26F6A9AB0062370A79328E5DC5591808F12A886506DD2B3B9F05E2"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_revive_sailor_UV.png",
+      "kind": "texture",
+      "size": 53873,
+      "sha256": "5384DE1CC96104F92727DBC2AF58B899FF5738886ABF054BE16B2F8DA3A83DCC"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_revive_skirt_UV.png",
+      "kind": "texture",
+      "size": 7104,
+      "sha256": "89E998DB52B43FE5215846296C8DCD7143C1EF8CA462537D5FC36067A2CC9CA5"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Nene_Rivive2328_Face.png",
+      "kind": "texture",
+      "size": 257621,
+      "sha256": "72B92F7D2F5F919AC549B24D44CF676EECB30E15A0F098DCAEAD5CB6269B46AF"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/Readme.txt",
+      "kind": "binary",
+      "size": 5031,
+      "sha256": "551A4FF3BE9386915DB4058BB9B7C6B32645E5CE1112E2861ADFED3CB6B84EC9"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/satin.jpg",
+      "kind": "texture",
+      "size": 2531,
+      "sha256": "2F9C3D9FAA078CAFEB790CF42C5AC24AB7C43C1844982A0279C560A5E331A6E5"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/shoes_UV.png",
+      "kind": "texture",
+      "size": 18825,
+      "sha256": "2805BD06803BDA23A834FD5C7980089349208EB6AD9B829325642F1F64B2E749"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/skin.png",
+      "kind": "texture",
+      "size": 12176,
+      "sha256": "A228EF23B1FFC1C712F52D2A99C2CCBE1108D3C3689C91D89AAEF902E7876C76"
+    },
+    {
+      "path": "assets/models/Nene_r2328_kihon_natsu_e511/towano_scarf.png",
+      "kind": "texture",
+      "size": 53781,
+      "sha256": "0A26F85165747F503C669DE5B84AB77C2C25A2BA5803405D42BBBBD38930AE8B"
+    },
+    {
+      "path": "compiled/android/scripts/musicclassroom.dll",
+      "kind": "assembly",
+      "size": 3584,
+      "sha256": "5A4081D85F7A5E5EB154DAC0D03CBE3856D5212C28CEEDB4490948D3CF846137"
+    },
+    {
+      "path": "compiled/android/scripts/Nene_r2328_kihon_natsu_e511.dll",
+      "kind": "assembly",
+      "size": 4608,
+      "sha256": "B026C29B8515CBA25A2EE40ECD9602A5F97F80DCB32025F6A2B6A5731AF9CEF5"
+    },
+    {
+      "path": "compiled/desktop/scripts/musicclassroom.dll",
+      "kind": "assembly",
+      "size": 3072,
+      "sha256": "A98EB336F4A0B8F0BA49CE17FB03C79658F34E15016D98B261B00DA2E54C49EC"
+    },
+    {
+      "path": "compiled/desktop/scripts/Nene_r2328_kihon_natsu_e511.dll",
+      "kind": "assembly",
+      "size": 4096,
+      "sha256": "D1EBF6D0C41AD3A73E85D89D925547BB48E305FB5FEA3FED19A269892B3681E4"
+    },
+    {
+      "path": "compiled/web/scripts/musicclassroom.dll",
+      "kind": "assembly",
+      "size": 3584,
+      "sha256": "69C52C82C7AEF41A73286A423A16A3FF1FBA79D2B98ACDB38C34A0ABF1CED389"
+    },
+    {
+      "path": "compiled/web/scripts/Nene_r2328_kihon_natsu_e511.dll",
+      "kind": "assembly",
+      "size": 4096,
+      "sha256": "049B484D85B8C5C874C3D65E65FB4F947D5C2C6F8512773EDEDA4BB3807E5C27"
     }
   ],
-  "scripts": [],
+  "scripts": [
+    {
+      "id": "scripts/musicclassroom.csx",
+      "assembly": "compiled/web/scripts/musicclassroom.dll",
+      "type": "",
+      "factory": "",
+      "sha256": "69C52C82C7AEF41A73286A423A16A3FF1FBA79D2B98ACDB38C34A0ABF1CED389",
+      "entity": "e904b56eb3464b65b407c3012a9b99ae",
+      "apiVersion": "1.0",
+      "targetFramework": "net10.0-browser",
+      "dependencies": []
+    },
+    {
+      "id": "scripts/Nene_r2328_kihon_natsu_e511.csx",
+      "assembly": "compiled/web/scripts/Nene_r2328_kihon_natsu_e511.dll",
+      "type": "",
+      "factory": "",
+      "sha256": "049B484D85B8C5C874C3D65E65FB4F947D5C2C6F8512773EDEDA4BB3807E5C27",
+      "entity": "5b0246dda51c4055abe0d7d10d99d478",
+      "apiVersion": "1.0",
+      "targetFramework": "net10.0-browser",
+      "dependencies": []
+    }
+  ],
   "capabilities": [
     "scene",
-    "pmx-static",
-    "vmd-camera",
-    "webgl2"
-  ]
+    "pmx",
+    "vmd",
+    "pmx-skinning",
+    "pmx-morph",
+    "pmx-ik",
+    "webgl2",
+    "pointer",
+    "touch",
+    "gui-events",
+    "web-audio",
+    "motion-control",
+    "speech-callbacks",
+    "precompiled-scripts"
+  ],
+  "keyId": ""
 }

@@ -30,6 +30,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
     private bool _packageIncludeSaves;
     private bool _packagePrecompileAndroid = true;
     private bool _packagePrecompileDesktop = true;
+    private bool _packagePrecompileWeb = true;
+    private string _webOutputDirectory = string.Empty;
     private string _androidCompatibilityResult = string.Empty;
     private int _selectedMotionAssetIndex;
     private string _particlePreset = "sakura";
@@ -766,6 +768,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         ImGui.Checkbox("Include saves", ref _packageIncludeSaves);
         ImGui.Checkbox("Precompile desktop C#", ref _packagePrecompileDesktop);
         ImGui.Checkbox("Precompile Android C#", ref _packagePrecompileAndroid);
+        ImGui.Checkbox("Precompile Web C#", ref _packagePrecompileWeb);
         if (ImGui.Button("Export Package"))
         {
             try
@@ -780,7 +783,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     splitBytes,
                     _packageIncludeSaves,
                     _packagePrecompileAndroid,
-                    _packagePrecompileDesktop);
+                    _packagePrecompileDesktop,
+                    _packagePrecompileWeb);
             }
             catch (Exception ex)
             {
@@ -800,6 +804,27 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 _editorGame.UpdateStatus($"Android compatibility check failed: {ex.Message}");
             }
         }
+
+        if (string.IsNullOrWhiteSpace(_webOutputDirectory))
+        {
+            _webOutputDirectory = BuildDefaultWebOutputPath();
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Web static directory");
+        DrawPathInput("Output directory", ref _webOutputDirectory, 1024, "webOutputDirectory");
+        if (ImGui.Button("Export Web Static Directory"))
+        {
+            try
+            {
+                _ = _editorGame.ExportWebStaticDirectory(_webOutputDirectory);
+            }
+            catch (Exception ex)
+            {
+                _editorGame.UpdateStatus($"Export Web static directory failed: {ex.Message}");
+            }
+        }
+        ImGui.TextWrapped("This creates a folder that can be served directly by a static Web server. It contains game.project.json, scenes, assets, compiled Web script assemblies, compiled/web/manifest.json, and the root web.manifest.json. If a script uses an API that Web does not support yet, the export still succeeds with the compatible scripts and records the compiler diagnostics in compiled/web/manifest.json.");
 
         ImGui.TextWrapped("GamePlayer can load either the development project directory or the exported .dwgame package. Desktop and Android C# precompilation remove runtime Roslyn startup work; source scripts remain in the package as a compatibility fallback. Split packages are written as .dwgame.001, .dwgame.002, ... and GamePlayer can start from the .dwgame path or the first .001 part. Encryption prevents casual editing, but the password must still be provided at runtime. Android projects support C# scripts only; desktop sprite features are ignored.");
         if (!string.IsNullOrWhiteSpace(_androidCompatibilityResult))
@@ -823,6 +848,13 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         string projectName = ToSafeFileStem(_editorGame.Project.Name);
         string parent = Directory.GetParent(_editorGame.ProjectDirectory)?.FullName ?? _editorGame.ProjectDirectory;
         return Path.Combine(parent, $"{projectName}{GameProjectPackage.PackageExtension}");
+    }
+
+    private string BuildDefaultWebOutputPath()
+    {
+        string projectName = ToSafeFileStem(_editorGame.Project.Name);
+        string parent = Directory.GetParent(_editorGame.ProjectDirectory)?.FullName ?? _editorGame.ProjectDirectory;
+        return Path.Combine(parent, $"{projectName}-web");
     }
 
     private static string ToSafeFileStem(string value)

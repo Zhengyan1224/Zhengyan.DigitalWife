@@ -807,6 +807,18 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         return result;
     }
 
+    public WebGamePackageResult ExportWebStaticDirectory(string outputDirectory, bool overwrite = true)
+    {
+        SaveProject();
+        WebScriptPrecompileResult webPrecompile = WebCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project);
+        WebGamePackageResult result = WebGamePackageExporter.Publish(ProjectDirectory, outputDirectory, overwrite);
+        string warning = webPrecompile.Errors.Count == 0
+            ? string.Empty
+            : $"\n[Warning] Web precompile omitted {webPrecompile.Errors.Count} script(s); see {webPrecompile.ManifestPath}";
+        UpdateStatus($"Exported Web static directory: {result.OutputDirectory}\nManifest: {result.ManifestPath}\nAssets: {result.AssetCount:N0}\nPrecompiled Web C# scripts: {result.ScriptCount}\nTotal bytes: {result.TotalBytes:N0}{warning}");
+        return result;
+    }
+
     public AndroidCompatibilityReport CheckAndroidCompatibility()
     {
         SaveProject();

@@ -27,7 +27,8 @@ public sealed class WebPmxAsset : IDisposable
 {
     private readonly GameEntity _entity;
     private readonly PmxParsing _parsing;
-    private readonly PmxPoseEvaluator _pose;
+    private PmxPoseEvaluator _pose;
+    private readonly Func<string, VmdParsing?> _animationLoader;
     private readonly float[] _skinnedVertices;
     private bool _disposed;
 
@@ -36,13 +37,15 @@ public sealed class WebPmxAsset : IDisposable
         PmxParsing parsing,
         PmxPoseEvaluator pose,
         WebPmxMesh mesh,
-        float[] skinnedVertices)
+        float[] skinnedVertices,
+        Func<string, VmdParsing?> animationLoader)
     {
         _entity = entity;
         _parsing = parsing;
         _pose = pose;
         Mesh = mesh;
         _skinnedVertices = skinnedVertices;
+        _animationLoader = animationLoader;
     }
 
     public GameEntity Entity => _entity;
@@ -57,7 +60,8 @@ public sealed class WebPmxAsset : IDisposable
         GameEntity entity,
         PmxParsing parsing,
         IReadOnlyList<(VmdParsing Animation, float Weight)> layers,
-        WebPmxMesh? mesh = null)
+        WebPmxMesh? mesh = null,
+        Func<string, VmdParsing?>? animationLoader = null)
     {
         ArgumentNullException.ThrowIfNull(entity);
         ArgumentNullException.ThrowIfNull(parsing);
@@ -74,7 +78,50 @@ public sealed class WebPmxAsset : IDisposable
         pose.Update(0.0, entity.PlaybackSpeed, entity.LoopMotion, vertices, 1.0f / 30.0f);
         mesh ??= WebPmxMesh.FromParsing(parsing);
         mesh.UpdateFromInterleaved(vertices);
-        return new WebPmxAsset(entity, parsing, pose, mesh, vertices);
+        return new WebPmxAsset(entity, parsing, pose, mesh, vertices, animationLoader ?? (_ => null));
+    }
+
+    public bool ApplyMotion(string motionPath)
+    {
+        string normalized = NormalizeMotionPath(motionPath);
+        VmdParsing? animation = _animationLoader(normalized);
+        if (animation is null)
+        {
+            return false;
+        }
+
+        ReplacePose([(animation, 1.0f)]);
+        _entity.MotionLayers = [new MotionLayerSettings { Path = normalized, Weight = 1.0f }];
+        _entity.IsPlaying = true;
+        return true;
+    }
+
+    public void PlayMotion(bool restart)
+    {
+        if (restart)
+        {
+            for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerFrame(i, 0.0f);
+        }
+
+        for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerPlaying(i, true);
+        _entity.IsPlaying = true;
+    }
+
+    public void PauseMotion()
+    {
+        for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerPlaying(i, false);
+        _entity.IsPlaying = false;
+    }
+
+    public void StopMotion()
+    {
+        for (int i = 0; i < Pose.MotionLayerCount; i++)
+        {
+            Pose.SetMotionLayerFrame(i, 0.0f);
+            Pose.SetMotionLayerPlaying(i, false);
+        }
+
+        _entity.IsPlaying = false;
     }
 
     public bool Update(double timeSeconds, float deltaSeconds)
@@ -105,6 +152,23 @@ public sealed class WebPmxAsset : IDisposable
             pose.SetMotionLayerPlaybackSpeed(layer, entity.PlaybackSpeed);
         }
     }
+
+    private void ReplacePose(IReadOnlyList<(VmdParsing Animation, float Weight)> layers)
+    {
+        _pose.Dispose();
+        _pose = new PmxPoseEvaluator(
+            _parsing,
+            layers,
+            _entity.EnablePhysics,
+            _entity.PhysicsGravity,
+            _entity.ResetPhysicsOnMotionLoop);
+        ApplyPlaybackSettings(_pose, _entity);
+        _pose.Update(0.0, _entity.PlaybackSpeed, _entity.LoopMotion, _skinnedVertices, 1.0f / 30.0f);
+        Mesh.UpdateFromInterleaved(_skinnedVertices);
+    }
+
+    private static string NormalizeMotionPath(string path)
+        => (path ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
 
     public void ResetPhysics()
     {

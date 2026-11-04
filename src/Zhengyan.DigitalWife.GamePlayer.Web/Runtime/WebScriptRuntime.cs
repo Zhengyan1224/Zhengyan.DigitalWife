@@ -130,16 +130,38 @@ public sealed class WebScriptRuntime
         }
     }
 
-    public void DispatchEvent(WebScriptEvent gameEvent)
+    public IReadOnlyList<WebAudioCommand> DrainAudioCommands()
+    {
+        List<WebAudioCommand> commands = [];
+        foreach (WebLoadedScript script in _scripts)
+        {
+            commands.AddRange(script.Context.DrainAudioCommands());
+        }
+
+        return commands;
+    }
+
+    public void DispatchEvent(WebScriptEvent gameEvent, string? targetEntityId = null)
     {
         ArgumentNullException.ThrowIfNull(gameEvent);
         foreach (WebLoadedScript script in _scripts)
         {
             if (script.Module is null) continue;
+            if (!string.IsNullOrWhiteSpace(targetEntityId)
+                && !string.Equals(script.Context.Entity?.Id, targetEntityId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            script.Context.SetEvent(gameEvent);
             try { script.Module.OnEvent(script.Context, gameEvent); }
             catch (Exception exception)
             {
                 _diagnostics.Add(new WebScriptLoadDiagnostic(script.Manifest.Id, $"Event '{gameEvent.Name}' failed: {exception.Message}", true));
+            }
+            finally
+            {
+                script.Context.SetEvent(null);
             }
         }
     }

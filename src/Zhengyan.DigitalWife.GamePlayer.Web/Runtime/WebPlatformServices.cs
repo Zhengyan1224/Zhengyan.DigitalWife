@@ -8,6 +8,25 @@ public sealed class WebSpeechService(IJSRuntime jsRuntime) : IAsyncDisposable
     private IJSObjectReference? _module;
     public async ValueTask SpeakAsync(string text, string language = "zh-CN", float rate = 1, float pitch = 1, float volume = 1)
         => await (await ModuleAsync()).InvokeVoidAsync("speak", text, language, rate, pitch, volume);
+    public async ValueTask SpeakWithCallbackAsync(
+        string text,
+        string language,
+        float rate,
+        float pitch,
+        float volume,
+        object callbackReference,
+        string entityId,
+        string callbackName)
+        => await (await ModuleAsync()).InvokeVoidAsync(
+            "speakWithCallback",
+            text,
+            language,
+            rate,
+            pitch,
+            volume,
+            callbackReference,
+            entityId,
+            callbackName);
     public async ValueTask StopAsync() => await (await ModuleAsync()).InvokeVoidAsync("stopSpeaking");
     private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-platform.js");
     public async ValueTask DisposeAsync() { if (_module is not null) await _module.DisposeAsync(); _module = null; }

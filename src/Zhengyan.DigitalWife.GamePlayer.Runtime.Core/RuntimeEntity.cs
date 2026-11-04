@@ -8,13 +8,28 @@ public sealed class RuntimeEntity
     private readonly Func<string, bool>? _resetPmxPhysics;
     private readonly Func<ColliderSettings, RuntimeMeshCollider?>? _meshColliderResolver;
     private readonly Func<string, Matrix4x4?>? _nodeWorldResolver;
+    private readonly Action<string, RuntimeMotionCommand>? _motionCommand;
+    private readonly Action<string, RuntimeSpeechRequest>? _speechRequest;
 
     public RuntimeEntity(GameEntity definition, Func<string, bool>? resetPmxPhysics = null, Func<ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null, Func<string, Matrix4x4?>? nodeWorldResolver = null)
+        : this(definition, resetPmxPhysics, meshColliderResolver, nodeWorldResolver, null, null)
+    {
+    }
+
+    public RuntimeEntity(
+        GameEntity definition,
+        Func<string, bool>? resetPmxPhysics,
+        Func<ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver,
+        Func<string, Matrix4x4?>? nodeWorldResolver,
+        Action<string, RuntimeMotionCommand>? motionCommand,
+        Action<string, RuntimeSpeechRequest>? speechRequest)
     {
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _resetPmxPhysics = resetPmxPhysics;
         _meshColliderResolver = meshColliderResolver;
         _nodeWorldResolver = nodeWorldResolver;
+        _motionCommand = motionCommand;
+        _speechRequest = speechRequest;
     }
 
     public GameEntity Definition { get; }
@@ -129,6 +144,43 @@ public sealed class RuntimeEntity
         }
     }
 
+    public bool PointLightEnabled { get => IsPointLight && Definition.PointLight.Enabled; set { if (IsPointLight) Definition.PointLight.Enabled = value; } }
+    public Vector3 PointLightColor { get => LightColor; set => LightColor = value; }
+    public float PointLightIntensity { get => LightIntensity; set => LightIntensity = value; }
+    public float PointLightRange { get => LightRange; set => LightRange = value; }
+    public bool PointLightCastsShadows { get => IsPointLight && Definition.PointLight.CastShadows; set { if (IsPointLight) Definition.PointLight.CastShadows = value; } }
+    public bool SpotLightEnabled { get => IsSpotLight && Definition.SpotLight.Enabled; set { if (IsSpotLight) Definition.SpotLight.Enabled = value; } }
+    public Vector3 SpotLightColor { get => LightColor; set => LightColor = value; }
+    public float SpotLightIntensity { get => LightIntensity; set => LightIntensity = value; }
+    public float SpotLightRange { get => LightRange; set => LightRange = value; }
+    public bool SpotLightCastsShadows { get => IsSpotLight && Definition.SpotLight.CastShadows; set { if (IsSpotLight) Definition.SpotLight.CastShadows = value; } }
+    public bool EnableShadow { get => Definition.EnableShadow; set => Definition.EnableShadow = value; }
+    public bool ReceiveShadow { get => Definition.ReceiveShadow; set => Definition.ReceiveShadow = value; }
+    public bool DrawShadowInMainPass { get => Definition.DrawShadowInMainPass; set => Definition.DrawShadowInMainPass = value; }
+    public bool LoopMotion { get => Definition.LoopMotion; set => Definition.LoopMotion = value; }
+    public float PlaybackSpeed { get => Definition.PlaybackSpeed; set => Definition.PlaybackSpeed = Math.Max(value, 0.0f); }
+
+    public void SetPointLightColor(float red, float green, float blue) => PointLightColor = new Vector3(red, green, blue);
+    public void SetPointLightIntensity(float intensity) => PointLightIntensity = intensity;
+    public void SetPointLightRange(float range) => PointLightRange = range;
+    public void SetPointLightEnabled(bool enabled) => PointLightEnabled = enabled;
+    public void SetPointLightCastsShadows(bool castsShadows) => PointLightCastsShadows = castsShadows;
+    public void SetSpotLightColor(float red, float green, float blue) => SpotLightColor = new Vector3(red, green, blue);
+    public void SetSpotLightIntensity(float intensity) => SpotLightIntensity = intensity;
+    public void SetSpotLightRange(float range) => SpotLightRange = range;
+    public void SetSpotLightEnabled(bool enabled) => SpotLightEnabled = enabled;
+    public void SetSpotLightCastsShadows(bool castsShadows) => SpotLightCastsShadows = castsShadows;
+    public void SetSpotLightDirection(float x, float y, float z)
+    {
+        Vector3 direction = new(x, y, z);
+        if (direction.LengthSquared() <= 1e-8f) throw new ArgumentOutOfRangeException(nameof(direction));
+        direction = Vector3.Normalize(direction);
+        RotationDegrees = new Vector3(
+            MathF.Asin(-direction.Y) * 180.0f / MathF.PI,
+            MathF.Atan2(-direction.X, -direction.Z) * 180.0f / MathF.PI,
+            0.0f);
+    }
+
     public Vector3 SpotDirection
     {
         get
@@ -192,6 +244,89 @@ public sealed class RuntimeEntity
     public void ResetPhysics() => _ = TryResetPhysics();
 
     public void ResetMotionPhysics() => ResetPhysics();
+
+    public void SetPosition(float x, float y, float z) => Position = new Vector3(x, y, z);
+    public void SetPosition(Vector3 position) => Position = position;
+    public void SetScale(float x, float y, float z) => Scale = new Vector3(x, y, z);
+    public void LookAt(float targetX, float targetY, float targetZ) => LookAt(new Vector3(targetX, targetY, targetZ));
+    public void LookAt(Vector3 target)
+    {
+        Vector3 direction = target - Position;
+        direction.Y = 0.0f;
+        if (direction.LengthSquared() <= 0.000001f) return;
+        direction = Vector3.Normalize(direction);
+        RotationDegrees = new Vector3(0.0f, MathF.Atan2(direction.X, direction.Z) * 180.0f / MathF.PI, 0.0f);
+    }
+
+    public void ApplyMotion(string motionPath)
+    {
+        if (!string.IsNullOrWhiteSpace(motionPath))
+        {
+            _motionCommand?.Invoke(Id, new RuntimeMotionCommand("apply", motionPath));
+        }
+    }
+
+    public void PlayMotion(bool restart = false)
+        => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("play", Restart: restart));
+
+    public void PauseMotion()
+        => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("pause"));
+
+    public void StopMotion()
+        => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("stop"));
+
+    public void Speak(string text)
+        => Speak(text, 0, 1.0f, 1.0f, null);
+
+    public void Speak(string text, Action onCompleted)
+        => Speak(text, 0, 1.0f, 1.0f, onCompleted);
+
+    public void Speak(string text, int speakerId)
+        => Speak(text, speakerId, 1.0f, 1.0f, null);
+
+    public void Speak(string text, int speakerId, Action onCompleted)
+        => Speak(text, speakerId, 1.0f, 1.0f, onCompleted);
+
+    public void Speak(string text, int speakerId, float speed)
+        => Speak(text, speakerId, speed, 1.0f, null);
+
+    public void Speak(string text, int speakerId, float speed, Action onCompleted)
+        => Speak(text, speakerId, speed, 1.0f, onCompleted);
+
+    public void Speak(string text, int speakerId, float speed, float volume)
+        => Speak(text, speakerId, speed, volume, null);
+
+    public void Speak(
+        string text,
+        int speakerId = 0,
+        float speed = 1.0f,
+        float volume = 1.0f,
+        Action? onCompleted = null)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        _speechRequest?.Invoke(Id, new RuntimeSpeechRequest(
+            text,
+            speakerId,
+            Math.Max(speed, 0.1f),
+            Math.Clamp(volume, 0.0f, 1.0f),
+            Completion: onCompleted));
+    }
+
+    public void SpeakWithCallback(string text, string callbackName)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        _speechRequest?.Invoke(Id, new RuntimeSpeechRequest(
+            text,
+            CallbackName: callbackName ?? string.Empty));
+    }
 
     private static string NormalizeType(string? value) => (value ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_');
 

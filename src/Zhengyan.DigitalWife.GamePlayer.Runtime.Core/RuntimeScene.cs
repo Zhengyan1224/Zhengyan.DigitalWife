@@ -12,6 +12,8 @@ public sealed class RuntimeScene : IDisposable
     private readonly Func<string, bool>? _resetPmxPhysics;
     private readonly Func<string, ColliderSettings, RuntimeMeshCollider?>? _meshColliderResolver;
     private readonly Func<string, string, Matrix4x4?>? _nodeWorldResolver;
+    private readonly Action<string, RuntimeMotionCommand>? _motionCommand;
+    private readonly Action<string, RuntimeSpeechRequest>? _speechRequest;
     private bool _disposed;
 
     public RuntimeScene(
@@ -21,7 +23,9 @@ public sealed class RuntimeScene : IDisposable
         Func<string, bool>? resetPmxPhysics = null,
         Func<string, ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null,
         Func<string, string, Matrix4x4?>? nodeWorldResolver = null,
-        Func<string, VmdParsing?>? animationLoader = null)
+        Func<string, VmdParsing?>? animationLoader = null,
+        Action<string, RuntimeMotionCommand>? motionCommand = null,
+        Action<string, RuntimeSpeechRequest>? speechRequest = null)
     {
         ScenePath = scenePath;
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
@@ -32,9 +36,13 @@ public sealed class RuntimeScene : IDisposable
         _resetPmxPhysics = resetPmxPhysics;
         _meshColliderResolver = meshColliderResolver;
         _nodeWorldResolver = nodeWorldResolver;
+        _motionCommand = motionCommand;
+        _speechRequest = speechRequest;
         Physics = new RuntimeScenePhysics(() => Entities);
         Navigation = new RuntimeSceneNavigation(() => Entities);
         Debug = new RuntimeDebug();
+        PointLights = new RuntimeLightCollection(this, spot: false);
+        SpotLights = new RuntimeLightCollection(this, spot: true);
         foreach (GameEntity entity in definition.Entities) Register(CreateEntity(entity));
     }
 
@@ -48,8 +56,8 @@ public sealed class RuntimeScene : IDisposable
     public RuntimeLighting Lighting { get; }
     public IEnumerable<RuntimeEntity> Entities => _entitiesById.Values;
     public IEnumerable<RuntimeEntity> PmxModels => Entities.Where(entity => entity.IsPmxModel);
-    public IEnumerable<RuntimeEntity> PointLights => Entities.Where(entity => entity.IsPointLight && entity.Enabled);
-    public IEnumerable<RuntimeEntity> SpotLights => Entities.Where(entity => entity.IsSpotLight && entity.Enabled);
+    public RuntimeLightCollection SpotLights { get; }
+    public RuntimeLightCollection PointLights { get; }
     public IEnumerable<RuntimeEntity> TexturedPlanes => Entities.Where(entity => entity.IsTexturedPlane);
     public IEnumerable<RuntimeEntity> ParticleSystems => Entities.Where(entity => entity.IsParticleSystem);
     public IEnumerable<RuntimeEntity> WaterSurfaces => Entities.Where(entity => entity.IsWaterSurface);
@@ -61,6 +69,47 @@ public sealed class RuntimeScene : IDisposable
     public RuntimeCamera MainCamera => Cameras.FirstOrDefault(camera => camera.Enabled && camera.IsMain)
         ?? Cameras.FirstOrDefault(camera => camera.Enabled)
         ?? Cameras[0];
+
+    public RuntimeCamera Camera => MainCamera;
+
+    public IEnumerable<RuntimeGuiControl> GuiControls
+        => Definition.GuiControls.Select(control => new RuntimeGuiControl(control));
+
+    public RuntimeGuiControl? GetGuiControl(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName)) return null;
+        GuiControlSettings? control = Definition.GuiControls.FirstOrDefault(item =>
+            string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+        return control is null ? null : new RuntimeGuiControl(control);
+    }
+
+    public IEnumerable<RuntimeSpriteControl> Sprites
+        => Definition.Sprites.Select(sprite => new RuntimeSpriteControl(sprite));
+
+    public RuntimeSpriteControl? GetSprite(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName)) return null;
+        SpriteSettings? sprite = Definition.Sprites.FirstOrDefault(item =>
+            string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
+        return sprite is null ? null : new RuntimeSpriteControl(sprite);
+    }
+
+    public bool IsScreenPointOverGui(float x, float y)
+    {
+        const float actualWidth = 1280.0f;
+        const float actualHeight = 720.0f;
+        const float referenceWidth = 1280.0f;
+        const float referenceHeight = 720.0f;
+        return Definition.GuiControls.Any(control =>
+        {
+            if (!control.Visible) return false;
+            LayoutRect rect = LayoutResolver.Resolve(control.LayoutMode, control.X, control.Y,
+                control.Width, control.Height, actualWidth, actualHeight, referenceWidth, referenceHeight);
+            return x >= rect.X && x < rect.X + rect.Width && y >= rect.Y && y < rect.Y + rect.Height;
+        });
+    }
 
     public IReadOnlyList<RuntimeCamera> RenderCameras
     {
@@ -206,7 +255,9 @@ public sealed class RuntimeScene : IDisposable
 
     private RuntimeEntity CreateEntity(GameEntity entity) => new(entity, _resetPmxPhysics,
         collider => _meshColliderResolver?.Invoke(entity.Id, collider),
-        node => _nodeWorldResolver?.Invoke(entity.Id, node));
+        node => _nodeWorldResolver?.Invoke(entity.Id, node),
+        _motionCommand,
+        _speechRequest);
 
     private static void NormalizeCameras(GameProjectScene scene)
     {

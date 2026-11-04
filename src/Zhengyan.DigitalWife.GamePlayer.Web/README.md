@@ -13,11 +13,13 @@
 - 读取 VMD 动画，并复用共享的姿态、Morph、骨骼、IK 和轻量物理回退逻辑；
 - 使用 Pointer、Touch、Wheel 和 Keyboard 输入控制相机；桌面端可以使用鼠标、滚轮、WASD 或方向键，移动端可以使用触摸；
 - 使用第二个透明 Canvas 绘制 Sprite、GUI 和对话泡；GUI 捕获输入时可以阻止输入继续传给相机；
+- 将 GUI 点击、复选框和下拉框事件分发给 Web 脚本，并支持脚本完成 VMD 动作切换；
 - 通过 WebGL2 point sprite 绘制基础粒子；高级效果失败时保留基础 PMX 场景；
 - 从静态 `wwwroot/web-game` 目录加载游戏资源，并通过 `web.manifest.json` 检查资源路径、大小和 SHA-256；
 - 在浏览器内存中打开未加密的 `.dwgame` 文件；页面上的“打开 .dwgame 内存包”文件选择器就是这个入口；
 - 使用 IndexedDB 缓存已加载资源和保存 JSON 存档；
 - 使用浏览器 Web Audio 播放、停止和统一释放音频；浏览器通常要求用户先点击页面才能解锁音频；
+- 使用浏览器 SpeechSynthesis 执行脚本语音，并在语音结束后向指定实体脚本分发回调事件；
 - 提供浏览器 TTS、麦克风录音、JSON HTTP 和 WebSocket 适配器；麦克风需要用户授权；
 - 注册 Service Worker，缓存静态运行时文件并支持后续离线能力；
 - 只加载导出时生成的 Web 预编译程序集，不在浏览器中运行 Roslyn，也不直接执行 `.csx` 源文件；
@@ -235,16 +237,24 @@ web-game/
 
 ### 6.2 从 GameEditor 导出
 
-推荐使用 GameEditor 的 `Project → Package / Publish` 导出工程。导出前注意：
+GameEditor 的 `Project → Package / Publish` 面板现在有两种相关操作：
+
+- `Export Package` 生成 PC/Android 使用的 `.dwgame` 包；
+- `Export Web Static Directory` 生成可以直接放到网站上的 Web 静态目录。
+
+推荐使用第二个按钮发布 Web。操作步骤如下：
 
 1. 保存工程和当前场景；
 2. 确认启动场景是你希望 Web Player 打开的场景；
-3. 开启 Web 脚本预编译；
-4. 检查导出日志中的 `Precompiled Web C# scripts` 和 Web 预编译警告；
-5. 将导出的 Web 静态目录复制到 `wwwroot/web-game`，或者部署到网站中的 `web-game/` 目录；
-6. 确认 `web.manifest.json`、工程 JSON、场景 JSON、模型、动作、贴图和 `compiled/web/*.dll` 都被复制。
+3. 在 `Output directory` 中填写输出目录。默认目录是工程目录同级的 `<工程名>-web`，例如 `DemoGame07-web`；
+4. 点击 `Export Web Static Directory`。GameEditor 会先保存工程，再运行 Web C# 预编译，最后调用 Web 静态目录导出器；
+5. 检查导出日志中的 `Precompiled Web C# scripts`、`Assets` 和 Web 预编译警告；
+6. 将整个输出目录复制到 `src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game`，或者部署到网站中的 `web-game/` 目录；
+7. 确认 `web.manifest.json`、工程 JSON、场景 JSON、模型、动作、贴图和 `compiled/web/*.dll` 都被复制。
 
-GameEditor 还会在工程目录生成：
+如果仍然使用 `Export Package`，请确认 `Precompile Web C#` 复选框已开启。这个选项只控制 `.dwgame` 导出时是否在工程目录生成 Web 预编译结果；它不会自动创建 Web 静态目录。
+
+GameEditor 会在工程目录和 Web 静态输出目录中保留：
 
 ```text
 compiled/web/
@@ -252,7 +262,19 @@ compiled/web/
   manifest.json
 ```
 
+Web 静态输出目录的根目录还会有：
+
+```text
+game.project.json
+web.manifest.json
+scenes/
+assets/
+compiled/web/
+```
+
 Web Player 只加载这些预编译程序集。浏览器不会读取并编译 `.csx`。如果脚本引用了 Android、桌面窗口、Veldrid、Silk.NET、OpenTK 或 `Microsoft.Win32` 等不适合浏览器的程序集，导出日志和 `compiled/web/manifest.json` 会记录兼容性错误。
+
+如果 PC 和 Android 目录中有两个脚本 DLL，而 Web 目录只有一个，先不要把它判断为复制故障。Web 预编译器会尝试编译每个启用的 C# 脚本；不兼容的脚本不会生成 DLL，但错误会写入 `compiled/web/manifest.json`。当前 Web ABI 已经提供 GUI 事件、脚本音频命令、动作播放和语音回调；如果脚本仍然失败，优先检查是否引用了其他桌面专用 API。导出状态中的 `Web precompile omitted N script(s)` 就表示有 N 个脚本未生成。
 
 ### 6.3 用测试工具导出 Web 目录
 
@@ -447,6 +469,17 @@ Web 程序集需要实现 `IWebGameScript`，使用 `WebScriptContext` 访问受
 5. 把脚本异常记录到诊断列表，不直接终止渲染循环。
 
 脚本程序集属于受信任游戏代码。兼容性检查可以避免明显的错误引用，但它不是安全沙箱；不要把来源不明的 DLL 直接放进生产游戏包。
+
+GameEditor 预编译 `.csx` 时会把常用脚本全局量映射到 Web ABI，包括 `Entity`、`Scene`、`Input`、`Audio`、`DeltaSeconds`、`IsStart`、`IsUpdate`、`IsGuiEvent`、`GuiControlId`、`GuiControlName`、`GuiEventName`、`IsSpeechEvent` 和 `SpeechCallbackName`。因此同一份脚本可以继续使用类似 PC/Android 的事件判断写法。
+
+Web 脚本能力如下：
+
+- GUI：Web Player 在透明 Canvas 上绘制场景 GUI，并对按钮、复选框和下拉框进行指针命中测试。命中后按控件的 `EventName` 分发 GUI 事件；复选框会切换 `Checked`，下拉框会更新 `SelectedIndex`。事件仍然按控件的 `TargetEntity` 或脚本实体回退规则发送。
+- 音频：`Audio.Play`、`Audio.Pause`、`Audio.PlayOneShot`、`Audio.Stop`、`Audio.SetVolume` 和 `Audio.SetLoop` 先进入脚本命令队列，再由 `WebAudioService` 调用浏览器 Web Audio。名称和路径都可以引用场景 `Audio` 列表中的资源。浏览器通常要求用户先点击页面才能播放声音。
+- 动作：`Entity.ApplyMotion` 会替换当前模型的 VMD 动作并开始播放；`Entity.PlayMotion`、`PauseMotion` 和 `StopMotion` 控制当前动作。Web 加载场景时会预加载场景动作列表，以便脚本事件中同步切换动作。
+- 语音：`Entity.Speak` 使用浏览器 `speechSynthesis`；`Entity.SpeakWithCallback(text, callbackName)` 或带 `onCompleted` 的重载会在浏览器语音结束后回调指定脚本实体，脚本中可以通过 `IsSpeechEvent` 和 `SpeechCallbackName` 判断。
+
+这些能力的浏览器调用是异步的，但脚本接口保持同步。脚本调用只负责排队，Web 主循环在当前帧结束后执行命令，因此不会让预编译 DLL 直接依赖 JavaScript 或 DOM。
 
 ## 11. 浏览器平台服务
 

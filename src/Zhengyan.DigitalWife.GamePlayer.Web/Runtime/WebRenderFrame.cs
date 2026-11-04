@@ -13,6 +13,23 @@ public sealed record WebRenderMesh(
 
 public sealed record WebParticle(float[] Position, float[] Color, float Size);
 
+public sealed record WebPointLight(
+    float[] Position,
+    float[] Color,
+    float Intensity,
+    float Range,
+    bool CastShadows);
+
+public sealed record WebSpotLight(
+    float[] Position,
+    float[] Direction,
+    float[] Color,
+    float Intensity,
+    float Range,
+    float InnerConeCosine,
+    float OuterConeCosine,
+    bool CastShadows);
+
 public sealed record WebRenderFeatures(
     bool Shadows = true,
     bool Edges = true,
@@ -33,39 +50,68 @@ public sealed record WebRenderFrame(
     bool ShadowEnabled,
     IReadOnlyList<WebRenderMesh> Meshes,
     WebRenderFeatures Features,
-    IReadOnlyList<WebParticle> Particles)
+    IReadOnlyList<WebParticle> Particles,
+    IReadOnlyList<WebPointLight> PointLights,
+    IReadOnlyList<WebSpotLight> SpotLights)
 {
     public static WebRenderFrame FromScene(
         RuntimeScene scene,
-        IEnumerable<(RuntimeEntity Entity, WebPmxAsset Asset)> models,
+        IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models,
         int width,
         int height,
         double elapsedSeconds = 0.0)
     {
-        WebRenderMesh[] meshes = models
+        (RuntimeEntity Entity, WebPmxMesh Mesh)[] modelArray = models.ToArray();
+        WebRenderMesh[] meshes = modelArray
             .Where(item => item.Entity.IsPmxModel)
             .Select(item => new WebRenderMesh(
                 item.Entity.Id,
-                ToColumnMajor(item.Entity.TransformMatrix),
-                item.Entity.Definition.EnableShadow,
+                ToGlArray(item.Entity.TransformMatrix),
+                item.Entity.IsPmxModel && item.Entity.Definition.EnableShadow,
                 item.Entity.Definition.ReceiveShadow,
-                item.Entity.Definition.EnableEdge))
+                item.Entity.IsPmxModel && item.Entity.Definition.EnableEdge))
+            .ToArray();
+        WebPointLight[] pointLights = scene.PointLights
+            .Take(8)
+            .Select(entity => new WebPointLight(
+                ToVector(entity.Position),
+                ToVector(entity.LightColor),
+                entity.LightIntensity,
+                entity.LightRange,
+                entity.CastsShadows))
+            .ToArray();
+        WebSpotLight[] spotLights = scene.SpotLights
+            .Take(4)
+            .Select(entity =>
+            {
+                float inner = MathF.Cos(Math.Clamp(entity.SpotInnerConeAngleDegrees, 0.0f, 89.0f) * MathF.PI / 180.0f);
+                float outer = MathF.Cos(Math.Clamp(entity.SpotOuterConeAngleDegrees, 0.01f, 89.5f) * MathF.PI / 180.0f);
+                return new WebSpotLight(
+                    ToVector(entity.Position),
+                    ToVector(entity.SpotDirection),
+                    ToVector(entity.LightColor),
+                    entity.LightIntensity,
+                    entity.LightRange,
+                    inner,
+                    outer,
+                    entity.CastsShadows);
+            })
             .ToArray();
         WebRenderMesh first = meshes.FirstOrDefault()
-            ?? new WebRenderMesh("default", ToColumnMajor(Matrix4x4.Identity), true, true, true);
+            ?? new WebRenderMesh("default", ToGlArray(Matrix4x4.Identity), true, true, true);
         float aspect = Math.Max(width, 1) / (float)Math.Max(height, 1);
         Vector3 lightDirection = scene.Lighting.DirectionalDirection;
         if (lightDirection.LengthSquared() < 1e-8f) lightDirection = new(0.5f, -1.0f, 0.5f);
         lightDirection = Vector3.Normalize(lightDirection);
-        Vector3 center = ComputeLightCenter(models);
+        Vector3 center = ComputeLightCenter(modelArray);
         Vector3 lightPosition = center - lightDirection * 25.0f;
         Vector3 up = MathF.Abs(Vector3.Dot(lightDirection, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
         Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightPosition, center, up);
         Matrix4x4 lightProjection = Matrix4x4.CreateOrthographic(30.0f, 30.0f, 0.1f, 80.0f);
         return new WebRenderFrame(
-            ToColumnMajor(scene.MainCamera.CreateView() * scene.MainCamera.CreateProjection(aspect)),
+            ToGlArray(scene.MainCamera.CreateView() * scene.MainCamera.CreateProjection(aspect)),
             first.Model,
-            ToColumnMajor(lightView * lightProjection),
+            ToGlArray(lightView * lightProjection),
             ToVector(lightDirection),
             ToVector(scene.Lighting.DirectionalColor),
             ToVector(scene.Lighting.AmbientColor),
@@ -79,15 +125,17 @@ public sealed record WebRenderFrame(
                 Skybox: scene.Definition.Skybox.Enabled,
                 Particles: scene.ParticleSystems.Any(),
                 Water: scene.WaterSurfaces.Any()),
-            CreateParticles(scene, elapsedSeconds));
+            CreateParticles(scene, elapsedSeconds),
+            pointLights,
+            spotLights);
     }
 
     public static WebRenderFrame FromScene(RuntimeScene scene, RuntimeEntity entity, int width, int height)
     {
-        return FromScene(scene, [(entity, null!)], width, height);
+        return FromScene(scene, [], width, height);
     }
 
-    private static Vector3 ComputeLightCenter(IEnumerable<(RuntimeEntity Entity, WebPmxAsset Asset)> models)
+    private static Vector3 ComputeLightCenter(IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models)
     {
         Vector3[] positions = models.Select(item => item.Entity.Position).ToArray();
         return positions.Length == 0
@@ -120,12 +168,16 @@ public sealed record WebRenderFrame(
         return particles;
     }
 
-    private static float[] ToColumnMajor(Matrix4x4 value) =>
+    // System.Numerics uses row-vector matrix composition (world * view * projection),
+    // while the WebGL shaders consume column vectors. Passing the row-major
+    // fields as a column-major uniform supplies the required transposed matrix,
+    // matching the Android renderer's ToGlArray contract.
+    private static float[] ToGlArray(Matrix4x4 value) =>
     [
-        value.M11, value.M21, value.M31, value.M41,
-        value.M12, value.M22, value.M32, value.M42,
-        value.M13, value.M23, value.M33, value.M43,
-        value.M14, value.M24, value.M34, value.M44
+        value.M11, value.M12, value.M13, value.M14,
+        value.M21, value.M22, value.M23, value.M24,
+        value.M31, value.M32, value.M33, value.M34,
+        value.M41, value.M42, value.M43, value.M44
     ];
 
     private static float[] ToVector(Vector3 value) => [value.X, value.Y, value.Z];

@@ -1,4 +1,4 @@
-const CACHE_NAME = "zhengyan-web-runtime-v2";
+const CACHE_NAME = "zhengyan-web-runtime-v4";
 const CORE_ASSETS = ["./", "./index.html", "./css/app.css", "./js/web-runtime.js", "./js/webgl2-renderer.js", "./js/web-storage.js", "./js/web-audio.js", "./js/web-platform.js"];
 
 self.addEventListener("install", event => {

@@ -18,7 +18,10 @@ if (args is ["--export-project", string projectDirectory, string outputPath])
     ("Editor sends matching viewport, scissor, and clear rectangles", ViewportRenderingRegression.Run),
     ("Startup directory is available before the overlay captures it", TestStartupDirectory),
     ("Scene requests preserve the current scene until the next update", TestDeferredSceneSwitch),
-    ("Save and export all scenes after opening a project", TestMultiSceneExport)
+    ("Save and export all scenes after opening a project", TestMultiSceneExport),
+    ("Web static directory export writes a browser manifest", TestWebStaticExport),
+    ("Failed Web precompile removes a stale assembly", TestWebPrecompileRemovesStaleAssembly),
+    ("Web ABI precompiles GUI audio motion and speech globals", TestWebAbiPrecompile)
 ];
 int failures = 0;
 foreach (var test in tests)
@@ -132,6 +135,133 @@ static void TestMultiSceneExport()
     finally
     {
         Directory.Delete(root, recursive: true);
+    }
+}
+
+static void TestWebStaticExport()
+{
+    string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "dw-web-editor-tests-" + Guid.NewGuid().ToString("N")));
+    Directory.CreateDirectory(root);
+    try
+    {
+        string projectDirectory = Path.Combine(root, "WebProject");
+        GameProject project = new()
+        {
+            Name = "Web static export regression",
+            Scenes = ["scenes/main.scene.json"],
+            DefaultScene = "scenes/main.scene.json",
+            EditorScene = "scenes/main.scene.json"
+        };
+        GameProjectStore.Save(projectDirectory, project);
+        GameProjectStore.SaveScene(projectDirectory, "scenes/main.scene.json", new GameProjectScene { Name = "Main" });
+        string outputDirectory = Path.Combine(root, "WebProject-output");
+
+        using GameEditorGame editor = new(GraphicsBackend.OpenGL, projectDirectory);
+        typeof(GameEditorGame).GetProperty(nameof(GameEditorGame.Project))!
+            .SetValue(editor, GameProjectStore.Load(projectDirectory));
+        editor.SetProjectDirectory(projectDirectory);
+        WebGamePackageResult result = editor.ExportWebStaticDirectory(outputDirectory);
+
+        Check(result.OutputDirectory == Path.GetFullPath(outputDirectory), "Web export returned an unexpected output directory.");
+        Check(File.Exists(result.ManifestPath), "Web export did not write web.manifest.json.");
+        Check(File.Exists(Path.Combine(outputDirectory, "game.project.json")), "Web export did not write game.project.json.");
+        Check(File.Exists(Path.Combine(outputDirectory, "compiled", "web", "manifest.json")), "Web export did not preserve the Web script manifest.");
+        using JsonDocument manifest = JsonDocument.Parse(File.ReadAllText(result.ManifestPath));
+        Check(manifest.RootElement.GetProperty("runtime").GetString() == "web", "Web export manifest has the wrong runtime.");
+        Check(manifest.RootElement.GetProperty("renderer").GetString() == "webgl2", "Web export manifest has the wrong renderer.");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+}
+
+static void TestWebPrecompileRemovesStaleAssembly()
+{
+    string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "dw-web-precompile-tests-" + Guid.NewGuid().ToString("N")));
+    Directory.CreateDirectory(root);
+    try
+    {
+        GameProject project = new()
+        {
+            Name = "Web precompile regression",
+            Scenes = ["scenes/main.scene.json"],
+            DefaultScene = "scenes/main.scene.json",
+            EditorScene = "scenes/main.scene.json"
+        };
+        GameProjectStore.Save(root, project);
+        GameProjectStore.SaveScene(root, "scenes/main.scene.json", new GameProjectScene
+        {
+            Name = "Main",
+            LoadingScripts = [new ScriptBinding { Path = "scripts/body.csx", Language = "csharp" }]
+        });
+        string sourcePath = Path.Combine(root, "scripts", "body.csx");
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, "return null;");
+
+        WebScriptPrecompileResult first = WebCSharpScriptPrecompiler.Precompile(root, project);
+        string assemblyPath = Path.Combine(root, "compiled", "web", "scripts", "body.dll");
+        Check(first.Errors.Count == 0 && File.Exists(assemblyPath), "The compatible Web script did not produce an assembly.");
+
+        File.WriteAllText(sourcePath, "UnknownWebSymbol = 1;");
+        WebScriptPrecompileResult second = WebCSharpScriptPrecompiler.Precompile(root, project);
+        Check(second.Errors.Count > 0 && !File.Exists(assemblyPath), "A failed Web compile left a stale assembly behind.");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+}
+
+static void TestWebAbiPrecompile()
+{
+    string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "dw-web-abi-tests-" + Guid.NewGuid().ToString("N")));
+    Directory.CreateDirectory(root);
+    try
+    {
+        GameProject project = new()
+        {
+            Name = "Web ABI regression",
+            Scenes = ["scenes/main.scene.json"],
+            DefaultScene = "scenes/main.scene.json",
+            EditorScene = "scenes/main.scene.json"
+        };
+        GameProjectStore.Save(root, project);
+        GameProjectStore.SaveScene(root, "scenes/main.scene.json", new GameProjectScene
+        {
+            Name = "Main",
+            Entities =
+            [
+                new GameEntity
+                {
+                    Id = "avatar",
+                    Type = "pmx_model",
+                    Scripts = [new ScriptBinding { Path = "scripts/body.csx", Language = "csharp" }]
+                }
+            ]
+        });
+        string sourcePath = Path.Combine(root, "scripts", "body.csx");
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, """
+            if (IsGuiEvent && GuiEventName == "clicked")
+            {
+                Audio.Play("click");
+                Entity.ApplyMotion("assets/motions/click.vmd");
+            }
+            if (IsSpeechEvent && SpeechCallbackName == "after_speak")
+            {
+                Audio.Stop("click");
+            }
+            """);
+
+        WebScriptPrecompileResult result = WebCSharpScriptPrecompiler.Precompile(root, project);
+        Check(result.Errors.Count == 0, $"Web ABI globals failed to compile: {string.Join(Environment.NewLine, result.Errors)}");
+        Check(result.Entries.Count == 1, "Web ABI regression did not emit the script assembly.");
+        Check(File.Exists(Path.Combine(root, "compiled", "web", "scripts", "body.dll")), "Web ABI regression assembly is missing.");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 }
 

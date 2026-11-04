@@ -80,7 +80,7 @@ public static class WebGamePackageExporter
             entryScene = NormalizeRelative(webProject.DefaultScene),
             assets,
             scripts,
-            capabilities = new[] { "scene", "pmx", "vmd", "pmx-skinning", "pmx-morph", "pmx-ik", "webgl2", "pointer", "touch", "precompiled-scripts" },
+            capabilities = new[] { "scene", "pmx", "vmd", "pmx-skinning", "pmx-morph", "pmx-ik", "webgl2", "pointer", "touch", "gui-events", "web-audio", "motion-control", "speech-callbacks", "precompiled-scripts" },
             keyId = signing?.KeyId ?? string.Empty
         };
         object manifest = manifestCore;
