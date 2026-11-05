@@ -35,6 +35,11 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private readonly IkState[] _iks;
     private readonly Quaternion[] _ikRotations;
     private readonly Quaternion[] _bestIkRotations;
+    private readonly BonePose[] _poseBuffer;
+    private readonly BonePose[] _appendPoseBuffer;
+    private readonly MorphState[] _boneMorphs;
+    private readonly Dictionary<int, int[]> _ikAffectedBones;
+    private readonly bool _canUpdateIkBranches;
     private readonly PhysicsState[] _fallbackPhysics;
     private readonly IPmxPhysicsBridge? _physicsBridge;
     private readonly bool _physicsEnabled;
@@ -124,6 +129,17 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         _iks = _bones.Select((bone, index) => new IkState(index, bone)).Where(state => state.Enabled).ToArray();
         _ikRotations = Enumerable.Repeat(Quaternion.Identity, _bones.Length).ToArray();
         _bestIkRotations = Enumerable.Repeat(Quaternion.Identity, _bones.Length).ToArray();
+        _poseBuffer = new BonePose[_bones.Length];
+        _appendPoseBuffer = new BonePose[_bones.Length];
+        _boneMorphs = _morphs.Where(morph => morph.Source.MorphType == PmxMorphType.Bone).ToArray();
+        int[] ranks = new int[_bones.Length];
+        for (int i = 0; i < _sortedBones.Length; i++) ranks[_sortedBones[i]] = i;
+        _canUpdateIkBranches = Enumerable.Range(0, _bones.Length).All(index =>
+            (_bones[index].ParentIndex < 0 || _bones[index].ParentIndex >= _bones.Length || ranks[_bones[index].ParentIndex] < ranks[index])
+            && (_bones[index].AppendIndex < 0 || _bones[index].AppendIndex >= _bones.Length || _bones[index].AppendLocal
+                || (!_bones[_bones[index].AppendIndex].AppendRotate && !_bones[_bones[index].AppendIndex].AppendTranslate)
+                || ranks[_bones[index].AppendIndex] < ranks[index]));
+        _ikAffectedBones = BuildIkBranches();
         _physicsEnabled = physicsEnabled;
         _gravity = gravity;
         _resetPhysicsOnLoop = resetPhysicsOnLoop;
@@ -138,10 +154,18 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     }
 
     public bool HasAnimation => _tracks.Any(track => track.Count != 0) || _morphTracks.Any(track => track.Count != 0);
-    public bool RequiresUpdate => HasAnimation || (_physicsEnabled && _fallbackPhysics.Length != 0);
-    public string PhysicsBackend => !_physicsEnabled || _fallbackPhysics.Length == 0 ? "disabled" : _physicsBridge is null ? "lightweight fallback" : "Bullet";
+    // Hosts can suspend simulation while retaining the evaluated pose and
+    // physics state. The default preserves the existing Android contract.
+    public bool PhysicsSimulationEnabled { get; set; } = true;
+    public bool RequiresUpdate => HasAnimation || (_physicsEnabled && PhysicsSimulationEnabled && _fallbackPhysics.Length != 0);
+    public string PhysicsBackend => !_physicsEnabled || !PhysicsSimulationEnabled || _fallbackPhysics.Length == 0 ? "disabled" : _physicsBridge is null ? "lightweight fallback" : "Bullet";
+
+    public void SynchronizeTime(double timeSeconds) => _previousTimeSeconds = Math.Max(timeSeconds, 0.0);
 
     public ReadOnlySpan<Matrix4x4> SkinTransforms => _skinTransforms;
+    public ReadOnlySpan<Vector3> VertexMorphOffsets => _morphPositions;
+    public int VertexMorphRevision { get; private set; }
+    public bool UsePartialIkUpdates { get; set; }
 
     public ReadOnlySpan<Matrix4x4> GlobalTransforms => _globals;
 
@@ -220,7 +244,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         float physicsElapsedSeconds,
         bool skinVertices = true)
     {
-        if (destination.Length < _vertices.Length * 8)
+        if (skinVertices && destination.Length < _vertices.Length * 8)
         {
             return;
         }
@@ -244,7 +268,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
         EvaluateMorphs();
         EvaluateIkTracks();
-        BonePose[] poses = new BonePose[_bones.Length];
+        BonePose[] poses = _poseBuffer;
         for (int i = 0; i < poses.Length; i++)
         {
             poses[i] = BonePose.Identity;
@@ -287,7 +311,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         }
         RebuildGlobals(poses);
 
-        if (_physicsBridge is not null)
+        if (_physicsBridge is not null && _physicsEnabled && PhysicsSimulationEnabled)
         {
             IReadOnlyDictionary<int, Matrix4x4> overrides = _physicsBridge.Step(_globals, deltaSeconds, resetPhysics);
             ApplyPhysicsOverrides(overrides);
@@ -442,6 +466,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                 }
             }
         }
+        if (!_effectiveMorphWeights.AsSpan().SequenceEqual(_previousEffectiveMorphWeights)) VertexMorphRevision++;
         Array.Copy(_effectiveMorphWeights, _previousEffectiveMorphWeights, _effectiveMorphWeights.Length);
     }
 
@@ -503,8 +528,9 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     private void ApplyBoneMorphs(int boneIndex, ref BonePose pose)
     {
-        foreach (MorphState morph in _morphs.Where(morph => morph.Weight > 1e-5f && morph.Source.MorphType == PmxMorphType.Bone))
+        foreach (MorphState morph in _boneMorphs)
         {
+            if (morph.Weight <= 1e-5f) continue;
             foreach (PmxMorph.BoneMorph item in morph.Source.BoneMorphs.Where(item => item.BoneIndex == boneIndex))
             {
                 Vector3 translation = pose.Translation + FlipZ(item.Position) * morph.Weight;
@@ -565,7 +591,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                         planeAngles[linkIndex] = nextAngle;
                         Quaternion constrained = Quaternion.CreateFromAxisAngle(planeAxis, nextAngle);
                         _ikRotations[link] = Quaternion.Normalize(constrained * Quaternion.Inverse(poses[link].Rotation));
-                        RebuildGlobals(poses);
+                        RebuildIkBranch(poses, link);
                     }
                     continue;
                 }
@@ -593,7 +619,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                     rotation = ClampIkRotation(rotation, ik.Links[linkIndex]);
                 }
                 _ikRotations[link] = Quaternion.Normalize(rotation * Quaternion.Inverse(poses[link].Rotation));
-                RebuildGlobals(poses);
+                RebuildIkBranch(poses, link);
                 if (Vector3.DistanceSquared(GetPosition(_globals[ik.TargetIndex]), desired) < 1e-5f)
                 {
                     return;
@@ -651,7 +677,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     private void IntegrateFallbackPhysics(BonePose[] poses, float deltaSeconds)
     {
-        if (!_physicsEnabled || _fallbackPhysics.Length == 0)
+        if (!_physicsEnabled || !PhysicsSimulationEnabled || _fallbackPhysics.Length == 0)
         {
             return;
         }
@@ -765,8 +791,41 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private void RebuildGlobals(BonePose[] poses)
     {
         Array.Clear(_globals);
-        BonePose[] appendPoses = new BonePose[poses.Length];
-        foreach (int index in _sortedBones)
+        BonePose[] appendPoses = _appendPoseBuffer;
+        Array.Clear(appendPoses);
+        RebuildBones(poses, _sortedBones);
+    }
+
+    private Dictionary<int, int[]> BuildIkBranches()
+    {
+        List<int>[] dependants = Enumerable.Range(0,_bones.Length).Select(_ => new List<int>()).ToArray();
+        for (int index = 0; index < _bones.Length; index++)
+        {
+            BoneState bone = _bones[index];
+            if (bone.ParentIndex >= 0 && bone.ParentIndex < _bones.Length) dependants[bone.ParentIndex].Add(index);
+            if (bone.AppendIndex >= 0 && bone.AppendIndex < _bones.Length) dependants[bone.AppendIndex].Add(index);
+        }
+        Dictionary<int,int[]> result = [];
+        foreach (int link in _iks.SelectMany(ik => ik.Links).Select(link => link.BoneIndex).Where(index => index >= 0 && index < _bones.Length).Distinct())
+        {
+            HashSet<int> affected = [link];
+            Queue<int> queue = new(); queue.Enqueue(link);
+            while (queue.TryDequeue(out int bone)) foreach (int child in dependants[bone]) if (affected.Add(child)) queue.Enqueue(child);
+            result[link] = _sortedBones.Where(affected.Contains).ToArray();
+        }
+        return result;
+    }
+
+    private void RebuildIkBranch(BonePose[] poses, int link)
+    {
+        if (UsePartialIkUpdates && _canUpdateIkBranches && _ikAffectedBones.TryGetValue(link,out int[]? affected)) RebuildBones(poses,affected);
+        else RebuildGlobals(poses);
+    }
+
+    private void RebuildBones(BonePose[] poses, int[] indices)
+    {
+        BonePose[] appendPoses = _appendPoseBuffer;
+        foreach (int index in indices)
         {
             BoneState bone = _bones[index];
             BonePose pose = poses[index];

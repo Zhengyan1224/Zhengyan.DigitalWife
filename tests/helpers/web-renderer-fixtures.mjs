@@ -58,7 +58,7 @@ export function createFakeGl() {
     let cullEnabled = false;
     let cullMode;
     let blendEnabled = false;
-    const state = { uploads: [], draws: [], deletedTextures: [], bufferUpdates: [], buffers: [], samplerParameters: [], textureParameters: [] };
+    const state = { uploads: [], textureUpdates: [], draws: [], shadowDraws: [], deletedTextures: [], bufferUpdates: [], buffers: [], samplerParameters: [], textureParameters: [] };
     const resource = type => ({ type, id: ++nextId });
     const methods = {
         createShader: () => resource('shader'),
@@ -79,6 +79,8 @@ export function createFakeGl() {
         disable: capability => { if (capability === gl.CULL_FACE) cullEnabled = false; if (capability === gl.BLEND) blendEnabled = false; },
         cullFace: mode => { cullMode = mode; },
         uniform1i: (location, value) => { uniforms.set(`${location.program.id}:${location.name}`, value); },
+        uniform1f: (location, value) => { uniforms.set(`${location.program.id}:${location.name}`, value); },
+        uniform3fv: (location, value) => { uniforms.set(`${location.program.id}:${location.name}`, Array.from(value)); },
         activeTexture: unit => { activeUnit = unit; },
         samplerParameteri: (sampler, parameter, value) => state.samplerParameters.push({ sampler, parameter, value }),
         texParameteri: (target, parameter, value) => state.textureParameters.push({ texture: bindings.get(activeUnit ?? gl.TEXTURE0), parameter, value }),
@@ -89,6 +91,7 @@ export function createFakeGl() {
             texture.source = args.at(-1);
             state.uploads.push({ texture, width: args.length === 9 ? args[3] : args.at(-1).width, source: args.at(-1) });
         },
+        texSubImage2D: (...args) => state.textureUpdates.push({ texture: bindings.get(activeUnit), x: args[2], y: args[3], width: args[4], height: args[5], data: Array.from(args.at(-1)) }),
         generateMipmap: () => {
             const texture = bindings.get(activeUnit ?? gl.TEXTURE0);
             if (!texture?.source) throw new Error('Mipmap generation has no uploaded texture.');
@@ -98,7 +101,9 @@ export function createFakeGl() {
         bufferSubData: (target, offset, data) => { state.bufferUpdates.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice()); },
         drawElements: () => {
             if (uniforms.has(`${currentProgram.id}:u_edgePass`)) {
-                state.draws.push({ hasTexture: uniforms.get(`${currentProgram.id}:u_hasTexture`) || 0, texture: bindings.get(gl.TEXTURE0), edgePass: uniforms.get(`${currentProgram.id}:u_edgePass`), cullEnabled, cullMode, blendEnabled });
+                state.draws.push({ hasTexture: uniforms.get(`${currentProgram.id}:u_hasTexture`) || 0, texture: bindings.get(gl.TEXTURE0), edgePass: uniforms.get(`${currentProgram.id}:u_edgePass`), ambient: uniforms.get(`${currentProgram.id}:u_materialAmbient`), shadowStrength: uniforms.get(`${currentProgram.id}:u_shadowStrength`), receiveShadow: uniforms.get(`${currentProgram.id}:u_receiveShadow`), gpuSkinning: uniforms.get(`${currentProgram.id}:u_gpuSkinning`), boneCount: uniforms.get(`${currentProgram.id}:u_boneCount`), cullEnabled, cullMode, blendEnabled });
+            } else {
+                state.shadowDraws.push({ hasTexture: uniforms.get(`${currentProgram.id}:u_hasTexture`) || 0, texture: bindings.get(gl.TEXTURE0), alpha: uniforms.get(`${currentProgram.id}:u_alpha`), cullEnabled, cullMode, blendEnabled });
             }
         }
     };

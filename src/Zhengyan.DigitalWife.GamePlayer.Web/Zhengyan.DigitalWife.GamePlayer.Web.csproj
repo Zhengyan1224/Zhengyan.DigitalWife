@@ -24,6 +24,9 @@
     <TrimmerRootAssembly Include="Zhengyan.DigitalWife.GameProjects.Core" />
     <TrimmerRootAssembly Include="Zhengyan.DigitalWife.Mmd.Core" />
     <TrimmerRootAssembly Include="Zhengyan.DigitalWife.Abstractions" />
+    <!-- Precompiled scripts are loaded after trimming and commonly log GUI
+         events. Their Console calls are not visible to the linker. -->
+    <TrimmerRootAssembly Include="System.Console" />
   </ItemGroup>
 
 </Project>

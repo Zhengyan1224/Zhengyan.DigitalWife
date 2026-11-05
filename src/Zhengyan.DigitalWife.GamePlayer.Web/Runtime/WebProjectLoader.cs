@@ -196,7 +196,10 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
                 mesh,
                 path => animations.TryGetValue(
                     WebHttpAssetStore.NormalizeRelativePath(path),
-                    out VmdParsing? animation) ? animation : null);
+                    out VmdParsing? animation) ? animation : null,
+                preferGpuSkinning: true);
+            if (parsing.Bones.Length > 0)
+                foreach (MotionAsset motion in sceneDefinition.Motions) asset.PrepareMotion(motion.Path);
             pmxAssets[entity.Id] = asset;
         }
 

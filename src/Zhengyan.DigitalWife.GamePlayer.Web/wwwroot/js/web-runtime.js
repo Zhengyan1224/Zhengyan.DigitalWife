@@ -1,6 +1,6 @@
 import { createWebGl2Renderer } from "./webgl2-renderer.js";
 
-import { unlock as unlockAudio } from "./web-audio.js";
+import { unlock as unlockAudio, setErrorHandler as setAudioErrorHandler } from "./web-audio.js";
 import { registerServiceWorker as registerSw } from "./web-platform.js";
 import { detectWebGpu as detectGpu } from "./web-gpu.js";
 
@@ -14,7 +14,8 @@ function reportError(message, fatal = true) {
 
 function invoke(method, ...args) {
     if (!runtime?.dotNetReference) return;
-    runtime.dotNetReference.invokeMethodAsync(method, ...args).catch(() => {});
+    runtime.dotNetReference.invokeMethodAsync(method, ...args)
+        .catch(error => reportError(`Web runtime callback ${method} failed: ${error?.message || String(error)}`, false));
 }
 
 function updateCanvasMetrics() {
@@ -221,6 +222,7 @@ export function start(canvas, overlayCanvas, dotNetReference) {
         onWindowResize: null, onError: null, onUnhandledRejection: null,
         pointers: new Map(), pressedKeys: new Set(), lastPointerButtons: 0, pendingPointerInput: null, guiPointerActive: false, spritePointerActive: false, inputCaptured: false, overlayState: {}
     };
+    setAudioErrorHandler(message => dotNetReference.invokeMethodAsync("OnBrowserWarning", message));
     updateCanvasMetrics();
     installInputHandlers();
     if (typeof ResizeObserver !== "undefined") {
@@ -365,6 +367,7 @@ function renderOverlay() {
 
 export function stop() {
     if (!runtime) return;
+    setAudioErrorHandler(null);
     runtime.running = false;
     if (runtime.frameHandle) window.cancelAnimationFrame(runtime.frameHandle);
     runtime.renderer?.dispose();

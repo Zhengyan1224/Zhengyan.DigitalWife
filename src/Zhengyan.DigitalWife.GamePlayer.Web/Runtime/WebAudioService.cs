@@ -11,10 +11,13 @@ public sealed class WebAudioService(IJSRuntime jsRuntime) : IAsyncDisposable
         => await (await ModuleAsync()).InvokeAsync<string>("unlock");
 
     public async ValueTask PlayAsync(string key, string uri, bool loop = false, float volume = 1.0f)
-        => await (await ModuleAsync()).InvokeVoidAsync("play", key, uri, loop, volume);
+        => await (await ModuleAsync()).InvokeVoidAsync("queuePlay", key, uri, loop, volume);
 
     public async ValueTask PlayOneShotAsync(string uri, float volume = 1.0f)
-        => await (await ModuleAsync()).InvokeVoidAsync("playOneShot", uri, volume);
+        => await (await ModuleAsync()).InvokeVoidAsync("queuePlayOneShot", uri, volume);
+
+    public async ValueTask PrepareAsync(string key, string uri)
+        => await (await ModuleAsync()).InvokeVoidAsync("prepare", key, uri);
 
     public async ValueTask PauseAsync(string key)
         => await (await ModuleAsync()).InvokeVoidAsync("pause", key);

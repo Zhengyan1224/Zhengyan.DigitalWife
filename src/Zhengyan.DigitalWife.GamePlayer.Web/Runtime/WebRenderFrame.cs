@@ -9,7 +9,10 @@ public sealed record WebRenderMesh(
     float[] Model,
     bool ShadowEnabled,
     bool ReceiveShadow,
-    bool EdgeEnabled);
+    bool EdgeEnabled)
+{
+    public bool ShadowToon { get; init; }
+}
 
 public sealed record WebParticle(float[] Position, float[] Color, float Size);
 
@@ -54,6 +57,11 @@ public sealed record WebRenderFrame(
     IReadOnlyList<WebPointLight> PointLights,
     IReadOnlyList<WebSpotLight> SpotLights)
 {
+    public float ShadowStrength { get; init; }
+    public float ShadowBias { get; init; } = 0.0018f;
+    public float ShadowNormalOffset { get; init; }
+    public float[] CameraPosition { get; init; } = [0, 0, 0];
+
     public static WebRenderFrame FromScene(
         RuntimeScene scene,
         IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models,
@@ -63,13 +71,15 @@ public sealed record WebRenderFrame(
     {
         (RuntimeEntity Entity, WebPmxMesh Mesh)[] modelArray = models.ToArray();
         WebRenderMesh[] meshes = modelArray
-            .Where(item => item.Entity.IsPmxModel)
             .Select(item => new WebRenderMesh(
                 item.Entity.Id,
                 ToGlArray(item.Entity.TransformMatrix),
                 item.Entity.IsPmxModel && item.Entity.Definition.EnableShadow,
-                item.Entity.Definition.ReceiveShadow,
-                item.Entity.IsPmxModel && item.Entity.Definition.EnableEdge))
+                item.Entity.IsPmxModel ? item.Entity.Definition.ReceiveShadow : item.Mesh.Materials.Any(material => material.ReceiveShadow),
+                item.Entity.IsPmxModel && item.Entity.Definition.EnableEdge)
+            {
+                ShadowToon = string.Equals(item.Entity.Definition.ReceiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase)
+            })
             .ToArray();
         WebPointLight[] pointLights = scene.PointLights
             .Take(8)
@@ -103,15 +113,11 @@ public sealed record WebRenderFrame(
         Vector3 lightDirection = scene.Lighting.DirectionalDirection;
         if (lightDirection.LengthSquared() < 1e-8f) lightDirection = new(0.5f, -1.0f, 0.5f);
         lightDirection = Vector3.Normalize(lightDirection);
-        Vector3 center = ComputeLightCenter(modelArray);
-        Vector3 lightPosition = center - lightDirection * 25.0f;
-        Vector3 up = MathF.Abs(Vector3.Dot(lightDirection, Vector3.UnitY)) > 0.95f ? Vector3.UnitZ : Vector3.UnitY;
-        Matrix4x4 lightView = Matrix4x4.CreateLookAt(lightPosition, center, up);
-        Matrix4x4 lightProjection = Matrix4x4.CreateOrthographic(30.0f, 30.0f, 0.1f, 80.0f);
+        Matrix4x4 lightViewProjection = CreateLightViewProjection(modelArray, lightDirection, out float normalOffset);
         return new WebRenderFrame(
-            ToGlArray(scene.MainCamera.CreateView() * scene.MainCamera.CreateProjection(aspect)),
+            ToGlArray(scene.MainCamera.CreateView() * ToGlProjection(scene.MainCamera.CreateProjection(aspect))),
             first.Model,
-            ToGlArray(lightView * lightProjection),
+            ToGlArray(lightViewProjection),
             ToVector(lightDirection),
             ToVector(scene.Lighting.DirectionalColor),
             ToVector(scene.Lighting.AmbientColor),
@@ -127,7 +133,12 @@ public sealed record WebRenderFrame(
                 Water: scene.WaterSurfaces.Any()),
             CreateParticles(scene, elapsedSeconds),
             pointLights,
-            spotLights);
+            spotLights)
+        {
+            ShadowStrength = Math.Clamp(scene.Lighting.Settings.ShadowColor.W, 0.0f, 1.0f),
+            ShadowNormalOffset = normalOffset,
+            CameraPosition = ToVector(scene.MainCamera.Position)
+        };
     }
 
     public static WebRenderFrame FromScene(RuntimeScene scene, RuntimeEntity entity, int width, int height)
@@ -135,13 +146,48 @@ public sealed record WebRenderFrame(
         return FromScene(scene, [], width, height);
     }
 
-    private static Vector3 ComputeLightCenter(IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models)
+    private static Matrix4x4 CreateLightViewProjection(
+        IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models, Vector3 direction, out float normalOffset)
     {
-        Vector3[] positions = models.Select(item => item.Entity.Position).ToArray();
-        return positions.Length == 0
-            ? Vector3.Zero
-            : positions.Aggregate(Vector3.Zero, static (sum, position) => sum + position) / positions.Length;
+        Vector3 minimum = new(float.PositiveInfinity), maximum = new(float.NegativeInfinity);
+        foreach ((RuntimeEntity entity, WebPmxMesh mesh) in models)
+        {
+            foreach (Vector3 corner in BoundsCorners(mesh.BoundsMin, mesh.BoundsMax))
+            {
+                Vector3 world = Vector3.Transform(corner, entity.TransformMatrix);
+                minimum = Vector3.Min(minimum, world);
+                maximum = Vector3.Max(maximum, world);
+            }
+        }
+        if (!float.IsFinite(minimum.X)) { minimum = new(-3); maximum = new(3); }
+        minimum -= new Vector3(4);
+        maximum += new Vector3(4);
+        Vector3 center = (minimum + maximum) * 0.5f;
+        float radius = MathF.Max(Vector3.Distance(minimum, maximum) * 0.5f, 6.0f);
+        Vector3 up = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.92f ? Vector3.UnitZ : Vector3.UnitY;
+        Matrix4x4 view = Matrix4x4.CreateLookAt(center - direction * (radius + 18.0f), center, up);
+        float halfWidth = 3, halfHeight = 3;
+        foreach (Vector3 corner in BoundsCorners(minimum, maximum))
+        {
+            Vector3 lightSpace = Vector3.Transform(corner, view);
+            halfWidth = MathF.Max(halfWidth, MathF.Abs(lightSpace.X) + 1);
+            halfHeight = MathF.Max(halfHeight, MathF.Abs(lightSpace.Y) + 1);
+        }
+        normalOffset = MathF.Max(halfWidth, halfHeight) * 2.0f / 1024.0f * 0.75f;
+        return view * ToGlProjection(Matrix4x4.CreateOrthographic(halfWidth * 2, halfHeight * 2, 0.1f, radius * 2 + 36));
     }
+
+    private static IEnumerable<Vector3> BoundsCorners(Vector3 min, Vector3 max)
+    {
+        for (int x = 0; x < 2; x++)
+        for (int y = 0; y < 2; y++)
+        for (int z = 0; z < 2; z++)
+            yield return new Vector3(x == 0 ? min.X : max.X, y == 0 ? min.Y : max.Y, z == 0 ? min.Z : max.Z);
+    }
+
+    // Numerics projections use [0, 1] depth; WebGL requires [-1, 1].
+    private static Matrix4x4 ToGlProjection(Matrix4x4 projection)
+        => projection * Matrix4x4.CreateScale(1, 1, 2) * Matrix4x4.CreateTranslation(0, 0, -1);
 
     private static IReadOnlyList<WebParticle> CreateParticles(RuntimeScene scene, double elapsedSeconds)
     {

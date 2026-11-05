@@ -32,6 +32,7 @@ public sealed class WebRuntimeHost(
     private readonly Dictionary<string, Action> _speechCompletions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float> _audioVolumes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _audioLoops = new(StringComparer.OrdinalIgnoreCase);
+    private int _reportedScriptDiagnosticCount;
 
     public WebRuntimeSnapshot Snapshot { get; private set; } = WebRuntimeSnapshot.Initial;
     public event Action? Changed;
@@ -75,6 +76,8 @@ public sealed class WebRuntimeHost(
             }));
             WebLoadedProject loadedProject = await _projectLoader.LoadAsync(progress);
             _loadedProject = loadedProject;
+            foreach (WebAudioAsset audio in loadedProject.AudioAssets.Values.DistinctBy(asset => asset.Alias))
+                await _audioService.PrepareAsync(audio.Alias, audio.Uri);
             await ProcessScriptCommandsAsync();
             WebPmxAsset? firstAsset = loadedProject.PmxAssets.Values.FirstOrDefault();
             if (loadedProject.PmxAssets.Count > 0 || loadedProject.SceneMeshes.Count > 0)
@@ -135,6 +138,7 @@ public sealed class WebRuntimeHost(
             _speechCompletions.Clear();
             _audioVolumes.Clear();
             _audioLoops.Clear();
+            _reportedScriptDiagnosticCount = 0;
             try { await _audioService.StopAllAsync(); }
             catch (JSDisconnectedException) { }
             if (_loadedProject is not null)
@@ -418,6 +422,14 @@ public sealed class WebRuntimeHost(
         if (_loadedProject is null)
         {
             return;
+        }
+
+        while (_reportedScriptDiagnosticCount < _loadedProject.Scripts.Diagnostics.Count)
+        {
+            WebScriptLoadDiagnostic diagnostic = _loadedProject.Scripts.Diagnostics[_reportedScriptDiagnosticCount++];
+            string message = $"Web script {diagnostic.ScriptId}: {diagnostic.Message}";
+            if (_module is not null) await _module.InvokeVoidAsync("log", diagnostic.IsError ? "error" : "warn", message);
+            if (diagnostic.IsError) SetSnapshot(Snapshot with { LastError = message });
         }
 
         foreach (WebAudioCommand command in _loadedProject.Scripts.DrainAudioCommands())

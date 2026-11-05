@@ -7,6 +7,56 @@ import { colorBlock, createFakeGl, deferred, makeDds, settle, triangle } from '.
 const pixels = data => Array.from(data);
 const bufferOf = bytes => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 
+test('GPU skinning uploads a 237-bone palette and sparse morph rows without replacing vertex buffers', async () => {
+    const { canvas,state } = createFakeGl();
+    const renderer = createWebGl2Renderer(canvas);
+    const bytes = values => new Uint8Array(new Float32Array(values).buffer);
+    const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    const bones = bytes(Array.from({ length: 237 }, () => identity).flat());
+    const mesh = triangle([null]);
+    mesh.skinning = { boneCount: 237, bones, bindings: bytes(Array.from({ length: 3 }, () => [0,1,2,3,1,0,0,0]).flat()) };
+    await renderer.uploadMesh(mesh);
+    renderer.updateMesh({ vertices: new Uint8Array(), bones, morphs: bytes([1,.1,.2,.3]) });
+    renderer.render();
+    assert.equal(state.bufferUpdates.length,0);
+    assert.equal(state.textureUpdates[0].width,4); assert.equal(state.textureUpdates[0].height,237);
+    assert.equal(state.textureUpdates[1].height,1);
+    assert.deepEqual(state.textureUpdates[1].data.slice(4,7), Array.from(new Float32Array([.1,.2,.3])));
+    assert.equal(state.draws.at(-1).gpuSkinning,1); assert.equal(state.draws.at(-1).boneCount,237);
+    renderer.dispose();
+    assert.equal(new Set(state.deletedTextures).size,state.deletedTextures.length);
+});
+
+test('shadow passes honor material flags, alpha and double-sided state, and cache static caster depth', async () => {
+    const { canvas, gl, state } = createFakeGl();
+    const renderer = createWebGl2Renderer(canvas);
+    const mesh = triangle([null, null]);
+    Object.assign(mesh.materials[0], { enableShadow: true, diffuse: [1, 1, 1, .6], ambient: { x: .2, y: .3, z: .4 } });
+    Object.assign(mesh.materials[1], { enableShadow: false, receiveShadow: false, doubleSided: false });
+    await renderer.uploadMesh(mesh);
+    const identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    renderer.setFrameState({ shadowEnabled: true, shadowStrength: .7, lightViewProjection: identity });
+    renderer.render();
+    assert.equal(state.shadowDraws.length, 1);
+    assert.equal(state.shadowDraws[0].cullEnabled, false);
+    assert.equal(state.shadowDraws[0].blendEnabled, false);
+    assert.equal(state.shadowDraws[0].alpha, Math.fround(.6));
+    assert.deepEqual(state.draws[0].ambient, Array.from(new Float32Array([.2, .3, .4])));
+    assert.equal(state.draws[0].shadowStrength, .7);
+    assert.equal(state.draws[1].receiveShadow, 1, 'The PC entity receive-shadow override did not reach a material with self-shadow disabled.');
+    assert.ok(state.textureParameters.some(item => item.parameter === gl.TEXTURE_COMPARE_MODE && item.value === gl.COMPARE_REF_TO_TEXTURE));
+    renderer.setFrameState({ viewProjection: identity.map((value, i) => i === 12 ? 1 : value) });
+    renderer.render();
+    assert.equal(state.shadowDraws.length, 1, 'A camera drag rebuilt unchanged shadow depth.');
+    renderer.updateMesh({ positions: mesh.positions, normals: mesh.normals, uvs: mesh.uvs });
+    renderer.render();
+    assert.equal(state.shadowDraws.length, 2, 'Animated vertices did not invalidate shadow depth.');
+    renderer.setFrameState({ shadowStrength: 0 });
+    renderer.render();
+    assert.equal(state.shadowDraws.length, 2);
+    renderer.dispose();
+});
+
 test('DDS BGRA channels, alpha and row padding match the flipped PMX UVs', () => {
     const dds = makeDds({ width: 1, height: 2, pitch: 8, data: [3, 2, 1, 4, 99, 99, 99, 99, 30, 20, 10, 40] });
     assert.deepEqual(pixels(decodeDds(dds).data), [10, 20, 30, 40, 1, 2, 3, 4]);

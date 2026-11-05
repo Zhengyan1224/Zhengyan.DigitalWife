@@ -1,37 +1,80 @@
 ﻿const VERTEX_SHADER_SOURCE = `#version 300 es
-in vec3 a_position;
-in vec3 a_normal;
-in vec2 a_uv;
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_uv;
+${skinningShaderSource()}
 uniform mat4 u_viewProjection;
 uniform mat4 u_lightViewProjection;
 uniform mat4 u_model;
 uniform bool u_edgePass;
 uniform float u_edgeSize;
+uniform vec3 u_lightDirection;
+uniform float u_shadowNormalOffset;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec4 v_shadowPosition;
 out vec3 v_worldPosition;
 
 void main() {
-    vec3 position = a_position;
-    if (u_edgePass) position += normalize(a_normal) * u_edgeSize;
+    vec3 position, normal;
+    skinVertex(position, normal);
+    if (u_edgePass) position += normalize(normal) * u_edgeSize;
     vec4 worldPosition = u_model * vec4(position, 1.0);
     v_worldPosition = worldPosition.xyz;
-    v_normal = mat3(u_model) * a_normal;
+    v_normal = transpose(inverse(mat3(u_model))) * normal;
     v_uv = a_uv;
-    v_shadowPosition = u_lightViewProjection * worldPosition;
+    float ndotl = max(dot(normalize(v_normal), normalize(-u_lightDirection)), 0.0);
+    v_shadowPosition = u_lightViewProjection * vec4(worldPosition.xyz + normalize(v_normal) * u_shadowNormalOffset * (2.0 - ndotl), 1.0);
     gl_Position = u_viewProjection * worldPosition;
 }`;
 
+function skinningShaderSource() {
+    return `
+layout(location = 3) in vec4 a_boneIndices;
+layout(location = 4) in vec4 a_boneWeights;
+uniform bool u_gpuSkinning;
+uniform highp sampler2D u_bones;
+uniform highp sampler2D u_morphs;
+uniform int u_boneCount;
+uniform int u_morphWidth;
+mat4 boneMatrix(float index) {
+    int bone = int(index);
+    if (bone < 0 || bone >= u_boneCount) return mat4(1.0);
+    return mat4(texelFetch(u_bones,ivec2(0,bone),0), texelFetch(u_bones,ivec2(1,bone),0),
+                texelFetch(u_bones,ivec2(2,bone),0), texelFetch(u_bones,ivec2(3,bone),0));
+}
+void skinVertex(out vec3 position, out vec3 normal) {
+    position = a_position; normal = a_normal;
+    if (!u_gpuSkinning) return;
+    position += texelFetch(u_morphs,ivec2(gl_VertexID % u_morphWidth,gl_VertexID / u_morphWidth),0).xyz;
+    mat4 skin = boneMatrix(a_boneIndices.x) * a_boneWeights.x;
+    if (a_boneWeights.y != 0.0) skin += boneMatrix(a_boneIndices.y) * a_boneWeights.y;
+    if (a_boneWeights.z != 0.0) skin += boneMatrix(a_boneIndices.z) * a_boneWeights.z;
+    if (a_boneWeights.w != 0.0) skin += boneMatrix(a_boneIndices.w) * a_boneWeights.w;
+    position = (skin * vec4(position,1.0)).xyz;
+    vec3 transformedNormal = mat3(skin) * normal;
+    normal = dot(transformedNormal,transformedNormal) > 1e-10 ? normalize(transformedNormal) : normal;
+}`;
+}
+
 const FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
+precision highp sampler2DShadow;
 uniform sampler2D u_texture;
-uniform sampler2D u_shadowMap;
+uniform sampler2DShadow u_shadowMap;
 uniform bool u_hasTexture;
 uniform bool u_edgePass;
 uniform bool u_shadowEnabled;
 uniform bool u_receiveShadow;
 uniform vec4 u_diffuse;
+uniform vec3 u_materialAmbient;
+uniform vec3 u_specular;
+uniform float u_specularPower;
+uniform vec3 u_cameraPosition;
+uniform float u_shadowStrength;
+uniform float u_shadowBias;
+uniform vec2 u_shadowTexelSize;
+uniform bool u_shadowToon;
 uniform vec4 u_edgeColor;
 uniform vec3 u_lightDirection;
 uniform vec3 u_lightColor;
@@ -60,14 +103,37 @@ void main() {
     vec4 texel = u_hasTexture ? texture(u_texture, v_uv) : vec4(1.0);
     vec3 normal = normalize(v_normal);
     float diffuse = max(dot(normal, normalize(-u_lightDirection)), 0.0);
-    vec3 lighting = u_ambientColor * u_ambientStrength + u_lightColor * diffuse;
+    float shadowFactor = 1.0;
+    if (u_shadowEnabled && u_receiveShadow && v_shadowPosition.w > 0.0) {
+        vec3 shadow = v_shadowPosition.xyz / v_shadowPosition.w * 0.5 + 0.5;
+        if (all(greaterThanEqual(shadow, vec3(0.0))) && all(lessThanEqual(shadow, vec3(1.0)))) {
+            float depth = shadow.z - u_shadowBias * (1.0 + (1.0 - diffuse) * 2.0);
+            float visibility = 0.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    vec2 uv = clamp(shadow.xy + vec2(x, y) * u_shadowTexelSize, u_shadowTexelSize, vec2(1.0) - u_shadowTexelSize);
+                    visibility += texture(u_shadowMap, vec3(uv, depth));
+                }
+            }
+            visibility /= 9.0;
+            if (u_shadowToon) visibility = step(0.5, visibility);
+            shadowFactor = mix(1.0 - u_shadowStrength, 1.0, visibility);
+        }
+    }
+    vec3 lighting = u_lightColor * diffuse * shadowFactor;
+    vec3 eyeDirection = normalize(u_cameraPosition - v_worldPosition);
+    vec3 specular = vec3(0.0);
+    if (u_specularPower > 0.0 && diffuse * shadowFactor > 0.0) {
+        vec3 halfDirection = normalize(eyeDirection + normalize(-u_lightDirection));
+        specular = pow(max(dot(normal, halfDirection), 0.0), u_specularPower) * u_specular * u_lightColor;
+    }
     for (int i = 0; i < 8; i++) {
         if (i >= u_pointLightCount) break;
         vec3 toLight = u_pointLightPositionRange[i].xyz - v_worldPosition;
         float distanceToLight = length(toLight);
         if (distanceToLight <= 0.0001 || distanceToLight >= u_pointLightPositionRange[i].w) continue;
         vec3 lightDirection = toLight / distanceToLight;
-        float attenuation = 1.0 - smoothstep(0.0, u_pointLightPositionRange[i].w, distanceToLight);
+        float attenuation = 1.0 - distanceToLight / u_pointLightPositionRange[i].w;
         attenuation *= attenuation;
         lighting += u_pointLightColorIntensity[i].rgb
             * u_pointLightColorIntensity[i].a
@@ -85,37 +151,40 @@ void main() {
             u_spotLightDirectionOuterCosine[i].w,
             u_spotLightConeParameters[i].x,
             cone);
-        float attenuation = 1.0 - smoothstep(0.0, u_spotLightPositionRange[i].w, distanceToLight);
+        float attenuation = 1.0 - distanceToLight / u_spotLightPositionRange[i].w;
         attenuation *= attenuation * coneFalloff;
         lighting += u_spotLightColorIntensity[i].rgb
             * u_spotLightColorIntensity[i].a
             * max(dot(normal, lightDirection), 0.0)
             * attenuation;
     }
-    lighting = clamp(lighting, vec3(0.0), vec3(1.0));
-    if (u_shadowEnabled && u_receiveShadow && v_shadowPosition.w > 0.0) {
-        vec3 shadow = v_shadowPosition.xyz / v_shadowPosition.w;
-        shadow = shadow * 0.5 + 0.5;
-        if (shadow.x >= 0.0 && shadow.x <= 1.0 && shadow.y >= 0.0 && shadow.y <= 1.0 && shadow.z <= 1.0) {
-            float closest = texture(u_shadowMap, shadow.xy).r;
-            if (closest + 0.002 < shadow.z) lighting *= 0.45;
-        }
-    }
-    vec4 color = vec4(texel.rgb * u_diffuse.rgb * lighting, texel.a * u_diffuse.a);
-    if (color.a <= 0.001) discard;
+    vec3 albedo = texel.rgb * u_diffuse.rgb;
+    vec3 ambient = albedo * u_materialAmbient * u_ambientColor * u_ambientStrength;
+    vec4 color = vec4(clamp(albedo * lighting + ambient + specular, 0.0, 1.0), texel.a * u_diffuse.a);
+    if (color.a < 0.01) discard;
     out_color = color;
 }`;
 
 const SHADOW_VERTEX_SHADER_SOURCE = `#version 300 es
-in vec3 a_position;
+// Both passes share a mesh VAO. Keep UV separate from the normal slot.
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_uv;
+${skinningShaderSource()}
 uniform mat4 u_lightViewProjection;
 uniform mat4 u_model;
-void main() { gl_Position = u_lightViewProjection * u_model * vec4(a_position, 1.0); }`;
+out vec2 v_uv;
+void main() { vec3 position, normal; skinVertex(position,normal); v_uv = a_uv; gl_Position = u_lightViewProjection * u_model * vec4(position, 1.0); }`;
 
 const SHADOW_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_texture;
+uniform bool u_hasTexture;
+uniform float u_alpha;
 void main() {
-    // The depth attachment of the shadow framebuffer receives the fragment depth.
+    float alpha = u_alpha * (u_hasTexture ? texture(u_texture, v_uv).a : 1.0);
+    if (alpha < 0.01) discard;
 }`;
 
 const PARTICLE_VERTEX_SHADER_SOURCE = `#version 300 es
@@ -560,6 +629,28 @@ function createMeshResources(gl, payload, locations, reportError) {
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
     const mesh = { vao, vertexBuffer, indexBuffer, indexCount: indices.length, vertexCount, groups: [], interleaved, textures: new Set(), disposed: false };
+    const skinning = payload.skinning ?? payload.Skinning;
+    if (skinning) {
+        const bindings = floatBytes(skinning.bindings ?? skinning.Bindings);
+        const boneCount = Number(skinning.boneCount ?? skinning.BoneCount);
+        const bones = floatBytes(skinning.bones ?? skinning.Bones);
+        if (bindings.length !== vertexCount * 8 || bones.length !== boneCount * 16) throw new Error("Invalid PMX GPU skinning data.");
+        const bindingBuffer = gl.createBuffer();
+        gl.bindVertexArray(vao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, bindingBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, bindings, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 4, gl.FLOAT, false, 32, 0);
+        gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 32, 16);
+        gl.bindVertexArray(null);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        const morphWidth = 256, morphHeight = Math.max(Math.ceil(vertexCount / morphWidth), 1);
+        const morphData = new Float32Array(morphWidth * morphHeight * 4);
+        mesh.skinning = { bindingBuffer, boneCount, morphWidth, morphData,
+            boneTexture: createFloatTexture(gl, 4, boneCount, bones),
+            morphTexture: createFloatTexture(gl, morphWidth, morphHeight, morphData) };
+        const morphs = skinning.morphs ?? skinning.Morphs;
+        if (morphs) updateMorphTexture(gl, mesh, morphs);
+    }
     const texturePromises = new Map();
     mesh.groups = toEntryArray(payload.materials ?? payload.Materials).map(material => {
         const group = { ...material, texture: null };
@@ -580,7 +671,82 @@ function createMeshResources(gl, payload, locations, reportError) {
     return mesh;
 }
 
+function floatBytes(value) {
+    const bytes = value instanceof Uint8Array ? value : new Uint8Array(toEntryArray(value));
+    if (bytes.byteLength % 4 !== 0) throw new Error("Invalid PMX float buffer length.");
+    const aligned = bytes.byteOffset % 4 === 0 ? bytes : bytes.slice();
+    return new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4);
+}
+
+function createFloatTexture(gl, width, height, data) {
+    const texture = gl.createTexture();
+    if (!texture) throw new Error("WebGL2 could not allocate a skinning texture.");
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, data);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE0);
+    return texture;
+}
+
+function updateMorphTexture(gl, mesh, bytes) {
+    const skin = mesh.skinning, changes = floatBytes(bytes), rows = new Set();
+    if (changes.length % 4 !== 0) throw new Error("Invalid PMX morph update length.");
+    for (let i = 0; i < changes.length; i += 4) {
+        const vertex = changes[i];
+        if (!Number.isInteger(vertex) || vertex < 0 || vertex >= mesh.vertexCount) throw new Error("Invalid PMX morph vertex index.");
+        const offset = vertex * 4;
+        skin.morphData[offset] = changes[i+1]; skin.morphData[offset+1] = changes[i+2]; skin.morphData[offset+2] = changes[i+3];
+        rows.add(Math.floor(vertex / skin.morphWidth));
+    }
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, skin.morphTexture);
+    for (const row of rows) {
+        const start = row * skin.morphWidth * 4;
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, row, skin.morphWidth, 1, gl.RGBA, gl.FLOAT, skin.morphData.subarray(start,start + skin.morphWidth * 4));
+    }
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE0);
+}
+
+function skinningLocations(gl, program) {
+    return {
+        gpuSkinning: gl.getUniformLocation(program,"u_gpuSkinning"),
+        bones: gl.getUniformLocation(program,"u_bones"), morphs: gl.getUniformLocation(program,"u_morphs"),
+        boneCount: gl.getUniformLocation(program,"u_boneCount"), morphWidth: gl.getUniformLocation(program,"u_morphWidth")
+    };
+}
+
+function bindSkinning(gl, locations, mesh, defaultTexture) {
+    const skin = mesh.skinning;
+    gl.uniform1i(locations.gpuSkinning, skin ? 1 : 0);
+    gl.uniform1i(locations.boneCount, skin?.boneCount ?? 0);
+    gl.uniform1i(locations.morphWidth, skin?.morphWidth ?? 256);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, skin?.boneTexture ?? defaultTexture);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, skin?.morphTexture ?? defaultTexture);
+    gl.uniform1i(locations.bones, 2); gl.uniform1i(locations.morphs, 3);
+    gl.activeTexture(gl.TEXTURE0);
+}
+
 function updateMeshResources(gl, mesh, payload) {
+    const boneBytes = payload.bones ?? payload.Bones;
+    if (boneBytes) {
+        if (!mesh.skinning) throw new Error("A CPU mesh received a GPU skinning update.");
+        const bones = floatBytes(boneBytes);
+        if (bones.length !== mesh.skinning.boneCount * 16) throw new Error("Invalid PMX bone update length.");
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, mesh.skinning.boneTexture);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, mesh.skinning.boneCount, gl.RGBA, gl.FLOAT, bones);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        const morphs = payload.morphs ?? payload.Morphs;
+        if (morphs) updateMorphTexture(gl, mesh, morphs);
+        gl.activeTexture(gl.TEXTURE0);
+        return;
+    }
     const vertexBytes = payload.vertices ?? payload.Vertices;
     if (vertexBytes) {
         const bytes = vertexBytes instanceof Uint8Array ? vertexBytes : new Uint8Array(toEntryArray(vertexBytes));
@@ -617,6 +783,11 @@ function deleteMeshResources(gl, mesh) {
     gl.deleteVertexArray(mesh.vao);
     gl.deleteBuffer(mesh.vertexBuffer);
     gl.deleteBuffer(mesh.indexBuffer);
+    if (mesh.skinning) {
+        gl.deleteBuffer(mesh.skinning.bindingBuffer);
+        gl.deleteTexture(mesh.skinning.boneTexture);
+        gl.deleteTexture(mesh.skinning.morphTexture);
+    }
     for (const texture of mesh.textures) gl.deleteTexture(texture);
     mesh.textures.clear();
 }
@@ -681,6 +852,8 @@ export function createWebGl2Renderer(canvas, reportError) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, shadowSize, shadowSize, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTexture, 0);
     gl.drawBuffers([gl.NONE]);
@@ -692,6 +865,7 @@ export function createWebGl2Renderer(canvas, reportError) {
     const vao = gl.createVertexArray();
     if (!vao) throw new Error("WebGL2 could not allocate the empty mesh VAO.");
     const locations = {
+        ...skinningLocations(gl, program),
         position: gl.getAttribLocation(program, "a_position"),
         normal: gl.getAttribLocation(program, "a_normal"),
         uv: gl.getAttribLocation(program, "a_uv"),
@@ -702,6 +876,15 @@ export function createWebGl2Renderer(canvas, reportError) {
         texture: gl.getUniformLocation(program, "u_texture"),
         hasTexture: gl.getUniformLocation(program, "u_hasTexture"),
         diffuse: gl.getUniformLocation(program, "u_diffuse"),
+        materialAmbient: gl.getUniformLocation(program, "u_materialAmbient"),
+        specular: gl.getUniformLocation(program, "u_specular"),
+        specularPower: gl.getUniformLocation(program, "u_specularPower"),
+        cameraPosition: gl.getUniformLocation(program, "u_cameraPosition"),
+        shadowStrength: gl.getUniformLocation(program, "u_shadowStrength"),
+        shadowBias: gl.getUniformLocation(program, "u_shadowBias"),
+        shadowTexelSize: gl.getUniformLocation(program, "u_shadowTexelSize"),
+        shadowNormalOffset: gl.getUniformLocation(program, "u_shadowNormalOffset"),
+        shadowToon: gl.getUniformLocation(program, "u_shadowToon"),
         edgeColor: gl.getUniformLocation(program, "u_edgeColor"),
         lightDirection: gl.getUniformLocation(program, "u_lightDirection"),
         lightColor: gl.getUniformLocation(program, "u_lightColor"),
@@ -721,7 +904,12 @@ export function createWebGl2Renderer(canvas, reportError) {
         receiveShadow: gl.getUniformLocation(program, "u_receiveShadow")
     };
     const shadowLocations = {
+        ...skinningLocations(gl, shadowProgram),
         position: gl.getAttribLocation(shadowProgram, "a_position"),
+        uv: gl.getAttribLocation(shadowProgram, "a_uv"),
+        texture: gl.getUniformLocation(shadowProgram, "u_texture"),
+        hasTexture: gl.getUniformLocation(shadowProgram, "u_hasTexture"),
+        alpha: gl.getUniformLocation(shadowProgram, "u_alpha"),
         lightViewProjection: gl.getUniformLocation(shadowProgram, "u_lightViewProjection"),
         model: gl.getUniformLocation(shadowProgram, "u_model")
     };
@@ -753,6 +941,8 @@ export function createWebGl2Renderer(canvas, reportError) {
         lightDirection: [0.5, -1, 0.5], lightColor: [1, 1, 1], ambientColor: [0.65, 0.65, 0.65],
         ambientStrength: 0.25, clearColor: [0.035, 0.055, 0.1, 1], meshes: []
     };
+    let shadowDirty = true;
+    let shadowStateKey = "";
     const particleBuffer = gl.createBuffer();
     if (!particleBuffer) throw new Error("WebGL2 could not allocate the particle buffer.");
     const contextLost = event => { event.preventDefault(); disposed = true; reportError?.("WebGL2 context was lost."); };
@@ -775,17 +965,23 @@ export function createWebGl2Renderer(canvas, reportError) {
         setFrameState(nextState) {
             if (disposed || !nextState) return;
             frameState = { ...frameState, ...nextState };
+            // Camera drags and ambient edits do not change caster depth.
+            const key = JSON.stringify([frameState.lightViewProjection, frameState.model, frameState.meshes, frameState.shadowEnabled, frameState.features?.shadows]);
+            if (key !== shadowStateKey) { shadowDirty = true; shadowStateKey = key; }
         },
         async uploadMesh(payload) {
             if (disposed) return;
+            shadowDirty = true;
             const nextMesh = createMeshResources(gl, payload, locations, reportError);
             for (const existing of meshes.values()) deleteMeshResources(gl, existing);
             meshes.clear();
             meshes.set("default", nextMesh);
             await Promise.allSettled(nextMesh.groups.map(group => group.texturePromise));
+            shadowDirty = true;
         },
         async uploadMeshes(entries) {
             if (disposed) return;
+            shadowDirty = true;
             const nextMeshes = new Map();
             const pending = [];
             for (const entry of toEntryArray(entries)) {
@@ -800,12 +996,14 @@ export function createWebGl2Renderer(canvas, reportError) {
             meshes.clear();
             for (const [key, value] of nextMeshes) meshes.set(key, value);
             await Promise.allSettled(pending);
+            shadowDirty = true;
         },
         updateMesh(payload) {
             if (disposed || !payload) return;
             const mesh = meshes.get("default");
             if (!mesh) return;
             updateMeshResources(gl, mesh, payload);
+            shadowDirty = true;
         },
         updateMeshes(entries) {
             if (disposed) return;
@@ -813,40 +1011,58 @@ export function createWebGl2Renderer(canvas, reportError) {
                 const key = String(entry?.id ?? entry?.Id ?? "").trim();
                 const payload = entry?.mesh ?? entry?.Mesh;
                 const mesh = meshes.get(key);
-                if (mesh && payload) updateMeshResources(gl, mesh, payload);
+                if (mesh && payload) { updateMeshResources(gl, mesh, payload); shadowDirty = true; }
             }
         },
         render() {
             if (disposed) return;
             gl.enable(gl.DEPTH_TEST);
+            gl.depthMask(true);
             gl.enable(gl.CULL_FACE);
+            gl.cullFace(gl.BACK);
             const frameMeshes = Array.isArray(frameState.meshes) && frameState.meshes.length > 0
                 ? frameState.meshes
                 : [{ id: "default", model: frameState.model, shadowEnabled: frameState.shadowEnabled, receiveShadow: true, edgeEnabled: true }];
             const features = frameState.features || {};
-            const shadowsEnabled = features.shadows ?? frameState.shadowEnabled;
+            const shadowsEnabled = (features.shadows ?? frameState.shadowEnabled) && (frameState.shadowStrength ?? 0.7) > 0;
             const frameById = new Map(frameMeshes.map(item => [String(item.id ?? item.Id ?? "default"), item]));
             const renderEntries = [...meshes.entries()]
                 .map(([key, mesh]) => ({ key, mesh, frame: frameById.get(key) || frameById.get("default") }))
                 .filter(entry => entry.frame);
-            if (renderEntries.some(entry => entry.frame.shadowEnabled) && shadowsEnabled) {
+            if (shadowDirty && renderEntries.some(entry => entry.frame.shadowEnabled) && shadowsEnabled) {
                 gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
                 gl.viewport(0, 0, shadowSize, shadowSize);
                 gl.colorMask(false, false, false, false);
+                gl.disable(gl.BLEND);
+                gl.clearDepth(1.0);
                 gl.clear(gl.DEPTH_BUFFER_BIT);
                 gl.useProgram(shadowProgram);
                 gl.uniformMatrix4fv(shadowLocations.lightViewProjection, false, frameState.lightViewProjection);
                 for (const entry of renderEntries) {
                     if (!entry.frame.shadowEnabled) continue;
                     gl.uniformMatrix4fv(shadowLocations.model, false, entry.frame.model || identity);
+                    bindSkinning(gl, shadowLocations, entry.mesh, defaultTexture);
                     gl.bindVertexArray(entry.mesh.vao);
                     gl.bindBuffer(gl.ARRAY_BUFFER, entry.mesh.vertexBuffer);
                     gl.enableVertexAttribArray(shadowLocations.position);
                     gl.vertexAttribPointer(shadowLocations.position, 3, gl.FLOAT, false, 32, 0);
-                    for (const group of entry.mesh.groups) gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
+                    gl.enableVertexAttribArray(shadowLocations.uv);
+                    gl.vertexAttribPointer(shadowLocations.uv, 2, gl.FLOAT, false, 32, 24);
+                    for (const group of entry.mesh.groups) {
+                        if (!group.enableShadow) continue;
+                        if (group.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+                        gl.activeTexture(gl.TEXTURE0);
+                        gl.bindTexture(gl.TEXTURE_2D, group.texture || defaultTexture);
+                        gl.bindSampler(0, sampler);
+                        gl.uniform1i(shadowLocations.texture, 0);
+                        gl.uniform1i(shadowLocations.hasTexture, group.texture ? 1 : 0);
+                        gl.uniform1f(shadowLocations.alpha, toNumericVector(group.diffuse, 4, [1, 1, 1, 1])[3]);
+                        gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
+                    }
                 }
                 gl.bindVertexArray(null);
                 gl.colorMask(true, true, true, true);
+                shadowDirty = false;
             }
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, width, height);
@@ -860,6 +1076,11 @@ export function createWebGl2Renderer(canvas, reportError) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
             gl.uniform1i(locations.shadowMap, 1);
+            gl.uniform1f(locations.shadowStrength, frameState.shadowStrength ?? 0.7);
+            gl.uniform1f(locations.shadowBias, frameState.shadowBias ?? 0.0018);
+            gl.uniform2f(locations.shadowTexelSize, 1 / shadowSize, 1 / shadowSize);
+            gl.uniform1f(locations.shadowNormalOffset, frameState.shadowNormalOffset ?? 0);
+            gl.uniform3fv(locations.cameraPosition, frameState.cameraPosition || [0, 0, 0]);
             gl.uniform3fv(locations.lightDirection, toNumericVector(frameState.lightDirection, 3, [0, -1, 0]));
             gl.uniform3fv(locations.lightColor, toNumericVector(frameState.lightColor, 3, [1, 1, 1]));
             gl.uniform3fv(locations.ambientColor, toNumericVector(frameState.ambientColor, 3, [0.15, 0.15, 0.15]));
@@ -911,13 +1132,22 @@ export function createWebGl2Renderer(canvas, reportError) {
                 const mesh = entry.mesh;
                 const meshFrame = entry.frame;
                 gl.uniformMatrix4fv(locations.model, false, meshFrame.model || identity);
+                bindSkinning(gl, locations, mesh, defaultTexture);
                 gl.bindVertexArray(mesh.vao);
                 for (const group of mesh.groups) {
                     const diffuse = toNumericVector(group.diffuse ?? group.Diffuse, 4, [1, 1, 1, 1]);
                     const edge = toNumericVector(group.edgeColor ?? group.EdgeColor, 4, [0, 0, 0, 1]);
                     gl.uniform4fv(locations.diffuse, diffuse);
+                    gl.uniform3fv(locations.materialAmbient, toNumericVector(group.ambient ?? group.Ambient, 3, [1, 1, 1]));
+                    gl.uniform3fv(locations.specular, toNumericVector(group.specular ?? group.Specular, 3, [0, 0, 0]));
+                    gl.uniform1f(locations.specularPower, group.specularPower ?? group.SpecularPower ?? 0);
+                    gl.uniform1i(locations.shadowToon, meshFrame.shadowToon ? 1 : 0);
                     gl.uniform4fv(locations.edgeColor, edge);
-                    gl.uniform1i(locations.receiveShadow, group.receiveShadow && meshFrame.receiveShadow !== false ? 1 : 0);
+                    // PC applies the entity receive-shadow setting to every
+                    // PMX material, including classroom floors whose PMX
+                    // self-shadow flag is unset.
+                    const receiveShadow = meshFrame.receiveShadow ?? group.receiveShadow;
+                    gl.uniform1i(locations.receiveShadow, receiveShadow ? 1 : 0);
                     if (group.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
                     if ((features.edges ?? true) && meshFrame.edgeEnabled !== false && group.enableEdge && group.edgeSize > 0) {
                         // The expanded outline must draw only back faces even
@@ -961,6 +1191,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                 }
                 gl.useProgram(particleProgram);
                 gl.uniformMatrix4fv(particleLocations.viewProjection, false, frameState.viewProjection);
+                gl.bindVertexArray(vao);
                 gl.bindBuffer(gl.ARRAY_BUFFER, particleBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
                 gl.enableVertexAttribArray(particleLocations.position);

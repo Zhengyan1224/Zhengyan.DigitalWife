@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text.Json.Serialization;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd;
 
@@ -8,16 +9,27 @@ namespace Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
 public sealed record WebPmxMaterial(
     int StartIndex,
     int IndexCount,
-    Vector4 Diffuse,
-    Vector3 Ambient,
-    Vector4 EdgeColor,
+    [property: JsonIgnore] Vector4 Diffuse,
+    [property: JsonIgnore] Vector3 Ambient,
+    [property: JsonIgnore] Vector4 EdgeColor,
     float EdgeSize,
     bool DoubleSided,
     bool EnableEdge,
     bool EnableShadow,
     bool ReceiveShadow,
     string? TextureUri,
-    string Name);
+    string Name)
+{
+    [JsonIgnore] public Vector3 Specular { get; init; }
+    public float SpecularPower { get; init; }
+
+    // JS interop does not serialize Numerics' public vector fields. Transfer
+    // explicit arrays so material colors cannot silently become {}.
+    [JsonPropertyName("diffuse")] public float[] DiffuseComponents => [Diffuse.X, Diffuse.Y, Diffuse.Z, Diffuse.W];
+    [JsonPropertyName("ambient")] public float[] AmbientComponents => [Ambient.X, Ambient.Y, Ambient.Z];
+    [JsonPropertyName("edgeColor")] public float[] EdgeComponents => [EdgeColor.X, EdgeColor.Y, EdgeColor.Z, EdgeColor.W];
+    [JsonPropertyName("specular")] public float[] SpecularComponents => [Specular.X, Specular.Y, Specular.Z];
+}
 
 /// <summary>
 /// A PMX asset together with its shared CPU pose evaluator. The evaluator is
@@ -32,6 +44,15 @@ public sealed class WebPmxAsset : IDisposable
     private readonly Func<string, VmdParsing?> _animationLoader;
     private readonly float[] _skinnedVertices;
     private bool _disposed;
+    private bool _poseDirty;
+    private bool _wasPlaying;
+    private bool _skipPhysicsOnNextPlayFrame = true;
+    private readonly bool _gpuSkinning;
+    private readonly Dictionary<string, PmxPoseEvaluator> _preparedMotions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<PmxPoseEvaluator> _ownedPoses = [];
+    private readonly Vector3[] _publishedMorphs;
+    private readonly int[] _morphVertices;
+    private int _publishedMorphRevision = -1;
 
     private WebPmxAsset(
         GameEntity entity,
@@ -39,7 +60,8 @@ public sealed class WebPmxAsset : IDisposable
         PmxPoseEvaluator pose,
         WebPmxMesh mesh,
         float[] skinnedVertices,
-        Func<string, VmdParsing?> animationLoader)
+        Func<string, VmdParsing?> animationLoader,
+        bool gpuSkinning)
     {
         _entity = entity;
         _parsing = parsing;
@@ -47,6 +69,12 @@ public sealed class WebPmxAsset : IDisposable
         Mesh = mesh;
         _skinnedVertices = skinnedVertices;
         _animationLoader = animationLoader;
+        _wasPlaying = entity.IsPlaying && pose.MotionLayerCount > 0;
+        _gpuSkinning = gpuSkinning;
+        _ownedPoses.Add(pose);
+        _publishedMorphs = gpuSkinning ? new Vector3[parsing.Vertices.Length] : [];
+        _morphVertices = gpuSkinning ? parsing.Morphs.SelectMany(morph => morph.PositionMorphs)
+            .Select(morph => morph.VertexIndex).Where(index => index >= 0 && index < parsing.Vertices.Length).Distinct().ToArray() : [];
     }
 
     public GameEntity Entity => _entity;
@@ -56,13 +84,15 @@ public sealed class WebPmxAsset : IDisposable
     public bool HasAnimation => _pose.HasAnimation;
     public string PhysicsBackend => _pose.PhysicsBackend;
     public IReadOnlyList<Vector3> PhysicsColliderPoints => _pose.PhysicsColliderPoints;
+    public bool GpuSkinning => _gpuSkinning;
 
     public static WebPmxAsset Create(
         GameEntity entity,
         PmxParsing parsing,
         IReadOnlyList<(VmdParsing Animation, float Weight)> layers,
         WebPmxMesh? mesh = null,
-        Func<string, VmdParsing?>? animationLoader = null)
+        Func<string, VmdParsing?>? animationLoader = null,
+        bool preferGpuSkinning = false)
     {
         ArgumentNullException.ThrowIfNull(entity);
         ArgumentNullException.ThrowIfNull(parsing);
@@ -71,34 +101,57 @@ public sealed class WebPmxAsset : IDisposable
         PmxPoseEvaluator pose = new(
             parsing,
             layers,
-            entity.EnablePhysics,
+            physicsEnabled: true,
             entity.PhysicsGravity,
             entity.ResetPhysicsOnMotionLoop);
         ApplyPlaybackSettings(pose, entity);
-        float[] vertices = new float[parsing.Vertices.Length * 8];
-        pose.Update(0.0, entity.PlaybackSpeed, entity.LoopMotion, vertices, 1.0f / 30.0f);
+        pose.UsePartialIkUpdates = true;
+        pose.PhysicsSimulationEnabled = false;
+        bool gpuSkinning = preferGpuSkinning && parsing.Bones.Length is > 0 and <= 2048 && parsing.Vertices.Length <= 524288
+            && parsing.Vertices.All(vertex => vertex.WeightType is PmxVertexWeight.BDEF1 or PmxVertexWeight.BDEF2 or PmxVertexWeight.BDEF4)
+            && !parsing.Morphs.Any(morph => morph.MorphType is PmxMorphType.UV or PmxMorphType.AddUV1 or PmxMorphType.AddUV2 or PmxMorphType.AddUV3 or PmxMorphType.AddUV4);
+        float[] vertices = gpuSkinning ? [] : new float[parsing.Vertices.Length * 8];
+        pose.Update(0.0, entity.PlaybackSpeed, entity.LoopMotion, vertices, 1.0f / 30.0f, skinVertices: !gpuSkinning);
         mesh ??= WebPmxMesh.FromParsing(parsing);
-        mesh.UpdateFromInterleaved(vertices);
-        return new WebPmxAsset(entity, parsing, pose, mesh, vertices, animationLoader ?? (_ => null));
+        if (!gpuSkinning) mesh.UpdateFromInterleaved(vertices);
+        else mesh.Skinning = WebPmxSkinning.FromParsing(parsing, pose);
+        WebPmxAsset asset = new(entity, parsing, pose, mesh, vertices, animationLoader ?? (_ => null), gpuSkinning);
+        if (gpuSkinning) asset.UpdateGpuPose();
+        return asset;
+    }
+
+    public bool PrepareMotion(string motionPath)
+    {
+        string path = NormalizeMotionPath(motionPath);
+        if (_preparedMotions.ContainsKey(path)) return true;
+        VmdParsing? animation = _animationLoader(path);
+        if (animation is null) return false;
+        PmxPoseEvaluator prepared = new(_parsing, [(animation, 1.0f)], true, _entity.PhysicsGravity, _entity.ResetPhysicsOnMotionLoop)
+        { PhysicsSimulationEnabled = false, UsePartialIkUpdates = true };
+        _preparedMotions.Add(path, prepared);
+        _ownedPoses.Add(prepared);
+        return true;
     }
 
     public bool ApplyMotion(string motionPath)
     {
         string normalized = NormalizeMotionPath(motionPath);
-        VmdParsing? animation = _animationLoader(normalized);
-        if (animation is null)
-        {
-            return false;
-        }
-
-        ReplacePose([(animation, 1.0f)]);
+        if (!PrepareMotion(normalized)) return false;
+        _pose = _preparedMotions[normalized];
+        _pose.ResetPhysics();
+        for (int i = 0; i < _pose.MotionLayerCount; i++) _pose.SetMotionLayerFrame(i, 0);
+        _poseDirty = true;
+        _wasPlaying = false;
+        _publishedMorphRevision = -1;
         _entity.MotionLayers = [new MotionLayerSettings { Path = normalized, Weight = 1.0f }];
         _entity.IsPlaying = true;
+        _skipPhysicsOnNextPlayFrame = true;
         return true;
     }
 
     public void PlayMotion(bool restart)
     {
+        bool starting = !_entity.IsPlaying;
         if (restart)
         {
             for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerFrame(i, 0.0f);
@@ -106,12 +159,17 @@ public sealed class WebPmxAsset : IDisposable
 
         for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerPlaying(i, true);
         _entity.IsPlaying = true;
+        if (starting || restart) _skipPhysicsOnNextPlayFrame = true;
+        if (restart) _poseDirty = true;
     }
 
     public void PauseMotion()
     {
         for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerPlaying(i, false);
         _entity.IsPlaying = false;
+        _wasPlaying = false;
+        _skipPhysicsOnNextPlayFrame = true;
+        Pose.PhysicsSimulationEnabled = false;
     }
 
     public void StopMotion()
@@ -123,24 +181,39 @@ public sealed class WebPmxAsset : IDisposable
         }
 
         _entity.IsPlaying = false;
+        _poseDirty = true;
+        _skipPhysicsOnNextPlayFrame = true;
+        Pose.ResetPhysics();
     }
 
     public bool Update(double timeSeconds, float deltaSeconds)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!Pose.RequiresUpdate)
+        ApplyPlaybackSettings(Pose, _entity);
+        bool playing = _entity.IsPlaying && Pose.MotionLayerCount > 0;
+        if (playing && !_wasPlaying)
+        {
+            Pose.SynchronizeTime(timeSeconds);
+            _skipPhysicsOnNextPlayFrame = true;
+        }
+        _wasPlaying = playing;
+        Pose.PhysicsSimulationEnabled = playing && _entity.EnablePhysics && !_skipPhysicsOnNextPlayFrame;
+        if (!_poseDirty && !playing)
         {
             return false;
         }
 
-        ApplyPlaybackSettings(Pose, _entity);
+        if (_skipPhysicsOnNextPlayFrame) Pose.SynchronizeTime(timeSeconds);
         Pose.Update(
             timeSeconds,
             _entity.PlaybackSpeed,
             _entity.LoopMotion,
             _skinnedVertices,
-            Math.Clamp(deltaSeconds, 0.0f, 1.0f / 15.0f));
-        Mesh.UpdateFromInterleaved(_skinnedVertices);
+            Math.Clamp(deltaSeconds, 0.0f, 1.0f / 15.0f), skinVertices: !_gpuSkinning);
+        if (_gpuSkinning) UpdateGpuPose();
+        else Mesh.UpdateFromInterleaved(_skinnedVertices);
+        _poseDirty = false;
+        _skipPhysicsOnNextPlayFrame = false;
         return true;
     }
 
@@ -150,22 +223,30 @@ public sealed class WebPmxAsset : IDisposable
         {
             pose.SetMotionLayerPlaying(layer, entity.IsPlaying);
             pose.SetMotionLayerLoop(layer, entity.LoopMotion);
-            pose.SetMotionLayerPlaybackSpeed(layer, entity.PlaybackSpeed);
+            // Update already supplies the entity speed; a layer multiplier
+            // of the same value would apply it twice.
+            pose.SetMotionLayerPlaybackSpeed(layer, 1.0f);
         }
     }
 
-    private void ReplacePose(IReadOnlyList<(VmdParsing Animation, float Weight)> layers)
+    private void UpdateGpuPose()
     {
-        _pose.Dispose();
-        _pose = new PmxPoseEvaluator(
-            _parsing,
-            layers,
-            _entity.EnablePhysics,
-            _entity.PhysicsGravity,
-            _entity.ResetPhysicsOnMotionLoop);
-        ApplyPlaybackSettings(_pose, _entity);
-        _pose.Update(0.0, _entity.PlaybackSpeed, _entity.LoopMotion, _skinnedVertices, 1.0f / 30.0f);
-        Mesh.UpdateFromInterleaved(_skinnedVertices);
+        byte[]? morphBytes = null;
+        if (_publishedMorphRevision != _pose.VertexMorphRevision)
+        {
+            List<float> changes = [];
+            ReadOnlySpan<Vector3> offsets = _pose.VertexMorphOffsets;
+            foreach (int vertex in _morphVertices)
+            {
+                Vector3 offset = offsets[vertex];
+                if (_publishedMorphs[vertex] == offset) continue;
+                changes.Add(vertex); changes.Add(offset.X); changes.Add(offset.Y); changes.Add(offset.Z);
+                _publishedMorphs[vertex] = offset;
+            }
+            if (changes.Count > 0) morphBytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(changes)).ToArray();
+            _publishedMorphRevision = _pose.VertexMorphRevision;
+        }
+        Mesh.UpdateSkinning(MemoryMarshal.AsBytes(_pose.SkinTransforms).ToArray(), morphBytes);
     }
 
     private static string NormalizeMotionPath(string path)
@@ -175,13 +256,15 @@ public sealed class WebPmxAsset : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         Pose.ResetPhysics();
+        _poseDirty = true;
+        _skipPhysicsOnNextPlayFrame = true;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _pose.Dispose();
+        foreach (PmxPoseEvaluator pose in _ownedPoses) pose.Dispose();
     }
 }
 
@@ -190,13 +273,44 @@ public sealed record WebPmxMeshInstance(string Id, WebPmxMesh Mesh);
 
 // Blazor transfers byte[] through its binary interop path. Serializing three
 // large float arrays as JSON on every frame stalls the browser's main thread.
-public sealed record WebPmxMeshUpdate(byte[] Vertices);
+public sealed record WebPmxMeshUpdate(byte[] Vertices)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public byte[]? Bones { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public byte[]? Morphs { get; init; }
+}
+
+public sealed record WebPmxSkinning(int BoneCount, byte[] Bindings, byte[] Bones, byte[]? Morphs = null)
+{
+    public static WebPmxSkinning FromParsing(PmxParsing parsing, PmxPoseEvaluator pose)
+    {
+        float[] bindings = new float[parsing.Vertices.Length * 8];
+        for (int i = 0; i < parsing.Vertices.Length; i++)
+        {
+            PmxVertex vertex = parsing.Vertices[i];
+            for (int bone = 0; bone < 4; bone++)
+            {
+                bindings[i * 8 + bone] = vertex.BoneIndices[bone];
+                bindings[i * 8 + 4 + bone] = vertex.BoneWeights[bone];
+            }
+            if (vertex.WeightType == PmxVertexWeight.BDEF1) { bindings[i*8+4] = 1; for (int b=1;b<4;b++) bindings[i*8+4+b] = 0; }
+            if (vertex.WeightType == PmxVertexWeight.BDEF2) { bindings[i*8+5] = 1 - bindings[i*8+4]; bindings[i*8+6] = bindings[i*8+7] = 0; }
+        }
+        return new(parsing.Bones.Length, MemoryMarshal.AsBytes(bindings.AsSpan()).ToArray(), MemoryMarshal.AsBytes(pose.SkinTransforms).ToArray());
+    }
+}
 
 public sealed record WebPmxMeshUpdateInstance(string Id, WebPmxMeshUpdate Mesh);
 
 public sealed class WebPmxMesh
 {
     private float[]? _interleavedVertices;
+    private WebPmxMeshUpdate? _skinningUpdate;
+    public WebPmxSkinning? Skinning { get; internal set; }
+    public void UpdateSkinning(byte[] bones, byte[]? morphs)
+    {
+        Skinning = Skinning! with { Bones = bones, Morphs = morphs };
+        _skinningUpdate = new([]) { Bones = bones, Morphs = morphs };
+    }
 
     public WebPmxMesh(
         float[] positions,
@@ -228,6 +342,7 @@ public sealed class WebPmxMesh
     public IReadOnlyList<WebPmxMaterial> Materials { get; }
     public WebPmxMeshUpdate CreateUpdate()
     {
+        if (_skinningUpdate is not null) return _skinningUpdate;
         if (_interleavedVertices is null)
         {
             int vertexCount = Positions.Length / 3;
@@ -338,11 +453,14 @@ public sealed class WebPmxMesh
                 material.EdgeSize,
                 material.DrawMode.HasFlag(PmxDrawModeFlags.BothFace),
                 material.DrawMode.HasFlag(PmxDrawModeFlags.DrawEdge),
-                material.DrawMode.HasFlag(PmxDrawModeFlags.GroundShadow)
-                    || material.DrawMode.HasFlag(PmxDrawModeFlags.CastSelfShadow),
+                material.DrawMode.HasFlag(PmxDrawModeFlags.CastSelfShadow),
                 material.DrawMode.HasFlag(PmxDrawModeFlags.RecieveSelfShadow),
                 textureUri,
-                string.IsNullOrWhiteSpace(material.Name) ? $"Material {i}" : material.Name));
+                string.IsNullOrWhiteSpace(material.Name) ? $"Material {i}" : material.Name)
+            {
+                Specular = material.Specular,
+                SpecularPower = material.SpecularPower
+            });
             start += count;
         }
 
