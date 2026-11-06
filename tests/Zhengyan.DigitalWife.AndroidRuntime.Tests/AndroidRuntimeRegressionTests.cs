@@ -33,6 +33,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Vulkan asynchronous skinning and vertex visibility", VulkanSynchronizationRegressionTests.TestSkinningFrames),
             ("Vulkan large CPU uploads after Compute fallback", VulkanSynchronizationRegressionTests.TestCpuFallbackFrames),
             ("Vulkan PMX draw snapshots, reflection and depth across frame slots", VulkanDrawSnapshotTests.TestPmxPasses),
+            ("PMX edge widths preserve desktop proportions on Android outputs", VulkanDrawSnapshotTests.TestPmxEdgeWidths),
             ("Vulkan scene upload snapshots and uninterrupted passes", VulkanSceneUploadTests.TestScenePasses),
             ("Android reflection sizes match across backends", VulkanSceneUploadTests.TestReflectionSizes),
             ("Android motion loops preserve script physics settings", AndroidMotionLoopTests.TestScriptLayers),

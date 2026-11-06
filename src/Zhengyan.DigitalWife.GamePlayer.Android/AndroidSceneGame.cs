@@ -300,12 +300,18 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         }
         foreach (TexturedPlaneComponent plane in _planes.Values) plane.ShadowMap = binding;
 
+        // Offscreen textures use their configured pixel dimensions on every
+        // platform. Apply the phone's display scale only to screen cameras.
+        foreach (PmxModelComponent model in _modelSnapshot) model.EdgeWidthScale = 1.0f;
         RenderSceneTextures(gameTime);
         long renderTextureEnd = Stopwatch.GetTimestamp();
 
         // Every output uses the same component passes on both Android backends.
         int width = Math.Max(GraphicsDevice.BackBufferSize.X, 1);
         int height = Math.Max(GraphicsDevice.BackBufferSize.Y, 1);
+        float edgeWidthScale = AndroidRenderPolicy.ResolvePmxEdgeWidthScale(
+            width, height, _windowSettings.Width, _windowSettings.Height);
+        foreach (PmxModelComponent model in _modelSnapshot) model.EdgeWidthScale = edgeWidthScale;
         foreach (RuntimeCamera runtimeCamera in _scene.RenderCameras)
         {
             RuntimeViewport viewport = ResolveViewport(runtimeCamera, width, height);

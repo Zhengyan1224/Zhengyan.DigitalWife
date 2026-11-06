@@ -12,6 +12,15 @@ internal sealed record AndroidRenderPolicy(
     int ParticleCount,
     int Samples)
 {
+    private const float PmxEdgeWidthMultiplier = 2.0f;
+
+    // PMX edge sizes are desktop pixels. Scale them like relative GUI fonts so
+    // a high-resolution phone preserves their width in the project's layout.
+    // The additional multiplier is calibrated from phone/desktop visual comparison.
+    public static float ResolvePmxEdgeWidthScale(int width, int height, int referenceWidth, int referenceHeight)
+        => PmxEdgeWidthMultiplier * Math.Min(Math.Max(width, 1) / (float)Math.Max(referenceWidth, 1),
+            Math.Max(height, 1) / (float)Math.Max(referenceHeight, 1));
+
     // Keep both Android backends at the same reflection detail. Memory budgets
     // alone allow full phone resolution, which can cost several times as many
     // fragments as the GLES 1024px reflection. Never upscale small viewports.

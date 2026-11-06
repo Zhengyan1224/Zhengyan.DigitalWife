@@ -271,6 +271,9 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
     public int LastEdgeMeshDrawCount => _lastEdgeMeshDrawCount;
 
+    // Output pixel scale; desktop and render textures retain the PMX pixel width.
+    internal float EdgeWidthScale { get; set; } = 1.0f;
+
     public int LastShadowMeshDrawCount => _lastShadowMeshDrawCount;
 
     public float AnimationTimeSeconds
@@ -1597,7 +1600,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         Matrix4x4 transform = World;
         Matrix4x4 worldView = transform * Camera.View;
         Matrix4x4 worldViewProjection = worldView * Camera.Projection;
-        Vector2 screenSize = new(Math.Max(Camera.Width, 1), Math.Max(Camera.Height, 1));
+        Vector2 screenSize = new Vector2(Math.Max(Camera.Width, 1), Math.Max(Camera.Height, 1)) / EdgeWidthScale;
 
         if (Game.GraphicsDevice.Backend == GraphicsBackend.OpenGL && _customShader is not null && _customShaderVao != 0)
         {

@@ -6,11 +6,108 @@ using System.Runtime.InteropServices;
 using Veldrid;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
+using Zhengyan.DigitalWife.GamePlayer.Android;
 using Mmd = MmdDesktop::Zhengyan.DigitalWife.Mmd;
 using Device = Veldrid.GraphicsDevice;
 
 internal static unsafe class VulkanDrawSnapshotTests
 {
+    public static void TestPmxEdgeWidths()
+    {
+        Check(AndroidRenderPolicy.ResolvePmxEdgeWidthScale(720, 1280, 720, 1280) == 2,
+            "Android did not apply the visually calibrated width at the reference resolution.");
+        Check(AndroidRenderPolicy.ResolvePmxEdgeWidthScale(1080, 2400, 720, 1280) == 3,
+            "A tall phone stretched the outline with its aspect ratio.");
+        Check(AndroidRenderPolicy.ResolvePmxEdgeWidthScale(1980, 720, 480, 320) == 4.5f,
+            "A wide phone stretched the outline with its aspect ratio.");
+        Check(AndroidRenderPolicy.ResolvePmxEdgeWidthScale(360, 640, 720, 1280) == 1,
+            "A smaller output did not downscale the outline.");
+        string fixtureDirectory = Path.GetFullPath(Path.Combine("temp", "pmx-edge-tests"));
+        Directory.CreateDirectory(fixtureDirectory);
+        string fixturePath = Path.Combine(fixtureDirectory, "unused.pmx");
+        File.WriteAllBytes(fixturePath, []);
+        using PmxModelComponent component = new(fixturePath);
+        Check(component.EdgeWidthScale == 1, "Desktop and offscreen outlines must default to PMX pixel widths.");
+        if (!VulkanRenderer.IsSupported(out string reason))
+        {
+            Console.WriteLine($"SKIP native edge rendering: {reason}");
+            return;
+        }
+        using Device device = Device.CreateVulkan(new GraphicsDeviceOptions());
+        ResourceFactory factory = device.ResourceFactory;
+        using CommandList commands = factory.CreateCommandList();
+        VulkanRenderer renderer = new();
+        Set(renderer, "_device", device);
+        Set(renderer, "_commandList", commands);
+        using TriangleModel model = new(edgeNormals: true);
+        using PmxGpuResources resources = new(new(renderer, Vector4.Zero), model);
+        resources.PositionBuffer.Update(new ReadOnlySpan<Vector3>(model.GetPositions(), 3));
+        resources.NormalBuffer.Update(new ReadOnlySpan<Vector3>(model.GetNormals(), 3));
+        using VeldridPmxAuxiliaryPassRenderer auxiliary = new(renderer, resources);
+        Mmd.MMDMaterial material = new() { EdgeFlag = 1, EdgeColor = Vector4.One };
+        Mmd.MMDMesh[] meshes = [new(0, 6, material)];
+        long frame = 0;
+        try
+        {
+            int desktop = Expansion(64, 1);
+            int unscaledPhone = Expansion(128, 1);
+            int previousPhone = Expansion(128, 2);
+            float scale = AndroidRenderPolicy.ResolvePmxEdgeWidthScale(128, 128, 64, 64);
+            int phone = Expansion(128, scale);
+            int splitViewport = Expansion(64, scale);
+            Console.WriteLine($"PMX edge raster widths: desktop={desktop}, unscaled phone={unscaledPhone}, previous phone={previousPhone}, calibrated phone={phone}, split viewport={splitViewport}");
+            Check(desktop > 0 && phone >= previousPhone + 2 && Math.Abs(phone - previousPhone * 2) <= 2,
+                $"Calibrated outline did not double the previous Android width: previous={previousPhone}, phone={phone}.");
+            Check(phone >= unscaledPhone + 2, "The phone still renders the original thin physical-pixel outline.");
+            Check(Math.Abs(splitViewport - phone) <= 2, "A split-screen camera changed the display's pixel scale.");
+        }
+        finally
+        {
+            device.WaitForIdle();
+            renderer.FrameUniforms.Dispose();
+        }
+
+        int Expansion(uint size, float scale) => Width(size, scale, 4) - Width(size, scale, 0);
+
+        int Width(uint size, float scale, float edgeSize)
+        {
+            using Texture color = factory.CreateTexture(TextureDescription.Texture2D(
+                size, size, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.RenderTarget));
+            using Texture depth = factory.CreateTexture(TextureDescription.Texture2D(
+                size, size, 1, 1, PixelFormat.R32_Float, TextureUsage.DepthStencil));
+            using Texture capture = factory.CreateTexture(TextureDescription.Texture2D(
+                size, size, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.Staging));
+            using Framebuffer target = factory.CreateFramebuffer(new(depth, color));
+            Set(renderer, "_uniformFrameId", frame++);
+            Set(renderer, "_frameOpen", true);
+            commands.Begin();
+            commands.SetFramebuffer(target);
+            typeof(VulkanRenderer).GetProperty("CurrentOutputDescription", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(renderer, target.OutputDescription);
+            commands.ClearColorTarget(0, RgbaFloat.Black);
+            commands.ClearDepthStencil(1);
+            commands.SetFullViewports();
+            commands.SetFullScissorRects();
+            material.EdgeSize = edgeSize;
+            auxiliary.DrawEdge(resources, meshes, Matrix4x4.Identity, Matrix4x4.Identity,
+                Matrix4x4.Identity, new Vector2(size, size) / scale);
+            commands.CopyTexture(color, capture);
+            commands.End();
+            device.SubmitCommands(commands);
+            device.WaitForIdle();
+            Set(renderer, "_frameOpen", false);
+            MappedResource pixels = device.Map(capture, MapMode.Read);
+            try
+            {
+                byte* row = (byte*)pixels.Data + (size / 2) * pixels.RowPitch;
+                int count = 0;
+                for (int x = 0; x < size; x++) if (row[x * 4] > 200) count++;
+                return count;
+            }
+            finally { device.Unmap(capture); }
+        }
+    }
+
     public static void TestPmxPasses()
     {
         if (!VulkanRenderer.IsSupported(out string reason))
@@ -152,17 +249,24 @@ internal static unsafe class VulkanDrawSnapshotTests
         private readonly Vector3* _positions = (Vector3*)NativeMemory.Alloc(36);
         private readonly Vector3* _normals = (Vector3*)NativeMemory.Alloc(36);
         private readonly Vector2* _uvs = (Vector2*)NativeMemory.AllocZeroed(24);
-        private readonly uint* _indices = (uint*)NativeMemory.Alloc(12);
-        public TriangleModel()
+        private readonly uint* _indices = (uint*)NativeMemory.Alloc(24);
+        private readonly bool _edgeNormals;
+        public TriangleModel(bool edgeNormals = false)
         {
+            _edgeNormals = edgeNormals;
             _positions[0] = new(-.3f, -.4f, 0);
             _positions[1] = new(.3f, -.4f, 0);
             _positions[2] = new(0, .4f, 0);
-            for (int i = 0; i < 3; i++) { _normals[i] = Vector3.UnitZ; _indices[i] = (uint)i; }
+            for (int i = 0; i < 3; i++)
+            {
+                _normals[i] = edgeNormals ? Vector3.Normalize(_positions[i]) : Vector3.UnitZ;
+                _indices[i] = (uint)i;
+                _indices[i + 3] = (uint)(2 - i);
+            }
         }
         public override bool HasUvMorphs => false;
         public override int GetVertexCount() => 3;
-        public override int GetIndexCount() => 3;
+        public override int GetIndexCount() => _edgeNormals ? 6 : 3;
         public override Vector3* GetPositions() => _positions;
         public override Vector3* GetNormals() => _normals;
         public override Vector2* GetUVs() => _uvs;
