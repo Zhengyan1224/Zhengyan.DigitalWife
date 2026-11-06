@@ -666,8 +666,10 @@ public unsafe class PmxModel : MMDModel
                     PmxNode linkNode = _nodes[ikLink.BoneIndex];
                     if (ikLink.EnableLimit)
                     {
-                        Vector3 limitMax = ikLink.LimitMin * new Vector3(-1.0f);
-                        Vector3 limitMin = ikLink.LimitMax * new Vector3(-1.0f);
+                        // Reflecting Z reverses rotation around X and Y,
+                        // while rotation around Z keeps its original sign.
+                        Vector3 limitMin = new(-ikLink.LimitMax.X, -ikLink.LimitMax.Y, ikLink.LimitMin.Z);
+                        Vector3 limitMax = new(-ikLink.LimitMin.X, -ikLink.LimitMin.Y, ikLink.LimitMax.Z);
 
                         solver.AddIkChain(linkNode, true, limitMin, limitMax);
                     }

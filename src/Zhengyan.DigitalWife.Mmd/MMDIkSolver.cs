@@ -168,24 +168,24 @@ public class MMDIkSolver
             if (chain.EnableAxisLimit)
             {
                 if ((chain.LimitMin.X != 0.0f || chain.LimitMax.X != 0.0f)
-                    && (chain.LimitMin.Y == 0.0f || chain.LimitMax.Y == 0.0f)
-                    && (chain.LimitMin.Z == 0.0f || chain.LimitMax.Z == 0.0f))
+                    && (chain.LimitMin.Y == 0.0f && chain.LimitMax.Y == 0.0f)
+                    && (chain.LimitMin.Z == 0.0f && chain.LimitMax.Z == 0.0f))
                 {
                     SolvePlane(iteration, i, SolveAxis.X);
 
                     continue;
                 }
                 else if ((chain.LimitMin.Y != 0.0f || chain.LimitMax.Y != 0.0f)
-                         && (chain.LimitMin.Z == 0.0f || chain.LimitMax.Z == 0.0f)
-                         && (chain.LimitMin.X == 0.0f || chain.LimitMax.X == 0.0f))
+                         && (chain.LimitMin.Z == 0.0f && chain.LimitMax.Z == 0.0f)
+                         && (chain.LimitMin.X == 0.0f && chain.LimitMax.X == 0.0f))
                 {
                     SolvePlane(iteration, i, SolveAxis.Y);
 
                     continue;
                 }
                 else if ((chain.LimitMin.Z != 0.0f || chain.LimitMax.Z != 0.0f)
-                         && (chain.LimitMin.X == 0.0f || chain.LimitMax.X == 0.0f)
-                         && (chain.LimitMin.Y == 0.0f || chain.LimitMax.Y == 0.0f))
+                         && (chain.LimitMin.X == 0.0f && chain.LimitMax.X == 0.0f)
+                         && (chain.LimitMin.Y == 0.0f && chain.LimitMax.Y == 0.0f))
                 {
                     SolvePlane(iteration, i, SolveAxis.Z);
 
@@ -219,7 +219,7 @@ public class MMDIkSolver
             Quaternion chainRot = chainNode.IkRotate * chainNode.AnimateRotate * rot;
             if (chain.EnableAxisLimit)
             {
-                // TODO: Axis-limited IK solving is not implemented yet.
+                chainRot = ClampRotation(chainRot, chain.LimitMin, chain.LimitMax);
             }
 
             Quaternion ikRot = chainRot * Quaternion.Inverse(chainNode.AnimateRotate);
@@ -228,6 +228,19 @@ public class MMDIkSolver
             chainNode.UpdateLocalTransform();
             chainNode.UpdateGlobalTransform();
         }
+    }
+
+    private static Quaternion ClampRotation(Quaternion rotation, Vector3 lower, Vector3 upper)
+    {
+        // Match the Web pose evaluator's yaw/pitch/roll convention. Limits
+        // supplied by PmxModel have already been converted to renderer space.
+        Matrix4x4 matrix = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(rotation));
+        float pitch = MathF.Asin(Math.Clamp(-matrix.M32, -1.0f, 1.0f));
+        Vector3 angles = MathF.Abs(MathF.Cos(pitch)) > 1e-5f
+            ? new Vector3(pitch, MathF.Atan2(matrix.M31, matrix.M33), MathF.Atan2(matrix.M12, matrix.M22))
+            : new Vector3(pitch, MathF.Atan2(-matrix.M13, matrix.M11), 0.0f);
+        Vector3 limited = Vector3.Clamp(angles, Vector3.Min(lower, upper), Vector3.Max(lower, upper));
+        return Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(limited.Y, limited.X, limited.Z));
     }
 
     private void SolvePlane(uint iteration, int chainIdx, SolveAxis solveAxis)

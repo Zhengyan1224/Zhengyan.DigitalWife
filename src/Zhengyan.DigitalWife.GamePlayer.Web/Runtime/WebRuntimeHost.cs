@@ -11,12 +11,15 @@ public sealed class WebRuntimeHost(
     IJSRuntime jsRuntime,
     WebProjectLoader projectLoader,
     WebAudioService audioService,
-    WebSpeechService speechService) : IAsyncDisposable
+    WebSpeechService speechService,
+    WebPmxPhysicsService? physicsService = null) : IAsyncDisposable
 {
     private readonly IJSRuntime _jsRuntime = jsRuntime;
     private WebProjectLoader _projectLoader = projectLoader;
     private readonly WebAudioService _audioService = audioService;
     private readonly WebSpeechService _speechService = speechService;
+    private readonly WebPmxPhysicsService _physicsService = physicsService ?? new WebPmxPhysicsService(jsRuntime);
+    private readonly bool _ownsPhysicsService = physicsService is null;
     private IJSObjectReference? _module;
     private DotNetObjectReference<WebRuntimeHost>? _dotNetReference;
     private bool _started;
@@ -54,6 +57,7 @@ public sealed class WebRuntimeHost(
         try
         {
             _projectLoader.SpeechRequestHandler = QueueSpeechRequest;
+            _projectLoader.PhysicsFactory = _physicsService.CreateAsync;
             SetSnapshot(Snapshot with { LastError = null, Status = "Initializing WebGL2" });
             _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-runtime.js");
             _dotNetReference = DotNetObjectReference.Create(this);
@@ -745,6 +749,7 @@ public sealed class WebRuntimeHost(
         if (_disposed) return;
         _disposed = true;
         await StopAsync();
+        if (_ownsPhysicsService) await _physicsService.DisposeAsync();
         _dotNetReference?.Dispose();
         _dotNetReference = null;
         if (_module is not null)

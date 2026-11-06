@@ -22,11 +22,13 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Script platform"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android navigation"
 dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "Android script"
+dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --test "MMD IK"
 ```
 
 ## 覆盖范围
 
 - 场景加载、PMX 动作与物理时间。
+- IK 单轴、多轴限位和 PMX 坐标转换；Nene + Lamb 全程整数帧、半帧的视线与 Web 姿态对照（需要本地 Nene 模型，见[修复记录](../../docs/mmd-ik-rotation-limits.md)）。
 - Vulkan 帧资源、Compute、上传和绘制快照。
 - 预编译 C# API、脚本兼容、工程与加密/分包。
 - LLM、工具、Skills、记忆、取消和诊断。

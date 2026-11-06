@@ -53,6 +53,7 @@ public sealed class WebPmxAsset : IDisposable
     private readonly Vector3[] _publishedMorphs;
     private readonly int[] _morphVertices;
     private int _publishedMorphRevision = -1;
+    private readonly IPmxPhysicsBridge? _physicsBridge;
 
     private WebPmxAsset(
         GameEntity entity,
@@ -61,7 +62,8 @@ public sealed class WebPmxAsset : IDisposable
         WebPmxMesh mesh,
         float[] skinnedVertices,
         Func<string, VmdParsing?> animationLoader,
-        bool gpuSkinning)
+        bool gpuSkinning,
+        IPmxPhysicsBridge? physicsBridge)
     {
         _entity = entity;
         _parsing = parsing;
@@ -71,6 +73,7 @@ public sealed class WebPmxAsset : IDisposable
         _animationLoader = animationLoader;
         _wasPlaying = entity.IsPlaying && pose.MotionLayerCount > 0;
         _gpuSkinning = gpuSkinning;
+        _physicsBridge = physicsBridge;
         _ownedPoses.Add(pose);
         _publishedMorphs = gpuSkinning ? new Vector3[parsing.Vertices.Length] : [];
         _morphVertices = gpuSkinning ? parsing.Morphs.SelectMany(morph => morph.PositionMorphs)
@@ -82,7 +85,7 @@ public sealed class WebPmxAsset : IDisposable
     public PmxPoseEvaluator Pose => _pose;
     public WebPmxMesh Mesh { get; }
     public bool HasAnimation => _pose.HasAnimation;
-    public string PhysicsBackend => _pose.PhysicsBackend;
+    public string PhysicsBackend => _pose.PhysicsBackend == "disabled" ? "disabled" : _physicsBridge is WebPmxBulletPhysics ? "Bullet WASM" : _pose.PhysicsBackend;
     public IReadOnlyList<Vector3> PhysicsColliderPoints => _pose.PhysicsColliderPoints;
     public bool GpuSkinning => _gpuSkinning;
 
@@ -92,7 +95,8 @@ public sealed class WebPmxAsset : IDisposable
         IReadOnlyList<(VmdParsing Animation, float Weight)> layers,
         WebPmxMesh? mesh = null,
         Func<string, VmdParsing?>? animationLoader = null,
-        bool preferGpuSkinning = false)
+        bool preferGpuSkinning = false,
+        IPmxPhysicsBridge? physicsBridge = null)
     {
         ArgumentNullException.ThrowIfNull(entity);
         ArgumentNullException.ThrowIfNull(parsing);
@@ -103,7 +107,8 @@ public sealed class WebPmxAsset : IDisposable
             layers,
             physicsEnabled: true,
             entity.PhysicsGravity,
-            entity.ResetPhysicsOnMotionLoop);
+            entity.ResetPhysicsOnMotionLoop,
+            physicsBridge);
         ApplyPlaybackSettings(pose, entity);
         pose.UsePartialIkUpdates = true;
         pose.PhysicsSimulationEnabled = false;
@@ -115,7 +120,7 @@ public sealed class WebPmxAsset : IDisposable
         mesh ??= WebPmxMesh.FromParsing(parsing);
         if (!gpuSkinning) mesh.UpdateFromInterleaved(vertices);
         else mesh.Skinning = WebPmxSkinning.FromParsing(parsing, pose);
-        WebPmxAsset asset = new(entity, parsing, pose, mesh, vertices, animationLoader ?? (_ => null), gpuSkinning);
+        WebPmxAsset asset = new(entity, parsing, pose, mesh, vertices, animationLoader ?? (_ => null), gpuSkinning, physicsBridge);
         if (gpuSkinning) asset.UpdateGpuPose();
         return asset;
     }
@@ -126,7 +131,7 @@ public sealed class WebPmxAsset : IDisposable
         if (_preparedMotions.ContainsKey(path)) return true;
         VmdParsing? animation = _animationLoader(path);
         if (animation is null) return false;
-        PmxPoseEvaluator prepared = new(_parsing, [(animation, 1.0f)], true, _entity.PhysicsGravity, _entity.ResetPhysicsOnMotionLoop)
+        PmxPoseEvaluator prepared = new(_parsing, [(animation, 1.0f)], true, _entity.PhysicsGravity, _entity.ResetPhysicsOnMotionLoop, _physicsBridge)
         { PhysicsSimulationEnabled = false, UsePartialIkUpdates = true };
         _preparedMotions.Add(path, prepared);
         _ownedPoses.Add(prepared);
@@ -139,6 +144,7 @@ public sealed class WebPmxAsset : IDisposable
         if (!PrepareMotion(normalized)) return false;
         _pose = _preparedMotions[normalized];
         _pose.ResetPhysics();
+        RequestBulletReset();
         for (int i = 0; i < _pose.MotionLayerCount; i++) _pose.SetMotionLayerFrame(i, 0);
         _poseDirty = true;
         _wasPlaying = false;
@@ -154,6 +160,7 @@ public sealed class WebPmxAsset : IDisposable
         bool starting = !_entity.IsPlaying;
         if (restart)
         {
+            RequestBulletReset();
             for (int i = 0; i < Pose.MotionLayerCount; i++) Pose.SetMotionLayerFrame(i, 0.0f);
         }
 
@@ -184,6 +191,7 @@ public sealed class WebPmxAsset : IDisposable
         _poseDirty = true;
         _skipPhysicsOnNextPlayFrame = true;
         Pose.ResetPhysics();
+        RequestBulletReset();
     }
 
     public bool Update(double timeSeconds, float deltaSeconds)
@@ -204,12 +212,17 @@ public sealed class WebPmxAsset : IDisposable
         }
 
         if (_skipPhysicsOnNextPlayFrame) Pose.SynchronizeTime(timeSeconds);
-        Pose.Update(
-            timeSeconds,
-            _entity.PlaybackSpeed,
-            _entity.LoopMotion,
-            _skinnedVertices,
-            Math.Clamp(deltaSeconds, 0.0f, 1.0f / 15.0f), skinVertices: !_gpuSkinning);
+        // Advance animated targets with Bullet as on PC/Android, and upload
+        // only the final visible pose after a slow frame's smaller steps.
+        float elapsed = Math.Clamp(deltaSeconds, 0, .25f);
+        int steps = Pose.PhysicsSimulationEnabled ? Math.Max(1,(int)MathF.Ceiling(elapsed * 30)) : 1;
+        float stepElapsed = elapsed / steps;
+        for (int step=0;step<steps;step++)
+        {
+            Pose.Update(timeSeconds - elapsed + (step+1) * (double)stepElapsed,
+                _entity.PlaybackSpeed, _entity.LoopMotion, _skinnedVertices, stepElapsed,
+                skinVertices: !_gpuSkinning && step == steps-1);
+        }
         if (_gpuSkinning) UpdateGpuPose();
         else Mesh.UpdateFromInterleaved(_skinnedVertices);
         _poseDirty = false;
@@ -256,6 +269,7 @@ public sealed class WebPmxAsset : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         Pose.ResetPhysics();
+        RequestBulletReset();
         _poseDirty = true;
         _skipPhysicsOnNextPlayFrame = true;
     }
@@ -265,6 +279,11 @@ public sealed class WebPmxAsset : IDisposable
         if (_disposed) return;
         _disposed = true;
         foreach (PmxPoseEvaluator pose in _ownedPoses) pose.Dispose();
+    }
+
+    private void RequestBulletReset()
+    {
+        if (_physicsBridge is WebPmxBulletPhysics bullet) bullet.RequestReset();
     }
 }
 

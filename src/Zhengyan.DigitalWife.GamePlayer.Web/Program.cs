@@ -24,6 +24,7 @@ public class Program
         builder.Services.AddScoped<WebGpuCapabilityService>();
         builder.Services.AddScoped<WebProjectLoader>();
         builder.Services.AddScoped<WebRuntimeHost>();
+        builder.Services.AddScoped<WebPmxPhysicsService>();
 
         await builder.Build().RunAsync();
     }

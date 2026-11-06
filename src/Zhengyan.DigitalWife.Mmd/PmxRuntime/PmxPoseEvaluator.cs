@@ -40,6 +40,8 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private readonly MorphState[] _boneMorphs;
     private readonly Dictionary<int, int[]> _ikAffectedBones;
     private readonly bool _canUpdateIkBranches;
+    private readonly int[][] _physicsChildren;
+    private readonly Matrix4x4[] _physicsLocals;
     private readonly PhysicsState[] _fallbackPhysics;
     private readonly IPmxPhysicsBridge? _physicsBridge;
     private readonly bool _physicsEnabled;
@@ -140,6 +142,9 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                 || (!_bones[_bones[index].AppendIndex].AppendRotate && !_bones[_bones[index].AppendIndex].AppendTranslate)
                 || ranks[_bones[index].AppendIndex] < ranks[index]));
         _ikAffectedBones = BuildIkBranches();
+        _physicsChildren = Enumerable.Range(0,_bones.Length).Select(parent => Enumerable.Range(0,_bones.Length)
+            .Where(child => _bones[child].ParentIndex == parent).ToArray()).ToArray();
+        _physicsLocals = new Matrix4x4[_bones.Length];
         _physicsEnabled = physicsEnabled;
         _gravity = gravity;
         _resetPhysicsOnLoop = resetPhysicsOnLoop;
@@ -665,7 +670,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         if (active != 1) return false;
         if (MathF.Abs(minValue.X) > 1e-6f || MathF.Abs(maxValue.X) > 1e-6f) { axisIndex = 0; axis = Vector3.UnitX; min = -maxValue.X; max = -minValue.X; }
         else if (MathF.Abs(minValue.Y) > 1e-6f || MathF.Abs(maxValue.Y) > 1e-6f) { axisIndex = 1; axis = Vector3.UnitY; min = -maxValue.Y; max = -minValue.Y; }
-        else { axisIndex = 2; axis = Vector3.UnitZ; min = -maxValue.Z; max = -minValue.Z; }
+        else { axisIndex = 2; axis = Vector3.UnitZ; min = minValue.Z; max = maxValue.Z; }
         if (min > max) (min, max) = (max, min);
         return true;
     }
@@ -707,7 +712,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         // the hierarchy rebuilt from the roots.  Rebuilding all globals in one
         // pass (the old Android path) loses this ordering when rigid bodies are
         // nested, which is especially visible on skirt/leg IK chains.
-        Matrix4x4[] locals = new Matrix4x4[_globals.Length];
+        Matrix4x4[] locals = _physicsLocals;
         for (int i = 0; i < _globals.Length; i++)
         {
             int parent = _bones[i].ParentIndex;
@@ -757,12 +762,8 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     private void PropagatePhysicsChildren(int parentIndex, Matrix4x4[] locals)
     {
-        for (int child = 0; child < _bones.Length; child++)
+        foreach (int child in _physicsChildren[parentIndex])
         {
-            if (_bones[child].ParentIndex != parentIndex)
-            {
-                continue;
-            }
             _globals[child] = locals[child] * _globals[parentIndex];
             PropagatePhysicsChildren(child, locals);
         }
@@ -774,12 +775,9 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         _globals[index] = parent >= 0 && parent < _globals.Length
             ? locals[index] * _globals[parent]
             : locals[index];
-        for (int child = 0; child < _bones.Length; child++)
+        foreach (int child in _physicsChildren[index])
         {
-            if (_bones[child].ParentIndex == index)
-            {
-                RebuildPhysicsHierarchy(child, locals);
-            }
+            RebuildPhysicsHierarchy(child, locals);
         }
     }
 
@@ -1184,7 +1182,10 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         int upper = Array.FindIndex(keys, key => key.Frame >= frame);
         MotionKey a = keys[upper - 1], b = keys[upper];
         float frameRange = b.Frame - a.Frame;
-        float t = frameRange <= 1.0f ? 0.0f : (frame - a.Frame) / frameRange;
+        // Adjacent MMD frames hold the previous sample between keys, but
+        // landing exactly on the destination key must return that key.
+        if (frameRange <= 1.0f) return frame >= b.Frame ? b.Pose : a.Pose;
+        float t = (frame - a.Frame) / frameRange;
         return new BonePose(
             new Vector3(
                 float.Lerp(a.Pose.Translation.X, b.Pose.Translation.X, b.X.Evaluate(t)),

@@ -16,6 +16,7 @@ VerifyIdlePhysicsAndPlayback();
 VerifyShadowCoverage();
 VerifyDanceScript();
 VerifyGpuPlayback();
+await VerifyBulletBridgeAsync();
 await VerifyFrameInputAndStartupAsync();
 await VerifyFrameInputAndStartupAsync(includeModels: true);
 Console.WriteLine("Web runtime C# regression tests passed.");
@@ -189,6 +190,34 @@ static void VerifyGpuPlayback()
     Console.WriteLine("PASS real character GPU packets and partial IK match full CPU solving across 46 animation frames");
 }
 
+static async Task VerifyBulletBridgeAsync()
+{
+    string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../.."));
+    string data = Path.Combine(root,"src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game");
+    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data,"assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_kihon_natsu_e511.pmx"))!;
+    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data,"assets/motions/Lamb.vmd"))!;
+    RecordingBulletModule module = new();
+    WebPmxBulletPhysics physics = await WebPmxBulletPhysics.CreateAsync(module,pmx,new(0,-98,0));
+    GameEntity entity = new() { IsPlaying=true,EnablePhysics=true };
+    using (WebPmxAsset asset = WebPmxAsset.Create(entity,pmx,[(motion,1)],preferGpuSkinning:true,physicsBridge:physics))
+    {
+        for (int frame=0;frame<360;frame++) asset.Update(frame/60.0,1.0f/60);
+        Check(asset.PhysicsBackend=="Bullet WASM","The Web asset used the translation fallback instead of Bullet.");
+        Check(module.Frames.Count==359 && module.Resets==1,"First-frame/reset handling did not reach the Bullet world once.");
+        int before=module.Frames.Count;
+        asset.PauseMotion(); asset.Update(20,1.0f/60);
+        Check(module.Frames.Count==before,"Paused animation advanced Bullet.");
+        asset.PlayMotion(false); asset.Update(21,1.0f/60); asset.Update(21.2,.2f);
+        Check(module.Frames.Count-before>=6 && module.Elapsed.All(delta=>delta<=1.0f/30+.000001f),"Slow-frame motion/physics targets were not substepped together.");
+        asset.StopMotion(); asset.Update(22,1.0f/60);
+        Check(asset.PhysicsBackend=="disabled","Stopping left Bullet enabled.");
+        File.WriteAllText(Path.Combine(root,"temp/web-debug/pmx-bullet-definition.json"),module.Definition);
+        File.WriteAllBytes(Path.Combine(root,"temp/web-debug/pmx-bullet-targets.bin"),MemoryMarshal.AsBytes(module.Frames.Take(359).SelectMany(frame=>frame).ToArray().AsSpan()).ToArray());
+    }
+    Check(module.Destroyed==1,"Shared cached motion poses disposed the Bullet world more than once.");
+    Console.WriteLine("PASS Bullet bridge first-frame, pause, stop, substeps, world lifetime and real PMX fixture");
+}
+
 static async Task VerifyFrameInputAndStartupAsync(bool includeModels = false)
 {
     Dictionary<string, byte[]> assets = new()
@@ -297,5 +326,31 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
         return result is TValue value ? value : default!;
     }
 
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+sealed class RecordingBulletModule : IJSInProcessObjectReference
+{
+    public string Definition { get; private set; } = "";
+    public List<float[]> Frames { get; } = [];
+    public List<float> Elapsed { get; } = [];
+    public int Resets { get; private set; }
+    public int Destroyed { get; private set; }
+    public TValue Invoke<TValue>(string identifier,params object?[]? args)
+    {
+        object? result=null;
+        if(identifier=="createWorld") { Definition=JsonSerializer.Serialize(args![0]); result=1; }
+        if(identifier=="stepWorld")
+        {
+            Frames.Add(MemoryMarshal.Cast<byte,float>((byte[])args![1]!).ToArray());
+            Elapsed.Add((float)args[2]!); if((bool)args[3]!) Resets++;
+            result=Array.Empty<float>();
+        }
+        if(identifier=="destroyWorld") Destroyed++;
+        return result is TValue value ? value : default!;
+    }
+    public ValueTask<TValue> InvokeAsync<TValue>(string identifier,object?[]? args) => ValueTask.FromResult(Invoke<TValue>(identifier,args));
+    public ValueTask<TValue> InvokeAsync<TValue>(string identifier,CancellationToken cancellationToken,object?[]? args) => InvokeAsync<TValue>(identifier,args);
+    public void Dispose() { }
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

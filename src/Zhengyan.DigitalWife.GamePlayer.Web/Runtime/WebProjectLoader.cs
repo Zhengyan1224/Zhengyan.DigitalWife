@@ -30,6 +30,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
     private readonly IWebAssetStore _assets = assets;
 
     public Action<string, RuntimeSpeechRequest>? SpeechRequestHandler { get; set; }
+    public Func<PmxParsing, Vector3, Task<IPmxPhysicsBridge?>>? PhysicsFactory { get; set; }
 
     public IWebAssetStore Assets => _assets;
 
@@ -189,6 +190,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
                 texturePath => IsRegistered(texturePath)
                     ? _assets.GetUriAsync(texturePath, cancellationToken).AsTask().GetAwaiter().GetResult()
                     : null);
+            IPmxPhysicsBridge? physics = PhysicsFactory is null ? null : await PhysicsFactory(parsing, entity.Definition.PhysicsGravity);
             WebPmxAsset asset = WebPmxAsset.Create(
                 entity.Definition,
                 parsing,
@@ -197,7 +199,8 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
                 path => animations.TryGetValue(
                     WebHttpAssetStore.NormalizeRelativePath(path),
                     out VmdParsing? animation) ? animation : null,
-                preferGpuSkinning: true);
+                preferGpuSkinning: true,
+                physicsBridge: physics);
             if (parsing.Bones.Length > 0)
                 foreach (MotionAsset motion in sceneDefinition.Motions) asset.PrepareMotion(motion.Path);
             pmxAssets[entity.Id] = asset;

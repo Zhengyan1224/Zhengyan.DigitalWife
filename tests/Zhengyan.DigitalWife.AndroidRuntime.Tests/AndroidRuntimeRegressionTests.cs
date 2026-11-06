@@ -24,6 +24,9 @@ internal static class AndroidRuntimeRegressionTests
     {
         (string Name, Action Test)[] tests =
         [
+            ("MMD IK rotation limits preserve single and multiple axes", MmdIkLimitTests.TestAxes),
+            ("MMD IK PMX limits preserve reflected X/Y and positive Z", MmdIkLimitTests.TestPmxLimitConversion),
+            ("MMD IK rotation limits match Web Nene gaze across Lamb", MmdIkLimitTests.TestNeneGaze),
             ("Loading frames and failure preservation", TestLoading),
             ("Hosted loading progress layout without a desktop window", HostedLoadingScreenRegressionTests.TestProgressLayout),
             ("Hosted Vulkan loading frames without device recreation", HostedLoadingScreenRegressionTests.TestVulkanFrames),
