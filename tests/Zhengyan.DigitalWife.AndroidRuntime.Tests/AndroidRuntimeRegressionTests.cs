@@ -84,6 +84,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Script current time compiles and runs on desktop and Android", TestScriptTime),
             ("Script platform Python worker globals, current time and touch transition snapshots", TestPythonPlatform),
             ("Android in-memory script references include default imports", AndroidScriptMetadataTests.TestDefaultImports),
+            ("Android script GUI control types resolve imports and preserve explicit aliases", AndroidScriptMetadataTests.TestGuiControlTypes),
             ("Android script portability for params collections and spans", AndroidScriptPortabilityTests.TestParamsAndSpans),
             ("Android script portability detects older package InlineArrays", AndroidScriptPortabilityTests.TestOldPackageDetection),
             ("TTS initialization retries after failure", AndroidTtsInitializationTests.TestRetry),
@@ -606,7 +607,12 @@ internal static class AndroidRuntimeRegressionTests
 
     private static void TestPackage()
     {
-        using ScriptFixture fixture = new();
+        using ScriptFixture fixture = new("""
+            RuntimeGuiControl? status = Scene.GetGuiControl("status");
+            if (IsStart) Entity.Speak("hello", () => status?.SetValue("spoken"));
+            if (IsLoadingEvent) status?.SetValue(LoadingEventName + ":" + LoadingProgress.ToString("F2", CultureInfo.InvariantCulture));
+            return null;
+            """);
         GameProject project = new() { Name = "Script ABI fixture", Scene = fixture.CoreScene.Definition };
         project.Scene.LoadingScripts.Add(new() { Language = "csharp", Path = "script.csx", Enabled = true });
         project.Scene.Entities[0].Scripts.Add(new() { Language = "csharp", Path = "script.csx", Enabled = true });

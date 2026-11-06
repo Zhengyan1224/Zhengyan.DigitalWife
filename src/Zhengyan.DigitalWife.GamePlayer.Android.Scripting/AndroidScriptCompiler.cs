@@ -105,6 +105,18 @@ public static class AndroidScriptCompiler
             returnType: typeof(object),
             globalsType: typeof(AndroidScriptGlobals));
 
+        // Scene.GetGuiControl returns the Android wrapper. The shared runtime
+        // also exposes RuntimeGuiControl through a default import. Resolve only
+        // ambiguous references, preserving explicit aliases and script types.
+        SyntaxNode scriptRoot = syntaxTree.GetRoot();
+        SyntaxNode resolvedRoot = new ScriptApiTypeRewriter(compilation.GetSemanticModel(syntaxTree)).Visit(scriptRoot)!;
+        if (!ReferenceEquals(scriptRoot, resolvedRoot))
+        {
+            SyntaxTree resolvedTree = CSharpSyntaxTree.Create((CSharpSyntaxNode)resolvedRoot, parseOptions, path, parsedTree.Encoding);
+            compilation = compilation.ReplaceSyntaxTree(syntaxTree, resolvedTree);
+            syntaxTree = resolvedTree;
+        }
+
         // Desktop .NET 10 overload resolution can choose params ReadOnlySpan<T>
         // and lower expanded arguments to private CoreLib InlineArray types.
         // Pass an explicit array instead, preserving arguments and evaluation.
@@ -137,6 +149,25 @@ public static class AndroidScriptCompiler
         }
 
         return image.ToArray();
+    }
+
+    private sealed class ScriptApiTypeRewriter(SemanticModel model) : CSharpSyntaxRewriter
+    {
+        private const string GuiControlType = "global::Zhengyan.DigitalWife.GamePlayer.Android.RuntimeGuiControl";
+
+        public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
+        {
+            if (node.Identifier.ValueText != "RuntimeGuiControl") return base.VisitIdentifierName(node);
+            SymbolInfo symbol = model.GetSymbolInfo(node);
+            if (symbol.CandidateReason != CandidateReason.Ambiguous
+                || !symbol.CandidateSymbols.OfType<INamedTypeSymbol>().Any(type =>
+                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == GuiControlType))
+                return base.VisitIdentifierName(node);
+            ExpressionSyntax resolved = SyntaxFacts.IsInTypeOnlyContext(node)
+                ? SyntaxFactory.ParseName(GuiControlType)
+                : SyntaxFactory.ParseExpression(GuiControlType);
+            return resolved.WithTriviaFrom(node);
+        }
     }
 
     private sealed class PortableInterpolatedStringRewriter : CSharpSyntaxRewriter
