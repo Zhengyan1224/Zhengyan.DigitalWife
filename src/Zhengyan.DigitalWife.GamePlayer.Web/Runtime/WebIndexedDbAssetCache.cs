@@ -49,8 +49,12 @@ public sealed class WebCachedAssetStore(IWebAssetStore source, WebIndexedDbAsset
 
     public WebAssetManifest Manifest => _source.Manifest;
 
-    public ValueTask<WebAssetManifest> LoadManifestAsync(CancellationToken cancellationToken = default)
-        => _source.LoadManifestAsync(cancellationToken);
+    public async ValueTask<WebAssetManifest> LoadManifestAsync(CancellationToken cancellationToken = default)
+    {
+        WebAssetManifest manifest = await _source.LoadManifestAsync(cancellationToken);
+        _uris.Clear();
+        return manifest;
+    }
 
     public async ValueTask<bool> ExistsAsync(string relativePath, CancellationToken cancellationToken = default)
         => await _source.ExistsAsync(relativePath, cancellationToken);

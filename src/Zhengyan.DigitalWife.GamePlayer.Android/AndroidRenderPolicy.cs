@@ -21,14 +21,15 @@ internal sealed record AndroidRenderPolicy(
         => PmxEdgeWidthMultiplier * Math.Min(Math.Max(width, 1) / (float)Math.Max(referenceWidth, 1),
             Math.Max(height, 1) / (float)Math.Max(referenceHeight, 1));
 
-    // Keep both Android backends at the same reflection detail. Memory budgets
-    // alone allow full phone resolution, which can cost several times as many
-    // fragments as the GLES 1024px reflection. Never upscale small viewports.
+    // Default/high profiles keep the PC renderer's native viewport resolution.
+    // Explicit reduced-quality profiles retain their smaller targets.
     public static (int Width, int Height) ResolveReflectionSize(int width, int height, string? profile)
     {
         width = Math.Max(width, 1);
         height = Math.Max(height, 1);
-        int limit = string.Equals(profile?.Trim(), "low", StringComparison.OrdinalIgnoreCase) ? 512 : 1024;
+        string mode = (profile ?? "auto").Trim().ToLowerInvariant();
+        if (mode is not ("low" or "medium")) return (width, height);
+        int limit = mode == "low" ? 512 : 1024;
         float scale = Math.Min(1f, limit / (float)Math.Max(width, height));
         return (Math.Max(1, (int)MathF.Round(width * scale)), Math.Max(1, (int)MathF.Round(height * scale)));
     }
@@ -47,6 +48,6 @@ internal sealed record AndroidRenderPolicy(
             Math.Clamp(quality.MaxSpotShadowMaps, 0, low ? 1 : 4),
             Math.Clamp(quality.MaxReflectionSurfaces, 0, low ? 1 : medium ? 2 : 16),
             Math.Clamp(quality.MaxParticleCount, 1, low ? 600 : medium ? 1200 : 100000),
-            low || profile == "auto" ? 1 : medium ? Math.Min(samples, 2) : samples);
+            low ? 1 : medium ? Math.Min(samples, 2) : samples);
     }
 }

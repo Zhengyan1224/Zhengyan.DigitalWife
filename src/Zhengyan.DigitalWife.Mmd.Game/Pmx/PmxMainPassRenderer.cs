@@ -997,6 +997,25 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             return mix(1.0 - clamp(strength, 0.0, 1.0), 1.0, visibility);
         }
 
+        // Vulkan targets expose raw depth through a point sampler. Interpolate
+        // the four comparison results (not the depth values), as WebGL/GLES
+        // linear shadow samplers do, so PCF edges have continuous coverage.
+        float SampleBilinearShadow(texture2D shadowMap, sampler shadowSampler, vec2 uv, float depth)
+        {
+            ivec2 size = textureSize(sampler2D(shadowMap, shadowSampler), 0);
+            vec2 pixel = uv * vec2(size) - vec2(0.5);
+            ivec2 lower = ivec2(floor(pixel));
+            vec2 fraction = fract(pixel);
+            ivec2 upperBound = size - ivec2(1);
+            float a = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower, ivec2(0), upperBound), 0).r;
+            float b = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower + ivec2(1, 0), ivec2(0), upperBound), 0).r;
+            float c = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower + ivec2(0, 1), ivec2(0), upperBound), 0).r;
+            float d = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower + ivec2(1, 1), ivec2(0), upperBound), 0).r;
+            vec4 visibility = step(vec4(depth), vec4(a, b, c, d));
+            return mix(mix(visibility.x, visibility.y, fraction.x),
+                mix(visibility.z, visibility.w, fraction.x), fraction.y);
+        }
+
         float SampleShadowMap(float surfaceNdotL)
         {
             vec3 ndc = vs_ShadowPos.xyz / max(abs(vs_ShadowPos.w), 0.0001);
@@ -1023,10 +1042,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             {
                 for (int x = -1; x <= 1; ++x)
                 {
-                    float storedDepth = texture(
-                        sampler2D(u_ShadowMap, u_ShadowSampler),
-                        clamp(uv + vec2(x, y) * texelSize, minimumUv, maximumUv)).r;
-                    visibility += storedDepth >= depth ? 1.0 : 0.0;
+                    visibility += SampleBilinearShadow(
+                        u_ShadowMap, u_ShadowSampler,
+                        clamp(uv + vec2(x, y) * texelSize, minimumUv, maximumUv), depth);
                 }
             }
 
@@ -1078,10 +1096,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 for (int x = 0; x <= 1; ++x)
                 {
                     vec2 offset = (vec2(x, y) - vec2(0.5)) * texelSize;
-                    float storedDepth = texture(
-                        sampler2D(u_LocalShadowAtlas, u_LocalShadowSampler),
-                        clamp(atlasUv + offset, minimumUv, maximumUv)).r;
-                    visibility += storedDepth >= depth ? 1.0 : 0.0;
+                    visibility += SampleBilinearShadow(
+                        u_LocalShadowAtlas, u_LocalShadowSampler,
+                        clamp(atlasUv + offset, minimumUv, maximumUv), depth);
                 }
             }
             return visibility * 0.25;

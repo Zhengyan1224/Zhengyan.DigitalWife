@@ -12,7 +12,8 @@ self.addEventListener("activate", event => {
 self.addEventListener("fetch", event => {
     if (event.request.method !== "GET") return;
     const url = new URL(event.request.url);
-    if (url.origin !== self.location.origin || event.request.cache === "no-store" || url.pathname.includes("/_framework/debug/")) return;
+    const projectManifest = url.pathname.endsWith("/web.manifest.json");
+    if (url.origin !== self.location.origin || (event.request.cache === "no-store" && !projectManifest) || url.pathname.includes("/_framework/debug/")) return;
 
     // These modules keep their URL across builds. Revalidate them so a cached
     // decoder or input bridge cannot survive a runtime update indefinitely.
@@ -20,7 +21,9 @@ self.addEventListener("fetch", event => {
 
     // Always check the network for the HTML entry point so a new deployment
     // can publish a new fingerprinted WebAssembly/JavaScript file immediately.
-    if (event.request.mode === "navigate" || runtimeAsset) {
+    // Project manifests are mutable entry points. Refresh them from the network
+    // while retaining an offline fallback; their assets use content-hash URLs.
+    if (event.request.mode === "navigate" || runtimeAsset || projectManifest) {
         event.respondWith(fetch(event.request).then(response => {
             if (response.ok) {
                 const clone = response.clone();

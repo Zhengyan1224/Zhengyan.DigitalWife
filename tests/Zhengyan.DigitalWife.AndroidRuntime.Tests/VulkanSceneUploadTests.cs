@@ -11,11 +11,18 @@ internal static unsafe class VulkanSceneUploadTests
 {
     public static void TestReflectionSizes()
     {
-        Check(AndroidRenderPolicy.ResolveReflectionSize(2400, 1080, "auto") == (1024, 461), "Landscape reflection exceeds GLES detail.");
-        Check(AndroidRenderPolicy.ResolveReflectionSize(1080, 2400, "high") == (461, 1024), "Portrait reflection aspect changed.");
+        Check(AndroidRenderPolicy.ResolveReflectionSize(2400, 1080, "auto") == (2400, 1080), "Default mirror/water reflection resolution differs from PC.");
+        Check(AndroidRenderPolicy.ResolveReflectionSize(1080, 2400, "high") == (1080, 2400), "High-profile portrait reflection resolution differs from PC.");
+        Check(AndroidRenderPolicy.ResolveReflectionSize(2400, 1080, "medium") == (1024, 461), "Explicit medium profile lost its reflection limit.");
         Check(AndroidRenderPolicy.ResolveReflectionSize(2400, 1080, " LOW ") == (512, 230), "Low profile reflection is too large.");
         Check(AndroidRenderPolicy.ResolveReflectionSize(320, 180, null) == (320, 180), "Small camera was upscaled.");
         Check(AndroidRenderPolicy.ResolveReflectionSize(0, -1, "auto") == (1, 1), "Invalid viewport was not clamped.");
+        var quality = new Zhengyan.DigitalWife.GameProjects.AndroidQualitySettings();
+        Check(AndroidRenderPolicy.Resolve(quality, 4).Samples == 4, "Auto profile disabled the project's PC 4x MSAA setting.");
+        quality.Profile = "low";
+        Check(AndroidRenderPolicy.Resolve(quality, 4).Samples == 1, "Explicit low profile no longer disables MSAA.");
+        quality.Profile = "medium";
+        Check(AndroidRenderPolicy.Resolve(quality, 4).Samples == 2, "Explicit medium profile lost its MSAA limit.");
     }
 
     public static void TestScenePasses()

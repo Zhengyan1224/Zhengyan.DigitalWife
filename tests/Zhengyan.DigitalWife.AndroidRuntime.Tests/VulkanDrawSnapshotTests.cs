@@ -12,6 +12,94 @@ using Device = Veldrid.GraphicsDevice;
 
 internal static unsafe class VulkanDrawSnapshotTests
 {
+    public static void TestShadowFilters()
+    {
+        if (!VulkanRenderer.IsSupported(out string reason)) { Console.WriteLine($"SKIP shadow filtering: {reason}"); return; }
+        using Device device = Device.CreateVulkan(new GraphicsDeviceOptions());
+        ResourceFactory factory = device.ResourceFactory;
+        using CommandList commands = factory.CreateCommandList();
+        VulkanRenderer renderer = new();
+        Set(renderer, "_device", device); Set(renderer, "_commandList", commands);
+        using TriangleModel model = new();
+        using PmxGpuResources resources = new(new(renderer, Vector4.Zero), model);
+        resources.PositionBuffer.Update(new ReadOnlySpan<Vector3>(model.GetPositions(), 3));
+        resources.NormalBuffer.Update(new ReadOnlySpan<Vector3>(model.GetNormals(), 3));
+        resources.UvBuffer.Update(new ReadOnlySpan<Vector2>(model.GetUVs(), 3));
+        using VeldridPmxMainPassRenderer main = new(renderer, resources);
+        Mmd.MMDMaterial material = new() { BothFace = true, Diffuse = Vector3.One, Ambient = Vector3.Zero };
+        Mmd.MMDMesh[] meshes = [new(0, 3, material)];
+        Dictionary<Mmd.MMDMaterial, MaterialTextures> materials = new()
+        { [material] = new() { DescriptorSet = resources.CreateMaterialDescriptorSet(null, null, null) } };
+        using Texture map = factory.CreateTexture(TextureDescription.Texture2D(4, 4, 1, 1, PixelFormat.R32_Float, TextureUsage.Sampled));
+        using TextureView mapView = factory.CreateTextureView(map);
+        using Sampler sampler = factory.CreateSampler(new SamplerDescription(
+            SamplerAddressMode.Clamp,SamplerAddressMode.Clamp,SamplerAddressMode.Clamp,
+            SamplerFilter.MinPoint_MagPoint_MipPoint,null,0,0,uint.MaxValue,0,SamplerBorderColor.OpaqueWhite));
+        float[] depths = Enumerable.Range(0, 16).Select(i => i % 4 < 2 ? .25f : .75f).ToArray();
+        device.UpdateTexture(map, depths, 0, 0, 0, 4, 4, 1, 0, 0);
+        using Texture color = factory.CreateTexture(TextureDescription.Texture2D(128, 128, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.RenderTarget));
+        using Texture depth = factory.CreateTexture(TextureDescription.Texture2D(128, 128, 1, 1, PixelFormat.R32_Float, TextureUsage.DepthStencil));
+        using Texture capture = factory.CreateTexture(TextureDescription.Texture2D(128, 128, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.Staging));
+        using Framebuffer target = factory.CreateFramebuffer(new(depth, color));
+        RuntimeTextureHandle texture = new(Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend.Vulkan, 0, mapView);
+        ShadowMapBinding directional = new(texture, Matrix4x4.Identity, 0, 100, 1, 0)
+        { NativeSampler = sampler, TexelSize = new(.25f), NormalOffset = 0 };
+        LocalLightShadowBinding local = new()
+        {
+            Texture = texture, NativeSampler = sampler, Strength = 1, Bias = 0, NormalOffset = 0, TexelSize = new(.25f),
+            PointLights = [new(0, .1f, 100, Enumerable.Repeat(Matrix4x4.Identity, 6).ToArray(), Enumerable.Repeat(new Vector4(0,0,1,1),6).ToArray())],
+            SpotLights = []
+        };
+        PointLightData[] points = [new(new(0, 0, 2), Vector3.One, 1, 100, CastShadows: true)];
+        long frame = 0;
+        try
+        {
+            foreach (bool point in new[] { false, true })
+            foreach (bool toon in new[] { false, true })
+            {
+                Set(renderer, "_uniformFrameId", frame++); Set(renderer, "_frameOpen", true);
+                commands.Begin(); commands.SetFramebuffer(target);
+                typeof(VulkanRenderer).GetProperty("CurrentOutputDescription", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer,target.OutputDescription);
+                commands.ClearColorTarget(0,RgbaFloat.Black); commands.ClearDepthStencil(1);
+                commands.SetFullViewports(); commands.SetFullScissorRects();
+                main.Draw(resources,meshes,materials,Matrix4x4.CreateScale(3,3,1)*Matrix4x4.CreateTranslation(0,0,.5f),
+                    Matrix4x4.Identity,Matrix4x4.Identity,point?Vector3.Zero:Vector3.One,-Vector3.UnitZ,Vector3.Zero,0,
+                    point?points:[],[],true,toon?"toon":"smooth",point?null:directional,point?local:null,null);
+                commands.CopyTexture(color,capture); commands.End(); device.SubmitCommands(commands); device.WaitForIdle();
+                Set(renderer,"_frameOpen",false);
+                MappedResource pixels=device.Map(capture,MapMode.Read);
+                try
+                {
+                    HashSet<byte> levels=[];
+                    for(int x=48;x<80;x++)
+                    {
+                        float worldX=(x+.5f)/128*2-1, uv=worldX*.5f+.5f;
+                        float visibility=point ? (Linear(uv-.125f)+Linear(uv+.125f))*.5f
+                            : (Linear(uv-.25f)+Linear(uv)+Linear(uv+.25f))/3;
+                        if(toon) visibility=visibility>=.5f?1:0;
+                        float distance=MathF.Sqrt(worldX*worldX+1.5f*1.5f+MathF.Pow(1f/128,2));
+                        float radiance=point?MathF.Pow(1-distance/100,2)*1.5f/distance:1;
+                        byte actual=*((byte*)pixels.Data+64*pixels.RowPitch+x*4);
+                        float expected=visibility*radiance*255;
+                        Check(MathF.Abs(actual-expected)<3,$"Shadow filtering point={point}, toon={toon}, x={x}: expected {expected}, got {actual}.");
+                        levels.Add(actual);
+                    }
+                    if(!toon) Check(levels.Count>12,"Shadow coverage still has quantized nearest-neighbour bands.");
+                    Console.WriteLine($"PASS shadow filter point={point}, toon={toon}, distinct levels={levels.Count}");
+                }
+                finally { device.Unmap(capture); }
+            }
+        }
+        finally { device.WaitForIdle(); renderer.FrameUniforms.Dispose(); }
+
+        static float Linear(float uv)
+        {
+            float pixel=Math.Clamp(uv,.25f,.75f)*4-.5f;
+            int lower=(int)MathF.Floor(pixel); float fraction=pixel-lower;
+            return (lower>=2?1-fraction:0)+(lower+1>=2?fraction:0);
+        }
+    }
+
     public static void TestPmxEdgeWidths()
     {
         Check(AndroidRenderPolicy.ResolvePmxEdgeWidthScale(720, 1280, 720, 1280) == 2,

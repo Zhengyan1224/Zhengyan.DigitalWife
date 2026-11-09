@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
@@ -22,6 +23,7 @@ public sealed class WebHttpAssetStore(HttpClient httpClient) : IWebAssetStore
 
     private readonly HttpClient _httpClient = httpClient;
     private WebAssetManifest? _manifest;
+    private string _manifestVersion = string.Empty;
     private string _rootPath = string.Empty;
 
     public WebAssetManifest Manifest => _manifest
@@ -52,6 +54,8 @@ public sealed class WebHttpAssetStore(HttpClient httpClient) : IWebAssetStore
         {
             throw new InvalidDataException("Web manifest signature is invalid.");
         }
+        // Older manifests may omit hashes. Their assets are fresh per load.
+        _manifestVersion = Guid.NewGuid().ToString("N");
         return _manifest;
     }
 
@@ -156,13 +160,26 @@ public sealed class WebHttpAssetStore(HttpClient httpClient) : IWebAssetStore
         return Deserialize<T>(bytes, NormalizeRelativePath(relativePath));
     }
 
-    public ValueTask<string> GetUriAsync(
+    public async ValueTask<string> GetUriAsync(
         string relativePath,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        await EnsureManifestAsync(cancellationToken);
         string normalized = NormalizeRelativePath(relativePath);
-        return ValueTask.FromResult(CombineUrl(_rootPath, normalized));
+        return CreateAssetUri(normalized);
+    }
+
+    private string CreateAssetUri(string path)
+    {
+        WebAssetEntry? entry = _manifest?.Assets.FirstOrDefault(asset =>
+            string.Equals(NormalizeRelativePath(asset.Path), path, StringComparison.OrdinalIgnoreCase));
+        string uri = CombineUrl(_rootPath, path);
+        if (entry is null) return uri;
+        // Different projects commonly reuse Body.pmx, textures and script names.
+        // Cache their contents, not the unversioned project-relative pathname.
+        string version = string.IsNullOrWhiteSpace(entry.Sha256) ? _manifestVersion : entry.Sha256.ToLowerInvariant();
+        return $"{uri}?v={Uri.EscapeDataString(version)}";
     }
 
     private async Task EnsureManifestAsync(CancellationToken cancellationToken)
@@ -177,8 +194,13 @@ public sealed class WebHttpAssetStore(HttpClient httpClient) : IWebAssetStore
         string relativePath,
         CancellationToken cancellationToken)
     {
-        string uri = CombineUrl(_rootPath, relativePath);
-        return await _httpClient.GetByteArrayAsync(uri, cancellationToken);
+        bool manifest = string.Equals(relativePath, "web.manifest.json", StringComparison.OrdinalIgnoreCase);
+        string uri = manifest ? CombineUrl(_rootPath, relativePath) : CreateAssetUri(relativePath);
+        using HttpRequestMessage request = new(HttpMethod.Get, uri);
+        if (manifest) request.SetBrowserRequestCache(BrowserRequestCache.NoStore);
+        using HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
 
     private static T Deserialize<T>(byte[] bytes, string path)

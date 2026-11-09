@@ -10,6 +10,13 @@ using Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd;
 
+if (args.Contains("--assets"))
+{
+    await WebAssetCacheTests.RunAsync();
+    Console.WriteLine("Web asset cache regression tests passed.");
+    return 0;
+}
+
 if (args.Contains("--surfaces"))
 {
     VerifyModuleBuildVersion();
@@ -20,6 +27,7 @@ if (args.Contains("--surfaces"))
 }
 
 VerifyVertexUpdates();
+await WebAssetCacheTests.RunAsync();
 VerifyModuleBuildVersion();
 VerifyMaterialInterop();
 VerifyIdlePhysicsAndPlayback();

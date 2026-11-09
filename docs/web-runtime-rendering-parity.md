@@ -58,3 +58,13 @@ GPU 像素测试得到阴影区 RGB 64、受光区 RGB 191、缓存阴影 RGB 64
 - `tests/helpers/web-cache-upgrade-fixture.mjs` 在保留旧模块的同一浏览器中升级播放器，分别关闭镜面、点光源阴影、射灯阴影并比较像素。旧模块的三项差异均为零；升级后要求三项效果都产生实际像素变化，并且阴影区域变暗。
 
 DemoGame05 Release AOT 实测：旧模块的三项差异均为 0；保留浏览器缓存、刷新到新版后，点光源阴影使 59,374 个像素变暗，射灯阴影使 25,305 个像素变暗，镜面改变 56,061 个像素，WebGL 错误为 0。原预览地址 `http://localhost:5052/` 也完成了反射和人物投影的画面检查。
+
+## 替换 web-game 项目内容
+
+可以将另一次完整 Web 导出的内容放到 `artifacts/web-player/wwwroot/web-game`，其中必须包含对应的 `web.manifest.json`、工程、场景、资源和预编译脚本。播放器与游戏内容可以分别更新。
+
+不同游戏常使用相同的 `assets/models/Body/Body.pmx`、贴图和脚本路径。HTTP 资源加载现在以清单中的 SHA-256 作为 URL 版本，清单则每次重新请求；旧版无哈希清单使用每次加载的新版本号。IndexedDB 包装器重新加载清单时会清除已解析的贴图 URI。清单仍保留 Service Worker 离线回退，资源大小和 SHA-256 校验继续生效。
+
+验证：`dotnet run --project tests/Zhengyan.DigitalWife.WebRuntime.Tests -- --assets`、`node --test tests/web-service-worker.test.mjs`，以及同一浏览器保留旧 Body.pmx 的实际导出项目加载测试。DemoGame01 的清单和磁盘模型均为 7,481,010 字节；旧缓存模型为 7,468,876 字节。
+
+Release AOT 浏览器实测完整复现原大小不匹配；同一浏览器刷新新版后，通过 `Body.pmx?v=074a9cdca7405d77d34b7ea809745c185e5587427df37530c78c3d6671269594` 读取到 7,481,010 字节，DemoGame01 成功加载 3 个 PMX 模型、52,521 个顶点。发布播放器后仍保留用户替换的游戏内容。
