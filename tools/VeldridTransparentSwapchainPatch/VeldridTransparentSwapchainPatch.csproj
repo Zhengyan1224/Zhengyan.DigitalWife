@@ -5,12 +5,18 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="..\VeldridCommonPatch\VeldridMemorySafetyPatch.cs" Link="VeldridMemorySafetyPatch.cs" />
     <Compile Include="..\VeldridCommonPatch\VeldridEmptyPassPatch.cs" Link="VeldridEmptyPassPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VeldridRenderPassSynchronizationPatch.cs" Link="VeldridRenderPassSynchronizationPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VeldridVulkanPresentationPatch.cs" Link="VeldridVulkanPresentationPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VulkanPresentRuntime.cs" Link="VulkanPresentRuntime.cs" />
+    <Compile Include="..\VeldridAndroidPatch\VulkanPresentationVerification.cs" Link="VulkanPresentationVerification.cs" />
     <PackageReference Include="Mono.Cecil" />
+    <PackageReference Include="Veldrid" />
   </ItemGroup>
 
 </Project>

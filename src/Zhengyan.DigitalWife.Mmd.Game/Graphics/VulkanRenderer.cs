@@ -36,6 +36,7 @@ public sealed class VulkanRenderer : IRenderer
     private long _uniformFrameId;
     private VeldridUniformArena? _uniformArena;
     private VeldridVertexArena? _vertexArena;
+    private VeldridIndexArena? _indexArena;
     private long _waterProfileFrameId = -1;
     private int _waterDraws;
     private int _waterRipples;
@@ -109,6 +110,16 @@ public sealed class VulkanRenderer : IRenderer
             _vertexArena ??= new VeldridVertexArena(Device);
             _vertexArena.BeginFrame(_frameSlot, _uniformFrameId);
             return _vertexArena;
+        }
+    }
+
+    internal VeldridIndexArena FrameIndices
+    {
+        get
+        {
+            _indexArena ??= new VeldridIndexArena(Device);
+            _indexArena.BeginFrame(_frameSlot, _uniformFrameId);
+            return _indexArena;
         }
     }
 
@@ -656,6 +667,8 @@ public sealed class VulkanRenderer : IRenderer
             _uniformArena = null;
             _vertexArena?.Dispose();
             _vertexArena = null;
+            _indexArena?.Dispose();
+            _indexArena = null;
             _multisampleFramebuffer?.Dispose();
             _multisampleDepth?.Dispose();
             _multisampleColor?.Dispose();

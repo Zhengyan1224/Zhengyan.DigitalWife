@@ -92,7 +92,7 @@ public static class AndroidVeldridPatch
         PatchCompositeAlpha(module, marker);
         AndroidVulkanRenderPassPatch.Apply(module);
         VeldridEmptyPassPatch.Apply(module);
-        AndroidVulkanPresentationPatch.Apply(module);
+        VeldridVulkanPresentationPatch.Apply(module);
         VeldridMemorySafetyPatch.Apply(module);
 
         foreach (TypeDefinition type in module.Types)

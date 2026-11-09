@@ -40,6 +40,7 @@ internal static class AndroidRuntimeRegressionTests
             ("PMX edge widths preserve desktop proportions on Android outputs", VulkanDrawSnapshotTests.TestPmxEdgeWidths),
             ("Vulkan scene upload snapshots and uninterrupted passes", VulkanSceneUploadTests.TestScenePasses),
             ("Vulkan precomputed water ripples preserve original GPU math", VulkanWaterRippleTests.TestPrecomputedRipples),
+            ("Vulkan desktop UI and debug line upload snapshots", VulkanDesktopOverlayTests.TestOverlaySnapshots),
             ("Android reflection sizes match across backends", VulkanSceneUploadTests.TestReflectionSizes),
             ("Android motion loops preserve script physics settings", AndroidMotionLoopTests.TestScriptLayers),
             ("Android motion loops preserve mixed layer physics settings", AndroidMotionLoopTests.TestMixedLayers),

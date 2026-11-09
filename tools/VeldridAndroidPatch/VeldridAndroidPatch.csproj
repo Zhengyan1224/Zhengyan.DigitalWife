@@ -9,6 +9,9 @@
   <ItemGroup>
     <Compile Include="..\VeldridCommonPatch\VeldridMemorySafetyPatch.cs" Link="VeldridMemorySafetyPatch.cs" />
     <Compile Include="..\VeldridCommonPatch\VeldridEmptyPassPatch.cs" Link="VeldridEmptyPassPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VeldridRenderPassSynchronizationPatch.cs" Link="VeldridRenderPassSynchronizationPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VeldridVulkanPresentationPatch.cs" Link="VeldridVulkanPresentationPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VulkanPresentRuntime.cs" Link="VulkanPresentRuntime.cs" />
     <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="Veldrid" />
     <PackageReference Include="Newtonsoft.Json" />

@@ -4,6 +4,25 @@ using Mono.Cecil.Cil;
 const string MarkerTypeName = "ZhengyanTransparentSwapchainPatch";
 const string EnvironmentVariableName = "ZHENGYAN_VULKAN_TRANSPARENT_SWAPCHAIN";
 
+if (args is ["--verify-present", string presentPath])
+{
+    VulkanPresentationVerification.Run(presentPath);
+    return 0;
+}
+
+if (args is ["--check", string checkedPath])
+{
+    using ModuleDefinition checkedModule = ModuleDefinition.ReadModule(Path.GetFullPath(checkedPath));
+    if (!checkedModule.Types.Any(type => type.Namespace == "Veldrid.Vk" && type.Name == MarkerTypeName))
+        throw new InvalidOperationException("Desktop Vulkan swapchain patch is missing.");
+    VeldridEmptyPassPatch.Check(checkedModule);
+    VeldridRenderPassSynchronizationPatch.Check(checkedModule);
+    VeldridVulkanPresentationPatch.Check(checkedModule);
+    VeldridMemorySafetyPatch.Check(checkedModule);
+    Console.WriteLine($"PASS desktop Vulkan patches: empty passes, color/depth and presentation synchronization, memory safety; {checkedPath}");
+    return 0;
+}
+
 if (args.Length != 1)
 {
     Console.Error.WriteLine("Usage: VeldridTransparentSwapchainPatch <Veldrid.dll>");
@@ -30,9 +49,11 @@ using ModuleDefinition module = ModuleDefinition.ReadModule(assemblyPath, new Re
 
 bool memoryPatched = VeldridMemorySafetyPatch.Apply(module);
 bool emptyPassesPatched = VeldridEmptyPassPatch.Apply(module);
+bool synchronizationPatched = VeldridRenderPassSynchronizationPatch.Apply(module);
+bool presentationPatched = VeldridVulkanPresentationPatch.Apply(module);
 if (module.Types.Any(type => type.Namespace == "Veldrid.Vk" && type.Name == MarkerTypeName))
 {
-    if (memoryPatched || emptyPassesPatched)
+    if (memoryPatched || emptyPassesPatched || synchronizationPatched || presentationPatched)
     {
         string updated = assemblyPath + ".memory-safety.tmp";
         module.Write(updated);

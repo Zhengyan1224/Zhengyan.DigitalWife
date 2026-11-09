@@ -11,28 +11,19 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 internal sealed unsafe class VeldridImGuiRenderer : IDisposable
 {
-    private const uint InitialVertexBufferSize = 256 * 1024;
-    private const uint InitialIndexBufferSize = 64 * 1024;
-
     private readonly VulkanRenderer _renderer;
     private readonly nint _context;
     private readonly ResourceLayout _mainLayout;
     private readonly ResourceLayout _textureLayout;
-    private readonly DeviceBuffer[] _frameBuffers;
     private readonly Sampler _sampler;
-    private readonly ResourceSet[] _mainSets;
+    private readonly Dictionary<DeviceBuffer, ResourceSet> _mainSets = [];
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
     private readonly Dictionary<TextureView, nint> _viewBindings = [];
     private readonly Dictionary<nint, ResourceSet> _textureSets = [];
     private readonly List<(OutputDescription Output, Pipeline Pipeline)> _pipelines = [];
-    private readonly List<DeviceBuffer> _retiredBuffers = [];
-    private DeviceBuffer[] _vertexBuffers;
-    private DeviceBuffer[] _indexBuffers;
     private Texture? _fontTexture;
     private TextureView? _fontView;
-    private uint _vertexBufferSize = InitialVertexBufferSize;
-    private uint _indexBufferSize = InitialIndexBufferSize;
     private nint _nextBinding = 1;
     private bool _disposed;
 
@@ -48,16 +39,12 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         configureFonts?.Invoke();
 
         ResourceFactory factory = renderer.ResourceFactory;
-        _vertexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
-        _indexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic))).ToArray();
-        _frameBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
         _sampler = factory.CreateSampler(SamplerDescription.Point);
         _mainLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("ImGuiFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex)));
+            new ResourceLayoutElementDescription("ImGuiFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex, ResourceLayoutElementOptions.DynamicBinding)));
         _textureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("ImGuiTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("ImGuiSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
-        _mainSets = _frameBuffers.Select(buffer => factory.CreateResourceSet(new ResourceSetDescription(_mainLayout, buffer))).ToArray();
         _shaders = factory.CreateFromSpirv(
             VulkanShaderCompiler.CompileSource("imgui.vert", VertexSource, ShaderStages.Vertex),
             VulkanShaderCompiler.CompileSource("imgui.frag", FragmentSource, ShaderStages.Fragment));
@@ -137,14 +124,10 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
         foreach (Shader shader in _shaders) shader.Dispose();
         _fontView?.Dispose();
         _fontTexture?.Dispose();
-        foreach (ResourceSet set in _mainSets) set.Dispose();
+        foreach (ResourceSet set in _mainSets.Values) set.Dispose();
         _textureLayout.Dispose();
         _mainLayout.Dispose();
         _sampler.Dispose();
-        foreach (DeviceBuffer buffer in _frameBuffers) buffer.Dispose();
-        foreach (DeviceBuffer buffer in _indexBuffers) buffer.Dispose();
-        foreach (DeviceBuffer buffer in _vertexBuffers) buffer.Dispose();
-        foreach (DeviceBuffer buffer in _retiredBuffers) buffer.Dispose();
         ImGui.DestroyContext(_context);
     }
 
@@ -167,26 +150,8 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
 
     private void RenderDrawData(ImDrawDataPtr drawData)
     {
-        if (drawData.CmdListsCount == 0 || drawData.TotalVtxCount == 0) return;
-        EnsureBufferCapacity(drawData.TotalVtxCount, drawData.TotalIdxCount);
-
-        int slot = _renderer.CurrentFrameSlot;
-        DeviceBuffer vertexBuffer = _vertexBuffers[slot];
-        DeviceBuffer indexBuffer = _indexBuffers[slot];
-        DeviceBuffer frameBuffer = _frameBuffers[slot];
+        if (drawData.CmdListsCount == 0 || drawData.TotalVtxCount == 0 || drawData.TotalIdxCount == 0) return;
         CommandList commands = _renderer.NativeCommandList;
-        uint vertexOffsetBytes = 0;
-        uint indexOffsetBytes = 0;
-        for (int i = 0; i < drawData.CmdListsCount; i++)
-        {
-            ImDrawListPtr drawList = drawData.CmdLists[i];
-            uint vertexBytes = checked((uint)(drawList.VtxBuffer.Size * sizeof(ImDrawVert)));
-            uint indexBytes = checked((uint)(drawList.IdxBuffer.Size * sizeof(ushort)));
-            commands.UpdateGraphicsBuffer(vertexBuffer, vertexOffsetBytes, (nint)drawList.VtxBuffer.Data, vertexBytes);
-            commands.UpdateGraphicsBuffer(indexBuffer, indexOffsetBytes, (nint)drawList.IdxBuffer.Data, indexBytes);
-            vertexOffsetBytes += vertexBytes;
-            indexOffsetBytes += indexBytes;
-        }
 
         FrameData frame = new()
         {
@@ -195,22 +160,32 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
                 -1f - drawData.DisplayPos.X * (2f / drawData.DisplaySize.X),
                 -1f - drawData.DisplayPos.Y * (2f / drawData.DisplaySize.Y))
         };
-        _renderer.NativeDevice.UpdateBuffer(frameBuffer, 0, frame);
+        VeldridUniformSlice frameUniforms = _renderer.FrameUniforms.Upload(frame);
+        if (!_mainSets.TryGetValue(frameUniforms.Buffer, out ResourceSet? mainSet))
+        {
+            mainSet = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_mainLayout, frameUniforms.BindingRange));
+            _mainSets.Add(frameUniforms.Buffer, mainSet);
+        }
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription));
-        commands.SetVertexBuffer(0, vertexBuffer);
-        commands.SetIndexBuffer(indexBuffer, IndexFormat.UInt16);
-        commands.SetGraphicsResourceSet(0, _mainSets[slot]);
+        frameUniforms.Bind(commands, 0, mainSet);
 
         Vector2 clipOffset = drawData.DisplayPos;
         Vector2 clipScale = drawData.FramebufferScale;
         int framebufferWidth = Math.Max((int)(drawData.DisplaySize.X * clipScale.X), 0);
         int framebufferHeight = Math.Max((int)(drawData.DisplaySize.Y * clipScale.Y), 0);
         if (framebufferWidth == 0 || framebufferHeight == 0) return;
-        int globalVertexOffset = 0;
-        uint globalIndexOffset = 0;
         for (int listIndex = 0; listIndex < drawData.CmdListsCount; listIndex++)
         {
             ImDrawListPtr drawList = drawData.CmdLists[listIndex];
+            if (drawList.VtxBuffer.Size == 0 || drawList.IdxBuffer.Size == 0) continue;
+            // Each list and each Render() call keeps its own ranges until this
+            // submission completes, including after pages grow within a frame.
+            VeldridVertexSlice vertices = _renderer.FrameVertices.Upload(
+                new ReadOnlySpan<ImDrawVert>((void*)drawList.VtxBuffer.Data, drawList.VtxBuffer.Size));
+            VeldridIndexSlice indices = _renderer.FrameIndices.Upload(
+                new ReadOnlySpan<ushort>((void*)drawList.IdxBuffer.Data, drawList.IdxBuffer.Size));
+            vertices.Bind(commands);
+            indices.Bind(commands, IndexFormat.UInt16);
             for (int commandIndex = 0; commandIndex < drawList.CmdBuffer.Size; commandIndex++)
             {
                 ImDrawCmdPtr drawCommand = drawList.CmdBuffer[commandIndex];
@@ -240,31 +215,10 @@ internal sealed unsafe class VeldridImGuiRenderer : IDisposable
                 commands.DrawIndexed(
                     drawCommand.ElemCount,
                     1,
-                    globalIndexOffset + drawCommand.IdxOffset,
-                    globalVertexOffset + (int)drawCommand.VtxOffset,
+                    drawCommand.IdxOffset,
+                    (int)drawCommand.VtxOffset,
                     0);
             }
-
-            globalIndexOffset += (uint)drawList.IdxBuffer.Size;
-            globalVertexOffset += drawList.VtxBuffer.Size;
-        }
-    }
-
-    private void EnsureBufferCapacity(int vertexCount, int indexCount)
-    {
-        uint requiredVertices = checked((uint)(vertexCount * sizeof(ImDrawVert)));
-        uint requiredIndices = checked((uint)(indexCount * sizeof(ushort)));
-        if (requiredVertices > _vertexBufferSize)
-        {
-            _vertexBufferSize = Math.Max(requiredVertices * 3 / 2, InitialVertexBufferSize);
-            _retiredBuffers.AddRange(_vertexBuffers);
-            _vertexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_vertexBufferSize, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
-        }
-        if (requiredIndices > _indexBufferSize)
-        {
-            _indexBufferSize = Math.Max(requiredIndices * 3 / 2, InitialIndexBufferSize);
-            _retiredBuffers.AddRange(_indexBuffers);
-            _indexBuffers = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_indexBufferSize, BufferUsage.IndexBuffer | BufferUsage.Dynamic))).ToArray();
         }
     }
 

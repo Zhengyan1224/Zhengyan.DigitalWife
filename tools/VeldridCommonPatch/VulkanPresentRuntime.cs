@@ -1,6 +1,6 @@
 using Vulkan;
 
-// Copied into the private Android Veldrid assembly by the build patch. This
+// Copied into the private Veldrid assembly by the build patch. This
 // class must only depend on the BCL and vk, never on the build tool at runtime.
 internal static unsafe class VulkanPresentRuntime
 {
@@ -79,3 +79,5 @@ internal static unsafe class VulkanPresentRuntime
             throw new InvalidOperationException("Vulkan presentation failed: " + result);
     }
 }
+
+

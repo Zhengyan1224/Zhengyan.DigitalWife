@@ -3,13 +3,14 @@ using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using Vulkan;
 
-internal static class AndroidVulkanPresentationPatch
+internal static class VeldridVulkanPresentationPatch
 {
     internal const string RuntimeName = "Veldrid.Vk.ZhengyanVulkanPresent";
     private const string SemaphoresName = "_zhengyanPresentSemaphores";
 
-    internal static void Apply(ModuleDefinition module)
+    internal static bool Apply(ModuleDefinition module)
     {
+        if (module.GetType(RuntimeName) is not null) { Check(module); return false; }
         TypeDefinition runtime = CopyRuntime(module);
         TypeDefinition swapchain = module.GetType("Veldrid.Vk.VkSwapchain");
         FieldDefinition semaphores = new(SemaphoresName, FieldAttributes.Assembly,
@@ -51,6 +52,7 @@ internal static class AndroidVulkanPresentationPatch
         recreate.Operand = swapchain.Methods.Single(m => m.Name == "RecreateAndReacquire");
         recreate.Next.OpCode = OpCodes.Nop;
         Check(module);
+        return true;
     }
 
     internal static void Check(ModuleDefinition module)
@@ -137,3 +139,5 @@ internal static class AndroidVulkanPresentationPatch
         return target;
     }
 }
+
+

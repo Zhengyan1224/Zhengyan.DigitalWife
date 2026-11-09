@@ -1,6 +1,6 @@
 # VeldridTransparentSwapchainPatch：桌面 Vulkan 透明窗口修补
 
-这是 GameEditor / GamePlayer 构建时自动调用的工具，为当前 Veldrid 构建副本补充透明 Swapchain 和相关内存安全处理。用于桌面精灵模式及底层兼容维护。
+这是 GameEditor / GamePlayer 构建时自动调用的工具，为当前 Veldrid 构建副本补充透明 Swapchain、空 Render Pass 优化、颜色/深度附件同步、每图像呈现信号量和内存安全处理。用于桌面精灵模式及底层兼容维护。
 
 普通用户只需构建播放器，不需要单独执行它。它不负责游戏场景编辑，也不将所有窗口强制变为透明。
 
@@ -22,6 +22,8 @@ dotnet build tools/VeldridTransparentSwapchainPatch
 
 ```text
 dotnet run --project tools/VeldridTransparentSwapchainPatch -- <build-copy-of-Veldrid.dll>
+dotnet run --project tools/VeldridTransparentSwapchainPatch -- --check <build-copy-of-Veldrid.dll>
+dotnet run --project tools/VeldridTransparentSwapchainPatch -- --verify-present <build-copy-of-Veldrid.dll>
 ```
 
 常规项目构建会自动修补输出目录和发布目录。修改工具后验证普通窗口、桌面精灵、OpenGL/Vulkan 和目标平台的行为。

@@ -12,7 +12,7 @@ internal static class AndroidVeldridPatchVerification
                 throw new Exception($"Android Vulkan startup patch is missing from {path}");
             AndroidVulkanRenderPassPatch.Check(module);
             VeldridEmptyPassPatch.Check(module);
-            AndroidVulkanPresentationPatch.Check(module);
+            VeldridVulkanPresentationPatch.Check(module);
             VeldridMemorySafetyPatch.Check(module);
             MethodDefinition method = module.GetType("Veldrid.Vk.VkGraphicsDevice").Methods.Single(m => m.Name == "CreateLogicalDevice");
             if (!method.Body.ExceptionHandlers.Any(handler => handler.HandlerType == Mono.Cecil.Cil.ExceptionHandlerType.Finally) ||

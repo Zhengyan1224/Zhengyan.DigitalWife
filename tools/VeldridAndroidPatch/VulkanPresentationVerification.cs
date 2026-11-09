@@ -27,8 +27,8 @@ public static unsafe class VulkanPresentationVerification
     internal static void Run(string path)
     {
         using ModuleDefinition module = ModuleDefinition.ReadModule(path);
-        AndroidVulkanPresentationPatch.Check(module);
-        TypeDefinition runtime = module.GetType(AndroidVulkanPresentationPatch.RuntimeName);
+        VeldridVulkanPresentationPatch.Check(module);
+        TypeDefinition runtime = module.GetType(VeldridVulkanPresentationPatch.RuntimeName);
         foreach (MethodDefinition method in runtime.Methods)
             foreach (var instruction in method.Body.Instructions)
                 if (instruction.Operand is MethodReference native && native.DeclaringType.FullName == "Vulkan.VulkanNative")
@@ -54,7 +54,7 @@ public static unsafe class VulkanPresentationVerification
         try
         {
             Assembly assembly = context.LoadFromStream(stream);
-            Type type = assembly.GetType(AndroidVulkanPresentationPatch.RuntimeName, true)!;
+            Type type = assembly.GetType(VeldridVulkanPresentationPatch.RuntimeName, true)!;
             PresentCall present = type.GetMethod("Present", BindingFlags.Static | BindingFlags.NonPublic)!.CreateDelegate<PresentCall>();
             DestroyCall destroy = type.GetMethod("DestroySwapchain", BindingFlags.Static | BindingFlags.NonPublic)!.CreateDelegate<DestroyCall>();
             Reset();

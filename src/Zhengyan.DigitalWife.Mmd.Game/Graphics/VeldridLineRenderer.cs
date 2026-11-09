@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.InteropServices;
 using Veldrid;
 using Veldrid.SPIRV;
 
@@ -8,25 +7,19 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Graphics;
 public sealed class VeldridLineRenderer : ILineRenderer
 {
     private readonly VulkanRenderer _renderer;
-    private DeviceBuffer[] _vertices;
-    private uint _capacity;
-    private readonly DeviceBuffer[] _uniforms;
     private readonly ResourceLayout _layout;
     private readonly Shader[] _shaders;
     private readonly ShaderSetDescription _shaderSet;
-    private readonly ResourceSet[] _sets;
+    private readonly Dictionary<DeviceBuffer, ResourceSet> _sets = [];
     private readonly List<(OutputDescription Output, bool Depth, Pipeline Pipeline)> _pipelines = [];
 
     public VeldridLineRenderer(VulkanRenderer renderer, uint initialCapacityBytes = 4096)
     {
         _renderer = renderer;
         ResourceFactory factory = renderer.ResourceFactory;
-        _capacity = Math.Max(initialCapacityBytes, 256);
-        _vertices = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription(_capacity, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
-        _uniforms = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => factory.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<Matrix4x4>(), BufferUsage.UniformBuffer | BufferUsage.Dynamic))).ToArray();
+        _ = initialCapacityBytes; // Shared frame pages grow to fit each upload.
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("LineFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex)));
-        _sets = _uniforms.Select(buffer => factory.CreateResourceSet(new ResourceSetDescription(_layout, buffer))).ToArray();
+            new ResourceLayoutElementDescription("LineFrame", ResourceKind.UniformBuffer, ShaderStages.Vertex, ResourceLayoutElementOptions.DynamicBinding)));
         _shaders = factory.CreateFromSpirv(
             VulkanShaderCompiler.CompileSource("line.vert", VertexSource, ShaderStages.Vertex),
             VulkanShaderCompiler.CompileSource("line.frag", FragmentSource, ShaderStages.Fragment));
@@ -40,15 +33,17 @@ public sealed class VeldridLineRenderer : ILineRenderer
     public void Draw(ReadOnlySpan<float> interleavedPositionColor, int vertexCount, Matrix4x4 worldViewProjection, bool depthTest = false)
     {
         if (!_renderer.IsFrameOpen || vertexCount <= 0) return;
-        uint byteCount = checked((uint)(vertexCount * 6 * sizeof(float)));
-        EnsureCapacity(byteCount);
         CommandList commands = _renderer.CommandList;
-        int slot = _renderer.CurrentFrameSlot;
-        commands.UpdateGraphicsBuffer(_vertices[slot], 0, interleavedPositionColor[..(vertexCount * 6)]);
-        commands.UpdateGraphicsBuffer(_uniforms[slot], 0, worldViewProjection);
+        VeldridVertexSlice vertices = _renderer.FrameVertices.Upload(interleavedPositionColor[..(vertexCount * 6)]);
+        VeldridUniformSlice uniforms = _renderer.FrameUniforms.Upload(worldViewProjection);
+        if (!_sets.TryGetValue(uniforms.Buffer, out ResourceSet? set))
+        {
+            set = _renderer.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, uniforms.BindingRange));
+            _sets.Add(uniforms.Buffer, set);
+        }
         commands.SetPipeline(GetPipeline(_renderer.CurrentOutputDescription, depthTest));
-        commands.SetVertexBuffer(0, _vertices[slot]);
-        commands.SetGraphicsResourceSet(0, _sets[slot]);
+        vertices.Bind(commands);
+        uniforms.Bind(commands, 0, set);
         commands.Draw((uint)vertexCount);
     }
 
@@ -56,18 +51,8 @@ public sealed class VeldridLineRenderer : ILineRenderer
     {
         foreach ((_, _, Pipeline pipeline) in _pipelines) pipeline.Dispose();
         foreach (Shader shader in _shaders) shader.Dispose();
-        foreach (ResourceSet set in _sets) set.Dispose();
+        foreach (ResourceSet set in _sets.Values) set.Dispose();
         _layout.Dispose();
-        foreach (DeviceBuffer buffer in _uniforms) buffer.Dispose();
-        foreach (DeviceBuffer buffer in _vertices) buffer.Dispose();
-    }
-
-    private void EnsureCapacity(uint bytes)
-    {
-        if (bytes <= _capacity) return;
-        _capacity = Math.Max(bytes, _capacity * 2);
-        foreach (DeviceBuffer buffer in _vertices) buffer.Dispose();
-        _vertices = Enumerable.Range(0, VulkanRenderer.FrameSlotCount).Select(_ => _renderer.ResourceFactory.CreateBuffer(new BufferDescription(_capacity, BufferUsage.VertexBuffer | BufferUsage.Dynamic))).ToArray();
     }
 
     private Pipeline GetPipeline(OutputDescription output, bool depth)
