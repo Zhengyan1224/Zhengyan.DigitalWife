@@ -11,6 +11,7 @@ internal static class AndroidVeldridPatchVerification
             if (module.GetType(AndroidVeldridPatch.MarkerName) is null)
                 throw new Exception($"Android Vulkan startup patch is missing from {path}");
             AndroidVulkanRenderPassPatch.Check(module);
+            VeldridEmptyPassPatch.Check(module);
             AndroidVulkanPresentationPatch.Check(module);
             VeldridMemorySafetyPatch.Check(module);
             MethodDefinition method = module.GetType("Veldrid.Vk.VkGraphicsDevice").Methods.Single(m => m.Name == "CreateLogicalDevice");

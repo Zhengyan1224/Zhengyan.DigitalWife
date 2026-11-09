@@ -125,6 +125,7 @@ public sealed class LocalLightShadowRenderer : IDisposable
         {
             Texture = _atlas.Texture,
             NativeSampler = _atlas.NativeSampler,
+            NativeComparisonSampler = _atlas.NativeComparisonSampler,
             PointLights = pointBindings,
             SpotLights = spotBindings,
             Strength = Math.Clamp(shadowStrength, 0.0f, 1.0f),

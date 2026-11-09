@@ -39,6 +39,10 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private long _profileUniforms;
     private long _profileVertices;
     private ulong _profileVertexBytes;
+    private long _profileWaterDraws;
+    private long _profileWaterRipples;
+    private long _profilePmxDraws;
+    private long _profileHardwareShadowDraws;
 
     public GameProject? Project => _project;
 
@@ -281,7 +285,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         try
         {
             if (!_surface.IsValid) throw new InvalidOperationException("Android Vulkan surface is no longer valid.");
-            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=5; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth; presentSync=per-image-semaphore; sceneUploads=draw-snapshots; reflections=android-size-limit");
+            Log.Info(LogTag, $"Vulkan startup: renderer initialization begin; surface={_width}x{_height}; startupPatch=8; loader=borrowed-dlerror; uniforms=draw-snapshots; depthSync=color-and-depth; presentSync=per-image-semaphore; sceneUploads=draw-snapshots; reflections=quality-profile; shadowFilter=hardware-comparison-or-gather; cpuPoseUpload=batched; emptyRenderPass=skipped; waterRipples=precomputed");
 #pragma warning disable CS0618
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618
@@ -314,7 +318,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 $"MSAA requested={_game.GraphicsDevice.RequestedAntiAliasingSamples}x, " +
                 $"actual={_game.GraphicsDevice.AntiAliasingSamples}x; " +
                 $"openCL=disabled; " +
-                $"frameSync=previous-submission-fence; deviceIdlePerFrame=false; " +
+                $"frameSync=frame-slot-fence; deviceIdlePerFrame=false; " +
                 $"vulkanCompute=requested={_project.Runtime.UseVulkanCompute}; " +
                 $"skinning={(_project.Runtime.UseVulkanCompute ? "Vulkan Compute (or CPU fallback)" : "CPU compatibility")}; " +
                 $"projectMsaa={_project.Window.AntiAliasingSamples}x; " +
@@ -365,11 +369,15 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _profileUniforms += renderer.LastFrameUniformUploadCount;
         _profileVertices += renderer.LastFrameVertexUploadCount;
         _profileVertexBytes += renderer.LastFrameVertexUploadBytes;
+        _profileWaterDraws += renderer.LastFrameWaterDrawCount;
+        _profileWaterRipples += renderer.LastFrameWaterRippleCount;
+        _profilePmxDraws += renderer.LastFramePmxDrawCount;
+        _profileHardwareShadowDraws += renderer.LastFrameHardwareShadowDrawCount;
         double seconds = (presentEnd - _profileStart) / (double)Stopwatch.Frequency;
         if (seconds < 5) return;
         double millisecondsPerTick = 1000.0 / Stopwatch.Frequency / _profileFrames;
         Log.Info(LogTag, FormattableString.Invariant(
-            $"Vulkan frame profile: fps={_profileFrames / seconds:F1}; frames={_profileFrames}; CPU ms/frame: fence={_profileTicks[0] * millisecondsPerTick:F2}, update={_profileTicks[1] * millisecondsPerTick:F2}, record={_profileTicks[2] * millisecondsPerTick:F2}, present={_profileTicks[3] * millisecondsPerTick:F2}; record subsets: shadow={_profileTicks[4] * millisecondsPerTick:F2}, localShadow={_profileTicks[5] * millisecondsPerTick:F2}, reflection={_profileTicks[6] * millisecondsPerTick:F2}; uniformSnapshots={_profileUniforms / _profileFrames}; vertexSnapshots={_profileVertices / _profileFrames}; vertexUploadKB={_profileVertexBytes / (double)_profileFrames / 1024:F1}"));
+            $"Vulkan frame profile: fps={_profileFrames / seconds:F1}; frames={_profileFrames}; CPU ms/frame: fence={_profileTicks[0] * millisecondsPerTick:F2}, update={_profileTicks[1] * millisecondsPerTick:F2}, record={_profileTicks[2] * millisecondsPerTick:F2}, present={_profileTicks[3] * millisecondsPerTick:F2}; record subsets: shadow={_profileTicks[4] * millisecondsPerTick:F2}, localShadow={_profileTicks[5] * millisecondsPerTick:F2}, reflection={_profileTicks[6] * millisecondsPerTick:F2}; uniformSnapshots={_profileUniforms / _profileFrames}; vertexSnapshots={_profileVertices / _profileFrames}; vertexUploadKB={_profileVertexBytes / (double)_profileFrames / 1024:F1}; waterDraws={_profileWaterDraws / _profileFrames}; waterRipplesPerDraw={_profileWaterRipples / (double)Math.Max(_profileWaterDraws, 1):F1}; pmxDraws={_profilePmxDraws / _profileFrames}; hardwareShadowDraws={_profileHardwareShadowDraws / _profileFrames}"));
         ResetFrameProfile();
     }
 
@@ -483,6 +491,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         _profileUniforms = 0;
         _profileVertices = 0;
         _profileVertexBytes = 0;
+        _profileWaterDraws = _profileWaterRipples = 0;
+        _profilePmxDraws = _profileHardwareShadowDraws = 0;
         Array.Clear(_profileTicks);
     }
 }

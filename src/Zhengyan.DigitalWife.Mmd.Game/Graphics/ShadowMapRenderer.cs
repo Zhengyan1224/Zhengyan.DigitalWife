@@ -96,6 +96,7 @@ public sealed class ShadowMapRenderer : IDisposable
             0.0018f)
         {
             NativeSampler = _shadowTexture.NativeSampler,
+            NativeComparisonSampler = _shadowTexture.NativeComparisonSampler,
             TexelSize = new Vector2(
                 1.0f / Math.Max(_shadowTexture.Width, 1),
                 1.0f / Math.Max(_shadowTexture.Height, 1)),

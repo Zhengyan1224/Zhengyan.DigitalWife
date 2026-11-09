@@ -53,6 +53,12 @@ if (args is ["--vulkan-project-models", string modelProject])
     return 0;
 }
 
+if (args is ["--vulkan-project-models", string singleSceneProject, string modelScene])
+{
+    VulkanProjectModelRegression.Run(singleSceneProject, modelScene);
+    return 0;
+}
+
 if (args is ["--sleep-child", string readyPath])
 {
     File.WriteAllText(readyPath, Environment.ProcessId.ToString());

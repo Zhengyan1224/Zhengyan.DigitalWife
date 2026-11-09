@@ -37,6 +37,7 @@ internal static unsafe class VulkanSynchronizationRegressionTests
         DeviceBuffer positions = cpuPositions.NativeBuffer;
         using DeviceBuffer normals = factory.CreateBuffer(new BufferDescription(36, BufferUsage.VertexBuffer));
         using DeviceBuffer uvs = factory.CreateBuffer(new BufferDescription(24, BufferUsage.VertexBuffer));
+        using VeldridPmxPoseUploader poseUploader = new(renderer, positions, normals, uvs);
         using VulkanPmxSkinningCompute compute = new(renderer, 3, 1);
         Check(compute.TryBindGpuOutput(positions, normals, uvs), "GPU output binding failed.");
         using Texture color = factory.CreateTexture(TextureDescription.Texture2D(64, 64, 1, 1,
@@ -106,7 +107,8 @@ internal static unsafe class VulkanSynchronizationRegressionTests
                     // then upload a large CPU pose to the same renderer buffer.
                     if (frame == 90) compute.Dispose();
                     for (int i = 0; i < 3; i++) fallbackPositions[i] = Vector3.Transform(inputPositions[i], transform);
-                    cpuPositions.Update<Vector3>(fallbackPositions);
+                    poseUploader.Upload(fallbackPositions, new ReadOnlySpan<Vector3>(inputNormals, 3),
+                        new ReadOnlySpan<Vector2>(inputUvs, 3));
                 }
                 commands.Begin();
                 commands.SetFramebuffer(framebuffer);

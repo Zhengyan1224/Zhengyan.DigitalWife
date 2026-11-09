@@ -28,6 +28,7 @@ public sealed class LocalLightShadowBinding
 {
     public required RuntimeTextureHandle Texture { get; init; }
     public object? NativeSampler { get; init; }
+    public object? NativeComparisonSampler { get; init; }
     public required IReadOnlyList<PointLightShadowBinding> PointLights { get; init; }
     public required IReadOnlyList<SpotLightShadowBinding> SpotLights { get; init; }
     public float Strength { get; init; } = 0.7f;

@@ -13,6 +13,7 @@ public readonly record struct ShadowMapBinding(
     public uint TextureId => Texture.LegacyTextureId;
     public object? NativeTexture => Texture.NativeResource;
     public object? NativeSampler { get; init; }
+    public object? NativeComparisonSampler { get; init; }
     public Vector2 TexelSize { get; init; }
     public float NormalOffset { get; init; }
 }

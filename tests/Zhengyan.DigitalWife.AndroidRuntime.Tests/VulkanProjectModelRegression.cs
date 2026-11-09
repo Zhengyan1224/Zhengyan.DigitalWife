@@ -10,19 +10,21 @@ internal static class VulkanProjectModelRegression
 {
     // Read-only integration probe. No editor save/import operation touches the
     // user's project, and no native window is needed.
-    public static void Run(string root)
+    public static void Run(string root, string? scenePath = null)
     {
         HashSet<string> models = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string file in Directory.EnumerateFiles(Path.Combine(root, "scenes"), "*.json"))
+        IEnumerable<string> scenes = scenePath is null
+            ? Directory.EnumerateFiles(Path.Combine(root, "scenes"), "*.json")
+            : [Path.GetFullPath(Path.Combine(root, scenePath))];
+        foreach (string file in scenes)
         {
             using JsonDocument scene = JsonDocument.Parse(File.ReadAllText(file));
             foreach (JsonElement entity in scene.RootElement.GetProperty("entities").EnumerateArray())
                 if (entity.TryGetProperty("assetPath", out JsonElement asset) && asset.GetString() is { } path &&
-                    path.EndsWith(".pmx", StringComparison.OrdinalIgnoreCase) &&
-                    (path.Contains("Body/", StringComparison.OrdinalIgnoreCase) || path.Contains("MaidOutfit/", StringComparison.OrdinalIgnoreCase)))
+                    path.EndsWith(".pmx", StringComparison.OrdinalIgnoreCase))
                     models.Add(Path.GetFullPath(Path.Combine(root, path)));
         }
-        if (models.Count == 0) throw new Exception("No character model found in the project.");
+        if (models.Count == 0) throw new Exception("No PMX model found in the project.");
         using var device = Veldrid.GraphicsDevice.CreateVulkan(new GraphicsDeviceOptions());
         VulkanRenderer renderer = new();
         typeof(VulkanRenderer).GetField("_device", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer, device);

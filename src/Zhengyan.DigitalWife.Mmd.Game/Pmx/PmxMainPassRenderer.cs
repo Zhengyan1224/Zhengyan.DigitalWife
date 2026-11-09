@@ -439,6 +439,9 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
     private readonly VeldridShader[] _shaders;
     private readonly Dictionary<MaterialSetKey, ResourceSet> _materialSets = [];
     private readonly List<PipelineBundle> _pipelineBundles = [];
+    private readonly bool _customSpirv;
+    private VeldridShader? _comparisonFragmentShader;
+    private bool _comparisonUnavailable;
     private bool _disposed;
 
     public VeldridPmxMainPassRenderer(
@@ -468,6 +471,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
 
         bool customSpirv = !string.IsNullOrWhiteSpace(vertexSpirvPath)
             || !string.IsNullOrWhiteSpace(fragmentSpirvPath);
+        _customSpirv = customSpirv;
         if (customSpirv && (string.IsNullOrWhiteSpace(vertexSpirvPath) || string.IsNullOrWhiteSpace(fragmentSpirvPath)))
         {
             throw new ArgumentException("Both Vulkan vertex and fragment SPIR-V paths are required.");
@@ -589,15 +593,36 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         commands.SetVertexBuffer(1, RequireDeviceBuffer(resources.NormalBuffer));
         commands.SetVertexBuffer(2, RequireDeviceBuffer(resources.UvBuffer));
         commands.SetIndexBuffer(RequireDeviceBuffer(resources.IndexBuffer), IndexFormat.UInt32);
-        PipelineBundle pipelines = GetPipelineBundle(_renderer.CurrentOutputDescription);
+        VeldridSampler? shadowComparison = shadowMap?.NativeComparisonSampler as VeldridSampler;
+        VeldridSampler? localComparison = localLightShadowMap?.NativeComparisonSampler as VeldridSampler;
+        bool comparison = !_customSpirv && !_comparisonUnavailable && receiveShadow
+            && (shadowTexture is not null || localShadowTexture is not null)
+            && (shadowTexture is null || shadowComparison is not null)
+            && (localShadowTexture is null || localComparison is not null);
+        PipelineBundle pipelines;
+        try { pipelines = GetPipelineBundle(_renderer.CurrentOutputDescription, comparison); }
+        catch (Exception ex) when (comparison)
+        {
+            // A driver may reject a comparison variant despite advertising its
+            // format support. Keep the established raw-depth path available.
+            _comparisonUnavailable = true;
+            comparison = false;
+            Console.Error.WriteLine($"[Vulkan] Hardware shadow filtering unavailable; using gather: {ex.Message}");
+            pipelines = GetPipelineBundle(_renderer.CurrentOutputDescription);
+        }
         commands.SetPipeline(pipelines.Culled);
+        // Comparison shaders require depth views even for disabled shadow
+        // bindings. Reuse an available depth view for the inactive binding;
+        // its enable flag stays false, so no additional shadow is introduced.
+        TextureView? fallbackDepth = comparison ? shadowTexture ?? localShadowTexture : null;
+        VeldridSampler? fallbackComparison = comparison ? shadowComparison ?? localComparison : null;
         ResourceSet frameSet = GetFrameSet(
             resources,
             frameUniform,
-            shadowTexture,
-            shadowSampler,
-            receiveShadow ? localShadowTexture : null,
-            receiveShadow ? localShadowSampler : null);
+            comparison ? shadowTexture ?? fallbackDepth : shadowTexture,
+            comparison ? shadowComparison ?? fallbackComparison : shadowSampler,
+            comparison ? localShadowTexture ?? fallbackDepth : receiveShadow ? localShadowTexture : null,
+            comparison ? localComparison ?? fallbackComparison : receiveShadow ? localShadowSampler : null);
 
         int drawCount = 0;
         foreach (Zhengyan.DigitalWife.Mmd.MMDMesh mesh in meshes)
@@ -636,6 +661,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             drawCount++;
         }
 
+        _renderer.RecordPmxDraw(drawCount, comparison);
         return drawCount;
     }
 
@@ -664,6 +690,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         }
 
         _pipelineBundles.Clear();
+        _comparisonFragmentShader?.Dispose();
+        _comparisonFragmentShader = null;
         foreach (VeldridShader shader in _shaders)
         {
             shader.Dispose();
@@ -739,25 +767,49 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         return resourceSet;
     }
 
-    private PipelineBundle GetPipelineBundle(OutputDescription outputDescription)
+    private PipelineBundle GetPipelineBundle(OutputDescription outputDescription, bool comparison = false)
     {
         foreach (PipelineBundle existing in _pipelineBundles)
         {
-            if (existing.OutputDescription.Equals(outputDescription))
+            if (existing.OutputDescription.Equals(outputDescription) && existing.Comparison == comparison)
             {
                 return existing;
             }
         }
 
         ResourceLayout[] layouts = [_frameLayout, _materialLayout];
-        PipelineBundle created = new(
-            outputDescription,
-            _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
-                _shaderSet, layouts, outputDescription, cullBack: true)),
-            _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(
-                _shaderSet, layouts, outputDescription, cullBack: false)));
-        _pipelineBundles.Add(created);
-        return created;
+        ShaderSetDescription shaderSet = _shaderSet;
+        if (comparison)
+        {
+            _comparisonFragmentShader ??= _renderer.ResourceFactory.CreateShader(
+                VulkanShaderCompiler.CompileSource("pmx_main_compare.frag", CreateComparisonFragmentSource(), ShaderStages.Fragment));
+            shaderSet = new ShaderSetDescription(_shaderSet.VertexLayouts, [_shaders[0], _comparisonFragmentShader]);
+        }
+        Pipeline? culled = null, doubleSided = null;
+        try
+        {
+            culled = _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(shaderSet, layouts, outputDescription, cullBack: true));
+            doubleSided = _renderer.ResourceFactory.CreateGraphicsPipeline(CreatePipelineDescription(shaderSet, layouts, outputDescription, cullBack: false));
+            PipelineBundle created = new(outputDescription, comparison, culled, doubleSided);
+            _pipelineBundles.Add(created);
+            return created;
+        }
+        catch { culled?.Dispose(); doubleSided?.Dispose(); throw; }
+    }
+
+    private static string CreateComparisonFragmentSource()
+    {
+        string source = FragmentShaderSource.Replace("uniform sampler u_ShadowSampler;", "uniform samplerShadow u_ShadowSampler;")
+            .Replace("uniform sampler u_LocalShadowSampler;", "uniform samplerShadow u_LocalShadowSampler;");
+        int start = source.IndexOf("float SampleBilinearShadow(", StringComparison.Ordinal);
+        int end = source.IndexOf("float SampleShadowMap(", start, StringComparison.Ordinal);
+        return source[..start] + """
+            float SampleBilinearShadow(texture2D map, samplerShadow comparisonSampler, vec2 uv, float depth)
+            {
+                return texture(sampler2DShadow(map, comparisonSampler), vec3(uv, depth));
+            }
+
+            """ + source[end..];
     }
 
     private GraphicsPipelineDescription CreatePipelineDescription(
@@ -842,7 +894,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             ?? throw new InvalidOperationException("PMX Vulkan pass requires a Veldrid sampler.");
     }
 
-    private sealed record PipelineBundle(OutputDescription OutputDescription, Pipeline Culled, Pipeline DoubleSided);
+    private sealed record PipelineBundle(OutputDescription OutputDescription, bool Comparison, Pipeline Culled, Pipeline DoubleSided);
 
     private readonly record struct MaterialSetKey(DeviceBuffer Buffer, PmxMaterialDescriptorSet DescriptorSet, TextureView? OverrideTexture);
     private readonly record struct FrameSetKey(
@@ -997,21 +1049,23 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             return mix(1.0 - clamp(strength, 0.0, 1.0), 1.0, visibility);
         }
 
-        // Vulkan targets expose raw depth through a point sampler. Interpolate
-        // the four comparison results (not the depth values), as WebGL/GLES
-        // linear shadow samplers do, so PCF edges have continuous coverage.
+        // Gather the same four raw depths with one texture instruction. Keep
+        // comparing before interpolation: filtering depths changes PCF coverage.
+        // The point sampler and custom shader descriptor contract stay intact.
         float SampleBilinearShadow(texture2D shadowMap, sampler shadowSampler, vec2 uv, float depth)
         {
             ivec2 size = textureSize(sampler2D(shadowMap, shadowSampler), 0);
             vec2 pixel = uv * vec2(size) - vec2(0.5);
-            ivec2 lower = ivec2(floor(pixel));
             vec2 fraction = fract(pixel);
-            ivec2 upperBound = size - ivec2(1);
-            float a = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower, ivec2(0), upperBound), 0).r;
-            float b = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower + ivec2(1, 0), ivec2(0), upperBound), 0).r;
-            float c = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower + ivec2(0, 1), ivec2(0), upperBound), 0).r;
-            float d = texelFetch(sampler2D(shadowMap, shadowSampler), clamp(lower + ivec2(1, 1), ivec2(0), upperBound), 0).r;
-            vec4 visibility = step(vec4(depth), vec4(a, b, c, d));
+            // Sample at the footprint's centre, away from texel-selection
+            // boundaries. Keep the original weights even outside the image;
+            // clamped addressing then duplicates edge texels like texelFetch.
+            vec2 gatherUv = clamp((floor(pixel) + vec2(1.0)) / vec2(size), vec2(0.0), vec2(1.0));
+            vec4 depths = textureGather(sampler2D(shadowMap, shadowSampler),
+                gatherUv);
+            // Gather order is (i0,j1), (i1,j1), (i1,j0), (i0,j0):
+            // w/z form row j0, x/y form row j1.
+            vec4 visibility = step(vec4(depth), depths.wzxy);
             return mix(mix(visibility.x, visibility.y, fraction.x),
                 mix(visibility.z, visibility.w, fraction.x), fraction.y);
         }

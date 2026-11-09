@@ -36,6 +36,12 @@ public sealed class VulkanRenderer : IRenderer
     private long _uniformFrameId;
     private VeldridUniformArena? _uniformArena;
     private VeldridVertexArena? _vertexArena;
+    private long _waterProfileFrameId = -1;
+    private int _waterDraws;
+    private int _waterRipples;
+    private long _pmxProfileFrameId = -1;
+    private int _pmxDraws;
+    private int _hardwareShadowDraws;
     private readonly IRenderBackendServices _services;
 
     public VulkanRenderer()
@@ -66,6 +72,10 @@ public sealed class VulkanRenderer : IRenderer
     public int LastFrameUniformUploadCount { get; private set; }
     public int LastFrameVertexUploadCount { get; private set; }
     public ulong LastFrameVertexUploadBytes { get; private set; }
+    public int LastFrameWaterDrawCount { get; private set; }
+    public int LastFrameWaterRippleCount { get; private set; }
+    public int LastFramePmxDrawCount { get; private set; }
+    public int LastFrameHardwareShadowDrawCount { get; private set; }
 
     public IRenderBackendServices Services => _services;
 
@@ -109,6 +119,28 @@ public sealed class VulkanRenderer : IRenderer
             _device.WaitForFence(previous);
         Fence fence = _frameFences[_frameSlot];
         if (!fence.Signaled) _device.WaitForFence(fence);
+    }
+
+    internal void RecordWaterDraw(int rippleCount)
+    {
+        if (_waterProfileFrameId != _uniformFrameId)
+        {
+            _waterProfileFrameId = _uniformFrameId;
+            _waterDraws = _waterRipples = 0;
+        }
+        _waterDraws++;
+        _waterRipples += rippleCount;
+    }
+
+    internal void RecordPmxDraw(int drawCount, bool hardwareComparison)
+    {
+        if (_pmxProfileFrameId != _uniformFrameId)
+        {
+            _pmxProfileFrameId = _uniformFrameId;
+            _pmxDraws = _hardwareShadowDraws = 0;
+        }
+        _pmxDraws += drawCount;
+        if (hardwareComparison) _hardwareShadowDraws += drawCount;
     }
 
     internal FrontFace RasterizerFrontFace
@@ -546,6 +578,10 @@ public sealed class VulkanRenderer : IRenderer
         LastFrameUniformUploadCount = _uniformArena is null ? 0 : FrameUniforms.AllocationCount;
         LastFrameVertexUploadCount = _vertexArena is null ? 0 : FrameVertices.AllocationCount;
         LastFrameVertexUploadBytes = _vertexArena is null ? 0 : FrameVertices.BytesWritten;
+        LastFrameWaterDrawCount = _waterProfileFrameId == _uniformFrameId ? _waterDraws : 0;
+        LastFrameWaterRippleCount = _waterProfileFrameId == _uniformFrameId ? _waterRipples : 0;
+        LastFramePmxDrawCount = _pmxProfileFrameId == _uniformFrameId ? _pmxDraws : 0;
+        LastFrameHardwareShadowDrawCount = _pmxProfileFrameId == _uniformFrameId ? _hardwareShadowDraws : 0;
         Fence fence = _frameFences![_frameSlot];
         // Readback and dynamic resources belong to the same submission. Do not
         // replace the frame fence with a readback fence: that lets the CPU reuse

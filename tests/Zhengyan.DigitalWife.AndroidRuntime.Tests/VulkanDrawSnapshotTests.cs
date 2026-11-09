@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Veldrid;
+using Veldrid.SPIRV;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 using Zhengyan.DigitalWife.GamePlayer.Android;
@@ -13,6 +14,12 @@ using Device = Veldrid.GraphicsDevice;
 internal static unsafe class VulkanDrawSnapshotTests
 {
     public static void TestShadowFilters()
+        => TestShadowFilters(false);
+
+    public static void TestHardwareShadowFilters()
+        => TestShadowFilters(true);
+
+    private static void TestShadowFilters(bool hardwareComparison)
     {
         if (!VulkanRenderer.IsSupported(out string reason)) { Console.WriteLine($"SKIP shadow filtering: {reason}"); return; }
         using Device device = Device.CreateVulkan(new GraphicsDeviceOptions());
@@ -30,41 +37,53 @@ internal static unsafe class VulkanDrawSnapshotTests
         Mmd.MMDMesh[] meshes = [new(0, 3, material)];
         Dictionary<Mmd.MMDMaterial, MaterialTextures> materials = new()
         { [material] = new() { DescriptorSet = resources.CreateMaterialDescriptorSet(null, null, null) } };
-        using Texture map = factory.CreateTexture(TextureDescription.Texture2D(4, 4, 1, 1, PixelFormat.R32_Float, TextureUsage.Sampled));
+        using Texture map = factory.CreateTexture(TextureDescription.Texture2D(4, 4, 1, 1,
+            hardwareComparison ? PixelFormat.D24_UNorm_S8_UInt : PixelFormat.R32_Float,
+            hardwareComparison ? TextureUsage.Sampled | TextureUsage.DepthStencil : TextureUsage.Sampled));
+        if (hardwareComparison && !VeldridDepthComparison.IsSupported(device, map))
+        { Console.WriteLine("SKIP hardware shadow comparison: sampled depth format does not support linear filtering."); return; }
         using TextureView mapView = factory.CreateTextureView(map);
         using Sampler sampler = factory.CreateSampler(new SamplerDescription(
             SamplerAddressMode.Clamp,SamplerAddressMode.Clamp,SamplerAddressMode.Clamp,
             SamplerFilter.MinPoint_MagPoint_MipPoint,null,0,0,uint.MaxValue,0,SamplerBorderColor.OpaqueWhite));
+        using Sampler? comparisonSampler = hardwareComparison ? factory.CreateSampler(new SamplerDescription(
+            SamplerAddressMode.Clamp, SamplerAddressMode.Clamp, SamplerAddressMode.Clamp,
+            SamplerFilter.MinLinear_MagLinear_MipPoint, ComparisonKind.LessEqual, 0, 0, 0, 0, SamplerBorderColor.OpaqueWhite)) : null;
         float[] depths = Enumerable.Range(0, 16).Select(i => i % 4 < 2 ? .25f : .75f).ToArray();
-        device.UpdateTexture(map, depths, 0, 0, 0, 4, 4, 1, 0, 0);
+        if (hardwareComparison) PopulateDepth();
+        else device.UpdateTexture(map, depths, 0, 0, 0, 4, 4, 1, 0, 0);
         using Texture color = factory.CreateTexture(TextureDescription.Texture2D(128, 128, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.RenderTarget));
         using Texture depth = factory.CreateTexture(TextureDescription.Texture2D(128, 128, 1, 1, PixelFormat.R32_Float, TextureUsage.DepthStencil));
         using Texture capture = factory.CreateTexture(TextureDescription.Texture2D(128, 128, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.Staging));
         using Framebuffer target = factory.CreateFramebuffer(new(depth, color));
         RuntimeTextureHandle texture = new(Zhengyan.DigitalWife.Mmd.Game.Graphics.GraphicsBackend.Vulkan, 0, mapView);
         ShadowMapBinding directional = new(texture, Matrix4x4.Identity, 0, 100, 1, 0)
-        { NativeSampler = sampler, TexelSize = new(.25f), NormalOffset = 0 };
+        { NativeSampler = sampler, NativeComparisonSampler = comparisonSampler, TexelSize = new(.25f), NormalOffset = 0 };
         LocalLightShadowBinding local = new()
         {
-            Texture = texture, NativeSampler = sampler, Strength = 1, Bias = 0, NormalOffset = 0, TexelSize = new(.25f),
+            Texture = texture, NativeSampler = sampler, NativeComparisonSampler = comparisonSampler, Strength = 1, Bias = 0, NormalOffset = 0, TexelSize = new(.25f),
             PointLights = [new(0, .1f, 100, Enumerable.Repeat(Matrix4x4.Identity, 6).ToArray(), Enumerable.Repeat(new Vector4(0,0,1,1),6).ToArray())],
-            SpotLights = []
+            SpotLights = [new(0, .1f, 100, Matrix4x4.Identity, new Vector4(0, 0, 1, 1))]
         };
         PointLightData[] points = [new(new(0, 0, 2), Vector3.One, 1, 100, CastShadows: true)];
+        SpotLightData[] spots = [new(new(0, 0, 2), -Vector3.UnitZ, Vector3.One, 1, 100, 45, 60, CastShadows: true)];
         long frame = 0;
         try
         {
-            foreach (bool point in new[] { false, true })
+            foreach (int lightKind in new[] { 0, 1, 2 })
             foreach (bool toon in new[] { false, true })
             {
+                bool localLight = lightKind != 0;
                 Set(renderer, "_uniformFrameId", frame++); Set(renderer, "_frameOpen", true);
                 commands.Begin(); commands.SetFramebuffer(target);
                 typeof(VulkanRenderer).GetProperty("CurrentOutputDescription", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer,target.OutputDescription);
                 commands.ClearColorTarget(0,RgbaFloat.Black); commands.ClearDepthStencil(1);
                 commands.SetFullViewports(); commands.SetFullScissorRects();
                 main.Draw(resources,meshes,materials,Matrix4x4.CreateScale(3,3,1)*Matrix4x4.CreateTranslation(0,0,.5f),
-                    Matrix4x4.Identity,Matrix4x4.Identity,point?Vector3.Zero:Vector3.One,-Vector3.UnitZ,Vector3.Zero,0,
-                    point?points:[],[],true,toon?"toon":"smooth",point?null:directional,point?local:null,null);
+                    Matrix4x4.Identity,Matrix4x4.Identity,localLight?Vector3.Zero:Vector3.One,-Vector3.UnitZ,Vector3.Zero,0,
+                    lightKind==1?points:[],lightKind==2?spots:[],true,toon?"toon":"smooth",localLight?null:directional,localLight?local:null,null);
+                int hardwareDraws = (int)typeof(VulkanRenderer).GetField("_hardwareShadowDraws", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(renderer)!;
+                Check(hardwareComparison ? hardwareDraws == 1 : hardwareDraws == 0, "The requested shadow filtering path was not used.");
                 commands.CopyTexture(color,capture); commands.End(); device.SubmitCommands(commands); device.WaitForIdle();
                 Set(renderer,"_frameOpen",false);
                 MappedResource pixels=device.Map(capture,MapMode.Read);
@@ -74,23 +93,80 @@ internal static unsafe class VulkanDrawSnapshotTests
                     for(int x=48;x<80;x++)
                     {
                         float worldX=(x+.5f)/128*2-1, uv=worldX*.5f+.5f;
-                        float visibility=point ? (Linear(uv-.125f)+Linear(uv+.125f))*.5f
+                        float visibility=localLight ? (Linear(uv-.125f)+Linear(uv+.125f))*.5f
                             : (Linear(uv-.25f)+Linear(uv)+Linear(uv+.25f))/3;
                         if(toon) visibility=visibility>=.5f?1:0;
                         float distance=MathF.Sqrt(worldX*worldX+1.5f*1.5f+MathF.Pow(1f/128,2));
-                        float radiance=point?MathF.Pow(1-distance/100,2)*1.5f/distance:1;
+                        float radiance=localLight?MathF.Pow(1-distance/100,2)*1.5f/distance:1;
                         byte actual=*((byte*)pixels.Data+64*pixels.RowPitch+x*4);
                         float expected=visibility*radiance*255;
-                        Check(MathF.Abs(actual-expected)<3,$"Shadow filtering point={point}, toon={toon}, x={x}: expected {expected}, got {actual}.");
+                        Check(MathF.Abs(actual-expected)<3,$"Shadow filtering lightKind={lightKind}, toon={toon}, x={x}: expected {expected}, got {actual}.");
                         levels.Add(actual);
                     }
                     if(!toon) Check(levels.Count>12,"Shadow coverage still has quantized nearest-neighbour bands.");
-                    Console.WriteLine($"PASS shadow filter point={point}, toon={toon}, distinct levels={levels.Count}");
+                    Console.WriteLine($"PASS shadow filter hardware={hardwareComparison}, lightKind={lightKind}, toon={toon}, distinct levels={levels.Count}");
                 }
                 finally { device.Unmap(capture); }
             }
+            if (hardwareComparison) TestCustomSampler();
         }
         finally { device.WaitForIdle(); renderer.FrameUniforms.Dispose(); }
+
+        void PopulateDepth()
+        {
+            using Framebuffer depthTarget = factory.CreateFramebuffer(new(map));
+            Shader[] shaders = factory.CreateFromSpirv(
+                VulkanShaderCompiler.CompileSource("comparison-depth.vert", """
+                    void main(){vec2 p=gl_VertexIndex==0?vec2(-1,-1):gl_VertexIndex==1?vec2(3,-1):vec2(-1,3);gl_Position=vec4(p,0,1);}
+                    """, ShaderStages.Vertex),
+                VulkanShaderCompiler.CompileSource("comparison-depth.frag", """
+                    void main(){gl_FragDepth=gl_FragCoord.x<2.0?.25:.75;}
+                    """, ShaderStages.Fragment));
+            using Shader vertex = shaders[0], fragment = shaders[1];
+            using Pipeline pipeline = factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
+                BlendStateDescription.Empty, new DepthStencilStateDescription(true, true, ComparisonKind.Always),
+                RasterizerStateDescription.CullNone, PrimitiveTopology.TriangleList,
+                new ShaderSetDescription([], shaders), [], depthTarget.OutputDescription));
+            commands.Begin(); commands.SetFramebuffer(depthTarget); commands.ClearDepthStencil(1);
+            commands.SetFullViewports(); commands.SetFullScissorRects(); commands.SetPipeline(pipeline); commands.Draw(3);
+            commands.End(); device.SubmitCommands(commands); device.WaitForIdle();
+        }
+
+        void TestCustomSampler()
+        {
+            string directory = Path.GetFullPath(Path.Combine("temp", "vulkan-custom-shadow-sampler"));
+            Directory.CreateDirectory(directory);
+            string vertexPath = Path.Combine(directory, "custom.vert.spv"), fragmentPath = Path.Combine(directory, "custom.frag.spv");
+            File.WriteAllBytes(vertexPath, CompileCustom("custom-shadow.vert", """
+                layout(location=0) in vec3 Position;
+                void main(){gl_Position=vec4(Position.xy*3.0,0,1);}
+                """, ShaderStages.Vertex));
+            File.WriteAllBytes(fragmentPath, CompileCustom("custom-shadow.frag", """
+                layout(location=0) out vec4 Color;
+                void main(){Color=vec4(1,0,.5,1);}
+                """, ShaderStages.Fragment));
+            using VeldridPmxMainPassRenderer custom = new(renderer, resources, vertexPath, fragmentPath);
+            Set(renderer, "_uniformFrameId", frame++); Set(renderer, "_frameOpen", true);
+            commands.Begin(); commands.SetFramebuffer(target); commands.ClearColorTarget(0, RgbaFloat.Black); commands.ClearDepthStencil(1);
+            commands.SetFullViewports(); commands.SetFullScissorRects();
+            custom.Draw(resources, meshes, materials, Matrix4x4.Identity, Matrix4x4.Identity, Matrix4x4.Identity,
+                Vector3.One, -Vector3.UnitZ, Vector3.Zero, 0, [], [], true, "smooth", directional, null, null);
+            Check((int)typeof(VulkanRenderer).GetField("_hardwareShadowDraws", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(renderer)! == 0,
+                "Custom SPIR-V was changed to a comparison sampler.");
+            commands.CopyTexture(color, capture); commands.End(); device.SubmitCommands(commands); device.WaitForIdle(); Set(renderer, "_frameOpen", false);
+            MappedResource pixels = device.Map(capture, MapMode.Read);
+            try
+            {
+                byte* value = (byte*)pixels.Data + 64 * pixels.RowPitch + 64 * 4;
+                Check(value[0] == 255 && value[1] == 0 && Math.Abs(value[2] - 128) <= 1, "Custom SPIR-V was replaced by the built-in shader.");
+            }
+            finally { device.Unmap(capture); }
+            Console.WriteLine("PASS custom SPIR-V remains active with comparison-capable shadow bindings");
+
+            static byte[] CompileCustom(string name, string source, ShaderStages stage)
+                => SpirvCompilation.CompileGlslToSpirv("#version 450\n" + source, name, stage,
+                    new GlslCompileOptions { Debug = true }).SpirvBytes;
+        }
 
         static float Linear(float uv)
         {

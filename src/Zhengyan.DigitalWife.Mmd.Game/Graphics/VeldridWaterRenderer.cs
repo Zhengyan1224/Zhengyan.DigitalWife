@@ -70,7 +70,10 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
         CommandList commands = _renderer.CommandList;
         VeldridVertexSlice vertexSlice = _renderer.FrameVertices.Upload(vertices);
         VeldridUniformSlice frameSlice = _renderer.FrameUniforms.Upload(data);
-        VeldridUniformSlice rippleSlice = _renderer.FrameUniforms.UploadSpan(ripples[..(MaxRipples * 2 + 1)]);
+        Span<Vector4> packedRipples = stackalloc Vector4[MaxRipples * 2 + 1];
+        int rippleCount = PackRipples(ripples, packedRipples);
+        _renderer.RecordWaterDraw(rippleCount);
+        VeldridUniformSlice rippleSlice = _renderer.FrameUniforms.UploadSpan((ReadOnlySpan<Vector4>)packedRipples);
         var setKey = (frameSlice.Buffer, rippleSlice.Buffer, key);
         if (!_sets.TryGetValue(setKey, out ResourceSet? set))
         {
@@ -94,6 +97,35 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
         foreach (Shader shader in _shaders) shader.Dispose();
         _layout.Dispose(); _sampler.Dispose();
         _indices.Dispose();
+    }
+
+    internal static int PackRipples(ReadOnlySpan<Vector4> source, Span<Vector4> destination)
+    {
+        const int length = MaxRipples * 2 + 1;
+        source = source[..length];
+        destination = destination[..length];
+        destination.Clear();
+        Vector4 settings = source[^1];
+        float lifetime = Math.Max(settings.X, .001f);
+        int count = 0;
+        for (int i = 0; i < MaxRipples; i++)
+        {
+            Vector4 center = source[i * 2];
+            float strength = source[i * 2 + 1].X;
+            // Only omit exactly zero contributions, including unused slots.
+            // Preserve small/signed strengths and the original summation order.
+            if (strength == 0) continue;
+            float radius = Math.Max(center.W, .001f);
+            destination[count * 2] = new(center.X, center.Y, center.Z * settings.Y, center.W);
+            destination[count * 2 + 1] = new(strength,
+                MathF.Exp(-(center.Z / lifetime) * 2.4f) * strength, 1f / (radius * radius), 0);
+            count++;
+        }
+        // Wave phase and temporal decay are constant over all fragments. Their
+        // original inputs remain the backend-neutral contract; only this Vulkan
+        // payload uses settings.y for the compacted count.
+        destination[^1] = new(settings.X, count, settings.Z, settings.W);
+        return count;
     }
 
     private Pipeline GetPipeline(OutputDescription output)
@@ -135,16 +167,25 @@ internal sealed class VeldridWaterRenderer : IWaterPassRenderer
         layout(location=0) in vec2 vs_Uv; layout(location=1) in vec3 vs_World; layout(location=2) in vec3 vs_Normal; layout(location=3) in vec4 vs_Reflection;
         layout(location=0) out vec4 out_Color; const float PI=3.14159265359;
         vec2 skyUv(vec3 d){ d=normalize(d); return vec2(fract(atan(d.z,d.x)/(2.0*PI)+0.5),0.5-asin(clamp(d.y,-1.0,1.0))/PI); }
+        vec2 EvaluateRipples(vec3 worldPosition){
+            vec4 settings=ripples.data[96]; float ripple=0.0; float highlight=0.0;
+            for(int i=0;i<int(settings.y);i++){
+                vec4 centerPhase=ripples.data[i*2]; vec4 strengthDecay=ripples.data[i*2+1];
+                vec2 delta=worldPosition.xz-centerPhase.xy; float distanceSquared=dot(delta,delta);
+                float wave=sin(sqrt(distanceSquared)*settings.z-centerPhase.z);
+                float envelope=exp(-distanceSquared*strengthDecay.z)*strengthDecay.y;
+                ripple+=wave*envelope; highlight+=max(wave,0.0)*envelope;
+            }
+            return vec2(ripple,highlight);
+        }
         void main(){
             float t=frame.eyeTime.w; vec3 na=texture(sampler2D(normalA,samplerA),vs_Uv*.1+vec2(t)).xyz;
             vec3 nb=texture(sampler2D(normalB,samplerB),vs_Uv*.1+vec2(t)).xyz;
             vec3 n=normalize(vs_Normal+(mix(nb,na,frame.parameters.x)*2.0-1.0).xzy*.55);
-            vec4 rippleSettings=ripples.data[96]; float ripple=0.0; float rippleHighlight=0.0;
-            for(int i=0;i<48;i++){ vec4 centerAge=ripples.data[i*2]; vec4 radiusStrength=ripples.data[i*2+1];
-                float d=distance(vs_World.xz,centerAge.xy); float wave=sin(d*rippleSettings.z-centerAge.z*rippleSettings.y);
-                float envelope=exp(-(centerAge.z/max(rippleSettings.x,.001))*2.4)*exp(-pow(d/max(centerAge.w,.001),2.0));
-                ripple+=wave*envelope*radiusStrength.x; rippleHighlight+=max(wave,0.0)*envelope*radiusStrength.x; }
-            n=normalize(n+vec3(cos(vs_World.x*8.0+t)*ripple*rippleSettings.w,abs(ripple)*rippleSettings.w*1.15,sin(vs_World.z*8.0+t)*ripple*rippleSettings.w));
+            vec4 rippleSettings=ripples.data[96]; vec2 rippleValues=EvaluateRipples(vs_World);
+            float ripple=rippleValues.x; float rippleHighlight=rippleValues.y;
+            if(rippleSettings.y>0.0)
+                n=normalize(n+vec3(cos(vs_World.x*8.0+t)*ripple*rippleSettings.w,abs(ripple)*rippleSettings.w*1.15,sin(vs_World.z*8.0+t)*ripple*rippleSettings.w));
             vec3 incident=normalize(vs_World-frame.eyeTime.xyz); vec3 reflected=reflect(incident,n);
             float fresnel=pow(1.0-max(dot(normalize(frame.eyeTime.xyz-vs_World),n),0.0),5.0);
             vec3 gradient=mix(frame.deepAlpha.rgb*.72,frame.reflectionSky.rgb,clamp(reflected.y*.5+.5,0.0,1.0));

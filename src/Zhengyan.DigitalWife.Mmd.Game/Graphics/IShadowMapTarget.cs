@@ -14,6 +14,7 @@ public interface IShadowMapTarget : IDisposable
     int Height { get; }
     RuntimeTextureHandle Texture { get; }
     object? NativeSampler { get; }
+    object? NativeComparisonSampler => null;
 
     void EnsureSize(int width, int height);
     void BeginPass();
@@ -87,6 +88,7 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
     private TextureView? _depthView;
     private VeldridFramebuffer? _framebuffer;
     private VeldridSampler? _sampler;
+    private VeldridSampler? _comparisonSampler;
     private bool _disposed;
 
     public VeldridShadowMapTarget(VulkanRenderer renderer, string name)
@@ -100,6 +102,7 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
     public int Height { get; private set; }
     public RuntimeTextureHandle Texture => new(GraphicsBackend.Vulkan, 0, _depthView);
     public object? NativeSampler => _sampler;
+    public object? NativeComparisonSampler => _comparisonSampler;
     internal VeldridFramebuffer Framebuffer => _framebuffer
         ?? throw new InvalidOperationException("Shadow map target has not been sized.");
 
@@ -139,6 +142,11 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
             uint.MaxValue,
             0,
             SamplerBorderColor.OpaqueWhite));
+        if (VeldridDepthComparison.IsSupported(_renderer.Device, _depthTexture))
+            _comparisonSampler = factory.CreateSampler(new VeldridSamplerDescription(
+                SamplerAddressMode.Clamp, SamplerAddressMode.Clamp, SamplerAddressMode.Clamp,
+                SamplerFilter.MinLinear_MagLinear_MipPoint, ComparisonKind.LessEqual,
+                0, 0, 0, 0, SamplerBorderColor.OpaqueWhite));
     }
 
     public void BeginPass()
@@ -178,5 +186,7 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
         _depthTexture = null;
         _sampler?.Dispose();
         _sampler = null;
+        _comparisonSampler?.Dispose();
+        _comparisonSampler = null;
     }
 }

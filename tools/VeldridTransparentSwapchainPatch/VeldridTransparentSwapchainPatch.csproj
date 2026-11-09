@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="..\VeldridCommonPatch\VeldridMemorySafetyPatch.cs" Link="VeldridMemorySafetyPatch.cs" />
+    <Compile Include="..\VeldridCommonPatch\VeldridEmptyPassPatch.cs" Link="VeldridEmptyPassPatch.cs" />
     <PackageReference Include="Mono.Cecil" />
   </ItemGroup>
 

@@ -29,9 +29,10 @@ using ModuleDefinition module = ModuleDefinition.ReadModule(assemblyPath, new Re
 });
 
 bool memoryPatched = VeldridMemorySafetyPatch.Apply(module);
+bool emptyPassesPatched = VeldridEmptyPassPatch.Apply(module);
 if (module.Types.Any(type => type.Namespace == "Veldrid.Vk" && type.Name == MarkerTypeName))
 {
-    if (memoryPatched)
+    if (memoryPatched || emptyPassesPatched)
     {
         string updated = assemblyPath + ".memory-safety.tmp";
         module.Write(updated);

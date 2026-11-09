@@ -9,6 +9,7 @@ Android 工程会在打包、裁剪前对构建副本应用修补，检查裁剪
 - Vulkan 启动与原生指针生命周期。
 - Vk / NativeLibraryLoader 加载错误处理。
 - Android Render Pass 与 Present 同步。
+- 跳过没有绘制和待清屏操作的空 Render Pass，保留附件内容和布局转换。
 - 透明合成选择与内存安全。
 - 修补标识检查及验证入口。
 
@@ -31,6 +32,7 @@ dotnet run --project tools/VeldridAndroidPatch -- <original-Veldrid.dll> <output
 dotnet run --project tools/VeldridAndroidPatch -- --check <linked-Veldrid.dll>
 dotnet run --project tools/VeldridAndroidPatch -- --loader <original-loader.dll> <output-loader.dll>
 dotnet run --project tools/VeldridAndroidPatch -- --check-loader <loader.dll>
+dotnet run --project tools/VeldridAndroidPatch -- --verify-empty-passes <patched-Veldrid.dll>
 ```
 
 先使用构建副本，再验证。原始 DLL 与输出路径应分开。

@@ -7,6 +7,8 @@ namespace Zhengyan.DigitalWife.Mmd.Game.Pmx;
 /// <summary>Owns backend-neutral buffers and descriptor inputs shared by PMX draw passes.</summary>
 internal sealed unsafe class PmxGpuResources : IDisposable
 {
+    private readonly VeldridPmxPoseUploader? _poseUploader;
+
     public PmxGpuResources(GraphicsDevice graphicsDevice, Zhengyan.DigitalWife.Mmd.MMDModel model)
     {
         ArgumentNullException.ThrowIfNull(graphicsDevice);
@@ -20,6 +22,11 @@ internal sealed unsafe class PmxGpuResources : IDisposable
             checked((uint)(sizeof(Vector3) * vertexCount)), GpuBufferKind.Vertex));
         UvBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
             checked((uint)(sizeof(Vector2) * vertexCount)), GpuBufferKind.Vertex));
+        if (graphicsDevice.Renderer is VulkanRenderer renderer)
+            _poseUploader = new VeldridPmxPoseUploader(renderer,
+                ((VeldridGpuBuffer)PositionBuffer).NativeBuffer,
+                ((VeldridGpuBuffer)NormalBuffer).NativeBuffer,
+                ((VeldridGpuBuffer)UvBuffer).NativeBuffer);
         IndexBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
             checked((uint)(sizeof(uint) * indexCount)), GpuBufferKind.Index));
         FrameUniformBuffer = graphicsDevice.CreateBuffer(new GpuBufferDescription(
@@ -82,6 +89,13 @@ internal sealed unsafe class PmxGpuResources : IDisposable
     public void UploadPose(Zhengyan.DigitalWife.Mmd.MMDModel model, bool uploadUv)
     {
         int vertexCount = model.GetVertexCount();
+        if (_poseUploader is not null)
+        {
+            _poseUploader.Upload(new ReadOnlySpan<Vector3>(model.GetUpdatePositions(), vertexCount),
+                new ReadOnlySpan<Vector3>(model.GetUpdateNormals(), vertexCount),
+                uploadUv ? new ReadOnlySpan<Vector2>(model.GetUpdateUVs(), vertexCount) : []);
+            return;
+        }
         PositionBuffer.Update(new ReadOnlySpan<Vector3>(model.GetUpdatePositions(), vertexCount));
         NormalBuffer.Update(new ReadOnlySpan<Vector3>(model.GetUpdateNormals(), vertexCount));
         if (uploadUv)
@@ -99,6 +113,7 @@ internal sealed unsafe class PmxGpuResources : IDisposable
 
     public void Dispose()
     {
+        _poseUploader?.Dispose();
         PositionBuffer.Dispose();
         NormalBuffer.Dispose();
         UvBuffer.Dispose();
