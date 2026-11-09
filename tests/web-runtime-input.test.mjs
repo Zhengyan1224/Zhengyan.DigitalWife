@@ -3,6 +3,14 @@ import test from 'node:test';
 import * as runtime from '../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/js/web-runtime.js';
 import { deferred, settle } from './helpers/web-renderer-fixtures.mjs';
 
+test('runtime dependencies share the WASM build version and cannot reuse bare cached modules', () => {
+    const base = 'http://localhost:5052/js/web-runtime.js?v=build-2';
+    for (const name of ['webgl2-renderer.js','web-audio.js','web-platform.js','web-gpu.js'])
+        assert.equal(runtime.moduleUrl(name,base),`http://localhost:5052/js/${name}?v=build-2`);
+    assert.equal(runtime.moduleUrl('web-audio.js','http://localhost:5052/js/web-runtime.js'),
+        'http://localhost:5052/js/web-audio.js');
+});
+
 function setup(t, devicePixelRatio = 1) {
     const previousWindow = globalThis.window;
     const callbacks = new Map();

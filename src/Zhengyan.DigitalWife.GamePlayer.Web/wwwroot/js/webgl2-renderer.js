@@ -88,13 +88,57 @@ uniform vec4 u_spotLightPositionRange[4];
 uniform vec4 u_spotLightDirectionOuterCosine[4];
 uniform vec4 u_spotLightColorIntensity[4];
 uniform vec4 u_spotLightConeParameters[4];
+uniform sampler2DShadow u_localShadowAtlas;
+uniform mat4 u_localShadowMatrices[16];
+uniform vec4 u_localShadowRects[16];
+uniform vec2 u_localShadowRanges[16];
+uniform int u_pointShadowBase[8];
+uniform int u_spotShadowTile[4];
+uniform bool u_texturedPlane;
+uniform sampler2D u_reflectionTexture;
+uniform mat4 u_reflectionViewProjection;
+uniform float u_reflectionStrength;
+uniform bool u_clipEnabled;
+uniform vec4 u_clipPlane;
 in vec3 v_normal;
 in vec2 v_uv;
 in vec4 v_shadowPosition;
 in vec3 v_worldPosition;
 out vec4 out_color;
 
+int pointShadowFace(vec3 direction) {
+    vec3 a = abs(direction);
+    if (a.x >= a.y && a.x >= a.z) return direction.x >= 0.0 ? 0 : 1;
+    if (a.y >= a.z) return direction.y >= 0.0 ? 2 : 3;
+    return direction.z >= 0.0 ? 4 : 5;
+}
+
+float localShadow(int tile, vec3 normal, vec3 lightDirection, float ndotl) {
+    if (tile < 0 || !u_shadowEnabled || !u_receiveShadow) return 1.0;
+    vec3 position = v_worldPosition + normal * 0.0075 * (2.0 - ndotl);
+    vec4 clip = u_localShadowMatrices[tile] * vec4(position, 1.0);
+    if (clip.w <= 0.0) return 1.0;
+    vec3 ndc = clip.xyz / clip.w;
+    if (any(lessThan(ndc, vec3(-1.0))) || any(greaterThan(ndc, vec3(1.0)))) return 1.0;
+    vec2 range = u_localShadowRanges[tile];
+    float bias = 0.015 * (1.0 + (1.0 - ndotl) * 2.0) * range.x * range.y
+        / ((range.y - range.x) * clip.w * clip.w);
+    float depth = ndc.z * 0.5 + 0.5 - bias;
+    vec4 rect = u_localShadowRects[tile];
+    vec2 texel = vec2(1.0 / 4096.0);
+    vec2 uv = rect.xy + (ndc.xy * 0.5 + 0.5) * rect.zw;
+    float visibility = 0.0;
+    for (int y = 0; y <= 1; y++) for (int x = 0; x <= 1; x++) {
+        vec2 sampleUv = clamp(uv + (vec2(x,y) - 0.5) * texel, rect.xy + texel, rect.xy + rect.zw - texel);
+        visibility += texture(u_localShadowAtlas, vec3(sampleUv, depth));
+    }
+    visibility *= 0.25;
+    if (u_shadowToon) visibility = step(0.5, visibility);
+    return mix(1.0 - u_shadowStrength, 1.0, visibility);
+}
+
 void main() {
+    if (u_clipEnabled && dot(vec4(v_worldPosition, 1.0), u_clipPlane) < 0.0) discard;
     if (u_edgePass) {
         out_color = u_edgeColor;
         if (out_color.a <= 0.001) discard;
@@ -120,6 +164,17 @@ void main() {
             shadowFactor = mix(1.0 - u_shadowStrength, 1.0, visibility);
         }
     }
+    if (u_texturedPlane) {
+        vec4 color = texel * u_diffuse;
+        color.rgb *= shadowFactor;
+        vec4 reflectionClip = u_reflectionViewProjection * vec4(v_worldPosition, 1.0);
+        vec2 uv = reflectionClip.xy / max(abs(reflectionClip.w), 0.0001) * 0.5 + 0.5;
+        if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
+            color.rgb = mix(color.rgb, texture(u_reflectionTexture, clamp(uv, 0.001, 0.999)).rgb, u_reflectionStrength);
+        if (color.a <= 0.001) discard;
+        out_color = color;
+        return;
+    }
     vec3 lighting = u_lightColor * diffuse * shadowFactor;
     vec3 eyeDirection = normalize(u_cameraPosition - v_worldPosition);
     vec3 specular = vec3(0.0);
@@ -135,9 +190,12 @@ void main() {
         vec3 lightDirection = toLight / distanceToLight;
         float attenuation = 1.0 - distanceToLight / u_pointLightPositionRange[i].w;
         attenuation *= attenuation;
+        float ndotl = max(dot(normal, lightDirection), 0.0);
+        int baseTile = u_pointShadowBase[i];
+        float visibility = localShadow(baseTile < 0 ? -1 : baseTile + pointShadowFace(-toLight), normal, lightDirection, ndotl);
         lighting += u_pointLightColorIntensity[i].rgb
             * u_pointLightColorIntensity[i].a
-            * max(dot(normal, lightDirection), 0.0)
+            * ndotl * visibility
             * attenuation;
     }
     for (int i = 0; i < 4; i++) {
@@ -153,9 +211,11 @@ void main() {
             cone);
         float attenuation = 1.0 - distanceToLight / u_spotLightPositionRange[i].w;
         attenuation *= attenuation * coneFalloff;
+        float ndotl = max(dot(normal, lightDirection), 0.0);
+        float visibility = localShadow(u_spotShadowTile[i], normal, lightDirection, ndotl);
         lighting += u_spotLightColorIntensity[i].rgb
             * u_spotLightColorIntensity[i].a
-            * max(dot(normal, lightDirection), 0.0)
+            * ndotl * visibility
             * attenuation;
     }
     vec3 albedo = texel.rgb * u_diffuse.rgb;
@@ -835,6 +895,41 @@ function toNumericVector(value, length, fallback) {
     return normalized;
 }
 
+function createRenderTarget(gl, width, height, depthOnly) {
+    const texture = gl.createTexture(), framebuffer = gl.createFramebuffer();
+    const depth = depthOnly ? null : gl.createRenderbuffer();
+    if (!texture || !framebuffer || (!depthOnly && !depth)) throw new Error("WebGL2 could not allocate a scene render target.");
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, depthOnly ? gl.DEPTH_COMPONENT24 : gl.RGBA8, width, height,
+        0, depthOnly ? gl.DEPTH_COMPONENT : gl.RGBA, depthOnly ? gl.UNSIGNED_INT : gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, depthOnly ? gl.DEPTH_ATTACHMENT : gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    if (depthOnly) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+        gl.drawBuffers([gl.NONE]);
+        gl.readBuffer(gl.NONE);
+    } else {
+        gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+        gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
+        gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+        gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    }
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("WebGL2 scene framebuffer is incomplete.");
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return { texture, framebuffer, depth, width, height };
+}
+
+function deleteRenderTarget(gl, target) {
+    gl.deleteTexture(target.texture);
+    gl.deleteFramebuffer(target.framebuffer);
+    if (target.depth) gl.deleteRenderbuffer(target.depth);
+}
+
 export function createWebGl2Renderer(canvas, reportError) {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: true, depth: true });
     if (!gl) throw new Error("This browser does not provide WebGL2.");
@@ -903,6 +998,9 @@ export function createWebGl2Renderer(canvas, reportError) {
         shadowEnabled: gl.getUniformLocation(program, "u_shadowEnabled"),
         receiveShadow: gl.getUniformLocation(program, "u_receiveShadow")
     };
+    for (const name of ["localShadowAtlas", "localShadowMatrices", "localShadowRects", "localShadowRanges",
+        "pointShadowBase", "spotShadowTile", "texturedPlane", "reflectionTexture", "reflectionViewProjection",
+        "reflectionStrength", "clipEnabled", "clipPlane"]) locations[name] = gl.getUniformLocation(program, `u_${name}`);
     const shadowLocations = {
         ...skinningLocations(gl, shadowProgram),
         position: gl.getAttribLocation(shadowProgram, "a_position"),
@@ -943,6 +1041,8 @@ export function createWebGl2Renderer(canvas, reportError) {
     };
     let shadowDirty = true;
     let shadowStateKey = "";
+    let localShadowTarget = null;
+    const reflectionTargets = new Map();
     const particleBuffer = gl.createBuffer();
     if (!particleBuffer) throw new Error("WebGL2 could not allocate the particle buffer.");
     const contextLost = event => { event.preventDefault(); disposed = true; reportError?.("WebGL2 context was lost."); };
@@ -966,7 +1066,7 @@ export function createWebGl2Renderer(canvas, reportError) {
             if (disposed || !nextState) return;
             frameState = { ...frameState, ...nextState };
             // Camera drags and ambient edits do not change caster depth.
-            const key = JSON.stringify([frameState.lightViewProjection, frameState.model, frameState.meshes, frameState.shadowEnabled, frameState.features?.shadows]);
+            const key = JSON.stringify([frameState.lightViewProjection, frameState.localShadows, frameState.model, frameState.meshes, frameState.shadowEnabled, frameState.features?.shadows]);
             if (key !== shadowStateKey) { shadowDirty = true; shadowStateKey = key; }
         },
         async uploadMesh(payload) {
@@ -1029,25 +1129,17 @@ export function createWebGl2Renderer(canvas, reportError) {
             const renderEntries = [...meshes.entries()]
                 .map(([key, mesh]) => ({ key, mesh, frame: frameById.get(key) || frameById.get("default") }))
                 .filter(entry => entry.frame);
-            if (shadowDirty && renderEntries.some(entry => entry.frame.shadowEnabled) && shadowsEnabled) {
-                gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
-                gl.viewport(0, 0, shadowSize, shadowSize);
-                gl.colorMask(false, false, false, false);
-                gl.disable(gl.BLEND);
-                gl.clearDepth(1.0);
-                gl.clear(gl.DEPTH_BUFFER_BIT);
+            const localShadows = Array.isArray(frameState.localShadows) ? frameState.localShadows.slice(0, 16) : [];
+            const reflections = Array.isArray(frameState.reflections) ? frameState.reflections : [];
+            const drawCasters = matrix => {
                 gl.useProgram(shadowProgram);
-                gl.uniformMatrix4fv(shadowLocations.lightViewProjection, false, frameState.lightViewProjection);
+                gl.uniformMatrix4fv(shadowLocations.lightViewProjection, false, matrix);
+                gl.cullFace(gl.BACK);
                 for (const entry of renderEntries) {
                     if (!entry.frame.shadowEnabled) continue;
                     gl.uniformMatrix4fv(shadowLocations.model, false, entry.frame.model || identity);
                     bindSkinning(gl, shadowLocations, entry.mesh, defaultTexture);
                     gl.bindVertexArray(entry.mesh.vao);
-                    gl.bindBuffer(gl.ARRAY_BUFFER, entry.mesh.vertexBuffer);
-                    gl.enableVertexAttribArray(shadowLocations.position);
-                    gl.vertexAttribPointer(shadowLocations.position, 3, gl.FLOAT, false, 32, 0);
-                    gl.enableVertexAttribArray(shadowLocations.uv);
-                    gl.vertexAttribPointer(shadowLocations.uv, 2, gl.FLOAT, false, 32, 24);
                     for (const group of entry.mesh.groups) {
                         if (!group.enableShadow) continue;
                         if (group.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
@@ -1060,160 +1152,237 @@ export function createWebGl2Renderer(canvas, reportError) {
                         gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
                     }
                 }
+            };
+            if (shadowDirty && renderEntries.some(entry => entry.frame.shadowEnabled) && shadowsEnabled) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
+                gl.viewport(0, 0, shadowSize, shadowSize);
+                gl.colorMask(false, false, false, false);
+                gl.disable(gl.BLEND);
+                gl.clearDepth(1.0);
+                gl.clear(gl.DEPTH_BUFFER_BIT);
+                drawCasters(frameState.lightViewProjection);
+                if (localShadows.length > 0) {
+                    localShadowTarget ??= createRenderTarget(gl, 4096, 4096, true);
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, localShadowTarget.framebuffer);
+                    gl.clear(gl.DEPTH_BUFFER_BIT);
+                    for (const shadow of localShadows) {
+                        const rect = shadow.atlasRect;
+                        gl.viewport(...rect.map(value => Math.round(value * 4096)));
+                        drawCasters(shadow.viewProjection);
+                    }
+                }
                 gl.bindVertexArray(null);
                 gl.colorMask(true, true, true, true);
                 shadowDirty = false;
             }
+            const drawColor = (viewProjection, cameraPosition, clipPlane = null) => {
+                gl.colorMask(true, true, true, true);
+                gl.depthMask(true);
+                gl.clearColor(...frameState.clearColor);
+                gl.clearDepth(1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                gl.useProgram(program);
+                gl.uniformMatrix4fv(locations.viewProjection, false, viewProjection);
+                gl.uniform1i(locations.clipEnabled, clipPlane ? 1 : 0);
+                gl.uniform4fv(locations.clipPlane, clipPlane || [0, 0, 0, 0]);
+                gl.uniformMatrix4fv(locations.lightViewProjection, false, frameState.lightViewProjection);
+                gl.uniform1i(locations.shadowEnabled, shadowsEnabled ? 1 : 0);
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
+                gl.bindSampler(1, null);
+                gl.uniform1i(locations.shadowMap, 1);
+                gl.uniform1f(locations.shadowStrength, frameState.shadowStrength ?? 0.7);
+                gl.uniform1f(locations.shadowBias, frameState.shadowBias ?? 0.0018);
+                gl.uniform2f(locations.shadowTexelSize, 1 / shadowSize, 1 / shadowSize);
+                gl.uniform1f(locations.shadowNormalOffset, frameState.shadowNormalOffset ?? 0);
+                gl.uniform3fv(locations.cameraPosition, cameraPosition || [0, 0, 0]);
+                const pointShadowBase = new Int32Array(8).fill(-1), spotShadowTile = new Int32Array(4).fill(-1);
+                const shadowMatrices = new Float32Array(16 * 16), shadowRects = new Float32Array(16 * 4), shadowRanges = new Float32Array(16 * 2);
+                for (let tile = 0; tile < localShadows.length; tile++) {
+                    const shadow = localShadows[tile];
+                    if (shadow.pointLightIndex >= 0 && shadow.face === 0) pointShadowBase[shadow.pointLightIndex] = tile;
+                    if (shadow.spotLightIndex >= 0) spotShadowTile[shadow.spotLightIndex] = tile;
+                    shadowMatrices.set(shadow.viewProjection, tile * 16);
+                    shadowRects.set(shadow.atlasRect, tile * 4);
+                    shadowRanges.set([shadow.nearPlane, shadow.farPlane], tile * 2);
+                }
+                gl.uniform1iv(locations.pointShadowBase, pointShadowBase);
+                gl.uniform1iv(locations.spotShadowTile, spotShadowTile);
+                gl.uniformMatrix4fv(locations.localShadowMatrices, false, shadowMatrices);
+                gl.uniform4fv(locations.localShadowRects, shadowRects);
+                gl.uniform2fv(locations.localShadowRanges, shadowRanges);
+                gl.activeTexture(gl.TEXTURE4);
+                gl.bindTexture(gl.TEXTURE_2D, localShadowTarget?.texture || shadowTexture);
+                gl.bindSampler(4, null);
+                gl.uniform1i(locations.localShadowAtlas, 4);
+                gl.uniform1i(locations.reflectionTexture, 5);
+                gl.uniform3fv(locations.lightDirection, toNumericVector(frameState.lightDirection, 3, [0, -1, 0]));
+                gl.uniform3fv(locations.lightColor, toNumericVector(frameState.lightColor, 3, [1, 1, 1]));
+                gl.uniform3fv(locations.ambientColor, toNumericVector(frameState.ambientColor, 3, [0.15, 0.15, 0.15]));
+                gl.uniform1f(locations.ambientStrength, frameState.ambientStrength);
+                const pointLights = Array.isArray(frameState.pointLights) ? frameState.pointLights.slice(0, 8) : [];
+                const pointPositionRange = new Float32Array(8 * 4);
+                const pointColorIntensity = new Float32Array(8 * 4);
+                for (let i = 0; i < pointLights.length; i++) {
+                    const light = pointLights[i];
+                    pointPositionRange.set([
+                        ...toNumericVector(light?.position, 3, [0, 0, 0]),
+                        Number(light?.range) || 1
+                    ], i * 4);
+                    pointColorIntensity.set([
+                        ...toNumericVector(light?.color, 3, [1, 1, 1]),
+                        Number(light?.intensity) || 0
+                    ], i * 4);
+                }
+                gl.uniform1i(locations.pointLightCount, pointLights.length);
+                gl.uniform4fv(locations.pointLightPositionRange, pointPositionRange);
+                gl.uniform4fv(locations.pointLightColorIntensity, pointColorIntensity);
+                const spotLights = Array.isArray(frameState.spotLights) ? frameState.spotLights.slice(0, 4) : [];
+                const spotPositionRange = new Float32Array(4 * 4);
+                const spotDirectionOuterCosine = new Float32Array(4 * 4);
+                const spotColorIntensity = new Float32Array(4 * 4);
+                const spotConeParameters = new Float32Array(4 * 4);
+                for (let i = 0; i < spotLights.length; i++) {
+                    const light = spotLights[i];
+                    spotPositionRange.set([
+                        ...toNumericVector(light?.position, 3, [0, 0, 0]),
+                        Number(light?.range) || 1
+                    ], i * 4);
+                    spotDirectionOuterCosine.set([
+                        ...toNumericVector(light?.direction, 3, [0, -1, 0]),
+                        Number(light?.outerConeCosine) || 0
+                    ], i * 4);
+                    spotColorIntensity.set([
+                        ...toNumericVector(light?.color, 3, [1, 1, 1]),
+                        Number(light?.intensity) || 0
+                    ], i * 4);
+                    spotConeParameters.set([Number(light?.innerConeCosine) || 1, 0, 0, 0], i * 4);
+                }
+                gl.uniform1i(locations.spotLightCount, spotLights.length);
+                gl.uniform4fv(locations.spotLightPositionRange, spotPositionRange);
+                gl.uniform4fv(locations.spotLightDirectionOuterCosine, spotDirectionOuterCosine);
+                gl.uniform4fv(locations.spotLightColorIntensity, spotColorIntensity);
+                gl.uniform4fv(locations.spotLightConeParameters, spotConeParameters);
+                for (const entry of renderEntries) {
+                    const mesh = entry.mesh;
+                    const meshFrame = entry.frame;
+                    // Desktop excludes all mirror planes from reflection passes.
+                    if (clipPlane && meshFrame.texturedPlane && meshFrame.mirrorReflectionStrength > 0) continue;
+                    const reflection = !clipPlane ? reflectionTargets.get(entry.key) : null;
+                    gl.uniform1i(locations.texturedPlane, meshFrame.texturedPlane ? 1 : 0);
+                    gl.uniformMatrix4fv(locations.reflectionViewProjection, false, reflection?.viewProjection || identity);
+                    gl.uniform1f(locations.reflectionStrength, reflection ? meshFrame.mirrorReflectionStrength || 0 : 0);
+                    gl.activeTexture(gl.TEXTURE5);
+                    gl.bindTexture(gl.TEXTURE_2D, reflection?.texture || defaultTexture);
+                    gl.bindSampler(5, null);
+                    gl.uniformMatrix4fv(locations.model, false, meshFrame.model || identity);
+                    bindSkinning(gl, locations, mesh, defaultTexture);
+                    gl.bindVertexArray(mesh.vao);
+                    for (const group of mesh.groups) {
+                        const diffuse = toNumericVector(group.diffuse ?? group.Diffuse, 4, [1, 1, 1, 1]);
+                        const edge = toNumericVector(group.edgeColor ?? group.EdgeColor, 4, [0, 0, 0, 1]);
+                        gl.uniform4fv(locations.diffuse, diffuse);
+                        gl.uniform3fv(locations.materialAmbient, toNumericVector(group.ambient ?? group.Ambient, 3, [1, 1, 1]));
+                        gl.uniform3fv(locations.specular, toNumericVector(group.specular ?? group.Specular, 3, [0, 0, 0]));
+                        gl.uniform1f(locations.specularPower, group.specularPower ?? group.SpecularPower ?? 0);
+                        gl.uniform1i(locations.shadowToon, meshFrame.shadowToon ? 1 : 0);
+                        gl.uniform4fv(locations.edgeColor, edge);
+                        // PC applies the entity receive-shadow setting to every
+                        // PMX material, including classroom floors whose PMX
+                        // self-shadow flag is unset.
+                        const receiveShadow = meshFrame.receiveShadow ?? group.receiveShadow;
+                        gl.uniform1i(locations.receiveShadow, receiveShadow ? 1 : 0);
+                        if (group.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+                        if ((features.edges ?? true) && meshFrame.edgeEnabled !== false && group.enableEdge && group.edgeSize > 0) {
+                            // The expanded outline must draw only back faces even
+                            // when the material itself is double-sided. Otherwise
+                            // its black front shell occludes the textured surface.
+                            gl.enable(gl.CULL_FACE);
+                            gl.cullFace(gl.FRONT);
+                            gl.uniform1i(locations.edgePass, 1);
+                            gl.uniform1f(locations.edgeSize, group.edgeSize * 0.01);
+                            gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
+                            gl.cullFace(gl.BACK);
+                            if (group.doubleSided) gl.disable(gl.CULL_FACE);
+                        }
+                        gl.uniform1i(locations.edgePass, 0);
+                        gl.uniform1f(locations.edgeSize, 0);
+                        const texture = group.texture || defaultTexture;
+                        gl.activeTexture(gl.TEXTURE0);
+                        gl.bindTexture(gl.TEXTURE_2D, texture);
+                        gl.bindSampler(0, sampler);
+                        gl.uniform1i(locations.texture, 0);
+                        gl.uniform1i(locations.hasTexture, group.texture ? 1 : 0);
+                        // PMX skin/hair overlays can have an opaque material color
+                        // and translucent texture pixels. Match the desktop pass
+                        // by blending textured materials as well.
+                        if (group.texture || diffuse[3] < 0.999) gl.enable(gl.BLEND); else gl.disable(gl.BLEND);
+                        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                        gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
+                    }
+                }
+                const particles = Array.isArray(frameState.particles) && frameState.particles.length > 0 ? frameState.particles : [];
+                if ((features.particles ?? false) && particles.length > 0) {
+                    const data = new Float32Array(particles.length * 8);
+                    for (let i = 0; i < particles.length; i++) {
+                        const particle = particles[i];
+                        const offset = i * 8;
+                        const position = particle.position || [0, 0, 0];
+                        const color = particle.color || [1, 1, 1, 1];
+                        data[offset] = position[0]; data[offset + 1] = position[1]; data[offset + 2] = position[2];
+                        data[offset + 3] = color[0]; data[offset + 4] = color[1]; data[offset + 5] = color[2]; data[offset + 6] = color[3];
+                        data[offset + 7] = particle.size || 0.1;
+                    }
+                    gl.useProgram(particleProgram);
+                    gl.uniformMatrix4fv(particleLocations.viewProjection, false, viewProjection);
+                    gl.bindVertexArray(vao);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, particleBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+                    gl.enableVertexAttribArray(particleLocations.position);
+                    gl.vertexAttribPointer(particleLocations.position, 3, gl.FLOAT, false, 32, 0);
+                    gl.enableVertexAttribArray(particleLocations.color);
+                    gl.vertexAttribPointer(particleLocations.color, 4, gl.FLOAT, false, 32, 12);
+                    gl.enableVertexAttribArray(particleLocations.size);
+                    gl.vertexAttribPointer(particleLocations.size, 1, gl.FLOAT, false, 32, 28);
+                    gl.enable(gl.BLEND);
+                    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                    gl.depthMask(false);
+                    gl.drawArrays(gl.POINTS, 0, particles.length);
+                    gl.depthMask(true);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+                }
+                gl.disable(gl.BLEND);
+                gl.bindSampler(0, null);
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, null);
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, null);
+                gl.bindVertexArray(null);
+            };
+            const activeReflections = new Set(reflections.map(item => item.id));
+            for (const [id, target] of reflectionTargets) {
+                if (!activeReflections.has(id) || target.width !== width || target.height !== height) {
+                    deleteRenderTarget(gl, target);
+                    reflectionTargets.delete(id);
+                }
+            }
+            for (const reflection of reflections) {
+                let target = reflectionTargets.get(reflection.id);
+                if (!target) {
+                    target = createRenderTarget(gl, width, height, false);
+                    reflectionTargets.set(reflection.id, target);
+                }
+                target.viewProjection = reflection.viewProjection;
+                // Unbind sampled color targets before attaching them for drawing.
+                gl.activeTexture(gl.TEXTURE5);
+                gl.bindTexture(gl.TEXTURE_2D, null);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+                gl.viewport(0, 0, width, height);
+                drawColor(reflection.viewProjection, reflection.cameraPosition, reflection.clipPlane);
+            }
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, width, height);
-            gl.clearColor(...frameState.clearColor);
-            gl.clearDepth(1.0);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-            gl.useProgram(program);
-            gl.uniformMatrix4fv(locations.viewProjection, false, frameState.viewProjection);
-            gl.uniformMatrix4fv(locations.lightViewProjection, false, frameState.lightViewProjection);
-            gl.uniform1i(locations.shadowEnabled, shadowsEnabled ? 1 : 0);
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
-            gl.uniform1i(locations.shadowMap, 1);
-            gl.uniform1f(locations.shadowStrength, frameState.shadowStrength ?? 0.7);
-            gl.uniform1f(locations.shadowBias, frameState.shadowBias ?? 0.0018);
-            gl.uniform2f(locations.shadowTexelSize, 1 / shadowSize, 1 / shadowSize);
-            gl.uniform1f(locations.shadowNormalOffset, frameState.shadowNormalOffset ?? 0);
-            gl.uniform3fv(locations.cameraPosition, frameState.cameraPosition || [0, 0, 0]);
-            gl.uniform3fv(locations.lightDirection, toNumericVector(frameState.lightDirection, 3, [0, -1, 0]));
-            gl.uniform3fv(locations.lightColor, toNumericVector(frameState.lightColor, 3, [1, 1, 1]));
-            gl.uniform3fv(locations.ambientColor, toNumericVector(frameState.ambientColor, 3, [0.15, 0.15, 0.15]));
-            gl.uniform1f(locations.ambientStrength, frameState.ambientStrength);
-            const pointLights = Array.isArray(frameState.pointLights) ? frameState.pointLights.slice(0, 8) : [];
-            const pointPositionRange = new Float32Array(8 * 4);
-            const pointColorIntensity = new Float32Array(8 * 4);
-            for (let i = 0; i < pointLights.length; i++) {
-                const light = pointLights[i];
-                pointPositionRange.set([
-                    ...toNumericVector(light?.position, 3, [0, 0, 0]),
-                    Number(light?.range) || 1
-                ], i * 4);
-                pointColorIntensity.set([
-                    ...toNumericVector(light?.color, 3, [1, 1, 1]),
-                    Number(light?.intensity) || 0
-                ], i * 4);
-            }
-            gl.uniform1i(locations.pointLightCount, pointLights.length);
-            gl.uniform4fv(locations.pointLightPositionRange, pointPositionRange);
-            gl.uniform4fv(locations.pointLightColorIntensity, pointColorIntensity);
-            const spotLights = Array.isArray(frameState.spotLights) ? frameState.spotLights.slice(0, 4) : [];
-            const spotPositionRange = new Float32Array(4 * 4);
-            const spotDirectionOuterCosine = new Float32Array(4 * 4);
-            const spotColorIntensity = new Float32Array(4 * 4);
-            const spotConeParameters = new Float32Array(4 * 4);
-            for (let i = 0; i < spotLights.length; i++) {
-                const light = spotLights[i];
-                spotPositionRange.set([
-                    ...toNumericVector(light?.position, 3, [0, 0, 0]),
-                    Number(light?.range) || 1
-                ], i * 4);
-                spotDirectionOuterCosine.set([
-                    ...toNumericVector(light?.direction, 3, [0, -1, 0]),
-                    Number(light?.outerConeCosine) || 0
-                ], i * 4);
-                spotColorIntensity.set([
-                    ...toNumericVector(light?.color, 3, [1, 1, 1]),
-                    Number(light?.intensity) || 0
-                ], i * 4);
-                spotConeParameters.set([Number(light?.innerConeCosine) || 1, 0, 0, 0], i * 4);
-            }
-            gl.uniform1i(locations.spotLightCount, spotLights.length);
-            gl.uniform4fv(locations.spotLightPositionRange, spotPositionRange);
-            gl.uniform4fv(locations.spotLightDirectionOuterCosine, spotDirectionOuterCosine);
-            gl.uniform4fv(locations.spotLightColorIntensity, spotColorIntensity);
-            gl.uniform4fv(locations.spotLightConeParameters, spotConeParameters);
-            for (const entry of renderEntries) {
-                const mesh = entry.mesh;
-                const meshFrame = entry.frame;
-                gl.uniformMatrix4fv(locations.model, false, meshFrame.model || identity);
-                bindSkinning(gl, locations, mesh, defaultTexture);
-                gl.bindVertexArray(mesh.vao);
-                for (const group of mesh.groups) {
-                    const diffuse = toNumericVector(group.diffuse ?? group.Diffuse, 4, [1, 1, 1, 1]);
-                    const edge = toNumericVector(group.edgeColor ?? group.EdgeColor, 4, [0, 0, 0, 1]);
-                    gl.uniform4fv(locations.diffuse, diffuse);
-                    gl.uniform3fv(locations.materialAmbient, toNumericVector(group.ambient ?? group.Ambient, 3, [1, 1, 1]));
-                    gl.uniform3fv(locations.specular, toNumericVector(group.specular ?? group.Specular, 3, [0, 0, 0]));
-                    gl.uniform1f(locations.specularPower, group.specularPower ?? group.SpecularPower ?? 0);
-                    gl.uniform1i(locations.shadowToon, meshFrame.shadowToon ? 1 : 0);
-                    gl.uniform4fv(locations.edgeColor, edge);
-                    // PC applies the entity receive-shadow setting to every
-                    // PMX material, including classroom floors whose PMX
-                    // self-shadow flag is unset.
-                    const receiveShadow = meshFrame.receiveShadow ?? group.receiveShadow;
-                    gl.uniform1i(locations.receiveShadow, receiveShadow ? 1 : 0);
-                    if (group.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
-                    if ((features.edges ?? true) && meshFrame.edgeEnabled !== false && group.enableEdge && group.edgeSize > 0) {
-                        // The expanded outline must draw only back faces even
-                        // when the material itself is double-sided. Otherwise
-                        // its black front shell occludes the textured surface.
-                        gl.enable(gl.CULL_FACE);
-                        gl.cullFace(gl.FRONT);
-                        gl.uniform1i(locations.edgePass, 1);
-                        gl.uniform1f(locations.edgeSize, group.edgeSize * 0.01);
-                        gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
-                        gl.cullFace(gl.BACK);
-                        if (group.doubleSided) gl.disable(gl.CULL_FACE);
-                    }
-                    gl.uniform1i(locations.edgePass, 0);
-                    gl.uniform1f(locations.edgeSize, 0);
-                    const texture = group.texture || defaultTexture;
-                    gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D, texture);
-                    gl.bindSampler(0, sampler);
-                    gl.uniform1i(locations.texture, 0);
-                    gl.uniform1i(locations.hasTexture, group.texture ? 1 : 0);
-                    // PMX skin/hair overlays can have an opaque material color
-                    // and translucent texture pixels. Match the desktop pass
-                    // by blending textured materials as well.
-                    if (group.texture || diffuse[3] < 0.999) gl.enable(gl.BLEND); else gl.disable(gl.BLEND);
-                    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-                    gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
-                }
-            }
-            const particles = Array.isArray(frameState.particles) && frameState.particles.length > 0 ? frameState.particles : [];
-            if ((features.particles ?? false) && particles.length > 0) {
-                const data = new Float32Array(particles.length * 8);
-                for (let i = 0; i < particles.length; i++) {
-                    const particle = particles[i];
-                    const offset = i * 8;
-                    const position = particle.position || [0, 0, 0];
-                    const color = particle.color || [1, 1, 1, 1];
-                    data[offset] = position[0]; data[offset + 1] = position[1]; data[offset + 2] = position[2];
-                    data[offset + 3] = color[0]; data[offset + 4] = color[1]; data[offset + 5] = color[2]; data[offset + 6] = color[3];
-                    data[offset + 7] = particle.size || 0.1;
-                }
-                gl.useProgram(particleProgram);
-                gl.uniformMatrix4fv(particleLocations.viewProjection, false, frameState.viewProjection);
-                gl.bindVertexArray(vao);
-                gl.bindBuffer(gl.ARRAY_BUFFER, particleBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
-                gl.enableVertexAttribArray(particleLocations.position);
-                gl.vertexAttribPointer(particleLocations.position, 3, gl.FLOAT, false, 32, 0);
-                gl.enableVertexAttribArray(particleLocations.color);
-                gl.vertexAttribPointer(particleLocations.color, 4, gl.FLOAT, false, 32, 12);
-                gl.enableVertexAttribArray(particleLocations.size);
-                gl.vertexAttribPointer(particleLocations.size, 1, gl.FLOAT, false, 32, 28);
-                gl.enable(gl.BLEND);
-                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-                gl.depthMask(false);
-                gl.drawArrays(gl.POINTS, 0, particles.length);
-                gl.depthMask(true);
-                gl.bindBuffer(gl.ARRAY_BUFFER, null);
-            }
-            gl.disable(gl.BLEND);
-            gl.bindSampler(0, null);
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, null);
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, null);
-            gl.bindVertexArray(null);
+            drawColor(frameState.viewProjection, frameState.cameraPosition);
         },
         dispose() {
             if (disposed) return;
@@ -1226,6 +1395,9 @@ export function createWebGl2Renderer(canvas, reportError) {
             gl.deleteTexture(defaultTexture);
             gl.deleteTexture(shadowTexture);
             gl.deleteFramebuffer(shadowFramebuffer);
+            if (localShadowTarget) deleteRenderTarget(gl, localShadowTarget);
+            for (const target of reflectionTargets.values()) deleteRenderTarget(gl, target);
+            reflectionTargets.clear();
             gl.deleteSampler(sampler);
             gl.deleteProgram(shadowProgram);
             gl.deleteBuffer(particleBuffer);

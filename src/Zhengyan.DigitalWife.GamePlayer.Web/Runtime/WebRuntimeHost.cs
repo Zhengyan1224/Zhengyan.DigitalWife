@@ -59,7 +59,7 @@ public sealed class WebRuntimeHost(
             _projectLoader.SpeechRequestHandler = QueueSpeechRequest;
             _projectLoader.PhysicsFactory = _physicsService.CreateAsync;
             SetSnapshot(Snapshot with { LastError = null, Status = "Initializing WebGL2" });
-            _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-runtime.js");
+            _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"));
             _dotNetReference = DotNetObjectReference.Create(this);
             await _module.InvokeVoidAsync("start", canvas, overlayCanvas, _dotNetReference);
             await _module.InvokeVoidAsync("registerServiceWorker", "./sw.js");

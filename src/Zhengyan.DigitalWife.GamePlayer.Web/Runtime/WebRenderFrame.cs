@@ -12,6 +12,8 @@ public sealed record WebRenderMesh(
     bool EdgeEnabled)
 {
     public bool ShadowToon { get; init; }
+    public bool TexturedPlane { get; init; }
+    public float MirrorReflectionStrength { get; init; }
 }
 
 public sealed record WebParticle(float[] Position, float[] Color, float Size);
@@ -41,7 +43,7 @@ public sealed record WebRenderFeatures(
     bool Water = false,
     bool PostProcess = false);
 
-public sealed record WebRenderFrame(
+public sealed partial record WebRenderFrame(
     float[] ViewProjection,
     float[] Model,
     float[] LightViewProjection,
@@ -61,6 +63,8 @@ public sealed record WebRenderFrame(
     public float ShadowBias { get; init; } = 0.0018f;
     public float ShadowNormalOffset { get; init; }
     public float[] CameraPosition { get; init; } = [0, 0, 0];
+    public IReadOnlyList<WebLocalShadow> LocalShadows { get; init; } = [];
+    public IReadOnlyList<WebPlanarReflection> Reflections { get; init; } = [];
 
     public static WebRenderFrame FromScene(
         RuntimeScene scene,
@@ -73,12 +77,15 @@ public sealed record WebRenderFrame(
         WebRenderMesh[] meshes = modelArray
             .Select(item => new WebRenderMesh(
                 item.Entity.Id,
-                ToGlArray(item.Entity.TransformMatrix),
+                ToGlArray(CreateRenderTransform(item.Entity, scene.MainCamera)),
                 item.Entity.IsPmxModel && item.Entity.Definition.EnableShadow,
                 item.Entity.IsPmxModel ? item.Entity.Definition.ReceiveShadow : item.Mesh.Materials.Any(material => material.ReceiveShadow),
                 item.Entity.IsPmxModel && item.Entity.Definition.EnableEdge)
             {
-                ShadowToon = string.Equals(item.Entity.Definition.ReceiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase)
+                ShadowToon = string.Equals(item.Entity.Definition.ReceiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase),
+                TexturedPlane = item.Entity.IsTexturedPlane,
+                MirrorReflectionStrength = item.Entity.IsTexturedPlane && item.Entity.Definition.Plane.MirrorReflectionEnabled
+                    ? Math.Clamp(item.Entity.Definition.Plane.MirrorReflectionStrength, 0, 1) : 0
             })
             .ToArray();
         WebPointLight[] pointLights = scene.PointLights
@@ -137,7 +144,9 @@ public sealed record WebRenderFrame(
         {
             ShadowStrength = Math.Clamp(scene.Lighting.Settings.ShadowColor.W, 0.0f, 1.0f),
             ShadowNormalOffset = normalOffset,
-            CameraPosition = ToVector(scene.MainCamera.Position)
+            CameraPosition = ToVector(scene.MainCamera.Position),
+            LocalShadows = CreateLocalShadows(pointLights, spotLights),
+            Reflections = CreateReflections(modelArray, scene.MainCamera, aspect)
         };
     }
 

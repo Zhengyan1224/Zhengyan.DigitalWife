@@ -1,8 +1,17 @@
-import { createWebGl2Renderer } from "./webgl2-renderer.js";
+// Propagate the WASM build ID to dependencies as well as the entry module.
+// Sharing the audio URL with C# also keeps one audio context and clip registry.
+export function moduleUrl(fileName, baseUrl = import.meta.url) {
+    const base = new URL(baseUrl), url = new URL(fileName, base);
+    const version = base.searchParams.get("v");
+    if (version) url.searchParams.set("v", version);
+    return url.href;
+}
 
-import { unlock as unlockAudio, setErrorHandler as setAudioErrorHandler } from "./web-audio.js";
-import { registerServiceWorker as registerSw } from "./web-platform.js";
-import { detectWebGpu as detectGpu } from "./web-gpu.js";
+const [{ createWebGl2Renderer }, { unlock: unlockAudio, setErrorHandler: setAudioErrorHandler },
+    { registerServiceWorker: registerSw }, { detectWebGpu: detectGpu }] = await Promise.all([
+    import(moduleUrl("./webgl2-renderer.js")), import(moduleUrl("./web-audio.js")),
+    import(moduleUrl("./web-platform.js")), import(moduleUrl("./web-gpu.js"))
+]);
 
 let runtime = null;
 const overlayImages = new Map();

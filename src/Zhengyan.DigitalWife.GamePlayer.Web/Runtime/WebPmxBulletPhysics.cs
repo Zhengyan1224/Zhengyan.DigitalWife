@@ -139,7 +139,7 @@ public sealed class WebPmxPhysicsService(IJSRuntime jsRuntime) : IAsyncDisposabl
     }
     private async Task<IJSInProcessObjectReference> LoadModuleAsync()
     {
-        IJSObjectReference module = await jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-physics.js");
+        IJSObjectReference module = await jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-physics.js"));
         await module.InvokeVoidAsync("initialize");
         return module as IJSInProcessObjectReference ?? throw new NotSupportedException("Bullet requires WebAssembly in-process JS interop.");
     }

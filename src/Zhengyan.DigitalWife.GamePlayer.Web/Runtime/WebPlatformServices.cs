@@ -28,7 +28,7 @@ public sealed class WebSpeechService(IJSRuntime jsRuntime) : IAsyncDisposable
             entityId,
             callbackName);
     public async ValueTask StopAsync() => await (await ModuleAsync()).InvokeVoidAsync("stopSpeaking");
-    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-platform.js");
+    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-platform.js"));
     public async ValueTask DisposeAsync() { if (_module is not null) await _module.DisposeAsync(); _module = null; }
 }
 
@@ -39,7 +39,7 @@ public sealed class WebMicrophoneService(IJSRuntime jsRuntime) : IAsyncDisposabl
     public async ValueTask<byte[]> RecordAsync(int maxMilliseconds = 15000)
         => await (await ModuleAsync()).InvokeAsync<byte[]>("recordMicrophone", maxMilliseconds);
     public async ValueTask StopAsync() => await (await ModuleAsync()).InvokeVoidAsync("stopMicrophone");
-    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-platform.js");
+    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-platform.js"));
     public async ValueTask DisposeAsync() { if (_module is not null) await _module.DisposeAsync(); _module = null; }
 }
 
@@ -52,6 +52,6 @@ public sealed class WebNetworkService(IJSRuntime jsRuntime) : IAsyncDisposable
     public async ValueTask ConnectWebSocketAsync(string url) => await (await ModuleAsync()).InvokeVoidAsync("connectWebSocket", url);
     public async ValueTask SendWebSocketAsync(string text) => await (await ModuleAsync()).InvokeVoidAsync("sendWebSocket", text);
     public async ValueTask CloseWebSocketAsync() => await (await ModuleAsync()).InvokeVoidAsync("closeWebSocket");
-    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-platform.js");
+    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-platform.js"));
     public async ValueTask DisposeAsync() { if (_module is not null) await _module.DisposeAsync(); _module = null; }
 }

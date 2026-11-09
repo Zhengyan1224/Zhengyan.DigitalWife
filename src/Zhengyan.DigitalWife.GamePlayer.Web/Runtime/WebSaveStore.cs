@@ -18,7 +18,7 @@ public sealed class WebSaveStore(IJSRuntime jsRuntime) : IAsyncDisposable
         => await (await ModuleAsync()).InvokeVoidAsync("removeJson", key);
 
     private async ValueTask<IJSObjectReference> ModuleAsync()
-        => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-storage.js");
+        => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-storage.js"));
 
     public async ValueTask DisposeAsync()
     {

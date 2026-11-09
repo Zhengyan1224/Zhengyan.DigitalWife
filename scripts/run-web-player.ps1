@@ -24,5 +24,5 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 
 Write-Host "Web Player: http://127.0.0.1:$Port/"
 Write-Host 'Press Ctrl+C to stop the local server.'
-& python -m http.server $Port --bind 127.0.0.1 --directory $webDirectory
+& python (Join-Path $PSScriptRoot 'web-preview-server.py') --port $Port --bind 127.0.0.1 --directory $webDirectory
 if ($LASTEXITCODE -ne 0) { throw 'The Web preview server stopped with an error.' }

@@ -35,7 +35,7 @@ public sealed class WebAudioService(IJSRuntime jsRuntime) : IAsyncDisposable
         => await (await ModuleAsync()).InvokeVoidAsync("stopAll");
 
     private async ValueTask<IJSObjectReference> ModuleAsync()
-        => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-audio.js");
+        => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-audio.js"));
 
     public async ValueTask DisposeAsync()
     {

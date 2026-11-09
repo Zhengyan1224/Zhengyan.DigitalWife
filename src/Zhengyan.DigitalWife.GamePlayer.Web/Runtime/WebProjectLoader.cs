@@ -134,8 +134,8 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
         {
             if (IsEntityType(entity.Type, "textured_plane", "plane"))
             {
-                string texturePath = WebHttpAssetStore.NormalizeRelativePath(entity.Plane.TexturePath);
-                string? textureUri = IsRegistered(texturePath)
+                string texturePath = entity.Plane.TexturePath;
+                string? textureUri = !string.IsNullOrWhiteSpace(texturePath) && IsRegistered(texturePath)
                     ? await _assets.GetUriAsync(texturePath, cancellationToken)
                     : null;
                 sceneMeshes[entity.Id] = CreateQuadMesh(
@@ -144,7 +144,8 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
                     entity.Plane.Tint,
                     Math.Clamp(entity.Plane.Opacity, 0.0f, 1.0f),
                     textureUri,
-                    entity.Plane.ReceiveShadow);
+                    entity.Plane.ReceiveShadow,
+                    doubleSided: true);
             }
             else if (IsEntityType(entity.Type, "water_surface", "water"))
             {
@@ -155,7 +156,8 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
                     Math.Clamp(entity.Water.Alpha, 0.0f, 1.0f),
                     null,
                     receiveShadow: false,
-                    doubleSided: true);
+                    doubleSided: true,
+                    horizontal: true);
             }
         }
 
@@ -221,27 +223,33 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
         float opacity,
         string? textureUri,
         bool receiveShadow,
-        bool doubleSided = false)
+        bool doubleSided = false,
+        bool horizontal = false)
     {
         float halfWidth = width * 0.5f;
         float halfHeight = height * 0.5f;
         return new WebPmxMesh(
-            [
+            horizontal ? [
                 -halfWidth, 0.0f, -halfHeight,
                  halfWidth, 0.0f, -halfHeight,
                  halfWidth, 0.0f,  halfHeight,
                 -halfWidth, 0.0f,  halfHeight
+            ] : [
+                -halfWidth, -halfHeight, 0.0f,
+                 halfWidth, -halfHeight, 0.0f,
+                 halfWidth,  halfHeight, 0.0f,
+                -halfWidth,  halfHeight, 0.0f
             ],
-            [
+            horizontal ? [
                 0.0f, 1.0f, 0.0f,
                 0.0f, 1.0f, 0.0f,
                 0.0f, 1.0f, 0.0f,
                 0.0f, 1.0f, 0.0f
-            ],
+            ] : [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
             [0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f],
             [0u, 1u, 2u, 2u, 3u, 0u],
-            new Vector3(-halfWidth, 0.0f, -halfHeight),
-            new Vector3(halfWidth, 0.0f, halfHeight),
+            horizontal ? new Vector3(-halfWidth, 0.0f, -halfHeight) : new Vector3(-halfWidth, -halfHeight, 0),
+            horizontal ? new Vector3(halfWidth, 0.0f, halfHeight) : new Vector3(halfWidth, halfHeight, 0),
             "Web scene quad",
             [new WebPmxMaterial(
                 0,

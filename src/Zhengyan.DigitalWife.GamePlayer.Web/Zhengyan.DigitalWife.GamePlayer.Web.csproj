@@ -29,4 +29,23 @@
     <TrimmerRootAssembly Include="System.Console" />
   </ItemGroup>
 
+  <Target Name="VersionWebRuntimeAssets" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <_WebRuntimeJavaScript Include="wwwroot/js/*.js" />
+    </ItemGroup>
+    <GetFileHash Files="@(_WebRuntimeJavaScript)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_WebRuntimeJavaScriptHashes" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_WebRuntimeAssetsHash>@(_WebRuntimeJavaScriptHashes->'%(FileHash)', '')</_WebRuntimeAssetsHash>
+    </PropertyGroup>
+    <!-- A JS-only change must also change the module ID used by JS interop. -->
+    <WriteLinesToFile File="$(IntermediateOutputPath)WebRuntimeAssets.g.cs"
+                      Lines="[assembly: System.Reflection.AssemblyMetadataAttribute(&quot;WebRuntimeAssets&quot;, &quot;$(_WebRuntimeAssetsHash)&quot;)]"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)WebRuntimeAssets.g.cs" />
+    </ItemGroup>
+  </Target>
+
 </Project>

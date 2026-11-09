@@ -62,6 +62,57 @@ test('DDS BGRA channels, alpha and row padding match the flipped PMX UVs', () =>
     assert.deepEqual(pixels(decodeDds(dds).data), [10, 20, 30, 40, 1, 2, 3, 4]);
 });
 
+test('local shadow tiles share the PMX caster rules and remain cached during camera movement', async () => {
+    const { canvas, state } = createFakeGl();
+    const renderer = createWebGl2Renderer(canvas);
+    const mesh = triangle([null]);
+    mesh.materials[0].enableShadow = true;
+    await renderer.uploadMesh(mesh);
+    const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    const localShadows = Array.from({length:7}, (_, i) => ({pointLightIndex:i<6?0:-1,spotLightIndex:i===6?0:-1,
+        face:i%6,viewProjection:identity,atlasRect:[.001,.001,.249,.249],nearPlane:.1,farPlane:10}));
+    renderer.setFrameState({shadowEnabled:true,lightViewProjection:identity,localShadows});
+    renderer.render();
+    assert.equal(state.shadowDraws.length,8);
+    renderer.setFrameState({viewProjection:identity.map((v,i)=>i===12?1:v)});
+    renderer.render();
+    assert.equal(state.shadowDraws.length,8,'Camera movement rebuilt the local shadow atlas.');
+    renderer.setFrameState({localShadows:localShadows.map((s,i)=>i===0?{...s,viewProjection:identity.map((v,j)=>j===12?1:v)}:s)});
+    renderer.render();
+    assert.equal(state.shadowDraws.length,16,'Changing the local light matrix did not rebuild the atlas.');
+    renderer.setFrameState({features:{shadows:false}});
+    renderer.render();
+    assert.equal(state.shadowDraws.length,16);
+    renderer.dispose();
+    assert.equal(new Set(state.deletedTextures).size,state.deletedTextures.length);
+});
+
+test('mirror passes exclude mirror surfaces, draw both sides and release resized or removed targets', async () => {
+    const { canvas, state } = createFakeGl();
+    const renderer = createWebGl2Renderer(canvas);
+    const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    await renderer.uploadMeshes([{id:'mirror',mesh:triangle([null])},{id:'actor',mesh:triangle([null])}]);
+    renderer.setFrameState({features:{shadows:false,edges:false},meshes:[
+        {id:'mirror',model:identity,texturedPlane:true,mirrorReflectionStrength:.75}, {id:'actor',model:identity}],
+        reflections:[{id:'mirror',viewProjection:identity,cameraPosition:[0,0,-2],clipPlane:[0,0,1,-.01]}]});
+    renderer.render();
+    assert.equal(state.draws.length,3);
+    assert.equal(state.draws[0].clipEnabled,1);
+    assert.equal(state.draws[0].texturedPlane,0);
+    assert.equal(state.draws[1].texturedPlane,1);
+    assert.equal(state.draws[1].reflectionStrength,.75);
+    assert.equal(state.draws[1].cullEnabled,false);
+    const target = state.uploads.find(u=>u.width===320).texture;
+    renderer.resize(640,480); renderer.render();
+    assert.ok(state.deletedTextures.includes(target));
+    const resized = state.uploads.find(u=>u.width===640).texture;
+    renderer.setFrameState({reflections:[]}); renderer.render();
+    assert.ok(state.deletedTextures.includes(resized));
+    assert.equal(state.draws.at(-2).reflectionStrength,0);
+    renderer.dispose();
+    assert.equal(new Set(state.deletedTextures).size,state.deletedTextures.length);
+});
+
 test('DDS RGB565 and 24-bit RGB do not invent transparency', () => {
     const rgb565 = makeDds({ width: 1, height: 1, bits: 16, masks: [0xf800, 0x07e0, 0x001f, 0], data: [0, 0xf8] });
     assert.deepEqual(pixels(decodeDds(rgb565).data), [255, 0, 0, 255]);

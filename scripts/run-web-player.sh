@@ -78,4 +78,4 @@ fi
 
 echo "Web Player: http://127.0.0.1:$port/"
 echo 'Press Ctrl+C to stop the local server.'
-exec python3 -m http.server "$port" --bind 127.0.0.1 --directory "$web_directory"
+exec python3 "$repository_directory/scripts/web-preview-server.py" --port "$port" --bind 127.0.0.1 --directory "$web_directory"

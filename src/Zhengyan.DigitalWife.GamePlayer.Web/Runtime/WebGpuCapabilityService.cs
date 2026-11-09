@@ -17,6 +17,6 @@ public sealed class WebGpuCapabilityService(IJSRuntime jsRuntime) : IAsyncDispos
     private IJSObjectReference? _module;
     public async ValueTask<WebGpuCapability> DetectAsync()
         => await (await ModuleAsync()).InvokeAsync<WebGpuCapability>("detectWebGpu");
-    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/web-gpu.js");
+    private async ValueTask<IJSObjectReference> ModuleAsync() => _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-gpu.js"));
     public async ValueTask DisposeAsync() { if (_module is not null) await _module.DisposeAsync(); _module = null; }
 }
