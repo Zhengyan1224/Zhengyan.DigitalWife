@@ -11,3 +11,4 @@ imgui.ini
 .session/
 .dotnet/
 .tmp*.png
+src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game
