@@ -169,34 +169,67 @@ Python 属性是当前事件开始时的快照，修改必须调用上述方法�
 
 保存为 `scripts/graphics-quality.csx`。此代码使用三端共同支持的 `GetEntity` 查找当前场景的平面和水面。
 
+为兼容 Android 发布包的运行时类型裁剪，示例使用普通 `int`／`float` 变量和 `switch` 语句，避免依赖 `System.ValueTuple`。如果 Body.csx 中复制了旧版元组示例，请替换对应的画质切换片段后重新导出游戏包。
+
 ```csharp
 if (IsGuiEvent && GuiEventName == "clicked")
 {
-    var preset = GuiControlName switch
-    {
-        "LowQuality" => (Scene: 1, Directional: 512, Local: 256, Filter: 4, Radius: 1.0f, Mirror: 1, Water: 1),
-        "MediumQuality" => (Scene: 2, Directional: 1024, Local: 512, Filter: 9, Radius: 1.5f, Mirror: 2, Water: 2),
-        "HighQuality" => (Scene: 4, Directional: 2048, Local: 1024, Filter: 25, Radius: 2.0f, Mirror: 4, Water: 4),
-        _ => (Scene: 0, Directional: 0, Local: 0, Filter: 0, Radius: 0.0f, Mirror: 0, Water: 0)
-    };
+    int sceneSamples = 0;
+    int directionalResolution = 0;
+    int localResolution = 0;
+    int filterSamples = 0;
+    float filterRadius = 0.0f;
+    int mirrorSamples = 0;
+    int waterSamples = 0;
 
-    if (preset.Scene != 0)
+    switch (GuiControlName)
     {
-        Graphics.SceneSamples = preset.Scene;
-        Graphics.Shadows.DirectionalResolution = preset.Directional;
-        Graphics.Shadows.LocalLightResolution = preset.Local;
-        Graphics.Shadows.FilterSamples = preset.Filter;
-        Graphics.Shadows.FilterRadius = preset.Radius;
+        case "LowQuality":
+            sceneSamples = 1;
+            directionalResolution = 512;
+            localResolution = 256;
+            filterSamples = 4;
+            filterRadius = 1.0f;
+            mirrorSamples = 1;
+            waterSamples = 1;
+            break;
+        case "MediumQuality":
+            sceneSamples = 2;
+            directionalResolution = 1024;
+            localResolution = 512;
+            filterSamples = 9;
+            filterRadius = 1.5f;
+            mirrorSamples = 2;
+            waterSamples = 2;
+            break;
+        case "HighQuality":
+            sceneSamples = 4;
+            directionalResolution = 2048;
+            localResolution = 1024;
+            filterSamples = 25;
+            filterRadius = 2.0f;
+            mirrorSamples = 4;
+            waterSamples = 4;
+            break;
+    }
+
+    if (sceneSamples != 0)
+    {
+        Graphics.SceneSamples = sceneSamples;
+        Graphics.Shadows.DirectionalResolution = directionalResolution;
+        Graphics.Shadows.LocalLightResolution = localResolution;
+        Graphics.Shadows.FilterSamples = filterSamples;
+        Graphics.Shadows.FilterRadius = filterRadius;
 
         foreach (var name in new[] { "Mirror" })
         {
             var surface = Scene.GetEntity(name);
-            if (surface != null) surface.ReflectionSamples = preset.Mirror;
+            if (surface != null) surface.ReflectionSamples = mirrorSamples;
         }
         foreach (var name in new[] { "Water" })
         {
             var surface = Scene.GetEntity(name);
-            if (surface != null) surface.ReflectionSamples = preset.Water;
+            if (surface != null) surface.ReflectionSamples = waterSamples;
         }
     }
 }
