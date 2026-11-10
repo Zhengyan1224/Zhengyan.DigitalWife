@@ -2875,48 +2875,37 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 continue;
             }
 
-            float verticalDistance = sample.Position.Y - surfaceY;
-            if (verticalDistance > sample.Radius)
-            {
-                continue;
-            }
-
             Vector3 delta = sample.Position - waterEntity.Transform.Position.ToVector3();
             if (MathF.Abs(delta.X) > waterHalfSize || MathF.Abs(delta.Z) > waterHalfSize)
             {
                 continue;
             }
 
-            string rippleKey = BuildParticleRippleKey(waterEntity, particleObject.Entity, sample, waterEntity.Water.ParticleRippleMergeDistance);
-            double minInterval = Math.Max(0.0, waterEntity.Water.ParticleRippleMinIntervalSeconds);
-            if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= minInterval)
+            bool rippleContact = ParticleWaterRipplePolicy.IsRippleContact(sample, waterEntity.Transform.Position.ToVector3(),
+                waterEntity.Water.Size, waterEntity.Water.InteractionRadius);
+            if (rippleContact)
             {
-                _waterRippleTimes[rippleKey] = now;
-                waterObject.Component.AddRipple(
-                    new Vector3(sample.Position.X, surfaceY, sample.Position.Z),
-                    waterEntity.Water.InteractionRadius,
-                    waterEntity.Water.InteractionStrength,
-                    waterEntity.Water.ParticleRippleMergeDistance);
+                string rippleKey = ParticleWaterRipplePolicy.BuildKey(waterEntity.Id, particleObject.Entity.Id, sample.Index);
+                double minInterval = Math.Max(0.0, waterEntity.Water.ParticleRippleMinIntervalSeconds);
+                if (!_waterRippleTimes.TryGetValue(rippleKey, out double lastRippleTime) || now - lastRippleTime >= minInterval)
+                {
+                    _waterRippleTimes[rippleKey] = now;
+                    waterObject.Component.AddParticleRipple(
+                        new Vector3(sample.Position.X, surfaceY, sample.Position.Z),
+                        waterEntity.Water.InteractionRadius,
+                        waterEntity.Water.InteractionStrength,
+                        waterEntity.Water.ParticleRippleMergeDistance);
+                }
             }
 
-            if (particleObject.Entity.Particle.KillOnWaterContact)
+            if (particleObject.Entity.Particle.KillOnWaterContact
+                && ParticleWaterRipplePolicy.IsSurfaceContact(sample, surfaceY, waterEntity.Water.InteractionRadius))
             {
                 particleObject.Component.KillParticle(sample.Index);
             }
         }
     }
 
-    private static string BuildParticleRippleKey(GameEntity waterEntity, GameEntity particleEntity, ParticleCollisionSample sample, float mergeDistance)
-    {
-        if (mergeDistance <= 0.0001f)
-        {
-            return $"{waterEntity.Id}:{particleEntity.Id}:particle:{sample.Index}";
-        }
-
-        int cellX = (int)MathF.Floor(sample.Position.X / mergeDistance);
-        int cellZ = (int)MathF.Floor(sample.Position.Z / mergeDistance);
-        return $"{waterEntity.Id}:{particleEntity.Id}:particle:{cellX}:{cellZ}";
-    }
 
     private bool TryGetColliderApproximation(GameEntity entity, ColliderSettings collider, out Vector3 center, out float radius)
     {

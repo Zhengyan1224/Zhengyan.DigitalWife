@@ -14,6 +14,9 @@ if (args is ["--export-project", string projectDirectory, string outputPath])
 
 (string Name, Action Run)[] tests =
 [
+    ("Water ripple contacts match Android and throttle per particle", WaterRippleRegression.ContactParity),
+    ("Water ripple rain cannot overwrite character waves", WaterRippleRegression.PreserveCharacterRipple),
+    ("Water ripple DemoGame01 rain reproduces and fixes pool churn", WaterRippleRegression.DemoRainSimulation),
     ("Runtime graphics requests coalesce and report device results", RuntimeGraphicsRegression.Requests),
     ("Runtime graphics settings survive scene changes", RuntimeGraphicsRegression.SceneLifetime),
     ("Runtime graphics PC Android Web script ABI and Python bridge", RuntimeGraphicsRegression.ScriptApis),

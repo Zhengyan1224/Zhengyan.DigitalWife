@@ -122,8 +122,11 @@ Gerstner 波用于基础水面起伏，会真实改变水面网格顶点高度�
 - 雨：`ParticleRippleMinIntervalSeconds` 取 `0.05 - 0.12`，`ParticleRippleMergeDistance` 取 `0.3 - 0.6`。
 - 瀑布：`ParticleRippleMinIntervalSeconds` 取 `0.02 - 0.08`，`ParticleRippleMergeDistance` 取 `0.6 - 1.2`。
 - 平静水面的小粒子点缀：`KillOnWaterContact = false`，让粒子穿过水面但仍留下波纹。
-- `ParticleRippleMergeDistance = 0` 表示不按空间网格合并触水点，只按单个粒子做节流；数值越大，相邻粒子越容易合并成同一个波纹区域。
-- 水面 shader 当前最多同时显示 48 个活动波纹；超过后会替换最旧的波纹。
+- 粒子波纹始终按“水面 + 粒子系统 + 粒子索引”节流，`ParticleRippleMinIntervalSeconds` 控制同一粒子的最短触发间隔。粒子移动到另一格不会绕过节流。
+- `ParticleRippleMergeDistance = 0` 表示不合并相邻粒子波纹；数值越大，相邻粒子越容易合并成同一个波纹区域。合并距离和触发间隔分别生效。
+- PC 编辑器、PC GamePlayer 和 Android 使用相同的粒子波纹接触窗口：粒子需要靠近水面平均高度，垂直距离不超过交互半径与粒子半径之和；波纹生成区域保持 Android 的历史范围，即水面中心周围 `Size / 2` 的世界空间圆形区域。该区域独立于缩放后的完整水面网格和粒子移除边界，出生在水面深处的粒子不再产生假的落水波纹。
+- PC 的 `KillOnWaterContact` 只在粒子实际接近／碰到水面时销毁粒子，出生在水面深处的粒子不会被立刻销毁再随机重生，避免大量假触水事件和重生循环。
+- 水面 shader 仍最多同时显示 48 个活动波纹。雨滴波纹只合并／替换其他粒子波纹，不会移动、重置或提前替换人物与脚本产生的波纹；人物与脚本波纹仍按设置的寿命自然衰减，新增交互波纹在槽位满时优先替换粒子波纹。
 - `MirrorReflectionEnabled` / `set_mirror_reflection_enabled` 用于切换水面的平面镜面反射。开启时 GameEditor/GamePlayer 会用镜像相机把场景额外渲染到离屏纹理，水面 shader 再采样这张反射纹理并叠加法线扰动和 Fresnel；关闭时水面更接近普通水色/环境渐变。
 - 性能注意：每个启用镜面反射的水面至少会多一次场景渲染。复杂场景、多个水面或多个相机视口会显著增加 GPU 开销。当前实现优先支持水平水面。
 

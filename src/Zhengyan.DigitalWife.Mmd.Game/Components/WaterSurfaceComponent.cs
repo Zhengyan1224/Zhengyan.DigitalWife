@@ -219,6 +219,12 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     }
 
     public void AddRipple(Vector3 worldPosition, float radius = 0.8f, float strength = 0.8f, float mergeDistance = -1.0f)
+        => AddRippleCore(worldPosition, radius, strength, mergeDistance, isParticle: false);
+
+    public void AddParticleRipple(Vector3 worldPosition, float radius, float strength, float mergeDistance)
+        => AddRippleCore(worldPosition, radius, strength, mergeDistance, isParticle: true);
+
+    private void AddRippleCore(Vector3 worldPosition, float radius, float strength, float mergeDistance, bool isParticle)
     {
         float effectiveMergeDistance = mergeDistance < 0.0f
             ? MathF.Max(radius * 1.25f, 0.45f)
@@ -230,7 +236,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             float nearestDistanceSquared = float.MaxValue;
             for (int i = 0; i < _ripples.Length; i++)
             {
-                if (!_ripples[i].Active)
+                if (!_ripples[i].Active || _ripples[i].IsParticle != isParticle)
                 {
                     continue;
                 }
@@ -254,8 +260,9 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             }
         }
 
-        int targetIndex = 0;
+        int targetIndex = -1;
         float oldestAge = float.MinValue;
+        bool hasParticleCandidate = false;
         for (int i = 0; i < _ripples.Length; i++)
         {
             if (!_ripples[i].Active)
@@ -265,6 +272,16 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
                 break;
             }
 
+            // Rain may replace older rain, but never a character/script ripple.
+            // New character ripples prefer replacing rain when the fixed-size pool is full.
+            if (isParticle && !_ripples[i].IsParticle) continue;
+            if (!isParticle && _ripples[i].IsParticle && !hasParticleCandidate)
+            {
+                hasParticleCandidate = true;
+                targetIndex = -1;
+                oldestAge = float.MinValue;
+            }
+            if (hasParticleCandidate && !_ripples[i].IsParticle) continue;
             if (_ripples[i].Age > oldestAge)
             {
                 oldestAge = _ripples[i].Age;
@@ -272,9 +289,11 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
             }
         }
 
+        if (targetIndex < 0) return;
         _ripples[targetIndex] = new RippleState
         {
             Active = true,
+            IsParticle = isParticle,
             Center = worldPosition,
             Age = 0.0f,
             Radius = MathF.Max(0.001f, radius),
@@ -872,6 +891,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
     private struct RippleState
     {
         public bool Active;
+        public bool IsParticle;
         public Vector3 Center;
         public float Age;
         public float Radius;

@@ -263,20 +263,18 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
                 }
             }
 
-            foreach (ParticleSystemComponent particles in _particleSnapshot)
+            foreach ((string particleId, ParticleSystemComponent particles) in _particles)
             {
                 foreach (ParticleCollisionSample sample in particles.GetCollisionSamples())
                 {
-                    Vector3 local = sample.Position - waterEntity.Position;
-                    if (MathF.Abs(local.Y) > radius + sample.Radius ||
-                        local.X * local.X + local.Z * local.Z > waterEntity.Definition.Water.Size * waterEntity.Definition.Water.Size * 0.25f)
+                    if (!ParticleWaterRipplePolicy.IsRippleContact(sample, waterEntity.Position, waterEntity.Definition.Water.Size, radius))
                         continue;
-                    string key = $"{waterEntity.Id}:particle:{sample.Index}";
+                    string key = ParticleWaterRipplePolicy.BuildKey(waterEntity.Id, particleId, sample.Index);
                     double minInterval = Math.Max(0.0f, waterEntity.Definition.Water.ParticleRippleMinIntervalSeconds);
                     if (!_waterRippleTimes.TryGetValue(key, out double last) || now - last >= minInterval)
                     {
                         _waterRippleTimes[key] = now;
-                        water.AddRipple(sample.Position, radius, strength,
+                        water.AddParticleRipple(sample.Position, radius, strength,
                             waterEntity.Definition.Water.ParticleRippleMergeDistance);
                     }
                 }
