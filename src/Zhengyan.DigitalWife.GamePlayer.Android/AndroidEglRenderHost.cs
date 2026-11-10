@@ -259,6 +259,9 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 _scriptsStarted = true;
             }
             _game.RenderHostedWithoutPresent(deltaSeconds);
+            // EGL swaps only the window buffers. Resolve and composite an active
+            // runtime MSAA scene target before handing that window image to EGL.
+            _game.PresentHosted();
             foreach (AndroidRuntimeEvent runtimeEvent in _game.DrainRuntimeEvents())
             {
                 _scriptHost?.DispatchEvent(runtimeScene, runtimeEvent);

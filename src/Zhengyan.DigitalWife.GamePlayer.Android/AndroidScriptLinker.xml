@@ -9,6 +9,19 @@
     <type fullname="System.DateTimeOffset" preserve="all" />
     <type fullname="System.DateTime" preserve="all" />
     <type fullname="System.TimeSpan" preserve="all" />
+    <!-- Tuple syntax in downloaded/precompiled scripts is invisible to the trimmer.
+         Preserve every arity, including TRest used by tuples with more than seven elements. -->
+    <type fullname="System.ValueTuple" preserve="all" />
+    <type fullname="System.ValueTuple`1" preserve="all" />
+    <type fullname="System.ValueTuple`2" preserve="all" />
+    <type fullname="System.ValueTuple`3" preserve="all" />
+    <type fullname="System.ValueTuple`4" preserve="all" />
+    <type fullname="System.ValueTuple`5" preserve="all" />
+    <type fullname="System.ValueTuple`6" preserve="all" />
+    <type fullname="System.ValueTuple`7" preserve="all" />
+    <type fullname="System.ValueTuple`8" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.ITuple" preserve="all" />
+    <type fullname="System.Runtime.CompilerServices.TupleElementNamesAttribute" preserve="all" />
     <!-- Required by every Roslyn script submission factory. -->
     <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder" preserve="all" />
     <type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1" preserve="all" />

@@ -171,6 +171,8 @@ Python 属性是当前事件开始时的快照，修改必须调用上述方法�
 
 为兼容 Android 发布包的运行时类型裁剪，示例使用普通 `int`／`float` 变量和 `switch` 语句，避免依赖 `System.ValueTuple`。如果 Body.csx 中复制了旧版元组示例，请替换对应的画质切换片段后重新导出游戏包。
 
+更新后的 Android 播放器会保留 `ValueTuple` 各种元组类型、命名元组元数据，以及超过七个元素所需的嵌套类型，动态加载的 C# 脚本也可以使用元组。此项运行时修复需要安装新版播放器 APK；仅重新导出游戏包无法补回旧 APK 中被裁剪的类型。上面的普通变量示例仍可用于兼容旧播放器。
+
 ```csharp
 if (IsGuiEvent && GuiEventName == "clicked")
 {

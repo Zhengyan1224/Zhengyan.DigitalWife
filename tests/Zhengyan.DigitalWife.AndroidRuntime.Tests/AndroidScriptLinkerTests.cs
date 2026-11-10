@@ -7,6 +7,7 @@ internal static class AndroidScriptLinkerTests
     // ordinary tests. AddSeconds used to disappear only in the Android APK.
     internal static void Verify(string linkedDirectory)
     {
+        VerifyValueTuples(linkedDirectory);
         VerifyMembers(Path.Combine(linkedDirectory, "System.Private.CoreLib.dll"), "System", "DateTimeOffset",
             ["get_UtcNow", "AddSeconds", "AddMilliseconds", "AddMinutes", "op_Subtraction", "op_GreaterThanOrEqual"], ["MinValue"]);
         VerifyMembers(Path.Combine(linkedDirectory, "System.Private.CoreLib.dll"), "System", "DateTime",
@@ -52,5 +53,20 @@ internal static class AndroidScriptLinkerTests
             if (!actualMethods.Contains(method)) throw new InvalidOperationException($"Android trimming removed {ns}.{name}.{method} from {path}.");
         foreach (string field in fields)
             if (!actualFields.Contains(field)) throw new InvalidOperationException($"Android trimming removed {ns}.{name}.{field} from {path}.");
+    }
+
+    internal static void VerifyValueTuples(string linkedDirectory)
+    {
+        string corelib=Path.Combine(linkedDirectory,"System.Private.CoreLib.dll");
+        VerifyMembers(corelib,"System","ValueTuple",["Create","Equals","GetHashCode","ToString"],[]);
+        for(int arity=1;arity<=8;arity++)
+        {
+            string[] fields=Enumerable.Range(1,Math.Min(arity,7)).Select(index=>"Item"+index).ToArray();
+            if(arity==8)fields=[..fields,"Rest"];
+            VerifyMembers(corelib,"System","ValueTuple`"+arity,[".ctor","Equals","GetHashCode","ToString"],fields);
+        }
+        VerifyMembers(corelib,"System.Runtime.CompilerServices","ITuple",["get_Length","get_Item"],[]);
+        VerifyMembers(corelib,"System.Runtime.CompilerServices","TupleElementNamesAttribute",[".ctor","get_TransformNames"],[]);
+        Console.WriteLine("PASS linked Android ValueTuple arities 0-8, named tuples and nested TRest");
     }
 }

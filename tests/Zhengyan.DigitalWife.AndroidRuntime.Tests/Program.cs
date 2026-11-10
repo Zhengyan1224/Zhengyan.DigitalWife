@@ -29,6 +29,12 @@ if (args is ["--verify-linked-script-apis", string linkedDirectory])
     return 0;
 }
 
+if(args is ["--verify-linked-valuetuples",string tupleLinkedDirectory])
+{
+    AndroidScriptLinkerTests.VerifyValueTuples(tupleLinkedDirectory);
+    return 0;
+}
+
 if (args is ["--local-speech-project", string speechProject])
 {
     await AndroidLocalSpeechTests.ValidateProjectModelsAsync(speechProject);

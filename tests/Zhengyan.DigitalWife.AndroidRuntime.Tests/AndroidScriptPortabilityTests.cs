@@ -58,6 +58,41 @@ internal static class AndroidScriptPortabilityTests
         Check(AndroidPrecompiledScriptCompatibility.ReferencesPrivateInlineArray(image.ToArray()), "Old desktop-compiled params script was not identified for runtime recompilation.");
     }
 
+    internal static void TestValueTupleScripts()
+    {
+        string path=Path.Combine(Path.GetTempPath(),"android-valuetuple-"+Guid.NewGuid().ToString("N")+".csx");
+        try
+        {
+            File.WriteAllText(path,"""
+                var quality=(Scene:4,Directional:2048,Local:1024,Filter:25,Radius:2.0f,Mirror:4,Water:4);
+                var eight=(1,2,3,4,5,6,7,8);
+                var nine=(1,2,3,4,5,6,7,8,9);
+                var one=new System.ValueTuple<int>(10);
+                System.Runtime.CompilerServices.ITuple boxed=nine;
+                return quality.Scene==4 && quality.Water==4 && quality==(4,2048,1024,25,2.0f,4,4)
+                    && quality.ToString().Contains("2048") && eight.Item8==8 && nine.Item9==9
+                    && boxed.Length==9 && (int)boxed[8]==9 && one.Item1==10;
+                """);
+            foreach(MetadataReference[]? references in new[]{(MetadataReference[]?)null,AndroidScriptMetadata.GetReferences().ToArray()})
+            {
+                byte[] image=AndroidScriptCompiler.Compile(path,references);
+                Assembly assembly=Assembly.Load(image);
+                MethodInfo factory=assembly.GetType("Script")!.GetMethod("<Factory>",BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic)!;
+                object? result=((Task<object?>)factory.Invoke(null,[new object?[2]])!).GetAwaiter().GetResult();
+                Check(result is true,"Android named/nested tuple script produced incorrect results.");
+            }
+            string root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../.."));
+            var descriptor=System.Xml.Linq.XDocument.Load(Path.Combine(root,"src/Zhengyan.DigitalWife.GamePlayer.Android/AndroidScriptLinker.xml"));
+            var corelib=descriptor.Root!.Elements("assembly").Single(element=>(string?)element.Attribute("fullname")=="System.Private.CoreLib");
+            string[] expected=["System.ValueTuple",..Enumerable.Range(1,8).Select(arity=>"System.ValueTuple`"+arity),
+                "System.Runtime.CompilerServices.ITuple","System.Runtime.CompilerServices.TupleElementNamesAttribute"];
+            foreach(string type in expected)
+                Check(corelib.Elements("type").Any(element=>(string?)element.Attribute("fullname")==type && (string?)element.Attribute("preserve")=="all"),
+                    "Android tuple type is not rooted: "+type);
+        }
+        finally{File.Delete(path);}
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

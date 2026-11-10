@@ -96,6 +96,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Android in-memory script references include default imports", AndroidScriptMetadataTests.TestDefaultImports),
             ("Android script GUI control types resolve imports and preserve explicit aliases", AndroidScriptMetadataTests.TestGuiControlTypes),
             ("Android script portability for params collections and spans", AndroidScriptPortabilityTests.TestParamsAndSpans),
+            ("Android script ValueTuple named seven-element and nested tuple support", AndroidScriptPortabilityTests.TestValueTupleScripts),
             ("Android script portability detects older package InlineArrays", AndroidScriptPortabilityTests.TestOldPackageDetection),
             ("TTS initialization retries after failure", AndroidTtsInitializationTests.TestRetry),
             ("TTS initialization cancellation is per caller", AndroidTtsInitializationTests.TestCancellation),

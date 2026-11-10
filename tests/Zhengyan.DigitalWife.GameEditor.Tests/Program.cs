@@ -14,6 +14,8 @@ if (args is ["--export-project", string projectDirectory, string outputPath])
 
 (string Name, Action Run)[] tests =
 [
+    ("Android GLES presents the scene before EGL swap", AndroidGlesPresentationRegression.HostOrder),
+    ("Android GLES hosted graphics frames advance after quality switches", AndroidGlesPresentationRegression.AnimatedFrames),
     ("Water ripple contacts match Android and throttle per particle", WaterRippleRegression.ContactParity),
     ("Water ripple rain cannot overwrite character waves", WaterRippleRegression.PreserveCharacterRipple),
     ("Water ripple DemoGame01 rain reproduces and fixes pool churn", WaterRippleRegression.DemoRainSimulation),
