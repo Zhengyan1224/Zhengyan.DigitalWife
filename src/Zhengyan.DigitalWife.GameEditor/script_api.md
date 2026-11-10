@@ -6,6 +6,8 @@
 
 ## 模块索引
 
+画质按钮示例：[三个按钮切换低级／中级／高级画质](./api_docs/31-graphics-quality.md#三个按钮切换低级中级高级画质)，包含场景 MSAA、阴影质量、平面／水面反射 MSAA 的三档预设和完整代码。
+
 | 模块 | 分类 | 主要对象 / 入口 | 文档 |
 | --- | --- | --- | --- |
 | 运行时画质与 MSAA | 渲染 | `Graphics`, `Scene.Graphics`, `Entity.ReflectionSamples` | [api_docs/31-graphics-quality.md](./api_docs/31-graphics-quality.md) |

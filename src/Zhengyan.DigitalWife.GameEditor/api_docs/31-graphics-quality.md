@@ -14,6 +14,10 @@ keywords:
   - quality
   - 阴影
   - 反射
+  - 三按钮
+  - 低级
+  - 中级
+  - 高级
 ---
 
 # 运行时画质与 MSAA
@@ -131,6 +135,117 @@ def start(entity, scene, input, audio):
 
 Python 属性是当前事件开始时的快照，修改必须调用上述方法；新值在后续事件快照中读取。
 按钮示例见 [graphics-quality.py](../samples/graphics-quality.py)。
+
+## 三个按钮切换低级／中级／高级画质
+
+此示例使用三个按钮同时切换场景 MSAA、阴影质量，以及平面和水面反射 MSAA。
+下面是示例预设，可以按游戏需要调整这些数字：
+
+| 参数 | 低级 | 中级 | 高级 |
+| --- | --- | --- | --- |
+| 场景 MSAA | 1x | 2x | 4x |
+| 方向光阴影分辨率 | 512 | 1024 | 2048 |
+| 点光源／聚光灯每面阴影分辨率 | 256 | 512 | 1024 |
+| 阴影过滤采样次数 | 4 | 9 | 25 |
+| 阴影过滤半径（texels） | 1.0 | 1.5 | 2.0 |
+| 平面镜面反射 MSAA | 1x | 2x | 4x |
+| 水面镜面反射 MSAA | 1x | 2x | 4x |
+
+### 在 GameEditor 中绑定按钮
+
+1. 给一个已有场景实体绑定 `scripts/graphics-quality.csx`，可将该实体命名为 `QualityController`。只绑定一次，三个按钮共用这个事件目标。
+2. 在当前场景创建三个 `button` 控件，分别设置如下。`Name` 是脚本匹配的控件名称，`Text` 是玩家看到的文字，两者可以不同。
+
+| 控件 Name | 显示 Text | EventName | TargetEntity |
+| --- | --- | --- | --- |
+| `LowQuality` | 低级 | `clicked` | 选择绑定画质脚本的实体 |
+| `MediumQuality` | 中级 | `clicked` | 同一实体 |
+| `HighQuality` | 高级 | `clicked` | 同一实体 |
+
+3. 在需要反射的平面和水面 Inspector 中启用 `Mirror reflection`；模型和灯光也需要开启相应的阴影投射／接收开关。示例只切换质量参数，这些效果开关继续独立生效。
+4. 将要控制的平面和水面分别命名为 `Mirror`、`Water`。有多个表面时，在代码的名称列表中添加其他实体名称或 Id。
+
+### C# 完整代码（PC／Android／Web）
+
+保存为 `scripts/graphics-quality.csx`。此代码使用三端共同支持的 `GetEntity` 查找当前场景的平面和水面。
+
+```csharp
+if (IsGuiEvent && GuiEventName == "clicked")
+{
+    var preset = GuiControlName switch
+    {
+        "LowQuality" => (Scene: 1, Directional: 512, Local: 256, Filter: 4, Radius: 1.0f, Mirror: 1, Water: 1),
+        "MediumQuality" => (Scene: 2, Directional: 1024, Local: 512, Filter: 9, Radius: 1.5f, Mirror: 2, Water: 2),
+        "HighQuality" => (Scene: 4, Directional: 2048, Local: 1024, Filter: 25, Radius: 2.0f, Mirror: 4, Water: 4),
+        _ => (Scene: 0, Directional: 0, Local: 0, Filter: 0, Radius: 0.0f, Mirror: 0, Water: 0)
+    };
+
+    if (preset.Scene != 0)
+    {
+        Graphics.SceneSamples = preset.Scene;
+        Graphics.Shadows.DirectionalResolution = preset.Directional;
+        Graphics.Shadows.LocalLightResolution = preset.Local;
+        Graphics.Shadows.FilterSamples = preset.Filter;
+        Graphics.Shadows.FilterRadius = preset.Radius;
+
+        foreach (var name in new[] { "Mirror" })
+        {
+            var surface = Scene.GetEntity(name);
+            if (surface != null) surface.ReflectionSamples = preset.Mirror;
+        }
+        foreach (var name in new[] { "Water" })
+        {
+            var surface = Scene.GetEntity(name);
+            if (surface != null) surface.ReflectionSamples = preset.Water;
+        }
+    }
+}
+```
+
+只有上述三个按钮的 `clicked` 事件会修改画质，其他按钮和 `pressed`／`released` 事件会被忽略。
+代码没有在 `IsUpdate` 中逐帧切换，重复点击同一档位也会由运行时跳过同值请求。
+完整文件见 [graphics-quality.csx](../samples/graphics-quality.csx)。
+
+### Python 完整代码（PC）
+
+使用 Python 时，将同一目标实体上的脚本改为 `scripts/graphics-quality.py`，三个按钮的配置保持一致。
+将需要控制的平面和水面分别命名为 `Mirror`、`Water`；有多个表面时扩展名称列表。
+
+```python
+def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
+    if event_name != "clicked":
+        return
+    presets = {
+        "LowQuality": (1, 512, 256, 4, 1.0, 1, 1),
+        "MediumQuality": (2, 1024, 512, 9, 1.5, 2, 2),
+        "HighQuality": (4, 2048, 1024, 25, 2.0, 4, 4),
+    }
+    preset = presets.get(control_name)
+    if preset is None:
+        return
+    samples, directional, local, filtering, radius, mirror, water = preset
+    scene.graphics.set_scene_samples(samples)
+    scene.graphics.shadows.set_directional_resolution(directional)
+    scene.graphics.shadows.set_local_light_resolution(local)
+    scene.graphics.shadows.set_filter_samples(filtering)
+    scene.graphics.shadows.set_filter_radius(radius)
+    mirror_names = ("Mirror",)
+    water_names = ("Water",)
+    for names, reflection_samples in ((mirror_names, mirror), (water_names, water)):
+        for name in names:
+            surface = scene.get_entity(name)
+            if surface is not None:
+                surface.set_reflection_samples(reflection_samples)
+```
+
+完整文件见 [graphics-quality.py](../samples/graphics-quality.py)。
+
+### 运行时表现
+
+按钮设置的是请求档位，实际 MSAA 和阴影分辨率仍按设备能力回退。
+Android 若明确选择项目的 low／medium 质量配置，这些档位仍会限制实际级别；需要让三个按钮按设备能力切换时，项目 Android 质量配置可使用 auto。
+可在后续事件中读取 `Graphics.ActualSceneSamples`、`Graphics.Shadows.ActualDirectionalResolution` 和表面的 `ActualReflectionSamples` 查看实际值。
+全局场景／阴影质量跨场景保留；反射参数属于当前场景实体，切换场景后可再次点击画质按钮更新新场景中的表面。
 
 ## 性能
 

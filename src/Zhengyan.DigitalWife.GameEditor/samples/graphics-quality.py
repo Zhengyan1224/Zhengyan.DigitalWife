@@ -1,13 +1,25 @@
 def gui_event(entity, scene, input, audio, control_id, control_name, event_name):
     if event_name != "clicked":
         return
-    high = control_name == "HighQuality"
-    scene.graphics.set_scene_samples(4 if high else 1)
-    scene.graphics.shadows.set_directional_resolution(2048 if high else 512)
-    scene.graphics.shadows.set_local_light_resolution(1024 if high else 256)
-    scene.graphics.shadows.set_filter_samples(25 if high else 4)
-    scene.graphics.shadows.set_filter_radius(2.0 if high else 1.0)
-    for name, samples in (("Mirror", 4 if high else 1), ("Water", 2 if high else 1)):
-        surface = scene.get_entity(name)
-        if surface is not None:
-            surface.set_reflection_samples(samples)
+    presets = {
+        "LowQuality": (1, 512, 256, 4, 1.0, 1, 1),
+        "MediumQuality": (2, 1024, 512, 9, 1.5, 2, 2),
+        "HighQuality": (4, 2048, 1024, 25, 2.0, 4, 4),
+    }
+    preset = presets.get(control_name)
+    if preset is None:
+        return
+    samples, directional, local, filtering, radius, mirror, water = preset
+    scene.graphics.set_scene_samples(samples)
+    scene.graphics.shadows.set_directional_resolution(directional)
+    scene.graphics.shadows.set_local_light_resolution(local)
+    scene.graphics.shadows.set_filter_samples(filtering)
+    scene.graphics.shadows.set_filter_radius(radius)
+    # Add the names of other surfaces here when the scene contains several mirrors or water surfaces.
+    mirror_names = ("Mirror",)
+    water_names = ("Water",)
+    for names, reflection_samples in ((mirror_names, mirror), (water_names, water)):
+        for name in names:
+            surface = scene.get_entity(name)
+            if surface is not None:
+                surface.set_reflection_samples(reflection_samples)
