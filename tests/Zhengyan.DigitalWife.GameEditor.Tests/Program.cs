@@ -14,6 +14,18 @@ if (args is ["--export-project", string projectDirectory, string outputPath])
 
 (string Name, Action Run)[] tests =
 [
+    ("Runtime graphics requests coalesce and report device results", RuntimeGraphicsRegression.Requests),
+    ("Runtime graphics settings survive scene changes", RuntimeGraphicsRegression.SceneLifetime),
+    ("Runtime graphics PC Android Web script ABI and Python bridge", RuntimeGraphicsRegression.ScriptApis),
+    ("Runtime graphics OpenGL MSAA and depth capture", RuntimeGraphicsRegression.OpenGlScene),
+    ("Runtime graphics Vulkan MSAA and depth capture", RuntimeGraphicsRegression.VulkanScene),
+    ("Reflection samples survive scene serialization", ReflectionSamplingRegression.Serialization),
+    ("Global shadow quality serialization and validation", ShadowQualityRegression.Serialization),
+    ("OpenGL shadow filtering matches CPU coverage", ShadowQualityRegression.OpenGl),
+    ("Vulkan shadow filtering matches CPU coverage", ShadowQualityRegression.Vulkan),
+    ("Reflection samples follow scene limits across camera viewports", ViewportRenderingRegression.RunReflections),
+    ("OpenGL reflection samples resolve and resize", ReflectionSamplingRegression.OpenGl),
+    ("Vulkan reflection samples resolve and resize", ReflectionSamplingRegression.Vulkan),
     ("OpenGL and Vulkan viewport placement and underwater layout", TestViewportCoordinates),
     ("Editor sends matching viewport, scissor, and clear rectangles", ViewportRenderingRegression.Run),
     ("Startup directory is available before the overlay captures it", TestStartupDirectory),
@@ -26,6 +38,7 @@ if (args is ["--export-project", string projectDirectory, string outputPath])
 int failures = 0;
 foreach (var test in tests)
 {
+    if (args is ["--test", string filter] && !test.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
     try
     {
         test.Run();
@@ -117,6 +130,7 @@ static void TestMultiSceneExport()
         GameProject project = new()
         {
             Name = "Multi-scene export regression",
+            Shadows = new() { DirectionalResolution = 4096, LocalLightResolution = 512, FilterSamples = 25, FilterRadius = 3 },
             Scenes = ["scenes/main.scene.json", "scenes/next.scene.json", "scenes/scene2.scene.json", "scenes/scene3.scene.json"]
         };
         GameProjectStore.Save(projectDirectory, project);
@@ -148,6 +162,7 @@ static void TestWebStaticExport()
         GameProject project = new()
         {
             Name = "Web static export regression",
+            Shadows = new() { DirectionalResolution = 4096, LocalLightResolution = 512, FilterSamples = 25, FilterRadius = 3 },
             Scenes = ["scenes/main.scene.json"],
             DefaultScene = "scenes/main.scene.json",
             EditorScene = "scenes/main.scene.json"
@@ -165,6 +180,8 @@ static void TestWebStaticExport()
         Check(result.OutputDirectory == Path.GetFullPath(outputDirectory), "Web export returned an unexpected output directory.");
         Check(File.Exists(result.ManifestPath), "Web export did not write web.manifest.json.");
         Check(File.Exists(Path.Combine(outputDirectory, "game.project.json")), "Web export did not write game.project.json.");
+        Check(GameProjectStore.Load(outputDirectory).Shadows is { DirectionalResolution: 4096, LocalLightResolution: 512, FilterSamples: 25, FilterRadius: 3 },
+            "Web export lost project global shadow settings.");
         Check(File.Exists(Path.Combine(outputDirectory, "compiled", "web", "manifest.json")), "Web export did not preserve the Web script manifest.");
         using JsonDocument manifest = JsonDocument.Parse(File.ReadAllText(result.ManifestPath));
         Check(manifest.RootElement.GetProperty("runtime").GetString() == "web", "Web export manifest has the wrong runtime.");
@@ -293,6 +310,7 @@ static void ExportAndCheck(string projectDirectory, string outputPath)
         });
     GameProject roundTrip = GameProjectStore.Load(extracted.ProjectDirectory);
     Check(roundTrip.Scenes.SequenceEqual(editor.Project.Scenes), "The package lost scene registrations.");
+    Check(JsonSerializer.Serialize(roundTrip.Shadows) == JsonSerializer.Serialize(editor.Project.Shadows), "The package lost global shadow quality.");
     HashSet<string> expectedScripts = new(StringComparer.OrdinalIgnoreCase);
     foreach (string scenePath in roundTrip.Scenes)
     {

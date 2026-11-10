@@ -25,6 +25,22 @@ internal static unsafe class VulkanSceneUploadTests
         Check(AndroidRenderPolicy.Resolve(quality, 4).Samples == 2, "Explicit medium profile lost its MSAA limit.");
     }
 
+    public static void TestGlobalShadowQuality()
+    {
+        var quality = new Zhengyan.DigitalWife.GameProjects.AndroidQualitySettings();
+        var shadows = new Zhengyan.DigitalWife.GameProjects.GameProjectShadowSettings { DirectionalResolution = 4096, LocalLightResolution = 1024 };
+        Check(AndroidRenderPolicy.Resolve(quality, 4, shadows) is { ShadowMapSize: 4096, LocalShadowMapSize: 1024 },
+            "Auto Android quality did not honor the project global shadow resolution.");
+        Check(AndroidRenderPolicy.Resolve(quality, 4) is { ShadowMapSize: 1024, LocalShadowMapSize: 512 },
+            "Legacy Android shadow defaults changed.");
+        quality.Profile = "low";
+        Check(AndroidRenderPolicy.Resolve(quality, 4, shadows) is { ShadowMapSize: 512, LocalShadowMapSize: 256 },
+            "Explicit Android low quality lost its resource limits.");
+        quality.Profile = "medium";
+        Check(AndroidRenderPolicy.Resolve(quality, 4, shadows) is { ShadowMapSize: 1024, LocalShadowMapSize: 512 },
+            "Explicit Android medium quality lost its resource limits.");
+    }
+
     public static void TestScenePasses()
     {
         if (!VulkanRenderer.IsSupported(out string reason))

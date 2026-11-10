@@ -6,6 +6,8 @@ public sealed unsafe class SceneColorDepthRenderTarget : IDisposable
 {
     private readonly GL _gl;
     private bool _disposed;
+    private uint _multisampleFramebuffer, _multisampleColor, _multisampleDepth;
+    public int SampleCount { get; private set; } = 1;
 
     public SceneColorDepthRenderTarget(GL gl, string name)
     {
@@ -47,16 +49,23 @@ public sealed unsafe class SceneColorDepthRenderTarget : IDisposable
     public int Height { get; private set; }
 
     public void EnsureSize(int width, int height)
+        => EnsureSize(width,height,1);
+
+    public void EnsureSize(int width,int height,int samples)
     {
         width = Math.Max(width, 1);
         height = Math.Max(height, 1);
-        if (Width == width && Height == height)
+        samples = AntiAliasingSamples.NormalizeRequested(samples);
+        if (Width == width && Height == height && samples == SampleCount)
         {
             return;
         }
 
         Width = width;
         Height = height;
+        DeleteMultisample();
+        SampleCount = samples;
+        if(samples>1) { AllocateMultisample(); return; }
 
         _gl.BindTexture(GLEnum.Texture2D, ColorTextureId);
         _gl.TexImage2D(GLEnum.Texture2D, 0, (int)GLEnum.Rgba, (uint)Width, (uint)Height, 0, GLEnum.Rgba, GLEnum.UnsignedByte, null);
@@ -79,6 +88,7 @@ public sealed unsafe class SceneColorDepthRenderTarget : IDisposable
         _gl.BindRenderbuffer(GLEnum.Renderbuffer, 0);
 
         _gl.BindFramebuffer(GLEnum.Framebuffer, FramebufferId);
+        _gl.FramebufferTexture2D(GLEnum.Framebuffer, GLEnum.DepthStencilAttachment, GLEnum.Texture2D, 0, 0);
         _gl.FramebufferTexture2D(GLEnum.Framebuffer, GLEnum.ColorAttachment0, GLEnum.Texture2D, ColorTextureId, 0);
         _gl.FramebufferTexture2D(GLEnum.Framebuffer, GLEnum.DepthAttachment, GLEnum.Texture2D, DepthTextureId, 0);
         _gl.FramebufferRenderbuffer(GLEnum.Framebuffer, GLEnum.StencilAttachment, GLEnum.Renderbuffer, StencilRenderbufferId);
@@ -100,7 +110,7 @@ public sealed unsafe class SceneColorDepthRenderTarget : IDisposable
 
     public void Bind()
     {
-        _gl.BindFramebuffer(GLEnum.Framebuffer, FramebufferId);
+        _gl.BindFramebuffer(GLEnum.Framebuffer, _multisampleFramebuffer != 0 ? _multisampleFramebuffer : FramebufferId);
         _gl.Viewport(0, 0, (uint)Math.Max(Width, 1), (uint)Math.Max(Height, 1));
     }
 
@@ -112,10 +122,49 @@ public sealed unsafe class SceneColorDepthRenderTarget : IDisposable
         }
 
         _disposed = true;
+        DeleteMultisample();
         _gl.DeleteFramebuffer(FramebufferId);
         _gl.DeleteTexture(ColorTextureId);
         _gl.DeleteTexture(DepthTextureId);
         _gl.DeleteRenderbuffer(StencilRenderbufferId);
         GC.SuppressFinalize(this);
+    }
+
+    private void AllocateMultisample()
+    {
+        _gl.BindTexture(GLEnum.Texture2D,ColorTextureId);
+        _gl.TexImage2D(GLEnum.Texture2D,0,(int)GLEnum.Rgba8,(uint)Width,(uint)Height,0,GLEnum.Rgba,GLEnum.UnsignedByte,null);
+        _gl.BindTexture(GLEnum.Texture2D,DepthTextureId);
+        _gl.TexImage2D(GLEnum.Texture2D,0,(int)GLEnum.Depth24Stencil8,(uint)Width,(uint)Height,0,GLEnum.DepthStencil,GLEnum.UnsignedInt248,null);
+        _gl.BindTexture(GLEnum.Texture2D,0);
+        _gl.BindFramebuffer(GLEnum.Framebuffer,FramebufferId);
+        _gl.FramebufferRenderbuffer(GLEnum.Framebuffer,GLEnum.StencilAttachment,GLEnum.Renderbuffer,0);
+        _gl.FramebufferTexture2D(GLEnum.Framebuffer,GLEnum.ColorAttachment0,GLEnum.Texture2D,ColorTextureId,0);
+        _gl.FramebufferTexture2D(GLEnum.Framebuffer,GLEnum.DepthStencilAttachment,GLEnum.Texture2D,DepthTextureId,0);
+        _multisampleFramebuffer=_gl.GenFramebuffer(); _multisampleColor=_gl.GenRenderbuffer(); _multisampleDepth=_gl.GenRenderbuffer();
+        _gl.BindFramebuffer(GLEnum.Framebuffer,_multisampleFramebuffer);
+        _gl.BindRenderbuffer(GLEnum.Renderbuffer,_multisampleColor);
+        _gl.RenderbufferStorageMultisample(GLEnum.Renderbuffer,(uint)SampleCount,GLEnum.Rgba8,(uint)Width,(uint)Height);
+        _gl.FramebufferRenderbuffer(GLEnum.Framebuffer,GLEnum.ColorAttachment0,GLEnum.Renderbuffer,_multisampleColor);
+        _gl.BindRenderbuffer(GLEnum.Renderbuffer,_multisampleDepth);
+        _gl.RenderbufferStorageMultisample(GLEnum.Renderbuffer,(uint)SampleCount,GLEnum.Depth24Stencil8,(uint)Width,(uint)Height);
+        _gl.FramebufferRenderbuffer(GLEnum.Framebuffer,GLEnum.DepthStencilAttachment,GLEnum.Renderbuffer,_multisampleDepth);
+        if(_gl.CheckFramebufferStatus(GLEnum.Framebuffer)!=GLEnum.FramebufferComplete) throw new InvalidOperationException($"{Name} multisample capture is incomplete.");
+        StencilAvailable=true; _gl.BindRenderbuffer(GLEnum.Renderbuffer,0); _gl.BindFramebuffer(GLEnum.Framebuffer,0);
+    }
+    public void Resolve()
+    {
+        if(SampleCount<=1) return;
+        _gl.Disable(GLEnum.ScissorTest); _gl.BindFramebuffer(GLEnum.ReadFramebuffer,_multisampleFramebuffer);
+        _gl.BindFramebuffer(GLEnum.DrawFramebuffer,FramebufferId);
+        _gl.BlitFramebuffer(0,0,Width,Height,0,0,Width,Height,ClearBufferMask.ColorBufferBit|ClearBufferMask.DepthBufferBit|ClearBufferMask.StencilBufferBit,GLEnum.Nearest);
+        _gl.BindFramebuffer(GLEnum.Framebuffer,0);
+    }
+    private void DeleteMultisample()
+    {
+        if(_multisampleFramebuffer!=0) _gl.DeleteFramebuffer(_multisampleFramebuffer);
+        if(_multisampleColor!=0) _gl.DeleteRenderbuffer(_multisampleColor);
+        if(_multisampleDepth!=0) _gl.DeleteRenderbuffer(_multisampleDepth);
+        _multisampleFramebuffer=_multisampleColor=_multisampleDepth=0;
     }
 }

@@ -16,6 +16,8 @@ public readonly record struct UnderwaterPostProcessSettings(
 public interface IUnderwaterPostProcessRenderer : IDisposable
 {
     void BeginCapture(int width, int height, Vector4 clearColor);
+    void BeginCapture(int width, int height, Vector4 clearColor, int samples) => BeginCapture(width,height,clearColor);
+    void EndCapture() { }
     void ResumeCapture();
     void Draw(OrbitCamera camera, UnderwaterPostProcessSettings settings, double timeSeconds, int viewportWidth, int viewportHeight);
 }
@@ -103,8 +105,12 @@ public sealed unsafe class UnderwaterPostProcessRenderer : IUnderwaterPostProces
     }
 
     public void BeginCapture(int width, int height, Vector4 clearColor)
+        => BeginCapture(width,height,clearColor,1);
+
+    public void BeginCapture(int width, int height, Vector4 clearColor,int samples)
     {
-        BeginCapture(width, height);
+        _captureTarget.EnsureSize(width,height,samples);
+        _captureTarget.Bind();
         _gl.Disable(GLEnum.ScissorTest);
         _gl.Disable(GLEnum.StencilTest);
         _gl.ColorMask(true, true, true, true);
@@ -115,6 +121,7 @@ public sealed unsafe class UnderwaterPostProcessRenderer : IUnderwaterPostProces
     }
 
     public void ResumeCapture() => _captureTarget.Bind();
+    public void EndCapture() => _captureTarget.Resolve();
 
     public void Draw(OrbitCamera camera, UnderwaterPostProcessSettings settings, double timeSeconds, int viewportWidth, int viewportHeight)
     {

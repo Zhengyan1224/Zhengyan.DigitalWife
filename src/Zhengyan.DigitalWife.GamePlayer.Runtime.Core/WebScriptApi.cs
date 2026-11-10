@@ -119,6 +119,7 @@ public sealed record RuntimeSpeechRequest(
 public sealed class WebScriptContext(RuntimeScene scene, RuntimeEntity? entity)
 {
     public RuntimeScene Scene { get; } = scene;
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics => Scene.Graphics;
     public RuntimeEntity? Entity { get; } = entity;
     public double ElapsedSeconds { get; private set; }
     public RuntimeCameraInput Input { get; private set; }

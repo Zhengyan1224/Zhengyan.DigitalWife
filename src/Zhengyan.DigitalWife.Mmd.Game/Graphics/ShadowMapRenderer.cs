@@ -27,6 +27,8 @@ public sealed class ShadowMapRenderer : IDisposable
     }
 
     public ShadowMapBinding? CurrentBinding { get; private set; }
+    public int FilterSamples { get; set; }
+    public float FilterRadius { get; set; } = 1;
 
     public void Render(
         GameTime gameTime,
@@ -59,15 +61,15 @@ public sealed class ShadowMapRenderer : IDisposable
         }
 
         Bounds3 bounds = ComputeSceneBounds(casters, particleCasters, planeReceivers);
+        _shadowTexture.EnsureSize(_resolution, _resolution);
         Matrix4x4 lightViewProjection = CreateLightViewProjection(
             bounds,
             lightDirection,
-            _resolution,
+            _shadowTexture.Width,
             out float nearDistance,
             out float farDistance,
             out float worldUnitsPerTexel);
 
-        _shadowTexture.EnsureSize(_resolution, _resolution);
         _shadowTexture.BeginPass();
         try
         {
@@ -100,7 +102,9 @@ public sealed class ShadowMapRenderer : IDisposable
             TexelSize = new Vector2(
                 1.0f / Math.Max(_shadowTexture.Width, 1),
                 1.0f / Math.Max(_shadowTexture.Height, 1)),
-            NormalOffset = worldUnitsPerTexel * 0.75f
+            NormalOffset = worldUnitsPerTexel * 0.75f,
+            FilterSamples = FilterSamples,
+            FilterRadius = FilterRadius
         };
     }
 

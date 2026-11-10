@@ -421,6 +421,17 @@ public sealed class WebRuntimeHost(
         return Task.CompletedTask;
     }
 
+    [JSInvokable]
+    public Task OnGraphicsQualityApplied(WebGraphicsApplied quality)
+    {
+        if (_loadedProject is not { } project || quality.ScenePath != project.RuntimeScene.ScenePath) return Task.CompletedTask;
+        project.RuntimeScene.Graphics.ReportApplied(quality.Revision,quality.SceneSamples,quality.DirectionalResolution,quality.LocalLightResolution);
+        foreach (var entity in project.RuntimeScene.Entities)
+            if(entity.IsTexturedPlane || entity.IsWaterSurface)
+                entity.ReportReflectionSamples(quality.ReflectionSamples?.GetValueOrDefault(entity.Id) ?? 0);
+        return Task.CompletedTask;
+    }
+
     private async Task ProcessScriptCommandsAsync()
     {
         if (_loadedProject is null)
@@ -711,7 +722,8 @@ public sealed class WebRuntimeHost(
                 .Where(item => item.Entity is not null)
                 .Select(item => (item.Entity!, item.Mesh)))
             .ToArray();
-        WebRenderFrame frame = WebRenderFrame.FromScene(project.RuntimeScene, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight, Snapshot.ElapsedSeconds);
+        WebRenderFrame frame = WebRenderFrame.FromScene(project.RuntimeScene, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight,
+            Snapshot.ElapsedSeconds, project.Project.Window.AntiAliasingSamples, project.Project.Shadows, project.RuntimeScene.Graphics.Capture());
         await _module.InvokeVoidAsync("setFrameState", frame);
     }
 

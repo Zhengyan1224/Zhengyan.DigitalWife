@@ -20,6 +20,7 @@ internal sealed class PmxShader : IDisposable
         InUV = (uint)gl.GetAttribLocation(Id, "in_UV");
 
         UniWV = gl.GetUniformLocation(Id, "u_WV");
+        UniShadowFilterParameters = gl.GetUniformLocation(Id, "u_ShadowFilterParameters");
         UniWVP = gl.GetUniformLocation(Id, "u_WVP");
         UniAlpha = gl.GetUniformLocation(Id, "u_Alpha");
         UniDiffuse = gl.GetUniformLocation(Id, "u_Diffuse");
@@ -144,6 +145,7 @@ internal sealed class PmxShader : IDisposable
     public int UniLocalShadowBias { get; }
 
     public int UniLocalShadowTexelSize { get; }
+    public int UniShadowFilterParameters { get; }
 
     public int UniLocalShadowNormalOffset { get; }
 

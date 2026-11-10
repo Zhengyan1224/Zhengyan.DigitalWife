@@ -1,11 +1,125 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
-import { createWebGl2Renderer, decodeDds } from '../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/js/webgl2-renderer.js';
+import { createWebGl2Renderer, decodeDds, resolveReflectionSamples, resolveShadowResolution, resolveShadowFilterSamples } from '../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/js/webgl2-renderer.js';
 import { colorBlock, createFakeGl, deferred, makeDds, settle, triangle } from './helpers/web-renderer-fixtures.mjs';
 
 const pixels = data => Array.from(data);
 const bufferOf = bytes => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+
+test('dynamic scene MSAA preserves direct rendering, clamps reflections and reports only changes', async () => {
+    const { canvas, state } = createFakeGl({sceneSamples:4});
+    const renderer=createWebGl2Renderer(canvas);
+    const identity=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    await renderer.uploadMesh(triangle([null]));
+    const reflection={id:'mirror',samples:4,viewProjection:identity,cameraPosition:[0,0,-2],clipPlane:[0,0,1,0]};
+    renderer.setFrameState({sceneAntiAliasingSamples:4,graphicsRevision:0,graphicsScenePath:'main',features:{shadows:false,edges:false},reflections:[reflection]});
+    assert.equal(renderer.render().sceneSamples,4);
+    assert.equal(state.multisampleStorage.length,2,'Default scene introduced an extra offscreen target.');
+    assert.equal(renderer.render(),undefined,'Stable quality caused repeated .NET telemetry.');
+    renderer.setFrameState({sceneAntiAliasingSamples:1,graphicsRevision:1,overrideSceneSamples:true});
+    let report=renderer.render();
+    assert.equal(report.sceneSamples,1); assert.equal(report.reflectionSamples.mirror,1);
+    const count=state.uploads.length; renderer.render(); assert.equal(state.uploads.length,count);
+    renderer.setFrameState({sceneAntiAliasingSamples:2,graphicsRevision:2});
+    report=renderer.render(); assert.equal(report.sceneSamples,2); assert.equal(report.reflectionSamples.mirror,2);
+    renderer.setFrameState({sceneAntiAliasingSamples:4,graphicsRevision:3});
+    report=renderer.render(); assert.equal(report.sceneSamples,4); assert.equal(report.reflectionSamples.mirror,4);
+    renderer.dispose();
+    assert.equal(new Set(state.deletedTextures).size,state.deletedTextures.length);
+});
+
+test('shadow quality bounds resolution and sample counts', () => {
+    assert.equal(resolveShadowResolution(8192, 2048), 2048);
+    assert.equal(resolveShadowResolution(1500, 8192), 1024);
+    assert.equal(resolveShadowFilterSamples(49), 49);
+    assert.equal(resolveShadowFilterSamples(8), 4);
+    assert.equal(resolveShadowFilterSamples(0), 0);
+});
+
+test('global shadow quality rebuilds direction and local targets within device limits', async () => {
+    const { canvas, state } = createFakeGl({ maxTextureSize: 2048 });
+    const renderer = createWebGl2Renderer(canvas);
+    const mesh = triangle([null]); mesh.materials[0].enableShadow = true;
+    await renderer.uploadMesh(mesh);
+    const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    renderer.setFrameState({ shadowEnabled: true, shadowStrength: 1, lightViewProjection: identity,
+        shadowResolution: 8192, localShadowResolution: 2048, shadowFilterSamples: 25, shadowFilterRadius: 3,
+        localShadows: [{ pointLightIndex: -1, spotLightIndex: 0, face: 0, viewProjection: identity,
+            atlasRect: [2/8192,2/8192,.25-4/8192,.25-4/8192], nearPlane: .1, farPlane: 10 }] });
+    renderer.render();
+    assert.deepEqual(state.uniforms.u_shadowTexelSize, [1/2048,1/2048]);
+    assert.deepEqual(state.uniforms.u_shadowFilterParameters, [25,3]);
+    assert.equal(state.uploads.filter(item => item.width === 2048).length, 2);
+    const oldTargets = state.uploads.filter(item => item.width === 2048).map(item => item.texture);
+    const oldDraws = state.shadowDraws.length;
+    renderer.setFrameState({ shadowFilterSamples: 49, shadowFilterRadius: 8 }); renderer.render();
+    assert.equal(state.shadowDraws.length, oldDraws, 'Filter quality unnecessarily invalidated shadow depth.');
+    assert.deepEqual(state.uniforms.u_shadowFilterParameters, [49,8]);
+    renderer.setFrameState({ shadowResolution: 512, localShadowResolution: 256 }); renderer.render();
+    assert.ok(oldTargets.every(texture => state.deletedTextures.includes(texture)));
+    assert.deepEqual(state.uniforms.u_shadowTexelSize, [1/512,1/512]);
+    assert.ok(state.uploads.some(item => item.width === 512) && state.uploads.some(item => item.width === 1024));
+    renderer.dispose();
+    assert.equal(new Set(state.deletedTextures).size, state.deletedTextures.length);
+});
+
+test('reflection MSAA respects scene limits and the intersection of sparse color/depth sample support', () => {
+    assert.equal(resolveReflectionSamples(16, 8, [8, 4, 2], [4, 2]), 4);
+    assert.equal(resolveReflectionSamples(8, 2, [8, 4, 2], [8, 4, 2]), 2);
+    assert.equal(resolveReflectionSamples(2, 8, [8, 4], [8, 4, 2]), 1);
+    assert.equal(resolveReflectionSamples(1, 8, [8, 4, 2], [8, 4, 2]), 1);
+    assert.equal(resolveReflectionSamples(16, 1, [8, 4, 2], [8, 4, 2]), 1);
+    assert.equal(resolveReflectionSamples(0, 8, [], []), 1);
+});
+
+test('mirror and water MSAA resolve every pass and rebuild targets when quality changes', async () => {
+    const { canvas, gl, state } = createFakeGl({ sceneSamples: 4, colorSamples: [8, 4, 2], depthSamples: [4, 2] });
+    const renderer = createWebGl2Renderer(canvas);
+    const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    await renderer.uploadMeshes(['mirror', 'water', 'actor'].map(id => ({ id, mesh: triangle([null]) })));
+    const reflection = (id, samples) => ({ id, samples, viewProjection: identity, cameraPosition: [0,2,-2], clipPlane: [0,1,0,0] });
+    renderer.setFrameState({ features: { shadows: false, edges: false }, sceneAntiAliasingSamples: 8,
+        meshes: [{ id: 'mirror', texturedPlane: true, mirrorReflectionStrength: 1 },
+            { id: 'water', waterSurface: true, mirrorReflectionStrength: .65 }, { id: 'actor' }],
+        reflections: [reflection('mirror', 16), reflection('water', 2)] });
+    renderer.render();
+    assert.deepEqual(state.multisampleStorage.map(s => s.samples), [4,4,2,2]);
+    assert.equal(state.blits.length, 2);
+    assert.equal(state.draws.length, 5, 'Reflective surfaces recursed into reflection passes.');
+    for (const blit of state.blits) {
+        assert.notEqual(blit.readFramebuffer, blit.drawFramebuffer);
+        assert.equal(blit.args.at(-1), gl.NEAREST);
+        assert.equal(blit.args.at(-2), gl.COLOR_BUFFER_BIT);
+    }
+    const targets = state.blits.map(blit => blit.drawFramebuffer);
+    renderer.render();
+    assert.equal(state.multisampleStorage.length, 4, 'Unchanged targets were recreated.');
+    assert.equal(state.blits.length, 4, 'MSAA was not resolved each frame.');
+    renderer.setFrameState({ reflections: [reflection('mirror', 1), reflection('water', 1)] });
+    renderer.render();
+    assert.equal(state.blits.length, 4, '1x reflections should draw directly to the sampled texture.');
+    assert.ok(targets.every(target => state.deletedFramebuffers.includes(target)));
+    assert.equal(state.deletedRenderbuffers.length, 6);
+    renderer.dispose();
+    assert.equal(new Set(state.deletedFramebuffers).size, state.deletedFramebuffers.length);
+    assert.equal(new Set(state.deletedRenderbuffers).size, state.deletedRenderbuffers.length);
+});
+
+test('incomplete multisample targets fall back and release rejected attachments', async () => {
+    const { canvas, state } = createFakeGl({ sceneSamples: 4, failSamples: [4] });
+    const renderer = createWebGl2Renderer(canvas);
+    const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+    renderer.setFrameState({ features: { shadows: false, edges: false },
+        reflections: [{ id: 'mirror', samples: 8, viewProjection: identity, cameraPosition: [0,0,0], clipPlane: [0,1,0,0] }] });
+    renderer.render();
+    assert.deepEqual(state.multisampleStorage.map(s => s.samples), [4,4,2,2]);
+    assert.equal(state.blits[0].readFramebuffer.samples, 2);
+    assert.equal(state.deletedRenderbuffers.length, 2);
+    renderer.render();
+    assert.equal(state.multisampleStorage.length, 4, 'A rejected sample level was retried every frame.');
+    renderer.dispose();
+});
 
 test('GPU skinning uploads a 237-bone palette and sparse morph rows without replacing vertex buffers', async () => {
     const { canvas,state } = createFakeGl();

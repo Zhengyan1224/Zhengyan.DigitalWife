@@ -31,6 +31,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
 
     public Action<string, RuntimeSpeechRequest>? SpeechRequestHandler { get; set; }
     public Func<PmxParsing, Vector3, Task<IPmxPhysicsBridge?>>? PhysicsFactory { get; set; }
+    private Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality? _graphics;
 
     public IWebAssetStore Assets => _assets;
 
@@ -102,7 +103,8 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
                         break;
                 }
             },
-            speechRequest: (entityId, request) => SpeechRequestHandler?.Invoke(entityId, request));
+            speechRequest: (entityId, request) => SpeechRequestHandler?.Invoke(entityId, request),
+            graphics: _graphics ??= project.CreateRuntimeGraphicsQuality());
 
         Dictionary<string, WebAudioAsset> audioAssets = new(StringComparer.OrdinalIgnoreCase);
         foreach (AudioAsset audio in sceneDefinition.Audio.Where(item => !string.IsNullOrWhiteSpace(item.Path)))

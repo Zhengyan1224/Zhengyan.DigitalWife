@@ -6,10 +6,13 @@ public sealed unsafe class DepthRenderTexture : IDisposable
 {
     private readonly GL _gl;
     private bool _disposed;
+    private readonly int _maximumSize;
+    private int _allocationLimit = int.MaxValue;
 
     public DepthRenderTexture(GL gl, string name)
     {
         _gl = gl;
+        _maximumSize = Math.Max(1, Math.Min(_gl.GetInteger(GLEnum.MaxTextureSize), _gl.GetInteger(GLEnum.MaxRenderbufferSize)));
         Name = name;
         FramebufferId = _gl.GenFramebuffer();
         DepthTextureId = _gl.GenTexture();
@@ -45,6 +48,9 @@ public sealed unsafe class DepthRenderTexture : IDisposable
     {
         width = Math.Max(width, 1);
         height = Math.Max(height, 1);
+        int maximum = Math.Min(_maximumSize, _allocationLimit);
+        width = Math.Min(width, maximum);
+        height = Math.Min(height, maximum);
         if (Width == width && Height == height)
         {
             return;
@@ -73,6 +79,17 @@ public sealed unsafe class DepthRenderTexture : IDisposable
         _gl.BindFramebuffer(GLEnum.Framebuffer, FramebufferId);
         _gl.FramebufferTexture2D(GLEnum.Framebuffer, GLEnum.DepthAttachment, GLEnum.Texture2D, DepthTextureId, 0);
         _gl.FramebufferRenderbuffer(GLEnum.Framebuffer, GLEnum.ColorAttachment0, GLEnum.Renderbuffer, ColorRenderbufferId);
+        if (_gl.CheckFramebufferStatus(GLEnum.Framebuffer) != GLEnum.FramebufferComplete)
+        {
+            Width = Height = 0;
+            _gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+            if (width > 256 && height > 256)
+            {
+                _allocationLimit = Math.Min(width, height) / 2;
+                EnsureSize(width / 2, height / 2); return;
+            }
+            throw new InvalidOperationException($"Shadow framebuffer '{Name}' is incomplete.");
+        }
         _gl.BindFramebuffer(GLEnum.Framebuffer, 0);
     }
 

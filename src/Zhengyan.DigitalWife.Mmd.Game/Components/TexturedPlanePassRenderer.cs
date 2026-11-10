@@ -90,6 +90,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             LightViewProjection = shadowEnabled ? shadowMap!.Value.LightViewProjection : Matrix4x4.Identity,
             ReflectionViewProjection = reflectionEnabled ? reflectionViewProjection : Matrix4x4.Identity,
             Tint = tint,
+            ShadowFilterParameters = new Vector4(shadowMap?.FilterSamples ?? 0, shadowMap?.FilterRadius ?? 1, 0, 0),
             ShadowParameters = new Vector4(
                 shadowEnabled ? 1.0f : 0.0f,
                 shadowEnabled ? Math.Clamp(shadowMap!.Value.Strength, 0.0f, 1.0f) : 0.0f,
@@ -270,6 +271,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         public Vector4 ShadowParameters;
         public Vector4 ReflectionParameters;
         public Vector4 BackendParameters;
+        public Vector4 ShadowFilterParameters;
     }
 
     private sealed record PipelineBundle(OutputDescription Output, Pipeline Pipeline);
@@ -292,6 +294,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             vec4 u_ShadowParameters;
             vec4 u_ReflectionParameters;
             vec4 u_BackendParameters;
+            vec4 u_ShadowFilterParameters;
         } u_Frame;
         layout(location = 0) in vec3 in_Pos;
         layout(location = 1) in vec2 in_Uv;
@@ -321,6 +324,7 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
             vec4 u_ShadowParameters;
             vec4 u_ReflectionParameters;
             vec4 u_BackendParameters;
+            vec4 u_ShadowFilterParameters;
         } u_Frame;
         layout(set = 0, binding = 1) uniform texture2D u_Texture;
         layout(set = 0, binding = 2) uniform sampler u_TextureSampler;
@@ -333,6 +337,37 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
         layout(location = 2) in vec4 vs_ShadowPos;
         layout(location = 3) in vec4 vs_ReflectionPos;
         layout(location = 0) out vec4 out_Color;
+        int ShadowFilterSide(vec2 settings, int legacySide) {
+            if (settings.x < 1.0) return legacySide;
+            if (settings.x <= 1.0) return 1;
+            if (settings.x <= 4.0) return 2;
+            if (settings.x <= 9.0) return 3;
+            if (settings.x <= 16.0) return 4;
+            if (settings.x <= 25.0) return 5;
+            return 7;
+        }
+
+        vec2 ShadowFilterOffset(vec2 settings, ivec2 cell, int side, float legacyRadius) {
+            if (side == 1) return vec2(0.0);
+            float radius = settings.x < 1.0 ? legacyRadius : clamp(settings.y, 0.0, 8.0);
+            return (vec2(cell) / float(side - 1) * 2.0 - 1.0) * radius;
+        }
+
+        float SamplePlaneShadow(vec2 uv, float depth)
+        {
+            if (u_Frame.u_ShadowFilterParameters.x < 1.0)
+                return texture(sampler2D(u_ShadowMap, u_ShadowSampler), uv).r >= depth ? 1.0 : 0.0;
+            ivec2 size = textureSize(sampler2D(u_ShadowMap, u_ShadowSampler), 0);
+            vec2 pixel = uv * vec2(size) - 0.5;
+            ivec2 cell = ivec2(floor(pixel));
+            vec2 fraction = fract(pixel);
+            float a = step(depth, texelFetch(sampler2D(u_ShadowMap, u_ShadowSampler), clamp(cell, ivec2(0), size - 1), 0).r);
+            float b = step(depth, texelFetch(sampler2D(u_ShadowMap, u_ShadowSampler), clamp(cell + ivec2(1,0), ivec2(0), size - 1), 0).r);
+            float c = step(depth, texelFetch(sampler2D(u_ShadowMap, u_ShadowSampler), clamp(cell + ivec2(0,1), ivec2(0), size - 1), 0).r);
+            float d = step(depth, texelFetch(sampler2D(u_ShadowMap, u_ShadowSampler), clamp(cell + ivec2(1,1), ivec2(0), size - 1), 0).r);
+            return mix(mix(a, b, fraction.x), mix(c, d, fraction.x), fraction.y);
+        }
+
         float SampleShadow()
         {
             if (u_Frame.u_ShadowParameters.x < 0.5) return 1.0;
@@ -345,17 +380,16 @@ internal sealed class VeldridTexturedPlanePassRenderer : ITexturedPlanePassRende
                 - u_Frame.u_ShadowParameters.z;
             vec2 texelSize = max(u_Frame.u_BackendParameters.zw, vec2(0.000001));
             float visibility = 0.0;
-            for (int y = -1; y <= 1; ++y)
-            {
-                for (int x = -1; x <= 1; ++x)
-                {
-                    float storedDepth = texture(
-                        sampler2D(u_ShadowMap, u_ShadowSampler),
-                        uv + vec2(x, y) * texelSize).r;
-                    visibility += storedDepth >= depth ? 1.0 : 0.0;
+            int side = ShadowFilterSide(u_Frame.u_ShadowFilterParameters.xy, 3);
+            for (int y = 0; y < 7; ++y) {
+                if (y >= side) break;
+                for (int x = 0; x < 7; ++x) {
+                    if (x >= side) break;
+                    visibility += SamplePlaneShadow(
+                        uv + ShadowFilterOffset(u_Frame.u_ShadowFilterParameters.xy, ivec2(x, y), side, 1.0) * texelSize, depth);
                 }
             }
-            visibility /= 9.0;
+            visibility /= float(side * side);
             return mix(1.0 - clamp(u_Frame.u_ShadowParameters.y, 0.0, 1.0), 1.0, visibility);
         }
         void main()

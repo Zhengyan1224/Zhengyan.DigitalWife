@@ -74,6 +74,7 @@ uniform vec3 u_cameraPosition;
 uniform float u_shadowStrength;
 uniform float u_shadowBias;
 uniform vec2 u_shadowTexelSize;
+uniform vec2 u_shadowFilterParameters;
 uniform bool u_shadowToon;
 uniform vec4 u_edgeColor;
 uniform vec3 u_lightDirection;
@@ -95,6 +96,7 @@ uniform vec2 u_localShadowRanges[16];
 uniform int u_pointShadowBase[8];
 uniform int u_spotShadowTile[4];
 uniform bool u_texturedPlane;
+uniform bool u_waterSurface;
 uniform sampler2D u_reflectionTexture;
 uniform mat4 u_reflectionViewProjection;
 uniform float u_reflectionStrength;
@@ -105,6 +107,22 @@ in vec2 v_uv;
 in vec4 v_shadowPosition;
 in vec3 v_worldPosition;
 out vec4 out_color;
+
+int ShadowFilterSide(vec2 settings, int legacySide) {
+    if (settings.x < 1.0) return legacySide;
+    if (settings.x <= 1.0) return 1;
+    if (settings.x <= 4.0) return 2;
+    if (settings.x <= 9.0) return 3;
+    if (settings.x <= 16.0) return 4;
+    if (settings.x <= 25.0) return 5;
+    return 7;
+}
+
+vec2 ShadowFilterOffset(vec2 settings, ivec2 cell, int side, float legacyRadius) {
+    if (side == 1) return vec2(0.0);
+    float radius = settings.x < 1.0 ? legacyRadius : clamp(settings.y, 0.0, 8.0);
+    return (vec2(cell) / float(side - 1) * 2.0 - 1.0) * radius;
+}
 
 int pointShadowFace(vec3 direction) {
     vec3 a = abs(direction);
@@ -125,14 +143,20 @@ float localShadow(int tile, vec3 normal, vec3 lightDirection, float ndotl) {
         / ((range.y - range.x) * clip.w * clip.w);
     float depth = ndc.z * 0.5 + 0.5 - bias;
     vec4 rect = u_localShadowRects[tile];
-    vec2 texel = vec2(1.0 / 4096.0);
+    vec2 texel = 1.0 / vec2(textureSize(u_localShadowAtlas, 0));
     vec2 uv = rect.xy + (ndc.xy * 0.5 + 0.5) * rect.zw;
     float visibility = 0.0;
-    for (int y = 0; y <= 1; y++) for (int x = 0; x <= 1; x++) {
-        vec2 sampleUv = clamp(uv + (vec2(x,y) - 0.5) * texel, rect.xy + texel, rect.xy + rect.zw - texel);
-        visibility += texture(u_localShadowAtlas, vec3(sampleUv, depth));
+    int side = ShadowFilterSide(u_shadowFilterParameters, 2);
+    for (int y = 0; y < 7; y++) {
+        if (y >= side) break;
+        for (int x = 0; x < 7; x++) {
+            if (x >= side) break;
+            vec2 offset = ShadowFilterOffset(u_shadowFilterParameters, ivec2(x,y), side, 0.5) * texel;
+            vec2 sampleUv = clamp(uv + offset, rect.xy + texel, rect.xy + rect.zw - texel);
+            visibility += texture(u_localShadowAtlas, vec3(sampleUv, depth));
+        }
     }
-    visibility *= 0.25;
+    visibility /= float(side * side);
     if (u_shadowToon) visibility = step(0.5, visibility);
     return mix(1.0 - u_shadowStrength, 1.0, visibility);
 }
@@ -153,24 +177,32 @@ void main() {
         if (all(greaterThanEqual(shadow, vec3(0.0))) && all(lessThanEqual(shadow, vec3(1.0)))) {
             float depth = shadow.z - u_shadowBias * (1.0 + (1.0 - diffuse) * 2.0);
             float visibility = 0.0;
-            for (int y = -1; y <= 1; y++) {
-                for (int x = -1; x <= 1; x++) {
-                    vec2 uv = clamp(shadow.xy + vec2(x, y) * u_shadowTexelSize, u_shadowTexelSize, vec2(1.0) - u_shadowTexelSize);
+            int side = ShadowFilterSide(u_shadowFilterParameters, 3);
+            for (int y = 0; y < 7; ++y) {
+                if (y >= side) break;
+                for (int x = 0; x < 7; ++x) {
+                    if (x >= side) break;
+                    vec2 uv = clamp(shadow.xy + ShadowFilterOffset(u_shadowFilterParameters, ivec2(x, y), side, 1.0) * u_shadowTexelSize, u_shadowTexelSize, vec2(1.0) - u_shadowTexelSize);
                     visibility += texture(u_shadowMap, vec3(uv, depth));
                 }
             }
-            visibility /= 9.0;
+            visibility /= float(side * side);
             if (u_shadowToon) visibility = step(0.5, visibility);
             shadowFactor = mix(1.0 - u_shadowStrength, 1.0, visibility);
         }
     }
-    if (u_texturedPlane) {
+    if (u_texturedPlane || u_waterSurface) {
         vec4 color = texel * u_diffuse;
         color.rgb *= shadowFactor;
         vec4 reflectionClip = u_reflectionViewProjection * vec4(v_worldPosition, 1.0);
         vec2 uv = reflectionClip.xy / max(abs(reflectionClip.w), 0.0001) * 0.5 + 0.5;
+        float reflectionWeight = u_reflectionStrength;
+        if (u_waterSurface) {
+            float fresnel = pow(1.0 - abs(dot(normalize(u_cameraPosition - v_worldPosition), normal)), 5.0);
+            reflectionWeight *= mix(0.35, 1.0, fresnel);
+        }
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
-            color.rgb = mix(color.rgb, texture(u_reflectionTexture, clamp(uv, 0.001, 0.999)).rgb, u_reflectionStrength);
+            color.rgb = mix(color.rgb, texture(u_reflectionTexture, clamp(uv, 0.001, 0.999)).rgb, reflectionWeight);
         if (color.a <= 0.001) discard;
         out_color = color;
         return;
@@ -352,6 +384,27 @@ function createDefaultTexture(gl) {
         new Uint8Array([255, 255, 255, 255]));
     gl.bindTexture(gl.TEXTURE_2D, null);
     return texture;
+}
+
+function createScenePresenter(gl) {
+    const vertex = compileShader(gl, gl.VERTEX_SHADER, `#version 300 es
+precision highp float; out vec2 uv;
+void main(){ vec2 p=gl_VertexID==0?vec2(0,0):gl_VertexID==1?vec2(2,0):vec2(0,2); uv=p; gl_Position=vec4(p*2.0-1.0,0,1); }`, "Scene presenter vertex");
+    const fragment = compileShader(gl, gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float; in vec2 uv; uniform sampler2D scene; out vec4 color;
+void main(){ color=texture(scene,uv); }`, "Scene presenter fragment");
+    const program = gl.createProgram();
+    gl.attachShader(program,vertex); gl.attachShader(program,fragment); gl.linkProgram(program);
+    gl.deleteShader(vertex); gl.deleteShader(fragment);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+    return { program, vao: gl.createVertexArray(), texture: gl.getUniformLocation(program,"scene") };
+}
+
+function resolveColorTarget(gl,target) {
+    if(target.sampleCount<=1) return;
+    gl.disable(gl.SCISSOR_TEST); gl.bindFramebuffer(gl.READ_FRAMEBUFFER,target.drawFramebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,target.framebuffer);
+    gl.blitFramebuffer(0,0,target.width,target.height,0,0,target.width,target.height,gl.COLOR_BUFFER_BIT,gl.NEAREST);
 }
 
 function createTextureSampler(gl) {
@@ -895,7 +948,24 @@ function toNumericVector(value, length, fallback) {
     return normalized;
 }
 
-function createRenderTarget(gl, width, height, depthOnly) {
+const sampleChoices = [1, 2, 4, 8, 16];
+
+export function resolveShadowResolution(requested, maximum = 8192) {
+    return [256,512,1024,2048,4096,8192].findLast(value => value <= (Number(requested) || 1024) && value <= maximum) || 256;
+}
+
+export function resolveShadowFilterSamples(requested) {
+    if (!(Number(requested) > 0)) return 0; // Preserve the legacy per-light filters.
+    return [1,4,9,16,25,49].findLast(value => value <= Number(requested)) || 1;
+}
+
+export function resolveReflectionSamples(requested, sceneSamples, colorSamples, depthSamples) {
+    const normalized = sampleChoices.find(value => value >= (Number(requested) || 1)) || 16;
+    return sampleChoices.findLast(value => value <= normalized && value <= Math.max(1, Number(sceneSamples) || 1)
+        && (value === 1 || (colorSamples.includes(value) && depthSamples.includes(value)))) || 1;
+}
+
+function createRenderTarget(gl, width, height, depthOnly, samples = 1) {
     const texture = gl.createTexture(), framebuffer = gl.createFramebuffer();
     const depth = depthOnly ? null : gl.createRenderbuffer();
     if (!texture || !framebuffer || (!depthOnly && !depth)) throw new Error("WebGL2 could not allocate a scene render target.");
@@ -919,43 +989,73 @@ function createRenderTarget(gl, width, height, depthOnly) {
         gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
         gl.bindRenderbuffer(gl.RENDERBUFFER, null);
     }
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("WebGL2 scene framebuffer is incomplete.");
+    const target = { texture, framebuffer, depth, width, height, sampleCount: 1, requestedSamples: samples };
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        deleteRenderTarget(gl, target);
+        throw new Error("WebGL2 scene framebuffer is incomplete.");
+    }
+    if (!depthOnly && samples > 1) {
+        const colors = Array.from(gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES) || []);
+        const depths = Array.from(gl.getInternalformatParameter(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, gl.SAMPLES) || []);
+        for (const candidate of sampleChoices.slice().reverse()) {
+            if (candidate <= 1 || candidate > samples || !colors.includes(candidate) || !depths.includes(candidate)) continue;
+            const drawFramebuffer = gl.createFramebuffer(), color = gl.createRenderbuffer(), multisampleDepth = gl.createRenderbuffer();
+            if (drawFramebuffer && color && multisampleDepth) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, drawFramebuffer);
+                gl.bindRenderbuffer(gl.RENDERBUFFER, color);
+                gl.renderbufferStorageMultisample(gl.RENDERBUFFER, candidate, gl.RGBA8, width, height);
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, color);
+                gl.bindRenderbuffer(gl.RENDERBUFFER, multisampleDepth);
+                gl.renderbufferStorageMultisample(gl.RENDERBUFFER, candidate, gl.DEPTH_COMPONENT24, width, height);
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, multisampleDepth);
+                if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
+                    Object.assign(target, { drawFramebuffer, multisampleColor: color, multisampleDepth, sampleCount: candidate });
+                    break;
+                }
+            }
+            if (drawFramebuffer) gl.deleteFramebuffer(drawFramebuffer);
+            if (color) gl.deleteRenderbuffer(color);
+            if (multisampleDepth) gl.deleteRenderbuffer(multisampleDepth);
+        }
+        gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
-    return { texture, framebuffer, depth, width, height };
+    return target;
 }
 
 function deleteRenderTarget(gl, target) {
     gl.deleteTexture(target.texture);
     gl.deleteFramebuffer(target.framebuffer);
     if (target.depth) gl.deleteRenderbuffer(target.depth);
+    if (target.drawFramebuffer) gl.deleteFramebuffer(target.drawFramebuffer);
+    if (target.multisampleColor) gl.deleteRenderbuffer(target.multisampleColor);
+    if (target.multisampleDepth) gl.deleteRenderbuffer(target.multisampleDepth);
 }
 
 export function createWebGl2Renderer(canvas, reportError) {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: true, depth: true });
     if (!gl) throw new Error("This browser does not provide WebGL2.");
+    const sceneSamples = Math.max(1, Number(gl.getParameter(gl.SAMPLES)) || 1);
+    let actualSceneSamples = sceneSamples;
+    const reflectionColorSamples = Array.from(gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES) || []);
+    const reflectionDepthSamples = Array.from(gl.getInternalformatParameter(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, gl.SAMPLES) || []);
     const program = createProgram(gl);
     const shadowProgram = createShadowProgram(gl);
     const particleProgram = createParticleProgram(gl);
     const defaultTexture = createDefaultTexture(gl);
-    const shadowTexture = gl.createTexture();
-    const shadowFramebuffer = gl.createFramebuffer();
-    const shadowSize = 1024;
-    if (!shadowTexture || !shadowFramebuffer) throw new Error("WebGL2 could not allocate the shadow map.");
-    gl.bindTexture(gl.TEXTURE_2D, shadowTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, shadowSize, shadowSize, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTexture, 0);
-    gl.drawBuffers([gl.NONE]);
-    gl.readBuffer(gl.NONE);
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("WebGL2 shadow framebuffer is incomplete.");
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.bindTexture(gl.TEXTURE_2D, null);
+    const maxShadowSize = Math.max(256, Math.min(Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 8192,
+        Number(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)) || 8192));
+    const createShadowTarget = requested => {
+        for (let size = requested; size >= 256; size /= 2) {
+            try { return createRenderTarget(gl, size, size, true); }
+            catch (error) { if (size <= 256) throw error; }
+        }
+    };
+    let directionalShadowTarget = createShadowTarget(Math.min(1024, maxShadowSize));
+    let shadowTexture = directionalShadowTarget.texture;
+    let shadowFramebuffer = directionalShadowTarget.framebuffer;
+    let shadowSize = directionalShadowTarget.width;
+    let shadowRequestedSize = Math.min(1024, maxShadowSize);
     const sampler = createTextureSampler(gl);
     const vao = gl.createVertexArray();
     if (!vao) throw new Error("WebGL2 could not allocate the empty mesh VAO.");
@@ -1000,7 +1100,7 @@ export function createWebGl2Renderer(canvas, reportError) {
     };
     for (const name of ["localShadowAtlas", "localShadowMatrices", "localShadowRects", "localShadowRanges",
         "pointShadowBase", "spotShadowTile", "texturedPlane", "reflectionTexture", "reflectionViewProjection",
-        "reflectionStrength", "clipEnabled", "clipPlane"]) locations[name] = gl.getUniformLocation(program, `u_${name}`);
+        "reflectionStrength", "waterSurface", "shadowFilterParameters", "clipEnabled", "clipPlane"]) locations[name] = gl.getUniformLocation(program, `u_${name}`);
     const shadowLocations = {
         ...skinningLocations(gl, shadowProgram),
         position: gl.getAttribLocation(shadowProgram, "a_position"),
@@ -1042,7 +1142,11 @@ export function createWebGl2Renderer(canvas, reportError) {
     let shadowDirty = true;
     let shadowStateKey = "";
     let localShadowTarget = null;
+    let localShadowRequestedSize = 0;
     const reflectionTargets = new Map();
+    let sceneTarget = null, scenePresenter = null;
+    let graphicsDirty = true, reportedRevision = -1, reportedScenePath = "";
+    let reportedDirectional = -1, reportedLocal = -1, reportedSamples = -1;
     const particleBuffer = gl.createBuffer();
     if (!particleBuffer) throw new Error("WebGL2 could not allocate the particle buffer.");
     const contextLost = event => { event.preventDefault(); disposed = true; reportError?.("WebGL2 context was lost."); };
@@ -1065,6 +1169,7 @@ export function createWebGl2Renderer(canvas, reportError) {
         setFrameState(nextState) {
             if (disposed || !nextState) return;
             frameState = { ...frameState, ...nextState };
+            if ((frameState.graphicsRevision ?? 0) !== reportedRevision || (frameState.graphicsScenePath ?? "") !== reportedScenePath) graphicsDirty = true;
             // Camera drags and ambient edits do not change caster depth.
             const key = JSON.stringify([frameState.lightViewProjection, frameState.localShadows, frameState.model, frameState.meshes, frameState.shadowEnabled, frameState.features?.shadows]);
             if (key !== shadowStateKey) { shadowDirty = true; shadowStateKey = key; }
@@ -1130,6 +1235,45 @@ export function createWebGl2Renderer(canvas, reportError) {
                 .map(([key, mesh]) => ({ key, mesh, frame: frameById.get(key) || frameById.get("default") }))
                 .filter(entry => entry.frame);
             const localShadows = Array.isArray(frameState.localShadows) ? frameState.localShadows.slice(0, 16) : [];
+            const desiredSceneSamples = resolveReflectionSamples(frameState.sceneAntiAliasingSamples ?? sceneSamples,
+                16,reflectionColorSamples,reflectionDepthSamples);
+            const useSceneTarget = desiredSceneSamples !== sceneSamples;
+            if(useSceneTarget) {
+                if(!sceneTarget || sceneTarget.width!==width || sceneTarget.height!==height || sceneTarget.requestedSamples!==desiredSceneSamples) {
+                    if(sceneTarget) deleteRenderTarget(gl,sceneTarget);
+                    sceneTarget=createRenderTarget(gl,width,height,false,desiredSceneSamples);
+                    graphicsDirty=true;
+                }
+                scenePresenter ??= createScenePresenter(gl);
+                actualSceneSamples=sceneTarget.sampleCount;
+            } else actualSceneSamples=sceneSamples;
+            const requestedSize = resolveShadowResolution(frameState.shadowResolution, maxShadowSize);
+            if (requestedSize !== shadowRequestedSize) {
+                const replacement = createShadowTarget(requestedSize);
+                deleteRenderTarget(gl, directionalShadowTarget);
+                directionalShadowTarget = replacement;
+                shadowTexture = replacement.texture; shadowFramebuffer = replacement.framebuffer; shadowSize = replacement.width;
+                shadowRequestedSize = requestedSize;
+                shadowDirty = true;
+            }
+            const requestedLocalSize = resolveShadowResolution(frameState.localShadowResolution, Math.min(2048, maxShadowSize / 4)) * 4;
+            if (localShadowTarget && localShadowRequestedSize !== requestedLocalSize) {
+                deleteRenderTarget(gl, localShadowTarget); localShadowTarget = null; shadowDirty = true;
+            }
+            if (localShadows.length && shadowsEnabled && !localShadowTarget) {
+                localShadowTarget = createShadowTarget(requestedLocalSize);
+                localShadowRequestedSize = requestedLocalSize;
+                shadowDirty = true;
+            }
+            const atlasSize = localShadowTarget?.width || requestedLocalSize;
+            // Keep two pixels of padding even when the device uses a smaller atlas.
+            const atlasRects = localShadows.map((shadow, tile) => {
+                const rect = shadow.atlasRect;
+                const authoredPadding = 2 / ((frameState.localShadowResolution || 1024) * 4);
+                const padding = 2 / atlasSize;
+                return [rect[0] - authoredPadding + padding, rect[1] - authoredPadding + padding,
+                    rect[2] + 2 * authoredPadding - 2 * padding, rect[3] + 2 * authoredPadding - 2 * padding];
+            });
             const reflections = Array.isArray(frameState.reflections) ? frameState.reflections : [];
             const drawCasters = matrix => {
                 gl.useProgram(shadowProgram);
@@ -1162,12 +1306,12 @@ export function createWebGl2Renderer(canvas, reportError) {
                 gl.clear(gl.DEPTH_BUFFER_BIT);
                 drawCasters(frameState.lightViewProjection);
                 if (localShadows.length > 0) {
-                    localShadowTarget ??= createRenderTarget(gl, 4096, 4096, true);
                     gl.bindFramebuffer(gl.FRAMEBUFFER, localShadowTarget.framebuffer);
                     gl.clear(gl.DEPTH_BUFFER_BIT);
-                    for (const shadow of localShadows) {
-                        const rect = shadow.atlasRect;
-                        gl.viewport(...rect.map(value => Math.round(value * 4096)));
+                    for (let tile = 0; tile < localShadows.length; tile++) {
+                        const shadow = localShadows[tile];
+                        const rect = atlasRects[tile];
+                        gl.viewport(...rect.map(value => Math.round(value * atlasSize)));
                         drawCasters(shadow.viewProjection);
                     }
                 }
@@ -1194,7 +1338,10 @@ export function createWebGl2Renderer(canvas, reportError) {
                 gl.uniform1f(locations.shadowStrength, frameState.shadowStrength ?? 0.7);
                 gl.uniform1f(locations.shadowBias, frameState.shadowBias ?? 0.0018);
                 gl.uniform2f(locations.shadowTexelSize, 1 / shadowSize, 1 / shadowSize);
-                gl.uniform1f(locations.shadowNormalOffset, frameState.shadowNormalOffset ?? 0);
+                gl.uniform2f(locations.shadowFilterParameters, resolveShadowFilterSamples(frameState.shadowFilterSamples),
+                    Math.min(8, Math.max(0, Number.isFinite(frameState.shadowFilterRadius) ? frameState.shadowFilterRadius : 1)));
+                gl.uniform1f(locations.shadowNormalOffset, (frameState.shadowNormalOffset ?? 0)
+                    * (frameState.shadowResolution || 1024) / shadowSize);
                 gl.uniform3fv(locations.cameraPosition, cameraPosition || [0, 0, 0]);
                 const pointShadowBase = new Int32Array(8).fill(-1), spotShadowTile = new Int32Array(4).fill(-1);
                 const shadowMatrices = new Float32Array(16 * 16), shadowRects = new Float32Array(16 * 4), shadowRanges = new Float32Array(16 * 2);
@@ -1203,7 +1350,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                     if (shadow.pointLightIndex >= 0 && shadow.face === 0) pointShadowBase[shadow.pointLightIndex] = tile;
                     if (shadow.spotLightIndex >= 0) spotShadowTile[shadow.spotLightIndex] = tile;
                     shadowMatrices.set(shadow.viewProjection, tile * 16);
-                    shadowRects.set(shadow.atlasRect, tile * 4);
+                    shadowRects.set(atlasRects[tile], tile * 4);
                     shadowRanges.set([shadow.nearPlane, shadow.farPlane], tile * 2);
                 }
                 gl.uniform1iv(locations.pointShadowBase, pointShadowBase);
@@ -1267,9 +1414,10 @@ export function createWebGl2Renderer(canvas, reportError) {
                     const mesh = entry.mesh;
                     const meshFrame = entry.frame;
                     // Desktop excludes all mirror planes from reflection passes.
-                    if (clipPlane && meshFrame.texturedPlane && meshFrame.mirrorReflectionStrength > 0) continue;
+                    if (clipPlane && (meshFrame.texturedPlane || meshFrame.waterSurface) && meshFrame.mirrorReflectionStrength > 0) continue;
                     const reflection = !clipPlane ? reflectionTargets.get(entry.key) : null;
                     gl.uniform1i(locations.texturedPlane, meshFrame.texturedPlane ? 1 : 0);
+                    gl.uniform1i(locations.waterSurface, meshFrame.waterSurface ? 1 : 0);
                     gl.uniformMatrix4fv(locations.reflectionViewProjection, false, reflection?.viewProjection || identity);
                     gl.uniform1f(locations.reflectionStrength, reflection ? meshFrame.mirrorReflectionStrength || 0 : 0);
                     gl.activeTexture(gl.TEXTURE5);
@@ -1364,25 +1512,52 @@ export function createWebGl2Renderer(canvas, reportError) {
                 if (!activeReflections.has(id) || target.width !== width || target.height !== height) {
                     deleteRenderTarget(gl, target);
                     reflectionTargets.delete(id);
+                    graphicsDirty=true;
                 }
             }
             for (const reflection of reflections) {
                 let target = reflectionTargets.get(reflection.id);
+                const samples = resolveReflectionSamples(reflection.samples,
+                    actualSceneSamples, reflectionColorSamples, reflectionDepthSamples);
+                if (target && target.requestedSamples !== samples) {
+                    deleteRenderTarget(gl, target);
+                    reflectionTargets.delete(reflection.id);
+                    target = null;
+                }
                 if (!target) {
-                    target = createRenderTarget(gl, width, height, false);
+                    target = createRenderTarget(gl, width, height, false, samples);
                     reflectionTargets.set(reflection.id, target);
+                    graphicsDirty=true;
                 }
                 target.viewProjection = reflection.viewProjection;
                 // Unbind sampled color targets before attaching them for drawing.
                 gl.activeTexture(gl.TEXTURE5);
                 gl.bindTexture(gl.TEXTURE_2D, null);
-                gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, target.drawFramebuffer || target.framebuffer);
                 gl.viewport(0, 0, width, height);
                 drawColor(reflection.viewProjection, reflection.cameraPosition, reflection.clipPlane);
+                resolveColorTarget(gl,target);
             }
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, useSceneTarget ? sceneTarget.drawFramebuffer || sceneTarget.framebuffer : null);
             gl.viewport(0, 0, width, height);
             drawColor(frameState.viewProjection, frameState.cameraPosition);
+            if(useSceneTarget) {
+                resolveColorTarget(gl,sceneTarget); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+                gl.disable(gl.DEPTH_TEST); gl.disable(gl.STENCIL_TEST); gl.disable(gl.SCISSOR_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
+                gl.depthMask(false); gl.colorMask(true,true,true,true); gl.useProgram(scenePresenter.program); gl.bindVertexArray(scenePresenter.vao);
+                gl.activeTexture(gl.TEXTURE0); gl.bindSampler(0,null); gl.bindTexture(gl.TEXTURE_2D,sceneTarget.texture);
+                gl.uniform1i(scenePresenter.texture,0); gl.drawArrays(gl.TRIANGLES,0,3);
+                gl.bindTexture(gl.TEXTURE_2D,null); gl.bindVertexArray(null); gl.depthMask(true);
+            }
+            const directionalActual=shadowsEnabled && renderEntries.some(entry=>entry.frame.shadowEnabled) ? shadowSize : 0;
+            const localActual=directionalActual && localShadows.length ? atlasSize/4 : 0;
+            if(graphicsDirty || reportedSamples!==actualSceneSamples || reportedDirectional!==directionalActual || reportedLocal!==localActual) {
+                graphicsDirty=false; reportedRevision=frameState.graphicsRevision??0; reportedScenePath=frameState.graphicsScenePath??"";
+                reportedSamples=actualSceneSamples; reportedDirectional=directionalActual; reportedLocal=localActual;
+                return { revision:reportedRevision,scenePath:reportedScenePath,sceneSamples:actualSceneSamples,
+                    directionalResolution:directionalActual,localLightResolution:localActual,
+                    reflectionSamples:Object.fromEntries([...reflectionTargets].map(([id,target])=>[id,target.sampleCount])) };
+            }
         },
         dispose() {
             if (disposed) return;
@@ -1392,9 +1567,10 @@ export function createWebGl2Renderer(canvas, reportError) {
             for (const existing of meshes.values()) deleteMeshResources(gl, existing);
             meshes.clear();
             gl.deleteVertexArray(vao);
+            if(sceneTarget) deleteRenderTarget(gl,sceneTarget);
+            if(scenePresenter) { gl.deleteProgram(scenePresenter.program); gl.deleteVertexArray(scenePresenter.vao); }
             gl.deleteTexture(defaultTexture);
-            gl.deleteTexture(shadowTexture);
-            gl.deleteFramebuffer(shadowFramebuffer);
+            deleteRenderTarget(gl, directionalShadowTarget);
             if (localShadowTarget) deleteRenderTarget(gl, localShadowTarget);
             for (const target of reflectionTargets.values()) deleteRenderTarget(gl, target);
             reflectionTargets.clear();

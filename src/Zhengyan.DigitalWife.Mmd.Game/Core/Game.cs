@@ -80,6 +80,7 @@ public abstract class Game : IDisposable
     }
 
     public GameOptions Options { get; }
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality GraphicsQuality { get; protected set; } = new();
 
     public RendererSelection RendererSelection { get; }
 
@@ -262,6 +263,7 @@ public abstract class Game : IDisposable
     protected virtual void LateUpdate(GameTime gameTime) { }
 
     protected virtual void Draw(GameTime gameTime) { }
+    protected virtual void PrepareRenderFrame() { }
 
     public virtual bool ShouldDrawComponent(DrawableGameComponent component) => true;
 
@@ -371,6 +373,7 @@ public abstract class Game : IDisposable
         }
 
         GameTime gameTime = CreateGameTime(deltaSeconds);
+        PrepareRenderFrame();
         GraphicsDevice.Clear();
 
         Draw(gameTime);

@@ -48,7 +48,7 @@ export async function settle() {
     for (let i = 0; i < 20; i++) await Promise.resolve();
 }
 
-export function createFakeGl() {
+export function createFakeGl({ sceneSamples = 1, colorSamples = [4, 2], depthSamples = [4, 2], failSamples = [], maxTextureSize = 8192 } = {}) {
     let nextId = 0;
     const constants = new Map();
     const uniforms = new Map();
@@ -58,8 +58,10 @@ export function createFakeGl() {
     let cullEnabled = false;
     let cullMode;
     let blendEnabled = false;
+    let framebuffer, readFramebuffer, drawFramebuffer, renderbuffer;
     const state = { uploads: [], textureUpdates: [], draws: [], shadowDraws: [], deletedTextures: [], bufferUpdates: [], buffers: [], samplerParameters: [], textureParameters: [] };
     const resource = type => ({ type, id: ++nextId });
+    Object.assign(state, { multisampleStorage: [], blits: [], deletedFramebuffers: [], deletedRenderbuffers: [], viewports: [], uniforms: {} });
     const methods = {
         createShader: () => resource('shader'),
         createProgram: () => resource('program'),
@@ -71,8 +73,28 @@ export function createFakeGl() {
         createBuffer: () => resource('buffer'),
         getShaderParameter: () => true,
         getProgramParameter: () => true,
-        getParameter: () => 'Fake WebGL2',
-        checkFramebufferStatus: () => gl.FRAMEBUFFER_COMPLETE,
+        getParameter: parameter => parameter === gl.SAMPLES ? sceneSamples
+            : parameter === gl.MAX_TEXTURE_SIZE || parameter === gl.MAX_RENDERBUFFER_SIZE ? maxTextureSize : 'Fake WebGL2',
+        viewport: (...args) => state.viewports.push(args),
+        uniform2f: (location, x, y) => { state.uniforms[location.name] = [x,y]; },
+        getInternalformatParameter: (target, format) => format === gl.RGBA8 ? colorSamples : depthSamples,
+        bindFramebuffer: (target, value) => {
+            if (target === gl.FRAMEBUFFER) framebuffer = readFramebuffer = drawFramebuffer = value;
+            if (target === gl.READ_FRAMEBUFFER) readFramebuffer = value;
+            if (target === gl.DRAW_FRAMEBUFFER) drawFramebuffer = value;
+        },
+        bindRenderbuffer: (target, value) => { renderbuffer = value; },
+        renderbufferStorageMultisample: (target, samples, format, width, height) => {
+            renderbuffer.samples = samples;
+            state.multisampleStorage.push({ samples, format, width, height });
+        },
+        framebufferRenderbuffer: (target, attachment, renderbufferTarget, value) => {
+            if (value?.samples) framebuffer.samples = value.samples;
+        },
+        checkFramebufferStatus: () => failSamples.includes(framebuffer?.samples) ? gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT : gl.FRAMEBUFFER_COMPLETE,
+        blitFramebuffer: (...args) => state.blits.push({ readFramebuffer, drawFramebuffer, args }),
+        deleteFramebuffer: value => state.deletedFramebuffers.push(value),
+        deleteRenderbuffer: value => state.deletedRenderbuffers.push(value),
         getAttribLocation: (program, name) => ({ a_position: 0, a_normal: 1, a_uv: 2, a_color: 1, a_size: 2 })[name] ?? -1,
         getUniformLocation: (program, name) => ({ program, name }),
         useProgram: program => { currentProgram = program; },

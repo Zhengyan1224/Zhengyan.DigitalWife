@@ -745,13 +745,31 @@ public sealed class RuntimeEntity
             if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
             {
                 _definition.Water.MirrorReflectionEnabled = value;
-                if (_water is not null)
-                {
-                    _water.MirrorReflectionEnabled = value;
-                }
+                if (_water is not null) _water.MirrorReflectionEnabled = value;
             }
         }
     }
+
+    public int ReflectionSamples
+    {
+        get => _water is not null ? _water.MirrorReflectionSamples : _plane is not null ? _plane.MirrorReflectionSamples
+            : string.Equals(Type,"water_surface",StringComparison.OrdinalIgnoreCase) ? _definition.Water.MirrorReflectionSamples : _definition.Plane.MirrorReflectionSamples;
+        set
+        {
+            value = Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality.NormalizeSamples(value);
+            if (string.Equals(_definition.Type, "water_surface", StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Water.MirrorReflectionSamples = value;
+                if (_water is not null) _water.MirrorReflectionSamples = value;
+            }
+            else if (string.Equals(_definition.Type,"textured_plane",StringComparison.OrdinalIgnoreCase))
+            {
+                _definition.Plane.MirrorReflectionSamples = value;
+                if (_plane is not null) _plane.MirrorReflectionSamples = value;
+            }
+        }
+    }
+    public int ActualReflectionSamples => _water?.ActualReflectionSamples ?? _plane?.ActualReflectionSamples ?? 0;
 
     public bool PlaneMirrorReflectionEnabled
     {
@@ -2076,6 +2094,7 @@ public sealed class RuntimeEntity
             _definition.Water.ReflectionTint = Vector3Dto.FromVector3(_water.ReflectionTint);
             _definition.Water.SkyReflectionStrength = _water.SkyReflectionStrength;
             _definition.Water.MirrorReflectionEnabled = _water.MirrorReflectionEnabled;
+            _definition.Water.MirrorReflectionSamples = _water.MirrorReflectionSamples;
         }
         else if (_plane is not null)
         {
@@ -2088,6 +2107,7 @@ public sealed class RuntimeEntity
             _definition.Plane.Tint = Vector4Dto.FromVector4(_plane.Tint);
             _definition.Plane.ReceiveShadow = _plane.ReceiveShadow;
             _definition.Plane.MirrorReflectionEnabled = _plane.MirrorReflectionEnabled;
+            _definition.Plane.MirrorReflectionSamples = _plane.MirrorReflectionSamples;
             _definition.Plane.MirrorReflectionStrength = _plane.MirrorReflectionStrength;
         }
     }

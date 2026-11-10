@@ -55,6 +55,18 @@ public sealed class RuntimeEntity
     public bool IsParticleSystem => NormalizeType(Type) is "particle_system" or "particles" or "particle";
 
     public bool IsWaterSurface => NormalizeType(Type) is "water_surface" or "water";
+    public int ReflectionSamples
+    {
+        get => IsWaterSurface ? Definition.Water.MirrorReflectionSamples : Definition.Plane.MirrorReflectionSamples;
+        set
+        {
+            value = Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality.NormalizeSamples(value);
+            if (IsWaterSurface) Definition.Water.MirrorReflectionSamples = value;
+            else if (IsTexturedPlane) Definition.Plane.MirrorReflectionSamples = value;
+        }
+    }
+    public int ActualReflectionSamples { get; private set; }
+    public void ReportReflectionSamples(int samples) => ActualReflectionSamples = Math.Max(0,samples);
 
     public Vector3 Position
     {

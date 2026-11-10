@@ -700,6 +700,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
 
         DrawWindowSettings(project.Window);
+        DrawShadowSettings(project);
 
         string[] languages = ["csharp", "python"];
         _preferredLanguageIndex = string.Equals(project.ScriptRuntime.PreferredLanguage, "python", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
@@ -717,6 +718,31 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
         ImGui.TextWrapped("The editor saves scene, resources, and script templates into the selected project directory.");
         ImGui.PopID();
+    }
+
+    private void DrawShadowSettings(GameProject project)
+    {
+        if (!ImGui.CollapsingHeader("Shadow quality")) return;
+        bool enabled = project.Shadows is not null;
+        if (ImGui.Checkbox("Use global shadow settings", ref enabled))
+            project.Shadows = enabled ? new GameProjectShadowSettings() : null;
+        if (project.Shadows is not { } settings) return;
+        ImGui.TextWrapped("These settings apply to every scene in this project.");
+        string directional = $"{settings.NormalizedDirectionalResolution}";
+        string local = $"{settings.NormalizedLocalLightResolution}";
+        string samples = $"{settings.NormalizedFilterSamples}";
+        float radius = settings.NormalizedFilterRadius;
+        if (DrawStringCombo("Directional shadow resolution", ref directional,
+            GameProjectShadowSettings.ResolutionChoices.Select(value => $"{value}").ToArray()))
+            settings.DirectionalResolution = int.Parse(directional);
+        if (DrawStringCombo("Point / spot shadow resolution", ref local,
+            GameProjectShadowSettings.ResolutionChoices.Where(value => value <= 2048).Select(value => $"{value}").ToArray()))
+            settings.LocalLightResolution = int.Parse(local);
+        if (DrawStringCombo("Shadow filter samples", ref samples,
+            GameProjectShadowSettings.SampleChoices.Select(value => $"{value}").ToArray()))
+            settings.FilterSamples = int.Parse(samples);
+        if (ImGui.SliderFloat("Shadow filter radius", ref radius, 0, 8, "%.2f texels"))
+            settings.FilterRadius = radius;
     }
 
     private static void DrawMicrophoneSettings(GameProjectMicrophoneSettings microphone)
@@ -4515,6 +4541,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector3 reflectionTint = water.ReflectionTint.ToVector3();
         float skyReflectionStrength = water.SkyReflectionStrength;
         bool mirrorReflectionEnabled = water.MirrorReflectionEnabled;
+        int mirrorReflectionSamples = water.MirrorReflectionSamples;
         bool underwaterEffectEnabled = water.UnderwaterEffectEnabled;
         Vector3 underwaterTint = water.UnderwaterTint.ToVector3();
         Vector3 underwaterFogColor = water.UnderwaterFogColor.ToVector3();
@@ -4541,6 +4568,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         }
         changed |= ImGui.ColorEdit3("Deep color", ref deepColor);
         changed |= ImGui.Checkbox("Mirror reflection", ref mirrorReflectionEnabled);
+        if (mirrorReflectionEnabled)
+            changed |= DrawReflectionSamplesCombo(ref mirrorReflectionSamples);
         changed |= ImGui.ColorEdit3("Reflection tint", ref reflectionTint);
         changed |= ImGui.SliderFloat("Sky reflection", ref skyReflectionStrength, 0.0f, 1.0f);
         changed |= ImGui.Checkbox("Underwater effect", ref underwaterEffectEnabled);
@@ -4628,6 +4657,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             water.ReflectionTint = Vector3Dto.FromVector3(reflectionTint);
             water.SkyReflectionStrength = Math.Clamp(skyReflectionStrength, 0.0f, 1.0f);
             water.MirrorReflectionEnabled = mirrorReflectionEnabled;
+            water.MirrorReflectionSamples = mirrorReflectionSamples;
             water.UnderwaterEffectEnabled = underwaterEffectEnabled;
             water.UnderwaterTint = Vector3Dto.FromVector3(underwaterTint);
             water.UnderwaterFogColor = Vector3Dto.FromVector3(underwaterFogColor);
@@ -4727,6 +4757,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         Vector4 tint = plane.Tint.ToVector4();
         bool receiveShadow = plane.ReceiveShadow;
         bool mirrorReflectionEnabled = plane.MirrorReflectionEnabled;
+        int mirrorReflectionSamples = plane.MirrorReflectionSamples;
         float mirrorReflectionStrength = plane.MirrorReflectionStrength;
         bool changed = false;
 
@@ -4748,6 +4779,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         changed |= ImGui.Checkbox("Mirror reflection", ref mirrorReflectionEnabled);
         if (mirrorReflectionEnabled)
         {
+            changed |= DrawReflectionSamplesCombo(ref mirrorReflectionSamples);
             changed |= ImGui.SliderFloat("Mirror reflection strength", ref mirrorReflectionStrength, 0.0f, 1.0f);
             ImGui.TextWrapped("Mirror reflection renders the scene again from a reflected camera before drawing this plane.");
         }
@@ -4763,9 +4795,22 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             plane.Tint = Vector4Dto.FromVector4(tint);
             plane.ReceiveShadow = receiveShadow;
             plane.MirrorReflectionEnabled = mirrorReflectionEnabled;
+            plane.MirrorReflectionSamples = mirrorReflectionSamples;
             plane.MirrorReflectionStrength = Math.Clamp(mirrorReflectionStrength, 0.0f, 1.0f);
             _editorGame.ApplySelectedPlaneToRuntime();
         }
+    }
+
+    private bool DrawReflectionSamplesCombo(ref int samples)
+    {
+        int maximum = AntiAliasingSamples.NormalizeRequested(_editorGame.Project.Window.AntiAliasingSamples);
+        int clamped = AntiAliasingSamples.FallbackToSupported(samples, maximum);
+        bool clampedChanged = clamped != samples;
+        string selected = $"{clamped}x";
+        string[] choices = AntiAliasingSamples.Choices.Where(value => value <= maximum).Select(value => $"{value}x").ToArray();
+        bool changed = DrawStringCombo("Mirror reflection samples", ref selected, choices);
+        samples = changed ? int.Parse(selected[..^1]) : clamped;
+        return changed || clampedChanged;
     }
 
     private bool DrawPathInput(string label, ref string value, uint maxLength, string id)

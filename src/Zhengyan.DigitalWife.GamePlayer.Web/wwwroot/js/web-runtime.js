@@ -205,7 +205,10 @@ function frame(timestamp) {
     current.dotNetReference.invokeMethodAsync("OnAnimationFrameWithInput", timestamp, input)
         .then(() => {
             if (runtime !== current || !current.running) return;
-            try { runtime.renderer?.render(timestamp); }
+            try {
+                const quality=runtime.renderer?.render(timestamp);
+                if(quality) current.dotNetReference.invokeMethodAsync("OnGraphicsQualityApplied",quality).catch(()=>{});
+            }
             catch (error) {
                 const message = error?.message || String(error);
                 runtime.renderer?.dispose();

@@ -57,6 +57,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     private readonly List<PointLightData> _pointLights = [];
     private readonly List<SpotLightData> _spotLights = [];
     private ShadowMapRenderer? _shadowRenderer;
+    private Zhengyan.DigitalWife.Scripting.RuntimeGraphicsSnapshot _frameGraphics;
     private LocalLightShadowRenderer? _localLightShadowRenderer;
     private PlanarReflectionRenderer? _planarReflectionRenderer;
     private IUnderwaterPostProcessRenderer? _underwaterPostProcessRenderer;
@@ -94,6 +95,9 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         _windowSettings = project.Window;
         _quality = project.AndroidQuality;
         _renderPolicy = AndroidRenderPolicy.Resolve(_quality, project.Window.AntiAliasingSamples);
+        GraphicsQuality = scene.Graphics;
+        _frameGraphics = GraphicsQuality.Capture();
+        GraphicsQuality.ReportApplied(_frameGraphics.Revision, renderer.AntiAliasingSamples, 0, 0);
     }
 
     protected override void Initialize()
@@ -122,8 +126,10 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             BindPmxRelations();
             RefreshComponentSnapshots();
             _loadedEntityRevision = _scene.EntityRevision;
-            _shadowRenderer = new ShadowMapRenderer(this) { Resolution = _renderPolicy.ShadowMapSize };
-            _localLightShadowRenderer = new LocalLightShadowRenderer(this) { Resolution = _renderPolicy.LocalShadowMapSize * 4 };
+            _shadowRenderer = new ShadowMapRenderer(this) { Resolution = _renderPolicy.ShadowMapSize,
+                FilterSamples = _frameGraphics.ShadowsEnabled ? _frameGraphics.FilterSamples : 0, FilterRadius = _frameGraphics.FilterRadius };
+            _localLightShadowRenderer = new LocalLightShadowRenderer(this) { Resolution = _renderPolicy.LocalShadowMapSize * 4,
+                FilterSamples = _frameGraphics.ShadowsEnabled ? _frameGraphics.FilterSamples : 0, FilterRadius = _frameGraphics.FilterRadius };
             _planarReflectionRenderer = new PlanarReflectionRenderer(this);
             _underwaterPostProcessRenderer = GraphicsDevice.Renderer.Services
                 .CreateUnderwaterPostProcessRenderer("AndroidUnderwater");
@@ -136,6 +142,25 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     {
         while (!IsReady && LoadingError is null) ProcessLoadingStep();
         if (LoadingError is not null) throw new InvalidOperationException(LoadingMessage, LoadingError);
+    }
+
+    protected override void PrepareRenderFrame()
+    {
+        _frameGraphics = GraphicsQuality.Capture();
+        string profile = (_quality.Profile ?? "auto").Trim().ToLowerInvariant();
+        if (_frameGraphics.OverrideSceneSamples)
+            GraphicsDevice.Renderer.SetAntiAliasingSamples(Math.Min(_frameGraphics.SceneSamples, profile == "low" ? 1 : profile == "medium" ? 2 : 16));
+        if (_shadowRenderer is not null && _localLightShadowRenderer is not null)
+        {
+            _shadowRenderer.Resolution = _frameGraphics.ShadowsEnabled
+                ? Math.Min(_frameGraphics.DirectionalResolution, profile == "low" ? 512 : profile == "medium" ? 1024 : 8192) : _renderPolicy.ShadowMapSize;
+            _localLightShadowRenderer.Resolution = (_frameGraphics.ShadowsEnabled
+                ? Math.Min(_frameGraphics.LocalLightResolution, profile == "low" ? 256 : profile == "medium" ? 512 : 2048) : _renderPolicy.LocalShadowMapSize) * 4;
+            _shadowRenderer.FilterSamples = _localLightShadowRenderer.FilterSamples = _frameGraphics.ShadowsEnabled ? _frameGraphics.FilterSamples : 0;
+            _shadowRenderer.FilterRadius = _localLightShadowRenderer.FilterRadius = _frameGraphics.FilterRadius;
+        }
+        GraphicsQuality.ReportApplied(_frameGraphics.Revision, GraphicsDevice.AntiAliasingSamples,
+            GraphicsQuality.Shadows.ActualDirectionalResolution, GraphicsQuality.Shadows.ActualLocalLightResolution);
     }
 
     protected override void Update(GameTime gameTime)
@@ -293,6 +318,9 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             GraphicsDevice.RestoreBackBuffer);
         long localShadowEnd = Stopwatch.GetTimestamp();
         ShadowMapBinding? binding = _shadowRenderer.CurrentBinding;
+        GraphicsQuality.ReportApplied(_frameGraphics.Revision, GraphicsDevice.AntiAliasingSamples,
+            binding is { } directional ? (int)MathF.Round(1 / directional.TexelSize.X) : 0,
+            _localLightShadowRenderer.CurrentBinding is { } local ? (int)MathF.Round(1 / local.TexelSize.X) / 4 : 0);
         foreach (PmxModelComponent model in _models.Values)
         {
             model.ShadowMap = binding;
@@ -745,7 +773,8 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
                 if (string.IsNullOrWhiteSpace(settings.Name)) continue;
                 validNames.Add(settings.Name);
                 RenderTextureState state = GetOrCreateRenderTexture(settings.Name);
-                state.Target.EnsureSize(Math.Max(settings.Width, 1), Math.Max(settings.Height, 1));
+                state.Target.EnsureSize(Math.Max(settings.Width, 1), Math.Max(settings.Height, 1),
+                    _frameGraphics.OverrideSceneSamples ? GraphicsDevice.AntiAliasingSamples : 1);
                 if (!ShouldRenderRenderTexture(settings, state, gameTime.TotalSeconds)) continue;
 
                 RuntimeCamera camera = _scene.GetCamera(settings.Camera) ?? _scene.MainCamera;
@@ -851,6 +880,8 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             ApplyCameraToComponents, ApplyCameraToComponents, GraphicsDevice.ClearColor,
             width, height, restoreTarget);
         _reflectionTicks += Stopwatch.GetTimestamp() - start;
+        foreach (var pair in _waters) _scene.GetEntity(pair.Key)?.ReportReflectionSamples(pair.Value.ActualReflectionSamples);
+        foreach (var pair in _planes) _scene.GetEntity(pair.Key)?.ReportReflectionSamples(pair.Value.ActualReflectionSamples);
     }
 
     private void DrawSkyboxOnly(GameTime gameTime)
@@ -914,7 +945,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         long start = Stopwatch.GetTimestamp();
         int width = viewport.Width;
         int height = viewport.Height;
-        _underwaterPostProcessRenderer.BeginCapture(width, height, clearColor);
+        _underwaterPostProcessRenderer.BeginCapture(width, height, clearColor, _frameGraphics.OverrideSceneSamples ? GraphicsDevice.AntiAliasingSamples : 1);
         try
         {
             RenderPlanarReflections(gameTime, camera, width, height, _underwaterPostProcessRenderer.ResumeCapture);
@@ -926,6 +957,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         }
         finally
         {
+            _underwaterPostProcessRenderer.EndCapture();
             RestoreBackBufferViewport(viewport);
         }
         GraphicsDevice.ClearViewport(viewport.X, viewport.Y, width, height, clearColor);
@@ -1126,6 +1158,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         component.SkyReflectionStrength = settings.SkyReflectionStrength;
         component.MirrorReflectionEnabled = settings.MirrorReflectionEnabled;
         component.RippleLifetimeSeconds = Math.Max(0.05f, settings.RippleLifetimeSeconds);
+        component.MirrorReflectionSamples = settings.MirrorReflectionSamples;
         component.RippleWaveSpeed = settings.RippleWaveSpeed;
         component.RippleFrequency = Math.Max(0.0f, settings.RippleFrequency);
         component.RippleNormalStrength = Math.Max(0.0f, settings.RippleNormalStrength);
@@ -1147,6 +1180,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
         component.ReceiveShadow = settings.ReceiveShadow;
         component.MirrorReflectionEnabled = settings.MirrorReflectionEnabled;
         component.MirrorReflectionStrength = settings.MirrorReflectionStrength;
+        component.MirrorReflectionSamples = settings.MirrorReflectionSamples;
     }
 
     internal PmxModelComponent? GetPmxModel(string idOrName) => FindModel(idOrName);

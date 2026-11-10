@@ -469,6 +469,13 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         }
 
         Action restore = restoreRenderTarget ?? (() => _sceneRenderTarget.Bind());
+        GameProjectShadowSettings? shadows = Project.Shadows;
+        _shadowMapRenderer.Resolution = shadows?.NormalizedDirectionalResolution ?? 2048;
+        _shadowMapRenderer.FilterSamples = shadows?.NormalizedFilterSamples ?? 0;
+        _shadowMapRenderer.FilterRadius = shadows?.NormalizedFilterRadius ?? 1;
+        _localLightShadowRenderer.Resolution = (shadows?.NormalizedLocalLightResolution ?? 1024) * 4;
+        _localLightShadowRenderer.FilterSamples = shadows?.NormalizedFilterSamples ?? 0;
+        _localLightShadowRenderer.FilterRadius = shadows?.NormalizedFilterRadius ?? 1;
         _shadowMapRenderer.Render(
             gameTime,
             _pmxObjects.Select(item => item.Model).ToArray(),
@@ -2696,6 +2703,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.ReflectionTint = entity.Water.ReflectionTint.ToVector3();
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
         component.MirrorReflectionEnabled = entity.Water.MirrorReflectionEnabled;
+        component.MirrorReflectionSamples = entity.Water.MirrorReflectionSamples;
         component.RippleLifetimeSeconds = Math.Max(0.05f, entity.Water.RippleLifetimeSeconds);
         component.RippleWaveSpeed = entity.Water.RippleWaveSpeed;
         component.RippleFrequency = Math.Max(0.0f, entity.Water.RippleFrequency);
@@ -2716,6 +2724,7 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.Opacity = entity.Plane.Opacity;
         component.ReceiveShadow = entity.Plane.ReceiveShadow;
         component.MirrorReflectionEnabled = entity.Plane.MirrorReflectionEnabled;
+        component.MirrorReflectionSamples = entity.Plane.MirrorReflectionSamples;
         component.MirrorReflectionStrength = entity.Plane.MirrorReflectionStrength;
     }
 

@@ -86,6 +86,16 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
     }
 
     public GameProject Project { get; private set; } = new();
+    private bool _graphicsConfigured;
+    private Zhengyan.DigitalWife.Scripting.RuntimeGraphicsSnapshot _frameGraphics;
+
+    protected override void PrepareRenderFrame()
+    {
+        _frameGraphics = GraphicsQuality.Capture();
+        if (_frameGraphics.OverrideSceneSamples) GraphicsDevice.Renderer.SetAntiAliasingSamples(_frameGraphics.SceneSamples);
+        GraphicsQuality.ReportApplied(_frameGraphics.Revision, GraphicsDevice.AntiAliasingSamples,
+            GraphicsQuality.Shadows.ActualDirectionalResolution, GraphicsQuality.Shadows.ActualLocalLightResolution);
+    }
 
     public OrbitCamera Camera => _camera;
 
@@ -508,6 +518,12 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
 
         Action restore = restoreRenderTarget ?? GraphicsDevice.RestoreBackBuffer;
 
+        _shadowMapRenderer.Resolution = _frameGraphics.ShadowsEnabled ? _frameGraphics.DirectionalResolution : 2048;
+        _shadowMapRenderer.FilterSamples = _frameGraphics.ShadowsEnabled ? _frameGraphics.FilterSamples : 0;
+        _shadowMapRenderer.FilterRadius = _frameGraphics.FilterRadius;
+        _localLightShadowRenderer.Resolution = (_frameGraphics.ShadowsEnabled ? _frameGraphics.LocalLightResolution : 1024) * 4;
+        _localLightShadowRenderer.FilterSamples = _frameGraphics.ShadowsEnabled ? _frameGraphics.FilterSamples : 0;
+        _localLightShadowRenderer.FilterRadius = _frameGraphics.FilterRadius;
         _shadowMapRenderer.Render(
             gameTime,
             _pmxObjects.Select(item => item.Model).ToArray(),
@@ -529,6 +545,9 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             restore);
 
         ShadowMapBinding? binding = _shadowMapRenderer.CurrentBinding;
+        GraphicsQuality.ReportApplied(_frameGraphics.Revision, GraphicsDevice.AntiAliasingSamples,
+            binding is { } directional ? (int)MathF.Round(1 / directional.TexelSize.X) : 0,
+            _localLightShadowRenderer.CurrentBinding is { } local ? (int)MathF.Round(1 / local.TexelSize.X) / 4 : 0);
         foreach (PlayerPmxObject item in _pmxObjects)
         {
             item.Model.ShadowMap = binding;
@@ -603,7 +622,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         camera.Width = width;
         camera.Height = height;
 
-        _underwaterPostProcessRenderer.BeginCapture(width, height, clearColor);
+        _underwaterPostProcessRenderer.BeginCapture(width, height, clearColor, _frameGraphics.OverrideSceneSamples ? GraphicsDevice.AntiAliasingSamples : 1);
 
         ApplyRuntimeCamera(camera);
         Action restoreCaptureTarget = () =>
@@ -623,6 +642,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         // Keep the surface in the capture so a below-water camera can see it.
         DrawSceneComponentsOnce(gameTime);
 
+        _underwaterPostProcessRenderer.EndCapture();
         bindOutputTarget();
         _underwaterPostProcessRenderer.Draw(camera, settings, gameTime.TotalSeconds, width, height);
     }
@@ -747,6 +767,12 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         EnqueueLoadingStep("Loading project...", () =>
         {
             Project = GameProjectStore.Load(_projectDirectory);
+            if (!_graphicsConfigured)
+            {
+                GraphicsQuality = Project.CreateRuntimeGraphicsQuality();
+                GraphicsQuality.ReportApplied(0, GraphicsDevice.AntiAliasingSamples, 0, 0);
+                _graphicsConfigured = true;
+            }
             _microphoneInputAvailable = true;
             _microphoneUnavailableReason = string.Empty;
             ApplyRuntimeSettings();
@@ -1088,7 +1114,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
                 RemoveRuntimeSpotLight,
                 DispatchSpeechEvent,
                 InvokeLlmTool,
-                RequestSceneChange);
+                RequestSceneChange, GraphicsQuality);
             PrepareLoadingScripts();
             DispatchLoadingEvent("loading_started", 0.0f, $"Loading scene: {Project.Scene.Name}");
 
@@ -2550,6 +2576,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.ReflectionTint = entity.Water.ReflectionTint.ToVector3();
         component.SkyReflectionStrength = entity.Water.SkyReflectionStrength;
         component.MirrorReflectionEnabled = entity.Water.MirrorReflectionEnabled;
+        component.MirrorReflectionSamples = entity.Water.MirrorReflectionSamples;
         component.RippleLifetimeSeconds = Math.Max(0.05f, entity.Water.RippleLifetimeSeconds);
         component.RippleWaveSpeed = entity.Water.RippleWaveSpeed;
         component.RippleFrequency = Math.Max(0.0f, entity.Water.RippleFrequency);
@@ -2570,6 +2597,7 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
         component.Opacity = entity.Plane.Opacity;
         component.ReceiveShadow = entity.Plane.ReceiveShadow;
         component.MirrorReflectionEnabled = entity.Plane.MirrorReflectionEnabled;
+        component.MirrorReflectionSamples = entity.Plane.MirrorReflectionSamples;
         component.MirrorReflectionStrength = entity.Plane.MirrorReflectionStrength;
     }
 

@@ -9,6 +9,11 @@ public sealed class OpenGlRenderer : IRenderer
 {
     private GL? _gl;
     private readonly IRenderBackendServices _services;
+    private int _defaultSamples = 1;
+    private bool _runtimeSamplesSet, _useSceneTarget;
+    private RenderTexture? _sceneTarget;
+    private OpenGlScenePresenter? _presenter;
+    private HashSet<int> _supportedSamples = [1];
 
     public OpenGlRenderer()
     {
@@ -66,19 +71,58 @@ public sealed class OpenGlRenderer : IRenderer
 
         AntiAliasingSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FallbackToSupported(
             RequestedAntiAliasingSamples, actualSamples);
+        _defaultSamples = actualSamples;
+        _supportedSamples = QuerySamples(GLEnum.Rgba8);
+        _supportedSamples.IntersectWith(QuerySamples(GLEnum.Depth24Stencil8));
+        _supportedSamples.Add(1);
         Resize(backBufferSize);
+    }
+
+    public void SetAntiAliasingSamples(int requestedSamples)
+    {
+        requestedSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
+        if (_runtimeSamplesSet && RequestedAntiAliasingSamples == requestedSamples) return;
+        _runtimeSamplesSet = true;
+        RequestedAntiAliasingSamples = requestedSamples;
+        int actual = _supportedSamples.Where(value => value <= requestedSamples).DefaultIfEmpty(1).Max();
+        _useSceneTarget = actual != _defaultSamples;
+        if (_useSceneTarget)
+        {
+            _sceneTarget ??= new RenderTexture(Gl,"RuntimeScene");
+            _sceneTarget.EnsureSize(BackBufferSize.X,BackBufferSize.Y,actual);
+            _presenter ??= new OpenGlScenePresenter(Gl);
+            actual = _sceneTarget.SampleCount;
+        }
+        AntiAliasingSamples = actual;
+    }
+
+    private unsafe HashSet<int> QuerySamples(GLEnum format)
+    {
+        int count=0;
+        Gl.GetInternalformat(GLEnum.Renderbuffer,format,(GLEnum)0x9380,1,&count);
+        count=Math.Clamp(count,0,32); int* values=stackalloc int[32];
+        if(count>0) Gl.GetInternalformat(GLEnum.Renderbuffer,format,GLEnum.Samples,(uint)count,values);
+        HashSet<int> supported=[1];
+        for(int i=0;i<count;i++) if(Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.Choices.Contains(values[i])) supported.Add(values[i]);
+        return supported;
     }
 
     public void Resize(Vector2D<int> backBufferSize)
     {
         BackBufferSize = backBufferSize;
+        if (_useSceneTarget)
+        {
+            _sceneTarget!.EnsureSize(backBufferSize.X,backBufferSize.Y,AntiAliasingSamples);
+            AntiAliasingSamples = _sceneTarget.SampleCount;
+        }
         Gl.Viewport(backBufferSize);
     }
 
     public void Clear(Vector4 color)
     {
         GL gl = Gl;
-        gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+        if (_useSceneTarget) _sceneTarget!.Bind();
+        else gl.BindFramebuffer(GLEnum.Framebuffer, 0);
         gl.Viewport(BackBufferSize);
         gl.Disable(GLEnum.ScissorTest);
         gl.Disable(GLEnum.StencilTest);
@@ -128,7 +172,8 @@ public sealed class OpenGlRenderer : IRenderer
 
     public void RestoreBackBuffer()
     {
-        Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+        if (_useSceneTarget) _sceneTarget!.Bind();
+        else Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
         Gl.Viewport(BackBufferSize);
     }
 
@@ -157,10 +202,13 @@ public sealed class OpenGlRenderer : IRenderer
 
         fixed (byte* pixels = destination)
         {
-            Gl.BindFramebuffer(GLEnum.Framebuffer, 0);
+            uint previous = (uint)Gl.GetInteger(GLEnum.FramebufferBinding);
+            if (_useSceneTarget) _sceneTarget!.EndPass();
+            Gl.BindFramebuffer(GLEnum.Framebuffer, _useSceneTarget ? _sceneTarget!.FramebufferId : 0);
             Gl.PixelStore(GLEnum.PackAlignment, 1);
             Gl.ReadPixels(0, 0, (uint)Math.Max(BackBufferSize.X, 1), (uint)Math.Max(BackBufferSize.Y, 1),
                 GLEnum.Rgba, GLEnum.UnsignedByte, pixels);
+            Gl.BindFramebuffer(GLEnum.Framebuffer, previous);
         }
 
         return true;
@@ -168,13 +216,19 @@ public sealed class OpenGlRenderer : IRenderer
 
     public void Present()
     {
-        // Silk.NET presents the OpenGL surface at the end of the window Render callback.
+        if (_useSceneTarget)
+        {
+            _sceneTarget!.EndPass();
+            _presenter!.Draw(_sceneTarget.ColorTextureId,Math.Max(1,BackBufferSize.X),Math.Max(1,BackBufferSize.Y));
+        }
     }
 
     public void WaitForIdle() => Gl.Finish();
 
     public void Dispose()
     {
+        _presenter?.Dispose(); _presenter=null;
+        _sceneTarget?.Dispose(); _sceneTarget=null;
         _gl?.Dispose();
         _gl = null;
     }

@@ -16,6 +16,8 @@ public readonly record struct ShadowMapBinding(
     public object? NativeComparisonSampler { get; init; }
     public Vector2 TexelSize { get; init; }
     public float NormalOffset { get; init; }
+    public int FilterSamples { get; init; }
+    public float FilterRadius { get; init; } = 1;
 }
 
 internal static class ShadowDepthBias

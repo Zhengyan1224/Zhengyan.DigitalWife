@@ -34,7 +34,7 @@ internal sealed record AndroidRenderPolicy(
         return (Math.Max(1, (int)MathF.Round(width * scale)), Math.Max(1, (int)MathF.Round(height * scale)));
     }
 
-    public static AndroidRenderPolicy Resolve(AndroidQualitySettings quality, int requestedSamples)
+    public static AndroidRenderPolicy Resolve(AndroidQualitySettings quality, int requestedSamples, GameProjectShadowSettings? shadows = null)
     {
         string profile = (quality.Profile ?? "auto").Trim().ToLowerInvariant();
         bool low = profile == "low";
@@ -42,8 +42,10 @@ internal sealed record AndroidRenderPolicy(
         int samples = requestedSamples <= 1 ? 1 : requestedSamples <= 2 ? 2
             : requestedSamples <= 4 ? 4 : requestedSamples <= 8 ? 8 : 16;
         return new AndroidRenderPolicy(
-            Math.Clamp(quality.MaxShadowMapSize, 256, low ? 512 : medium ? 1024 : 2048),
-            Math.Clamp(quality.MaxLocalShadowMapSize, 256, low ? 256 : medium ? 512 : 2048),
+            Math.Clamp(shadows?.NormalizedDirectionalResolution ?? quality.MaxShadowMapSize, 256,
+                low ? 512 : medium ? 1024 : shadows is null ? 2048 : 8192),
+            Math.Clamp(shadows?.NormalizedLocalLightResolution ?? quality.MaxLocalShadowMapSize, 256,
+                low ? 256 : medium ? 512 : 2048),
             Math.Clamp(quality.MaxPointShadowMaps, 0, low ? 1 : 2),
             Math.Clamp(quality.MaxSpotShadowMaps, 0, low ? 1 : 4),
             Math.Clamp(quality.MaxReflectionSurfaces, 0, low ? 1 : medium ? 2 : 16),

@@ -31,6 +31,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
     private int _uniformShadowMapBias = -1;
     private int _uniformShadowMapTexelSize = -1;
     private int _uniformPlanarReflectionTex = -1;
+    private int _uniformShadowFilterParameters = -1;
     private int _uniformPlanarReflectionEnabled = -1;
     private int _uniformReflectionViewProjection = -1;
     private int _uniformMirrorReflectionStrength = -1;
@@ -112,6 +113,9 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
     public bool MirrorReflectionEnabled { get; set; }
 
+    public int MirrorReflectionSamples { get; set; } = 1;
+    public int ActualReflectionSamples { get; internal set; }
+
     public float MirrorReflectionStrength { get; set; } = 1.0f;
 
     public void SetPlanarReflection(uint textureId, Matrix4x4 reflectionViewProjection, int width, int height)
@@ -136,6 +140,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
     public void ClearPlanarReflection()
     {
+        ActualReflectionSamples = 0;
         _planarReflectionTextureId = 0;
         _planarReflectionTextureHandle = null;
         _planarReflectionViewProjection = Matrix4x4.Identity;
@@ -348,6 +353,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         _uniformShadowMapStrength = gl.GetUniformLocation(_program, "u_ShadowMapStrength");
         _uniformShadowMapBias = gl.GetUniformLocation(_program, "u_ShadowMapBias");
         _uniformShadowMapTexelSize = gl.GetUniformLocation(_program, "u_ShadowMapTexelSize");
+        _uniformShadowFilterParameters = gl.GetUniformLocation(_program, "u_ShadowFilterParameters");
         _uniformPlanarReflectionTex = gl.GetUniformLocation(_program, "u_PlanarReflectionTex");
         _uniformPlanarReflectionEnabled = gl.GetUniformLocation(_program, "u_PlanarReflectionEnabled");
         _uniformReflectionViewProjection = gl.GetUniformLocation(_program, "u_ReflectionViewProjection");
@@ -427,6 +433,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
 
         gl.UseProgram(_program);
         gl.BindVertexArray(_vao);
+        gl.SetUniform(_uniformShadowFilterParameters, new Vector2(ShadowMap?.FilterSamples ?? 0, ShadowMap?.FilterRadius ?? 1));
         gl.SetUniform(_uniformWorld, World);
         gl.SetUniform(_uniformView, _camera.View);
         gl.SetUniform(_uniformProjection, _camera.Projection);
@@ -634,6 +641,7 @@ public sealed unsafe class TexturedPlaneComponent : DrawableGameComponent
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_ShadowMapBias", ShadowDepthBias.ToOpenGlComparisonSpace(shadowMap.Bias));
         shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
+        shader.SetUniform("u_ShadowFilterParameters", new Vector2(shadowMap.FilterSamples, shadowMap.FilterRadius));
     }
 
     private static void UnbindTextureSamplers(GL gl)
@@ -761,10 +769,27 @@ uniform int u_ShadowMapEnabled;
 uniform float u_ShadowMapStrength;
 uniform float u_ShadowMapBias;
 uniform vec2 u_ShadowMapTexelSize;
+uniform vec2 u_ShadowFilterParameters;
 uniform float u_PlanarReflectionEnabled;
 uniform float u_MirrorReflectionStrength;
 
 out vec4 out_Color;
+
+int ShadowFilterSide(vec2 settings, int legacySide) {
+    if (settings.x < 1.0) return legacySide;
+    if (settings.x <= 1.0) return 1;
+    if (settings.x <= 4.0) return 2;
+    if (settings.x <= 9.0) return 3;
+    if (settings.x <= 16.0) return 4;
+    if (settings.x <= 25.0) return 5;
+    return 7;
+}
+
+vec2 ShadowFilterOffset(vec2 settings, ivec2 cell, int side, float legacyRadius) {
+    if (side == 1) return vec2(0.0);
+    float radius = settings.x < 1.0 ? legacyRadius : clamp(settings.y, 0.0, 8.0);
+    return (vec2(cell) / float(side - 1) * 2.0 - 1.0) * radius;
+}
 
 float SampleShadow()
 {
@@ -783,15 +808,16 @@ float SampleShadow()
 
     float depth = (coord.z * 0.5 + 0.5) - u_ShadowMapBias;
     float visibility = 0.0;
-    for (int y = -1; y <= 1; ++y)
-    {
-        for (int x = -1; x <= 1; ++x)
-        {
-            vec2 offset = vec2(x, y) * u_ShadowMapTexelSize;
+    int side = ShadowFilterSide(u_ShadowFilterParameters, 3);
+    for (int y = 0; y < 7; ++y) {
+        if (y >= side) break;
+        for (int x = 0; x < 7; ++x) {
+            if (x >= side) break;
+            vec2 offset = ShadowFilterOffset(u_ShadowFilterParameters, ivec2(x, y), side, 1.0) * u_ShadowMapTexelSize;
             visibility += texture(u_ShadowMap, vec3(uv + offset, depth));
         }
     }
-    visibility /= 9.0;
+    visibility /= float(side * side);
     return mix(1.0 - clamp(u_ShadowMapStrength, 0.0, 1.0), 1.0, visibility);
 }
 

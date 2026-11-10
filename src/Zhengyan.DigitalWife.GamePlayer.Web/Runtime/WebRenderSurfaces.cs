@@ -6,14 +6,17 @@ namespace Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
 public sealed record WebLocalShadow(int PointLightIndex, int SpotLightIndex, int Face,
     float[] ViewProjection, float[] AtlasRect, float NearPlane, float FarPlane);
 
-public sealed record WebPlanarReflection(string Id, float[] ViewProjection, float[] CameraPosition, float[] ClipPlane);
+public sealed record WebPlanarReflection(string Id, float[] ViewProjection, float[] CameraPosition, float[] ClipPlane)
+{
+    public int Samples { get; init; } = 1;
+}
 
 public sealed partial record WebRenderFrame
 {
     // Match the desktop 4x4 atlas: two six-face point lights and four spots.
     public const int LocalShadowAtlasSize = 4096;
 
-    private static IReadOnlyList<WebLocalShadow> CreateLocalShadows(WebPointLight[] points, WebSpotLight[] spots)
+    private static IReadOnlyList<WebLocalShadow> CreateLocalShadows(WebPointLight[] points, WebSpotLight[] spots, int atlasSize = LocalShadowAtlasSize)
     {
         List<WebLocalShadow> shadows = [];
         int pointCount = 0;
@@ -52,7 +55,7 @@ public sealed partial record WebRenderFrame
         void Add(int point, int spot, int face, Vector3 position, Vector3 direction, Vector3 up, float fov, float near, float far)
         {
             int tile = shadows.Count;
-            const float padding = 2.0f / LocalShadowAtlasSize;
+            float padding = 2.0f / atlasSize;
             float[] rect = [tile % 4 / 4.0f + padding, tile / 4 / 4.0f + padding, .25f - 2 * padding, .25f - 2 * padding];
             Matrix4x4 matrix = Matrix4x4.CreateLookAt(position, position + direction, up)
                 * ToGlProjection(Matrix4x4.CreatePerspectiveFieldOfView(fov, 1, near, far));
@@ -79,10 +82,13 @@ public sealed partial record WebRenderFrame
         List<WebPlanarReflection> reflections = [];
         foreach ((RuntimeEntity entity, _) in models)
         {
-            if (!entity.IsTexturedPlane || !entity.Definition.Plane.MirrorReflectionEnabled
-                || entity.Definition.Plane.MirrorReflectionStrength <= .001f) continue;
+            bool water = entity.IsWaterSurface;
+            if (water ? !entity.Definition.Water.MirrorReflectionEnabled || entity.Definition.Water.Alpha <= .001f
+                : !entity.IsTexturedPlane || !entity.Definition.Plane.MirrorReflectionEnabled
+                  || entity.Definition.Plane.MirrorReflectionStrength <= .001f) continue;
             Matrix4x4 world = CreateRenderTransform(entity, camera);
-            Vector3 normal = Vector3.Cross(Vector3.TransformNormal(Vector3.UnitX, world), Vector3.TransformNormal(Vector3.UnitY, world));
+            Vector3 normal = water ? Vector3.UnitY
+                : Vector3.Cross(Vector3.TransformNormal(Vector3.UnitX, world), Vector3.TransformNormal(Vector3.UnitY, world));
             if (normal.LengthSquared() <= 1e-8f) continue;
             normal = Vector3.Normalize(normal);
             float distance = -Vector3.Dot(normal, entity.Position);
@@ -92,7 +98,10 @@ public sealed partial record WebRenderFrame
             Vector3 up = sourceUp - 2 * Vector3.Dot(normal, sourceUp) * normal;
             Matrix4x4 viewProjection = Matrix4x4.CreateLookAt(position, target, up) * ToGlProjection(camera.CreateProjection(aspect));
             if (Vector3.Dot(normal, camera.Position) + distance < 0) { normal = -normal; distance = -distance; }
-            reflections.Add(new(entity.Id, ToGlArray(viewProjection), ToVector(position), [normal.X, normal.Y, normal.Z, distance - .01f]));
+            reflections.Add(new(entity.Id, ToGlArray(viewProjection), ToVector(position), [normal.X, normal.Y, normal.Z, distance - .01f])
+            {
+                Samples = water ? entity.Definition.Water.MirrorReflectionSamples : entity.Definition.Plane.MirrorReflectionSamples
+            });
         }
         return reflections;
     }

@@ -137,7 +137,9 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
                 ReflectionSurfaceState state = GetOrCreateSurfaceState(surface.Key, sourceCamera);
                 IRenderTarget target = state.Target;
-                target.EnsureSize(textureWidth, textureHeight);
+                int samples = AntiAliasingSamples.FallbackToSupported(
+                    surface.Samples, _game.GraphicsDevice.AntiAliasingSamples);
+                target.EnsureSize(textureWidth, textureHeight, samples);
 
                 ConfigureReflectionCamera(
                     sourceCamera,
@@ -154,6 +156,8 @@ public sealed class PlanarReflectionRenderer : IDisposable
 
                 applyCamera(state.Camera);
                 DrawReflectionScene(gameTime, excluded);
+                target.EndPass();
+                surface.SetActualSamples(target.SampleCount);
                 surface.SetReflection(
                     new RuntimeTextureHandle(target.Backend, target.LegacyColorTextureId, target.NativeColorResource),
                     state.Camera.View * state.Camera.Projection,
@@ -380,6 +384,13 @@ public sealed class PlanarReflectionRenderer : IDisposable
         public Vector3 Normal { get; }
 
         public float Distance { get; }
+
+        public int Samples => _water?.MirrorReflectionSamples ?? _plane!.MirrorReflectionSamples;
+        public void SetActualSamples(int samples)
+        {
+            if (_water is not null) _water.ActualReflectionSamples = samples;
+            else _plane!.ActualReflectionSamples = samples;
+        }
 
         public static ReflectionSurface ForWater(WaterSurfaceComponent water) => new(water);
 

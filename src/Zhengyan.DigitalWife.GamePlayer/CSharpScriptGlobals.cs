@@ -16,6 +16,7 @@ public sealed class CSharpScriptGlobals
     public required RuntimeEntity Entity { get; init; }
 
     public required RuntimeScene Scene { get; init; }
+    public RuntimeGraphicsQuality Graphics => Scene.Graphics;
 
     public required RuntimeInput Input { get; init; }
 

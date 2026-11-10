@@ -8,6 +8,7 @@
 
 | 模块 | 分类 | 主要对象 / 入口 | 文档 |
 | --- | --- | --- | --- |
+| 运行时画质与 MSAA | 渲染 | `Graphics`, `Scene.Graphics`, `Entity.ReflectionSamples` | [api_docs/31-graphics-quality.md](./api_docs/31-graphics-quality.md) |
 | 总览 | 基础 | ``CSharpScriptGlobals``, ``Python event functions`` | [api_docs/00-overview.md](./api_docs/00-overview.md) |
 | 路径规则 | 基础 | ``GameProjectPath`` | [api_docs/01-paths.md](./api_docs/01-paths.md) |
 | 脚本类型 | 基础 | ``C# .csx``, ``Python .py`` | [api_docs/02-script-types.md](./api_docs/02-script-types.md) |

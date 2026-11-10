@@ -84,6 +84,7 @@ internal sealed class OpenGlShadowMapTarget : IShadowMapTarget
 internal sealed class VeldridShadowMapTarget : IShadowMapTarget
 {
     private readonly VulkanRenderer _renderer;
+    private readonly int _maximumWidth, _maximumHeight;
     private VeldridTexture? _depthTexture;
     private TextureView? _depthView;
     private VeldridFramebuffer? _framebuffer;
@@ -94,6 +95,10 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
     public VeldridShadowMapTarget(VulkanRenderer renderer, string name)
     {
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
+        bool supported = renderer.Device.GetPixelFormatSupport(VeldridPixelFormat.D24_UNorm_S8_UInt,
+            TextureType.Texture2D, TextureUsage.DepthStencil | TextureUsage.Sampled, out PixelFormatProperties limits);
+        _maximumWidth = supported ? (int)limits.MaxWidth : 8192;
+        _maximumHeight = supported ? (int)limits.MaxHeight : 8192;
         Name = name;
     }
 
@@ -111,6 +116,8 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
         ObjectDisposedException.ThrowIf(_disposed, this);
         width = Math.Max(width, 1);
         height = Math.Max(height, 1);
+        width = Math.Min(width, _maximumWidth);
+        height = Math.Min(height, _maximumHeight);
         if (Width == width && Height == height && _framebuffer is not null)
         {
             return;
@@ -178,15 +185,15 @@ internal sealed class VeldridShadowMapTarget : IShadowMapTarget
 
     private void DisposeResources()
     {
-        _framebuffer?.Dispose();
+        if (_framebuffer is not null) _renderer.RetireResource(_framebuffer);
         _framebuffer = null;
-        _depthView?.Dispose();
+        if (_depthView is not null) _renderer.RetireResource(_depthView);
         _depthView = null;
-        _depthTexture?.Dispose();
+        if (_depthTexture is not null) _renderer.RetireResource(_depthTexture);
         _depthTexture = null;
-        _sampler?.Dispose();
+        if (_sampler is not null) _renderer.RetireResource(_sampler);
         _sampler = null;
-        _comparisonSampler?.Dispose();
+        if (_comparisonSampler is not null) _renderer.RetireResource(_comparisonSampler);
         _comparisonSampler = null;
     }
 }

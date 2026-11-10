@@ -6,12 +6,14 @@ using System.Numerics;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd;
+using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 internal sealed class AndroidPmxSceneRenderer : IDisposable
 {
     private const string LogTag = "ZhengyanGamePlayer";
+    private readonly int _sceneSamples;
     private const int VertexFloatCount = 21;
     private const int VertexStride = VertexFloatCount * sizeof(float);
     private const int MaxGpuBones = 96;
@@ -270,6 +272,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
 
     public AndroidPmxSceneRenderer()
     {
+        int[] samples = new int[1];
+        GLES30.GlGetIntegerv(GLES30.GlSamples, samples, 0);
+        _sceneSamples = Math.Max(samples[0], 1);
         _program = CreateProgram(VertexShaderSource, FragmentShaderSource);
         _mvpLocation = GLES30.GlGetUniformLocation(_program, "uMvp");
         _modelLocation = GLES30.GlGetUniformLocation(_program, "uModel");
@@ -2071,6 +2076,15 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         _reflectionSurfaceId = null;
     }
 
+    private int ReflectionSamples(string surfaceId)
+    {
+        WaterGpu? water = _waters.FirstOrDefault(item => item.RuntimeEntity.Id.Equals(surfaceId, StringComparison.OrdinalIgnoreCase));
+        PlaneGpu? plane = _planes.FirstOrDefault(item => item.RuntimeEntity.Id.Equals(surfaceId, StringComparison.OrdinalIgnoreCase));
+        int requested = water?.RuntimeEntity.Definition.Water.MirrorReflectionSamples
+            ?? plane?.RuntimeEntity.Definition.Plane.MirrorReflectionSamples ?? 1;
+        return AntiAliasingSamples.FallbackToSupported(requested, _sceneSamples);
+    }
+
     private void EnsureReflectionTargetAspect(int viewportWidth, int viewportHeight)
     {
         if (_reflectionTargets.Count == 0)
@@ -2087,7 +2101,8 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         foreach (string surfaceId in _reflectionTargets.Keys.ToArray())
         {
             RenderTargetGpu current = _reflectionTargets[surfaceId];
-            if (current.Width == targetWidth && current.Height == targetHeight)
+            int samples = ReflectionSamples(surfaceId);
+            if (current.Width == targetWidth && current.Height == targetHeight && current.RequestedSamples == samples)
             {
                 continue;
             }
@@ -2102,7 +2117,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     Height = targetHeight,
                     RefreshMode = "every_frame",
                     ClearColor = Vector4Dto.FromVector4(current.ClearColor)
-                });
+                }, samples);
                 _reflectionTargets[surfaceId] = replacement;
                 _estimatedGpuBytes += replacement.EstimatedBytes - current.EstimatedBytes;
                 current.Dispose();
@@ -2154,7 +2169,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         Matrix4x4 projection = CreateProjection(camera.Settings, Math.Max(outputAspect, 0.001f));
         _reflectionMatrices[surfaceId] = view * projection;
 
-        GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, target.Framebuffer);
+        GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, target.DrawFramebuffer);
         GLES30.GlViewport(0, 0, target.Width, target.Height);
         GLES30.GlDisable(GLES30.GlScissorTest);
         GLES30.GlClearColor(target.ClearColor.X, target.ClearColor.Y, target.ClearColor.Z, target.ClearColor.W);
@@ -2280,6 +2295,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         DrawParticles(scene, camera, view, projection, timeSeconds);
 
         GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+        target.Resolve();
         target.MarkRendered(timeSeconds);
     }
 
@@ -2923,7 +2939,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                     Height = _quality.Profile.Equals("low", StringComparison.OrdinalIgnoreCase) ? 256 : 512,
                     RefreshMode = "every_frame",
                     ClearColor = new Vector4Dto(0.0f, 0.0f, 0.0f, 1.0f)
-                });
+                }, ReflectionSamples(reflectionId));
                 if (_quality.RenderTargetMemoryBudgetMb > 0
                     && _estimatedGpuBytes + target.EstimatedBytes > _quality.RenderTargetMemoryBudgetMb * 1024L * 1024L)
                 {
@@ -3478,13 +3494,19 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
         public int Framebuffer { get; }
         public int ColorTexture { get; }
         public int DepthBuffer { get; }
+        private int _multisampleFramebuffer;
+        private int _multisampleColor;
+        private int _multisampleDepth;
+        public int DrawFramebuffer => _multisampleFramebuffer != 0 ? _multisampleFramebuffer : Framebuffer;
+        public int SampleCount { get; private set; } = 1;
+        public int RequestedSamples { get; private set; } = 1;
         public int Width { get; }
         public int Height { get; }
         public Vector4 ClearColor { get; }
         public string RefreshMode { get; private set; }
         public float RefreshInterval { get; private set; }
         public double LastRenderedSeconds { get; private set; }
-        public long EstimatedBytes => (long)Width * Height * 4L + (long)Width * Height * 4L;
+        public long EstimatedBytes => (long)Width * Height * (8L + (SampleCount > 1 ? 8L * SampleCount : 0));
 
         public AndroidRenderTextureInfo ToInfo(RenderTextureSettings settings)
         {
@@ -3524,7 +3546,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             RequestRefresh();
         }
 
-        public static RenderTargetGpu Create(RenderTextureSettings settings)
+        public static RenderTargetGpu Create(RenderTextureSettings settings, int samples = 1)
         {
             int width = Math.Clamp(settings.Width, 16, 2048);
             int height = Math.Clamp(settings.Height, 16, 2048);
@@ -3539,9 +3561,9 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
             GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureMagFilter, GLES30.GlLinear);
             GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapS, GLES30.GlClampToEdge);
             GLES30.GlTexParameteri(GLES30.GlTexture2d, GLES30.GlTextureWrapT, GLES30.GlClampToEdge);
-            GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, GLES30.GlRgba, width, height, 0, GLES30.GlRgba, GLES30.GlUnsignedByte, null);
+            GLES30.GlTexImage2D(GLES30.GlTexture2d, 0, GLES30.GlRgba8, width, height, 0, GLES30.GlRgba, GLES30.GlUnsignedByte, null);
             GLES30.GlBindRenderbuffer(GLES30.GlRenderbuffer, renderbuffers[0]);
-            GLES30.GlRenderbufferStorage(GLES30.GlRenderbuffer, 0x81A5, width, height); // GL_DEPTH_COMPONENT24
+            GLES30.GlRenderbufferStorage(GLES30.GlRenderbuffer, GLES30.GlDepthComponent16, width, height);
             GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, framebuffers[0]);
             GLES30.GlFramebufferTexture2D(GLES30.GlFramebuffer, 0x8CE0, GLES30.GlTexture2d, textures[0], 0);
             GLES30.GlFramebufferRenderbuffer(GLES30.GlFramebuffer, 0x8D00, GLES30.GlRenderbuffer, renderbuffers[0]);
@@ -3556,7 +3578,7 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 GLES30.GlDeleteRenderbuffers(1, renderbuffers, 0);
                 throw new InvalidOperationException("GLES RenderTexture framebuffer is incomplete.");
             }
-            return new RenderTargetGpu(
+            RenderTargetGpu target = new(
                 framebuffers[0],
                 textures[0],
                 renderbuffers[0],
@@ -3565,12 +3587,69 @@ internal sealed class AndroidPmxSceneRenderer : IDisposable
                 settings.ClearColor.ToVector4(),
                 NormalizeRefreshMode(settings.RefreshMode),
                 settings.RefreshIntervalSeconds);
+            try { target.AllocateMultisample(samples); return target; }
+            catch { target.Dispose(); throw; }
+        }
+
+        private static HashSet<int> SupportedSamples(int format)
+        {
+            int[] count = new int[1];
+            GLES30.GlGetInternalformativ(GLES30.GlRenderbuffer, format, 0x9380, 1, count, 0);
+            int[] values = new int[Math.Clamp(count[0], 0, 32)];
+            if (values.Length > 0)
+                GLES30.GlGetInternalformativ(GLES30.GlRenderbuffer, format, GLES30.GlSamples, values.Length, values, 0);
+            return new HashSet<int>(values);
+        }
+
+        private void AllocateMultisample(int requested)
+        {
+            RequestedSamples = AntiAliasingSamples.NormalizeRequested(requested);
+            if (RequestedSamples <= 1) return;
+            HashSet<int> colors = SupportedSamples(GLES30.GlRgba8), depths = SupportedSamples(GLES30.GlDepthComponent16);
+            foreach (int candidate in AntiAliasingSamples.Choices.Reverse())
+            {
+                if (candidate <= 1 || candidate > RequestedSamples || !colors.Contains(candidate) || !depths.Contains(candidate)) continue;
+                int[] framebuffer = new int[1], buffers = new int[2];
+                GLES30.GlGenFramebuffers(1, framebuffer, 0);
+                GLES30.GlGenRenderbuffers(2, buffers, 0);
+                _multisampleFramebuffer = framebuffer[0]; _multisampleColor = buffers[0]; _multisampleDepth = buffers[1];
+                GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, _multisampleFramebuffer);
+                GLES30.GlBindRenderbuffer(GLES30.GlRenderbuffer, _multisampleColor);
+                GLES30.GlRenderbufferStorageMultisample(GLES30.GlRenderbuffer, candidate, GLES30.GlRgba8, Width, Height);
+                GLES30.GlFramebufferRenderbuffer(GLES30.GlFramebuffer, GLES30.GlColorAttachment0, GLES30.GlRenderbuffer, _multisampleColor);
+                GLES30.GlBindRenderbuffer(GLES30.GlRenderbuffer, _multisampleDepth);
+                GLES30.GlRenderbufferStorageMultisample(GLES30.GlRenderbuffer, candidate, GLES30.GlDepthComponent16, Width, Height);
+                GLES30.GlFramebufferRenderbuffer(GLES30.GlFramebuffer, GLES30.GlDepthAttachment, GLES30.GlRenderbuffer, _multisampleDepth);
+                if (GLES30.GlCheckFramebufferStatus(GLES30.GlFramebuffer) == GLES30.GlFramebufferComplete)
+                { SampleCount = candidate; break; }
+                DeleteMultisample();
+            }
+            GLES30.GlBindRenderbuffer(GLES30.GlRenderbuffer, 0);
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+        }
+
+        public void Resolve()
+        {
+            if (SampleCount <= 1) return;
+            GLES30.GlDisable(GLES30.GlScissorTest);
+            GLES30.GlBindFramebuffer(GLES30.GlReadFramebuffer, _multisampleFramebuffer);
+            GLES30.GlBindFramebuffer(GLES30.GlDrawFramebuffer, Framebuffer);
+            GLES30.GlBlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, GLES30.GlColorBufferBit, GLES30.GlNearest);
+            GLES30.GlBindFramebuffer(GLES30.GlFramebuffer, 0);
+        }
+
+        private void DeleteMultisample()
+        {
+            if (_multisampleFramebuffer != 0) GLES30.GlDeleteFramebuffers(1, [_multisampleFramebuffer], 0);
+            if (_multisampleColor != 0) GLES30.GlDeleteRenderbuffers(2, [_multisampleColor, _multisampleDepth], 0);
+            _multisampleFramebuffer = _multisampleColor = _multisampleDepth = 0;
         }
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
+            DeleteMultisample();
             GLES30.GlDeleteFramebuffers(1, [Framebuffer], 0);
             GLES30.GlDeleteTextures(1, [ColorTexture], 0);
             GLES30.GlDeleteRenderbuffers(1, [DepthBuffer], 0);

@@ -139,7 +139,8 @@ internal sealed class SceneRenderTextureManager : IRuntimeTextureProvider, IDisp
                 validRenderTextures.Add(settings.Name);
                 RenderTextureRuntimeState state = GetOrCreateRenderTexture(settings.Name);
                 IRenderTarget renderTexture = state.Texture;
-                renderTexture.EnsureSize(settings.Width, settings.Height);
+                renderTexture.EnsureSize(settings.Width, settings.Height,
+                    _game.GraphicsQuality.Capture().OverrideSceneSamples ? _game.GraphicsDevice.AntiAliasingSamples : 1);
                 OrbitCamera camera = ResolveCamera(settings.Camera, mainCamera);
                 camera.Width = renderTexture.Width;
                 camera.Height = renderTexture.Height;

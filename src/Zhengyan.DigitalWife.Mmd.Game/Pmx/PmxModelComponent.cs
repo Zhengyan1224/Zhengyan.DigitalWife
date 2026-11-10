@@ -1872,6 +1872,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
         shader.SetUniform("u_ShadowMapStrength", Math.Clamp(shadowMap.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_ShadowMapBias", ShadowDepthBias.ToOpenGlComparisonSpace(shadowMap.Bias));
         shader.SetUniform("u_ShadowMapTexelSize", shadowMap.TexelSize);
+        shader.SetUniform("u_ShadowFilterParameters", new Vector2(shadowMap.FilterSamples, shadowMap.FilterRadius));
         float scaleX = new Vector3(transform.M11, transform.M12, transform.M13).Length();
         float scaleY = new Vector3(transform.M21, transform.M22, transform.M23).Length();
         float scaleZ = new Vector3(transform.M31, transform.M32, transform.M33).Length();
@@ -1904,6 +1905,7 @@ public unsafe class PmxModelComponent : DrawableGameComponent
 
         shader.SetUniform("u_LocalShadowStrength", Math.Clamp(binding.Strength, 0.0f, 1.0f));
         shader.SetUniform("u_LocalShadowBias", Math.Max(binding.Bias, 0.0f));
+        shader.SetUniform("u_ShadowFilterParameters", new Vector2(binding.FilterSamples, binding.FilterRadius));
         shader.SetUniform("u_LocalShadowTexelSize", binding.TexelSize);
         shader.SetUniform("u_LocalShadowNormalOffset", Math.Max(binding.NormalOffset, 0.0f));
         shader.SetUniform("u_LocalShadowInverseView", inverseView);

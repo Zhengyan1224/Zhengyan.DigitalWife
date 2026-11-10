@@ -160,6 +160,7 @@ internal sealed unsafe class PmxGpuResources : IDisposable
         public fixed float SpotLightShadowMatrices[LocalLightShadowLimits.MaxShadowedSpotLights * 16];
         public fixed float SpotLightShadowAtlasRects[LocalLightShadowLimits.MaxShadowedSpotLights * 4];
         public Vector4 ShadowDisplayParameters;
+        public Vector4 ShadowFilterParameters;
     }
 
     public static void SetLocalLightShadows(

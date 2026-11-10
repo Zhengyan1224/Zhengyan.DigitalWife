@@ -27,6 +27,8 @@ public sealed class LocalLightShadowRenderer : IDisposable
     }
 
     public LocalLightShadowBinding? CurrentBinding { get; private set; }
+    public int FilterSamples { get; set; }
+    public float FilterRadius { get; set; } = 1;
 
     public void Render(
         GameTime gameTime,
@@ -125,6 +127,8 @@ public sealed class LocalLightShadowRenderer : IDisposable
         {
             Texture = _atlas.Texture,
             NativeSampler = _atlas.NativeSampler,
+            FilterSamples = FilterSamples,
+            FilterRadius = FilterRadius,
             NativeComparisonSampler = _atlas.NativeComparisonSampler,
             PointLights = pointBindings,
             SpotLights = spotBindings,

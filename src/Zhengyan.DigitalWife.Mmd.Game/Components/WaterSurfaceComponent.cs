@@ -145,6 +145,9 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 
     public bool MirrorReflectionEnabled { get; set; } = true;
 
+    public int MirrorReflectionSamples { get; set; } = 1;
+    public int ActualReflectionSamples { get; internal set; }
+
     public bool GerstnerWavesEnabled { get; set; } = true;
 
     public int GerstnerWaveCount
@@ -209,6 +212,7 @@ public sealed unsafe class WaterSurfaceComponent : DrawableGameComponent
 
     public void ClearPlanarReflection()
     {
+        ActualReflectionSamples = 0;
         _planarReflectionTextureId = 0;
         _planarReflectionTextureHandle = null;
         _planarReflectionViewProjection = Matrix4x4.Identity;

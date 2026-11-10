@@ -19,6 +19,7 @@ public interface IRenderer : IDisposable
     int RequestedAntiAliasingSamples { get; }
 
     int AntiAliasingSamples { get; }
+    void SetAntiAliasingSamples(int requestedSamples) { }
 
     void Resize(Vector2D<int> backBufferSize);
 

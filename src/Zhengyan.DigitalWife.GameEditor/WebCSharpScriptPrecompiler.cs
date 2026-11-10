@@ -123,6 +123,7 @@ internal static class WebCSharpScriptPrecompiler
                 private void Execute(WebScriptContext context, float DeltaSeconds, bool IsStart, bool IsUpdate, WebScriptEvent? GameEvent)
                 {
                     RuntimeScene Scene = context.Scene;
+                    var Graphics = context.Graphics;
                     RuntimeEntity? Entity = context.Entity;
                     RuntimeCameraInput Input = context.Input;
                     WebScriptAudio Audio = context.Audio;

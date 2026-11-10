@@ -51,9 +51,11 @@ public sealed class RuntimeScene
         Func<string, bool> removeSpotLight,
         Action<RuntimeEntity, string> dispatchSpeechEvent,
         Func<RuntimeEntity, string, RuntimeLlmToolCall, Task<string?>> invokeLlmTool,
-        Action<string> requestSceneChange)
+        Action<string> requestSceneChange,
+        Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality? graphics = null)
     {
         _scene = scene;
+        Graphics = graphics ?? new();
         _entitiesById = entitiesById;
         _entitiesByName = entitiesByName;
         _window = window;
@@ -78,6 +80,7 @@ public sealed class RuntimeScene
     }
 
     public string Name => _scene.Name;
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics { get; }
 
     public IEnumerable<RuntimeEntity> Entities => _entitiesById.Values;
 

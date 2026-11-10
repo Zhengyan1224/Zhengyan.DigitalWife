@@ -61,8 +61,8 @@ static async Task VerifyRenderSurfacesAsync()
     {
         Entities = [
             new() { Id = "mirror", Type = "textured_plane", Transform = new() { Position = new(0, 1.78f, 0) },
-                Plane = new() { Width = 5, Height = 5, MirrorReflectionEnabled = true } },
-            new() { Id = "water", Type = "water_surface" },
+                Plane = new() { Width = 5, Height = 5, MirrorReflectionEnabled = true, MirrorReflectionSamples = 8 } },
+            new() { Id = "water", Type = "water_surface", Water = new() { MirrorReflectionSamples = 2 } },
             new() { Id = "point", Type = "point_light", Transform = new() { Position = new(0, 0, 2) },
                 PointLight = new() { CastShadows = true, Range = 200 } },
             new() { Id = "spot", Type = "spot_light", Transform = new() { Position = new(0, 0, 2) },
@@ -72,7 +72,8 @@ static async Task VerifyRenderSurfacesAsync()
     var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
     Dictionary<string, byte[]> assets = new()
     {
-        ["game.project.json"] = JsonSerializer.SerializeToUtf8Bytes(new GameProject { DefaultScene = "scenes/main.scene.json" }, options),
+        ["game.project.json"] = JsonSerializer.SerializeToUtf8Bytes(new GameProject { DefaultScene = "scenes/main.scene.json",
+            Shadows = new() { DirectionalResolution = 4096, LocalLightResolution = 512, FilterSamples = 25, FilterRadius = 3 } }, options),
         ["scenes/main.scene.json"] = JsonSerializer.SerializeToUtf8Bytes(definition, options)
     };
     WebMemoryAssetStore store = new(new WebAssetManifest
@@ -88,11 +89,18 @@ static async Task VerifyRenderSurfacesAsync()
     Check(plane.Materials.Single().DoubleSided && !plane.Materials.Single().EnableShadow, "The desktop plane is double-sided and does not cast PMX shadows.");
     Check(water.Positions.Where((_, i) => i % 3 == 1).All(y => y == 0), "Water was rotated with the vertical mirror.");
     var models = loaded.SceneMeshes.Select(item => (scene.GetEntity(item.Key)!, item.Value)).ToArray();
-    WebRenderFrame frame = WebRenderFrame.FromScene(scene, models, 1280, 720);
+    WebRenderFrame frame = WebRenderFrame.FromScene(scene, models, 1280, 720, shadows: loaded.Project.Shadows);
+    Check(frame.ShadowResolution == 4096 && frame.LocalShadowResolution == 512 && frame.ShadowFilterSamples == 25 && frame.ShadowFilterRadius == 3,
+        "Global project shadow quality did not reach the Web frame.");
     string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../.."));
     Directory.CreateDirectory(Path.Combine(root, "temp/web-debug"));
     File.WriteAllText(Path.Combine(root, "temp/web-debug/surface-frame.json"), JsonSerializer.Serialize(frame, options));
-    Check(frame.Reflections.Count == 1 && frame.Meshes.Single(m => m.Id == "mirror").TexturedPlane, "Mirror rendering state did not reach the browser.");
+    Check(frame.Reflections.Count == 2 && frame.Meshes.Single(m => m.Id == "mirror").TexturedPlane, "Mirror rendering state did not reach the browser.");
+    Check(frame.Reflections.Single(r => r.Id == "mirror").Samples == 8
+        && frame.Reflections.Single(r => r.Id == "water").Samples == 2, "Per-surface MSAA was lost loading the Web project.");
+    Check(frame.Meshes.Single(m => m.Id == "water").WaterSurface
+        && frame.Meshes.Single(m => m.Id == "water").MirrorReflectionStrength > 0, "Water reflection state did not reach WebGL.");
+    Check(frame.Reflections.Single(r => r.Id == "water").CameraPosition[1] == -scene.MainCamera.Position.Y, "The water camera was not reflected across its height.");
     Check(frame.LocalShadows.Count == 7 && frame.LocalShadows.Take(6).Select(s => s.Face).SequenceEqual(Enumerable.Range(0, 6)), "A point light requires six faces, followed by one spot tile.");
     Vector3[] faces = [Vector3.UnitX, -Vector3.UnitX, Vector3.UnitY, -Vector3.UnitY, Vector3.UnitZ, -Vector3.UnitZ];
     for (int face = 0; face < 6; face++)
@@ -105,15 +113,15 @@ static async Task VerifyRenderSurfacesAsync()
         Check(shadow.NearPlane == .25f && shadow.FarPlane == 200, "Local shadow clipping differs from PC.");
         Check(shadow.AtlasRect.All(v => v > 0 && v < 1), "Shadow atlas padding is invalid.");
     }
-    Check(frame.Reflections.Single().CameraPosition[2] == -scene.MainCamera.Position.Z, "The mirror camera is not reflected across the surface.");
-    Check(frame.Reflections.Single().ClipPlane[2] > 0, "Front-side reflection retained geometry from behind the mirror.");
+    Check(frame.Reflections.Single(r => r.Id == "mirror").CameraPosition[2] == -scene.MainCamera.Position.Z, "The mirror camera is not reflected across the surface.");
+    Check(frame.Reflections.Single(r => r.Id == "mirror").ClipPlane[2] > 0, "Front-side reflection retained geometry from behind the mirror.");
     scene.MainCamera.Position = new(0,2,-8); scene.MainCamera.Target = new(0,1.2f,0);
     frame = WebRenderFrame.FromScene(scene, models, 1280,720);
-    Check(frame.Reflections.Single().CameraPosition[2] == 8 && frame.Reflections.Single().ClipPlane[2] < 0, "Back-side mirror reflection or clipping failed.");
+    Check(frame.Reflections.Single(r => r.Id == "mirror").CameraPosition[2] == 8 && frame.Reflections.Single(r => r.Id == "mirror").ClipPlane[2] < 0, "Back-side mirror reflection or clipping failed.");
     var mirror = scene.GetEntity("mirror")!;
     mirror.RotationDegrees = new(25, 37, 12);
     frame = WebRenderFrame.FromScene(scene, models, 1280,720);
-    var reflection = frame.Reflections.Single();
+    var reflection = frame.Reflections.Single(r => r.Id == "mirror");
     Vector3 normal = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitZ, mirror.TransformMatrix));
     Vector3 source = scene.MainCamera.Position, reflected = new(reflection.CameraPosition);
     Check(MathF.Abs(Vector3.Dot(normal, source - mirror.Position) + Vector3.Dot(normal, reflected - mirror.Position)) < 1e-4f, "Rotated mirror does not reflect the camera across its transformed plane.");

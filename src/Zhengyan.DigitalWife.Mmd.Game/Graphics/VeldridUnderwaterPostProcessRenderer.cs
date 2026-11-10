@@ -56,6 +56,9 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
     }
 
     public void BeginCapture(int width, int height, Vector4 clearColor)
+        => BeginCapture(width,height,clearColor,1);
+
+    public void BeginCapture(int width,int height,Vector4 clearColor,int samples)
     {
         width = Math.Max(width, 1);
         height = Math.Max(height, 1);
@@ -68,7 +71,8 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
             _captures.Add((width, height), capture);
         }
 
-        capture.Target.EnsureSize(width, height);
+        if(capture.Target is VeldridRenderTarget target) target.ResolveDepth = true;
+        capture.Target.EnsureSize(width, height,samples);
         _activeCapture = capture;
         capture.Target.BeginPass(clearColor);
     }
@@ -77,6 +81,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
     {
         _activeCapture?.Target.ResumePass();
     }
+    public void EndCapture() => _activeCapture?.Target.EndPass();
 
     public void Draw(OrbitCamera camera, UnderwaterPostProcessSettings settings, double timeSeconds, int viewportWidth, int viewportHeight)
     {
@@ -88,7 +93,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
             || capture.Target.NativeDepthResource is not TextureView depthView) return;
         if (!ReferenceEquals(view, capture.ColorView) || !ReferenceEquals(depthView, capture.DepthView))
         {
-            foreach (ResourceSet? set in capture.ResourceSets) set?.Dispose();
+            foreach (ResourceSet? set in capture.ResourceSets) if(set is not null) _renderer.RetireResource(set);
             Array.Clear(capture.ResourceSets);
             capture.ColorView = view;
             capture.DepthView = depthView;
@@ -125,7 +130,7 @@ public sealed class VeldridUnderwaterPostProcessRenderer : IUnderwaterPostProces
     {
         foreach (CaptureState capture in _captures.Values)
         {
-            foreach (ResourceSet? set in capture.ResourceSets) set?.Dispose();
+            foreach (ResourceSet? set in capture.ResourceSets) if(set is not null) _renderer.RetireResource(set);
             capture.Target.Dispose();
         }
 

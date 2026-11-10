@@ -34,6 +34,9 @@ public sealed class VulkanRenderer : IRenderer
     private Fence? _lastSubmittedFrameFence;
     private int _frameSlot;
     private long _uniformFrameId;
+    private readonly List<IDisposable>[] _retiredResources = Enumerable.Range(0,FrameSlotCount).Select(_=>new List<IDisposable>()).ToArray();
+    private VeldridDepthResolvePass.SharedResources? _depthResolveResources;
+    internal VeldridDepthResolvePass.SharedResources DepthResolveResources => _depthResolveResources ??= new(this);
     private VeldridUniformArena? _uniformArena;
     private VeldridVertexArena? _vertexArena;
     private VeldridIndexArena? _indexArena;
@@ -56,7 +59,29 @@ public sealed class VulkanRenderer : IRenderer
 
     public int RequestedAntiAliasingSamples { get; private set; } = 1;
 
-    public int AntiAliasingSamples => (int)_sampleCount;
+    public int AntiAliasingSamples => Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FromVeldrid(_sampleCount);
+    public void SetAntiAliasingSamples(int requestedSamples)
+    {
+        requestedSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.NormalizeRequested(requestedSamples);
+        if (requestedSamples == RequestedAntiAliasingSamples) return;
+        if (_frameOpen) throw new InvalidOperationException("Change scene MSAA before a frame starts recording.");
+        RequestedAntiAliasingSamples = requestedSamples;
+        PixelFormat colorFormat = Device.SwapchainFramebuffer.ColorTargets[0].Target.Format;
+        int actual = ResolveSceneSamples(requestedSamples,colorFormat);
+        if (actual == AntiAliasingSamples) return;
+        if (_lastSubmittedFrameFence is not null) Device.WaitForFence(_lastSubmittedFrameFence);
+        RecreateMultisampleFramebuffer();
+    }
+
+    private int ResolveSceneSamples(int requested,PixelFormat format)
+    {
+        Device.GetPixelFormatSupport(format,TextureType.Texture2D,TextureUsage.RenderTarget,out PixelFormatProperties color);
+        Device.GetPixelFormatSupport(PixelFormat.D24_UNorm_S8_UInt,TextureType.Texture2D,TextureUsage.DepthStencil,out PixelFormatProperties depth);
+        foreach(int value in Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.Choices.Reverse())
+            if(value<=requested && color.IsSampleCountSupported(Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.ToVeldrid(value))
+                && depth.IsSampleCountSupported(Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.ToVeldrid(value))) return value;
+        return 1;
+    }
 
     /// <summary>
     /// Compatibility option that idles the device before presentation.
@@ -130,6 +155,16 @@ public sealed class VulkanRenderer : IRenderer
             _device.WaitForFence(previous);
         Fence fence = _frameFences[_frameSlot];
         if (!fence.Signaled) _device.WaitForFence(fence);
+        foreach(IDisposable resource in _retiredResources[_frameSlot]) resource.Dispose();
+        _retiredResources[_frameSlot].Clear();
+    }
+
+    internal void RetireResource(IDisposable resource)
+    {
+        if(_frameFences is null) { Device.DisposeWhenIdle(resource); return; }
+        if(!_frameOpen && _lastSubmittedFrameFence is null) { resource.Dispose(); return; }
+        int slot=_frameOpen ? _frameSlot : (_frameSlot+FrameSlotCount-1)%FrameSlotCount;
+        _retiredResources[slot].Add(resource);
     }
 
     internal void RecordWaterDraw(int rippleCount)
@@ -388,6 +423,7 @@ public sealed class VulkanRenderer : IRenderer
 
     internal void EndRenderTarget(VeldridRenderTarget target)
     {
+        if (_frameOpen) target.ResolveColor(_commandList!);
         _commandList?.SetFramebuffer(MainFramebuffer);
         CurrentOutputDescription = MainFramebuffer.OutputDescription;
         _commandList?.SetFullViewports();
@@ -660,6 +696,8 @@ public sealed class VulkanRenderer : IRenderer
         }
         finally
         {
+            foreach(var retired in _retiredResources) { foreach(var resource in retired) resource.Dispose(); retired.Clear(); }
+            _depthResolveResources?.Dispose(); _depthResolveResources=null;
             _commandList?.Dispose();
             _utilityPasses?.Dispose();
             _utilityPasses = null;
@@ -722,12 +760,11 @@ public sealed class VulkanRenderer : IRenderer
         _multisampleColor = null;
 
         PixelFormat colorFormat = Device.SwapchainFramebuffer.ColorTargets[0].Target.Format;
-        int colorLimit = (int)Device.GetSampleCountLimit(colorFormat, depthFormat: false);
-        int depthLimit = (int)Device.GetSampleCountLimit(PixelFormat.D24_UNorm_S8_UInt, depthFormat: true);
+        int colorLimit = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FromVeldrid(Device.GetSampleCountLimit(colorFormat, depthFormat: false));
+        int depthLimit = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FromVeldrid(Device.GetSampleCountLimit(PixelFormat.D24_UNorm_S8_UInt, depthFormat: true));
         int maximumSupported = Math.Min(colorLimit, depthLimit);
-        int actualSamples = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.FallbackToSupported(
-            RequestedAntiAliasingSamples, maximumSupported);
-        _sampleCount = (TextureSampleCount)actualSamples;
+        int actualSamples = ResolveSceneSamples(RequestedAntiAliasingSamples,colorFormat);
+        _sampleCount = Zhengyan.DigitalWife.Mmd.Game.Graphics.AntiAliasingSamples.ToVeldrid(actualSamples);
 
         if (actualSamples <= 1)
         {

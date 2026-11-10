@@ -25,13 +25,15 @@ public sealed class RuntimeScene : IDisposable
         Func<string, string, Matrix4x4?>? nodeWorldResolver = null,
         Func<string, VmdParsing?>? animationLoader = null,
         Action<string, RuntimeMotionCommand>? motionCommand = null,
-        Action<string, RuntimeSpeechRequest>? speechRequest = null)
+        Action<string, RuntimeSpeechRequest>? speechRequest = null,
+        Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality? graphics = null)
     {
         ScenePath = scenePath;
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         NormalizeCameras(definition);
         Cameras = definition.Cameras.Select(camera => new RuntimeCamera(camera)).ToArray();
         Lighting = new RuntimeLighting(definition.Lighting);
+        Graphics = graphics ?? new();
         _animations = new RuntimeSceneAnimationController(resolvePath, animationLoader);
         _resetPmxPhysics = resetPmxPhysics;
         _meshColliderResolver = meshColliderResolver;
@@ -63,6 +65,7 @@ public sealed class RuntimeScene : IDisposable
     public IEnumerable<RuntimeEntity> WaterSurfaces => Entities.Where(entity => entity.IsWaterSurface);
     public long EntityRevision { get; private set; }
     public RuntimeScenePhysics Physics { get; }
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics { get; }
     public RuntimeSceneNavigation Navigation { get; }
     public RuntimeDebug Debug { get; }
 

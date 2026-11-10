@@ -541,6 +541,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.mirror_reflection_enabled = bool(data.get("mirrorReflectionEnabled", False))
                        self.plane_mirror_reflection_enabled = bool(data.get("planeMirrorReflectionEnabled", False))
                        self.plane_mirror_reflection_strength = float(data.get("planeMirrorReflectionStrength", 0.0))
+                       self.reflection_samples = int(data.get("reflectionSamples", 1))
+                       self.actual_reflection_samples = int(data.get("actualReflectionSamples", 0))
                        self.gerstner_waves_enabled = bool(data.get("gerstnerWavesEnabled", False))
                        self.gerstner_wave_count = int(data.get("gerstnerWaveCount", 0))
                        self.gerstner_amplitude = float(data.get("gerstnerAmplitude", 0.0))
@@ -569,6 +571,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
 
                    def set_position(self, x, y, z):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_position", "x": x, "y": y, "z": z})
+
+                   def set_reflection_samples(self, samples):
+                       self._commands.append({"target":"entity", "entity":self.id, "action":"set_reflection_samples", "value":int(samples)})
 
                    def set_point_light_enabled(self, enabled):
                        self._commands.append({"target": "entity", "entity": self.id, "action": "set_point_light_enabled", "flag": bool(enabled)})
@@ -1979,6 +1984,37 @@ internal sealed class PythonScriptInstance : IScriptInstance
                    def clear_vmd(self):
                        self._commands.append({"target": "lighting", "action": "clear_vmd"})
 
+               class ShadowQuality:
+                   def __init__(self, data, commands):
+                       self.use_global_settings = bool(data.get("useGlobalSettings", False))
+                       self.directional_resolution = int(data.get("directionalResolution", 2048))
+                       self.local_light_resolution = int(data.get("localLightResolution", 1024))
+                       self.filter_samples = int(data.get("filterSamples", 9))
+                       self.filter_radius = float(data.get("filterRadius", 1.0))
+                       self.actual_directional_resolution = int(data.get("actualDirectionalResolution", 0))
+                       self.actual_local_light_resolution = int(data.get("actualLocalLightResolution", 0))
+                       self._commands = commands
+                   def set_use_global_settings(self, value):
+                       self._commands.append({"target":"graphics", "action":"set_shadows_enabled", "flag":bool(value)})
+                   def set_directional_resolution(self, value):
+                       self._commands.append({"target":"graphics", "action":"set_directional_resolution", "value":int(value)})
+                   def set_local_light_resolution(self, value):
+                       self._commands.append({"target":"graphics", "action":"set_local_light_resolution", "value":int(value)})
+                   def set_filter_samples(self, value):
+                       self._commands.append({"target":"graphics", "action":"set_filter_samples", "value":int(value)})
+                   def set_filter_radius(self, value):
+                       self._commands.append({"target":"graphics", "action":"set_filter_radius", "value":float(value)})
+
+               class Graphics:
+                   def __init__(self, data, commands):
+                       self.scene_samples = int(data.get("sceneSamples", 4))
+                       self.actual_scene_samples = int(data.get("actualSceneSamples", 1))
+                       self.pending = bool(data.get("pending", False))
+                       self.shadows = ShadowQuality(data.get("shadows", {}), commands)
+                       self._commands = commands
+                   def set_scene_samples(self, value):
+                       self._commands.append({"target":"graphics", "action":"set_scene_samples", "value":int(value)})
+
                class Scene:
                    def __init__(self, data, commands):
                        self.name = data.get("name", "")
@@ -2010,6 +2046,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        self.point_lights = PointLights(self, commands)
                        self.spot_lights = SpotLights(self, commands)
                        self.lighting = Lighting(data.get("lighting", {}), commands)
+                       self.graphics = Graphics(data.get("graphics", {}), commands)
                        self._commands = commands
 
                    def get_entity(self, id_or_name):
@@ -3516,6 +3553,19 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 ApplyLightingCommand(command, scene);
                 continue;
             }
+            if(string.Equals(command.Target,"graphics",StringComparison.OrdinalIgnoreCase))
+            {
+                switch(command.Action)
+                {
+                    case "set_scene_samples" when command.Value is { } v: scene.Graphics.SceneSamples=(int)v; break;
+                    case "set_shadows_enabled" when command.Flag is { } v: scene.Graphics.Shadows.UseGlobalSettings=v; break;
+                    case "set_directional_resolution" when command.Value is { } v: scene.Graphics.Shadows.DirectionalResolution=(int)v; break;
+                    case "set_local_light_resolution" when command.Value is { } v: scene.Graphics.Shadows.LocalLightResolution=(int)v; break;
+                    case "set_filter_samples" when command.Value is { } v: scene.Graphics.Shadows.FilterSamples=(int)v; break;
+                    case "set_filter_radius" when command.Value is { } v: scene.Graphics.Shadows.FilterRadius=(float)v; break;
+                }
+                continue;
+            }
 
             if (string.Equals(command.Target, "llm", StringComparison.OrdinalIgnoreCase))
             {
@@ -4520,6 +4570,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
             case "set_mirror_reflection_enabled" when command.Flag.HasValue:
                 entity.MirrorReflectionEnabled = command.Flag.Value;
                 break;
+            case "set_reflection_samples" when command.Value.HasValue:
+                entity.ReflectionSamples = (int)command.Value.Value;
+                break;
             case "set_plane_mirror_reflection_enabled" when command.Flag.HasValue:
                 entity.PlaneMirrorReflectionEnabled = command.Flag.Value;
                 break;
@@ -5048,6 +5101,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
                     Window = PythonWindow.FromRuntime(scene.Window),
                     Runtime = PythonRuntime.FromRuntime(scene.Runtime),
                     Lighting = PythonLighting.FromRuntime(scene.Lighting),
+                    Graphics = PythonGraphics.FromRuntime(scene.Graphics),
                     Llm = PythonLlmSettings.FromRuntime(scene.Llm),
                     Asr = PythonAsrSettings.FromRuntime(scene.Asr),
                     RealtimeVoice = PythonRealtimeVoiceSettings.FromRuntime(scene.RealtimeVoice),
@@ -5269,6 +5323,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public bool PlaneMirrorReflectionEnabled { get; set; }
 
         public float PlaneMirrorReflectionStrength { get; set; }
+        public int ReflectionSamples { get; set; }
+        public int ActualReflectionSamples { get; set; }
 
         public bool GerstnerWavesEnabled { get; set; }
 
@@ -5361,6 +5417,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
                 MirrorReflectionEnabled = entity.MirrorReflectionEnabled,
                 PlaneMirrorReflectionEnabled = entity.PlaneMirrorReflectionEnabled,
                 PlaneMirrorReflectionStrength = entity.PlaneMirrorReflectionStrength,
+                ReflectionSamples = entity.ReflectionSamples,
+                ActualReflectionSamples = entity.ActualReflectionSamples,
                 GerstnerWavesEnabled = entity.GerstnerWavesEnabled,
                 GerstnerWaveCount = entity.GerstnerWaveCount,
                 GerstnerAmplitude = entity.GerstnerAmplitude,
@@ -5542,6 +5600,32 @@ internal sealed class PythonScriptInstance : IScriptInstance
         private static float[] ToArray(Vector3 value) => [value.X, value.Y, value.Z];
     }
 
+    private sealed class PythonGraphics
+    {
+        public int SceneSamples { get; set; }
+        public int ActualSceneSamples { get; set; }
+        public bool Pending { get; set; }
+        public PythonShadowQuality Shadows { get; set; } = new();
+        public static PythonGraphics FromRuntime(Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality quality)
+        {
+            var state=quality.Capture();
+            return new(){ SceneSamples=state.SceneSamples,ActualSceneSamples=quality.ActualSceneSamples,Pending=quality.Pending,
+                Shadows=new(){UseGlobalSettings=state.ShadowsEnabled,DirectionalResolution=state.DirectionalResolution,LocalLightResolution=state.LocalLightResolution,
+                    FilterSamples=state.FilterSamples,FilterRadius=state.FilterRadius,ActualDirectionalResolution=quality.Shadows.ActualDirectionalResolution,
+                    ActualLocalLightResolution=quality.Shadows.ActualLocalLightResolution}};
+        }
+    }
+    private sealed class PythonShadowQuality
+    {
+        public bool UseGlobalSettings { get; set; }
+        public int DirectionalResolution { get; set; }
+        public int LocalLightResolution { get; set; }
+        public int FilterSamples { get; set; }
+        public float FilterRadius { get; set; }
+        public int ActualDirectionalResolution { get; set; }
+        public int ActualLocalLightResolution { get; set; }
+    }
+
     private sealed class PythonScene
     {
         public string Name { get; set; } = string.Empty;
@@ -5565,6 +5649,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public PythonRuntime Runtime { get; set; } = new();
 
         public PythonLighting Lighting { get; set; } = new();
+        public PythonGraphics Graphics { get; set; } = new();
 
         public PythonLlmSettings Llm { get; set; } = new();
 

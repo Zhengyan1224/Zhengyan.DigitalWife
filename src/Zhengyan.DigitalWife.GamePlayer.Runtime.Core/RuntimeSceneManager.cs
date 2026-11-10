@@ -26,6 +26,7 @@ public sealed class RuntimeSceneManager : IDisposable
         Func<string, string, Matrix4x4?>? nodeWorldResolver = null)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
+        Graphics = project.CreateRuntimeGraphicsQuality();
         _projectDirectory = Path.GetFullPath(projectDirectory ?? throw new ArgumentNullException(nameof(projectDirectory)));
         _resetPmxPhysics = resetPmxPhysics;
         _meshColliderResolver = meshColliderResolver;
@@ -38,6 +39,7 @@ public sealed class RuntimeSceneManager : IDisposable
     public event Action<RuntimeSceneLoadProgress>? LoadProgressChanged;
 
     public RuntimeScene? Current { get; private set; }
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics { get; }
     public string CurrentScenePath => Current?.ScenePath ?? string.Empty;
     public IReadOnlyList<string> ScenePaths => _project.Scenes;
     public RuntimeSceneLoadProgress LoadProgress { get; private set; } = new(string.Empty, RuntimeSceneLoadState.Idle, 0.0f, "Idle");
@@ -77,7 +79,7 @@ public sealed class RuntimeSceneManager : IDisposable
                 resolved,
                 definition,
                 path => GameProjectPath.ToAbsolute(_projectDirectory, path),
-                _resetPmxPhysics, _meshColliderResolver, _nodeWorldResolver);
+                _resetPmxPhysics, _meshColliderResolver, _nodeWorldResolver, graphics: Graphics);
             CommitScene(resolved, definition, next);
             SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;
@@ -113,7 +115,7 @@ public sealed class RuntimeSceneManager : IDisposable
                 resolved,
                 definition,
                 path => GameProjectPath.ToAbsolute(_projectDirectory, path),
-                _resetPmxPhysics, _meshColliderResolver, _nodeWorldResolver);
+                _resetPmxPhysics, _meshColliderResolver, _nodeWorldResolver, graphics: Graphics);
             CommitScene(resolved, definition, next);
             SetProgress(resolved, RuntimeSceneLoadState.Ready, 1.0f, "Scene ready");
             return true;

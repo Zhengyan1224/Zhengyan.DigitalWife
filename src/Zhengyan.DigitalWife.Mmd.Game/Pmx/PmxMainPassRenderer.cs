@@ -123,6 +123,9 @@ internal sealed unsafe class OpenGlPmxMainPassRenderer : IPmxMainPassRenderer
         _gl.BlendFuncSeparate(GLEnum.SrcAlpha, GLEnum.OneMinusSrcAlpha, GLEnum.One, GLEnum.OneMinusSrcAlpha);
         _gl.DepthMask(true);
         _gl.UseProgram(_shader.Id);
+        _gl.SetUniform(_shader.UniShadowFilterParameters, new Vector2(
+            shadowMap?.FilterSamples ?? localLightShadowMap?.FilterSamples ?? 0,
+            shadowMap?.FilterRadius ?? localLightShadowMap?.FilterRadius ?? 1));
         _gl.BindVertexArray(_vao);
         _gl.SetUniform(_shader.UniShadowDisplayMode, string.Equals(receiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
         _gl.SetUniform(_shader.UniWVP, worldViewProjection);
@@ -565,6 +568,8 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
                 _renderer.RequiresProjectedTextureYFlip ? 1.0f : 0.0f,
                 _renderer.UsesZeroToOneDepthRange ? 1.0f : 0.0f),
             ShadowLightViewProjection = shadowLightViewProjection,
+            ShadowFilterParameters = new Vector4(shadowMap?.FilterSamples ?? localLightShadowMap?.FilterSamples ?? 0,
+                shadowMap?.FilterRadius ?? localLightShadowMap?.FilterRadius ?? 1, 0, 0),
             ShadowParameters = new Vector4(
                 shadowAvailable ? 1.0f : 0.0f,
                 shadowAvailable ? Math.Clamp(shadowMap!.Value.Strength, 0.0f, 1.0f) : 0.0f,
@@ -935,6 +940,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             mat4 u_SpotLightShadowMatrix[4];
             vec4 u_SpotLightShadowAtlasRect[4];
             vec4 u_ShadowDisplayParameters;
+            vec4 u_ShadowFilterParameters;
         } u_Frame;
 
         layout(location = 0) in vec3 in_Pos;
@@ -991,6 +997,7 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             mat4 u_SpotLightShadowMatrix[4];
             vec4 u_SpotLightShadowAtlasRect[4];
             vec4 u_ShadowDisplayParameters;
+            vec4 u_ShadowFilterParameters;
         } u_Frame;
 
         layout(set = 0, binding = 1) uniform texture2D u_ShadowMap;
@@ -1052,6 +1059,22 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
         // Gather the same four raw depths with one texture instruction. Keep
         // comparing before interpolation: filtering depths changes PCF coverage.
         // The point sampler and custom shader descriptor contract stay intact.
+        int ShadowFilterSide(vec2 settings, int legacySide) {
+            if (settings.x < 1.0) return legacySide;
+            if (settings.x <= 1.0) return 1;
+            if (settings.x <= 4.0) return 2;
+            if (settings.x <= 9.0) return 3;
+            if (settings.x <= 16.0) return 4;
+            if (settings.x <= 25.0) return 5;
+            return 7;
+        }
+
+        vec2 ShadowFilterOffset(vec2 settings, ivec2 cell, int side, float legacyRadius) {
+            if (side == 1) return vec2(0.0);
+            float radius = settings.x < 1.0 ? legacyRadius : clamp(settings.y, 0.0, 8.0);
+            return (vec2(cell) / float(side - 1) * 2.0 - 1.0) * radius;
+        }
+
         float SampleBilinearShadow(texture2D shadowMap, sampler shadowSampler, vec2 uv, float depth)
         {
             ivec2 size = textureSize(sampler2D(shadowMap, shadowSampler), 0);
@@ -1092,17 +1115,18 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec2 minimumUv = filterRadius;
             vec2 maximumUv = vec2(1.0) - filterRadius;
             float visibility = 0.0;
-            for (int y = -1; y <= 1; ++y)
-            {
-                for (int x = -1; x <= 1; ++x)
-                {
+            int side = ShadowFilterSide(u_Frame.u_ShadowFilterParameters.xy, 3);
+            for (int y = 0; y < 7; ++y) {
+                if (y >= side) break;
+                for (int x = 0; x < 7; ++x) {
+                    if (x >= side) break;
                     visibility += SampleBilinearShadow(
                         u_ShadowMap, u_ShadowSampler,
-                        clamp(uv + vec2(x, y) * texelSize, minimumUv, maximumUv), depth);
+                        clamp(uv + ShadowFilterOffset(u_Frame.u_ShadowFilterParameters.xy, ivec2(x, y), side, 1.0) * texelSize, minimumUv, maximumUv), depth);
                 }
             }
 
-            return visibility / 9.0;
+            return visibility / float(side * side);
         }
 
         float ComputeLocalShadowDepthBias(vec4 clipCoord, vec2 depthRange, float surfaceNdotL)
@@ -1145,17 +1169,18 @@ internal sealed class VeldridPmxMainPassRenderer : IPmxMainPassRenderer
             vec2 minimumUv = atlasRect.xy + filterRadius;
             vec2 maximumUv = atlasRect.xy + atlasRect.zw - filterRadius;
             float visibility = 0.0;
-            for (int y = 0; y <= 1; ++y)
-            {
-                for (int x = 0; x <= 1; ++x)
-                {
-                    vec2 offset = (vec2(x, y) - vec2(0.5)) * texelSize;
+            int side = ShadowFilterSide(u_Frame.u_ShadowFilterParameters.xy, 2);
+            for (int y = 0; y < 7; ++y) {
+                if (y >= side) break;
+                for (int x = 0; x < 7; ++x) {
+                    if (x >= side) break;
+                    vec2 offset = ShadowFilterOffset(u_Frame.u_ShadowFilterParameters.xy, ivec2(x, y), side, 0.5) * texelSize;
                     visibility += SampleBilinearShadow(
                         u_LocalShadowAtlas, u_LocalShadowSampler,
                         clamp(atlasUv + offset, minimumUv, maximumUv), depth);
                 }
             }
-            return visibility * 0.25;
+            return visibility / float(side * side);
         }
 
         int SelectPointShadowFace(vec3 direction)

@@ -13,6 +13,7 @@ public sealed record WebRenderMesh(
 {
     public bool ShadowToon { get; init; }
     public bool TexturedPlane { get; init; }
+    public bool WaterSurface { get; init; }
     public float MirrorReflectionStrength { get; init; }
 }
 
@@ -65,13 +66,24 @@ public sealed partial record WebRenderFrame(
     public float[] CameraPosition { get; init; } = [0, 0, 0];
     public IReadOnlyList<WebLocalShadow> LocalShadows { get; init; } = [];
     public IReadOnlyList<WebPlanarReflection> Reflections { get; init; } = [];
+    public int SceneAntiAliasingSamples { get; init; } = 4;
+    public int ShadowResolution { get; init; } = 1024;
+    public int LocalShadowResolution { get; init; } = 1024;
+    public int ShadowFilterSamples { get; init; }
+    public float ShadowFilterRadius { get; init; } = 1;
+    public bool OverrideSceneSamples { get; init; }
+    public long GraphicsRevision { get; init; }
+    public string GraphicsScenePath { get; init; } = string.Empty;
 
     public static WebRenderFrame FromScene(
         RuntimeScene scene,
         IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models,
         int width,
         int height,
-        double elapsedSeconds = 0.0)
+        double elapsedSeconds = 0.0,
+        int antiAliasingSamples = 4,
+        GameProjectShadowSettings? shadows = null,
+        Zhengyan.DigitalWife.Scripting.RuntimeGraphicsSnapshot? runtimeGraphics = null)
     {
         (RuntimeEntity Entity, WebPmxMesh Mesh)[] modelArray = models.ToArray();
         WebRenderMesh[] meshes = modelArray
@@ -84,8 +96,10 @@ public sealed partial record WebRenderFrame(
             {
                 ShadowToon = string.Equals(item.Entity.Definition.ReceiveShadowMode, "toon", StringComparison.OrdinalIgnoreCase),
                 TexturedPlane = item.Entity.IsTexturedPlane,
+                WaterSurface = item.Entity.IsWaterSurface,
                 MirrorReflectionStrength = item.Entity.IsTexturedPlane && item.Entity.Definition.Plane.MirrorReflectionEnabled
-                    ? Math.Clamp(item.Entity.Definition.Plane.MirrorReflectionStrength, 0, 1) : 0
+                    ? Math.Clamp(item.Entity.Definition.Plane.MirrorReflectionStrength, 0, 1)
+                    : item.Entity.IsWaterSurface && item.Entity.Definition.Water.MirrorReflectionEnabled ? .65f : 0
             })
             .ToArray();
         WebPointLight[] pointLights = scene.PointLights
@@ -120,7 +134,10 @@ public sealed partial record WebRenderFrame(
         Vector3 lightDirection = scene.Lighting.DirectionalDirection;
         if (lightDirection.LengthSquared() < 1e-8f) lightDirection = new(0.5f, -1.0f, 0.5f);
         lightDirection = Vector3.Normalize(lightDirection);
-        Matrix4x4 lightViewProjection = CreateLightViewProjection(modelArray, lightDirection, out float normalOffset);
+        bool globalShadows = runtimeGraphics?.ShadowsEnabled ?? shadows is not null;
+        int shadowResolution = globalShadows ? runtimeGraphics?.DirectionalResolution ?? shadows!.NormalizedDirectionalResolution : 1024;
+        int localShadowResolution = globalShadows ? runtimeGraphics?.LocalLightResolution ?? shadows!.NormalizedLocalLightResolution : 1024;
+        Matrix4x4 lightViewProjection = CreateLightViewProjection(modelArray, lightDirection, out float normalOffset, shadowResolution);
         return new WebRenderFrame(
             ToGlArray(scene.MainCamera.CreateView() * ToGlProjection(scene.MainCamera.CreateProjection(aspect))),
             first.Model,
@@ -143,9 +160,17 @@ public sealed partial record WebRenderFrame(
             spotLights)
         {
             ShadowStrength = Math.Clamp(scene.Lighting.Settings.ShadowColor.W, 0.0f, 1.0f),
+            SceneAntiAliasingSamples = runtimeGraphics?.SceneSamples ?? antiAliasingSamples,
+            OverrideSceneSamples = runtimeGraphics?.OverrideSceneSamples ?? false,
+            GraphicsRevision = runtimeGraphics?.Revision ?? 0,
+            GraphicsScenePath = scene.ScenePath,
+            ShadowResolution = shadowResolution,
+            LocalShadowResolution = localShadowResolution,
+            ShadowFilterSamples = globalShadows ? runtimeGraphics?.FilterSamples ?? shadows!.NormalizedFilterSamples : 0,
+            ShadowFilterRadius = globalShadows ? runtimeGraphics?.FilterRadius ?? shadows!.NormalizedFilterRadius : 1,
             ShadowNormalOffset = normalOffset,
             CameraPosition = ToVector(scene.MainCamera.Position),
-            LocalShadows = CreateLocalShadows(pointLights, spotLights),
+            LocalShadows = CreateLocalShadows(pointLights, spotLights, localShadowResolution * 4),
             Reflections = CreateReflections(modelArray, scene.MainCamera, aspect)
         };
     }
@@ -156,7 +181,7 @@ public sealed partial record WebRenderFrame(
     }
 
     private static Matrix4x4 CreateLightViewProjection(
-        IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models, Vector3 direction, out float normalOffset)
+        IEnumerable<(RuntimeEntity Entity, WebPmxMesh Mesh)> models, Vector3 direction, out float normalOffset, int resolution = 1024)
     {
         Vector3 minimum = new(float.PositiveInfinity), maximum = new(float.NegativeInfinity);
         foreach ((RuntimeEntity entity, WebPmxMesh mesh) in models)
@@ -182,7 +207,7 @@ public sealed partial record WebRenderFrame(
             halfWidth = MathF.Max(halfWidth, MathF.Abs(lightSpace.X) + 1);
             halfHeight = MathF.Max(halfHeight, MathF.Abs(lightSpace.Y) + 1);
         }
-        normalOffset = MathF.Max(halfWidth, halfHeight) * 2.0f / 1024.0f * 0.75f;
+        normalOffset = MathF.Max(halfWidth, halfHeight) * 2.0f / resolution * 0.75f;
         return view * ToGlProjection(Matrix4x4.CreateOrthographic(halfWidth * 2, halfHeight * 2, 0.1f, radius * 2 + 36));
     }
 

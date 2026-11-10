@@ -32,11 +32,38 @@ public sealed class GameProject
 
     public GameRuntimeSettings Runtime { get; set; } = new();
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public GameProjectShadowSettings? Shadows { get; set; }
+
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality CreateRuntimeGraphicsQuality()
+        => new(Window.AntiAliasingSamples, Shadows is not null, Shadows?.NormalizedDirectionalResolution ?? 2048,
+            Shadows?.NormalizedLocalLightResolution ?? 1024, Shadows?.NormalizedFilterSamples ?? 9, Shadows?.NormalizedFilterRadius ?? 1);
+
     /// <summary>Android 运行时质量、资源预算和自适应降级策略。</summary>
     public AndroidQualitySettings AndroidQuality { get; set; } = new();
 
     [JsonIgnore]
     public GameProjectScene Scene { get; set; } = new();
+}
+
+public sealed class GameProjectShadowSettings
+{
+    public static readonly int[] ResolutionChoices = [256, 512, 1024, 2048, 4096, 8192];
+    public static readonly int[] SampleChoices = [1, 4, 9, 16, 25, 49];
+
+    public int DirectionalResolution { get; set; } = 2048;
+    // Resolution of one point-light cube face or spot-light tile, not the whole atlas.
+    public int LocalLightResolution { get; set; } = 1024;
+    public int FilterSamples { get; set; } = 9;
+    public float FilterRadius { get; set; } = 1.0f;
+
+    [JsonIgnore] public int NormalizedDirectionalResolution => NormalizeResolution(DirectionalResolution, 8192);
+    [JsonIgnore] public int NormalizedLocalLightResolution => NormalizeResolution(LocalLightResolution, 2048);
+    [JsonIgnore] public int NormalizedFilterSamples => SampleChoices.LastOrDefault(value => value <= FilterSamples, 1);
+    [JsonIgnore] public float NormalizedFilterRadius => float.IsFinite(FilterRadius) ? Math.Clamp(FilterRadius, 0, 8) : 1;
+
+    public static int NormalizeResolution(int requested, int maximum)
+        => ResolutionChoices.LastOrDefault(value => value <= requested && value <= maximum, 256);
 }
 
 public sealed class GameRuntimeSettings
@@ -1169,6 +1196,8 @@ public sealed class WaterSurfaceSettings
 
     public bool MirrorReflectionEnabled { get; set; } = true;
 
+    public int MirrorReflectionSamples { get; set; } = 1;
+
     public bool UnderwaterEffectEnabled { get; set; } = true;
 
     public Vector3Dto UnderwaterTint { get; set; } = new(0.58f, 0.88f, 0.95f);
@@ -1221,6 +1250,8 @@ public sealed class TexturedPlaneSettings
     public bool ReceiveShadow { get; set; } = true;
 
     public bool MirrorReflectionEnabled { get; set; }
+
+    public int MirrorReflectionSamples { get; set; } = 1;
 
     public float MirrorReflectionStrength { get; set; } = 1.0f;
 }

@@ -19,7 +19,10 @@ internal static unsafe class VulkanDrawSnapshotTests
     public static void TestHardwareShadowFilters()
         => TestShadowFilters(true);
 
-    private static void TestShadowFilters(bool hardwareComparison)
+    public static void TestGlobalShadowFilters() => TestShadowFilters(false, true);
+    public static void TestHardwareGlobalShadowFilters() => TestShadowFilters(true, true);
+
+    private static void TestShadowFilters(bool hardwareComparison, bool projectQuality = false)
     {
         if (!VulkanRenderer.IsSupported(out string reason)) { Console.WriteLine($"SKIP shadow filtering: {reason}"); return; }
         using Device device = Device.CreateVulkan(new GraphicsDeviceOptions());
@@ -72,8 +75,17 @@ internal static unsafe class VulkanDrawSnapshotTests
         {
             foreach (int lightKind in new[] { 0, 1, 2 })
             foreach (bool toon in new[] { false, true })
+            foreach (int filterSamples in projectQuality ? new[] { 1,4,9,16,25,49 } : new[] { 0 })
             {
                 bool localLight = lightKind != 0;
+                float radius = projectQuality ? 3 : 1;
+                ShadowMapBinding sampledDirectional = directional with { FilterSamples = filterSamples, FilterRadius = radius };
+                LocalLightShadowBinding sampledLocal = new()
+                {
+                    Texture = local.Texture, NativeSampler = local.NativeSampler, NativeComparisonSampler = local.NativeComparisonSampler,
+                    Strength = local.Strength, Bias = local.Bias, NormalOffset = local.NormalOffset, TexelSize = local.TexelSize,
+                    PointLights = local.PointLights, SpotLights = local.SpotLights, FilterSamples = filterSamples, FilterRadius = radius
+                };
                 Set(renderer, "_uniformFrameId", frame++); Set(renderer, "_frameOpen", true);
                 commands.Begin(); commands.SetFramebuffer(target);
                 typeof(VulkanRenderer).GetProperty("CurrentOutputDescription", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer,target.OutputDescription);
@@ -81,7 +93,7 @@ internal static unsafe class VulkanDrawSnapshotTests
                 commands.SetFullViewports(); commands.SetFullScissorRects();
                 main.Draw(resources,meshes,materials,Matrix4x4.CreateScale(3,3,1)*Matrix4x4.CreateTranslation(0,0,.5f),
                     Matrix4x4.Identity,Matrix4x4.Identity,localLight?Vector3.Zero:Vector3.One,-Vector3.UnitZ,Vector3.Zero,0,
-                    lightKind==1?points:[],lightKind==2?spots:[],true,toon?"toon":"smooth",localLight?null:directional,localLight?local:null,null);
+                    lightKind==1?points:[],lightKind==2?spots:[],true,toon?"toon":"smooth",localLight?null:sampledDirectional,localLight?sampledLocal:null,null);
                 int hardwareDraws = (int)typeof(VulkanRenderer).GetField("_hardwareShadowDraws", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(renderer)!;
                 Check(hardwareComparison ? hardwareDraws == 1 : hardwareDraws == 0, "The requested shadow filtering path was not used.");
                 commands.CopyTexture(color,capture); commands.End(); device.SubmitCommands(commands); device.WaitForIdle();
@@ -93,8 +105,12 @@ internal static unsafe class VulkanDrawSnapshotTests
                     for(int x=48;x<80;x++)
                     {
                         float worldX=(x+.5f)/128*2-1, uv=worldX*.5f+.5f;
-                        float visibility=localLight ? (Linear(uv-.125f)+Linear(uv+.125f))*.5f
-                            : (Linear(uv-.25f)+Linear(uv)+Linear(uv+.25f))/3;
+                        int side = filterSamples == 0 ? localLight ? 2 : 3 : (int)Math.Sqrt(filterSamples);
+                        float effectiveRadius = filterSamples == 0 ? localLight ? .5f : 1 : radius;
+                        float visibility = 0;
+                        for (int sample=0;sample<side;sample++)
+                            visibility += Linear(Math.Clamp(uv+(side==1?0:(sample*2f/(side-1)-1)*effectiveRadius*.25f),.25f,.75f));
+                        visibility /= side;
                         if(toon) visibility=visibility>=.5f?1:0;
                         float distance=MathF.Sqrt(worldX*worldX+1.5f*1.5f+MathF.Pow(1f/128,2));
                         float radiance=localLight?MathF.Pow(1-distance/100,2)*1.5f/distance:1;
@@ -103,8 +119,8 @@ internal static unsafe class VulkanDrawSnapshotTests
                         Check(MathF.Abs(actual-expected)<3,$"Shadow filtering lightKind={lightKind}, toon={toon}, x={x}: expected {expected}, got {actual}.");
                         levels.Add(actual);
                     }
-                    if(!toon) Check(levels.Count>12,"Shadow coverage still has quantized nearest-neighbour bands.");
-                    Console.WriteLine($"PASS shadow filter hardware={hardwareComparison}, lightKind={lightKind}, toon={toon}, distinct levels={levels.Count}");
+                    if(!toon && !projectQuality) Check(levels.Count>12,"Shadow coverage still has quantized nearest-neighbour bands.");
+                    Console.WriteLine($"PASS shadow filter hardware={hardwareComparison}, lightKind={lightKind}, toon={toon}, samples={filterSamples}, distinct levels={levels.Count}");
                 }
                 finally { device.Unmap(capture); }
             }

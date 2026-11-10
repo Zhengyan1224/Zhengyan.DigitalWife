@@ -89,6 +89,7 @@ public sealed class AndroidScriptScene
     public IAndroidScriptRealtimeVoice RealtimeVoice => Services.RealtimeVoice;
     public AndroidScriptBubbleManager Bubble => Services.Bubble;
     public RuntimeScenePhysics Physics => _scene.Physics;
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics => _scene.Graphics;
     public bool IsScreenPointOverGui(float x, float y)
     {
         Vector2 size = _getSurfaceSize();
@@ -184,6 +185,8 @@ public sealed class AndroidScriptSprite
 public sealed class AndroidScriptEntity
 {
     private readonly RuntimeEntity _entity;
+    public int ReflectionSamples { get => _entity.ReflectionSamples; set => _entity.ReflectionSamples = value; }
+    public int ActualReflectionSamples => _entity.ActualReflectionSamples;
 
     public static implicit operator RuntimeEntity?(AndroidScriptEntity? entity) => entity?._entity;
     private readonly Action<string> _applyMotion;
@@ -713,6 +716,7 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     }
 
     public new AndroidScriptScene Scene { get; }
+    public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics => Scene.Graphics;
     public new AndroidScriptEntity Entity { get; }
     public new AndroidScriptInputApi Input { get; }
     public new AndroidScriptAudio Audio { get; }
