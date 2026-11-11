@@ -15,9 +15,10 @@ public sealed record WebLoadedScript(
     public Task EventTask { get; set; } = Task.CompletedTask;
 }
 
-public sealed class WebScriptRuntime : IDisposable
+public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
 {
     private bool _disposed;
+    public Func<WebScriptEntry,string,IWebGameScript>? PythonFactory { get; set; }
     private readonly List<WebLoadedScript> _scripts = [];
 
     public IReadOnlyList<WebLoadedScript> Scripts => _scripts;
@@ -62,6 +63,12 @@ public sealed class WebScriptRuntime : IDisposable
                 if (!string.Equals(entry.ApiVersion, manifest.ApiVersion, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException($"Script API version {entry.ApiVersion} is incompatible with runtime {manifest.ApiVersion}.");
                 byte[] bytes = await assets.ReadAllBytesAsync(entry.Assembly, cancellationToken);
+                if(entry.Language.Equals("python",StringComparison.OrdinalIgnoreCase))
+                {
+                    if(PythonFactory is null)throw new NotSupportedException("Python runtime is not configured.");
+                    var pythonModule=PythonFactory(entry,System.Text.Encoding.UTF8.GetString(bytes));
+                    _scripts.Add(new(entry,typeof(WebScriptRuntime).Assembly,pythonModule,new(scene,scene.GetEntity(entry.Entity))));continue;
+                }
                 Assembly assembly = Assembly.Load(bytes);
                 WebScriptCompatibilityReport compatibility = WebScriptCompatibility.Analyze(assembly);
                 if (!compatibility.IsCompatible)
@@ -183,6 +190,14 @@ public sealed class WebScriptRuntime : IDisposable
     }
 
     public void Dispose() { _disposed=true; }
+    public async ValueTask DisposeAsync()
+    {
+        _disposed=true;
+        foreach(var script in _scripts)
+            if(script.Module is IAsyncDisposable asyncDisposable)await asyncDisposable.DisposeAsync();
+            else if(script.Module is IDisposable disposable)disposable.Dispose();
+        _scripts.Clear();
+    }
 
     private static IEnumerable<WebScriptEntry> OrderEntries(IReadOnlyList<WebScriptEntry> entries)
     {

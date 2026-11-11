@@ -1,5 +1,7 @@
 const asrUrl=new URL('./web-asr.js',import.meta.url);asrUrl.search=new URL(import.meta.url).search;
 const asr=await import(asrUrl.href);
+const offlineUrl=new URL('./web-offline.js',import.meta.url);offlineUrl.search=new URL(import.meta.url).search;
+const offline=await import(offlineUrl.href);
 let settings={},socket=null,connection=null,current=null,audioContext=null,nextAudioTime=0;
 const sources=new Set();
 export function configure(value){stopAll();settings=value||{};}
@@ -14,7 +16,7 @@ function cancel(state){
     if(!state)return;state.cancelled=true;state.abort?.abort();state.capture?.stop();if(state.timer)clearTimeout(state.timer);
     for(const source of sources)source.stop();sources.clear();nextAudioTime=0;
 }
-export function stopAll(){cancel(current);current=null;asr.stopAll();socket?.close();socket=null;connection=null;}
+export function stopAll(){if(offline.isEnabled())offline.executeRealtime({operation:'cancel_all'});cancel(current);current=null;asr.stopAll();socket?.close();socket=null;connection=null;}
 async function ready(){
     if(connection)return connection;
     // Browser WebSockets cannot set arbitrary HTTP headers. A same-origin
@@ -102,6 +104,7 @@ async function capture(state){
     state.timer=setTimeout(finish,Math.max(1,state.command.timeoutSeconds||30)*1000);
 }
 export function execute(command,reference){
+    if(offline.isEnabled()){offline.executeRealtime(command,reference);return;}
     if(command.operation==='cancel'){if(current?.command.requestId===command.requestId){cancel(current);current=null;if(socket?.readyState===1)send({type:'response.cancel'});}return;}
     if(command.operation==='cancel_all' || command.operation==='reset'){stopAll();return;}
     if(command.operation==='stop_wake'){asr.execute({operation:'stop_wake'});return;}

@@ -1,5 +1,7 @@
 let active = null;
-export function isAvailable() { return typeof (globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition) === 'function'; }
+const offlineUrl=new URL('./web-offline.js',import.meta.url);offlineUrl.search=new URL(import.meta.url).search;
+const offline=await import(offlineUrl.href);
+export function isAvailable() { return offline.isEnabled()?!!globalThis.navigator?.mediaDevices?.getUserMedia:typeof (globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition) === 'function'; }
 const notify = (state, eventName, callbackName, text = '', error = '', wakeWord = '') => {
     if (!callbackName || state.cancelled) return;
     state.reference?.invokeMethodAsync('OnAsrEvent', state.command.entityId, {
@@ -8,10 +10,12 @@ const notify = (state, eventName, callbackName, text = '', error = '', wakeWord 
     }).catch(()=>{});
 };
 export function stopAll() {
+    if(offline.isEnabled()){offline.stopAsr(true);return;}
     const state=active;active=null;
     if(state){state.cancelled=true;state.recognition?.abort();if(state.restart)clearTimeout(state.restart);}
 }
 export function execute(command, reference) {
+    if(offline.isEnabled()){offline.executeAsr(command,reference);return;}
     if(command.operation==='stop' || command.operation==='stop_wake') {
         if(!active || (command.operation==='stop' && active.command.requestId!==command.requestId) ||
             (command.operation==='stop_wake' && active.command.operation!=='wake'))return;

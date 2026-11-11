@@ -134,13 +134,21 @@ public static class WebDwGamePackageLoader
             foreach ((ScriptBinding Binding, string Entity) binding in scene.LoadingScripts.Select(item => (item, string.Empty))
                 .Concat(scene.Entities.SelectMany(entity => entity.Scripts.Select(item => (item, entity.Id)))))
             {
-                if (!binding.Binding.Enabled || !IsCSharp(binding.Binding.Path, binding.Binding.Language)) continue;
+                if (!binding.Binding.Enabled) continue;
                 string source = WebHttpAssetStore.NormalizeRelativePath(binding.Binding.Path);
+                string scriptId=$"{scenePath}:{binding.Entity}:{source}";
+                if(binding.Binding.Language.Equals("python",StringComparison.OrdinalIgnoreCase))
+                {
+                    if(files.TryGetValue(source,out var code))scripts.Add(new(){Id=scriptId,Scene=scenePath,Entity=binding.Entity,Assembly=source,Language="python",TargetFramework="wasm-python",Sha256=Convert.ToHexString(SHA256.HashData(code))});
+                    continue;
+                }
+                if(!IsCSharp(binding.Binding.Path,binding.Binding.Language))continue;
                 string assembly = $"compiled/web/{Path.ChangeExtension(source, ".dll")}".Replace('\\', '/');
-                if (!files.ContainsKey(assembly) || scripts.Any(item => item.Id.Equals(source, StringComparison.OrdinalIgnoreCase))) continue;
+                if (!files.ContainsKey(assembly) || scripts.Any(item => item.Id.Equals(scriptId, StringComparison.OrdinalIgnoreCase))) continue;
                 scripts.Add(new WebScriptEntry
                 {
-                    Id = source,
+                    Id = scriptId,
+                    Scene = scenePath,
                     Assembly = assembly,
                     Entity = binding.Entity,
                     Sha256 = Convert.ToHexString(SHA256.HashData(files[assembly]))

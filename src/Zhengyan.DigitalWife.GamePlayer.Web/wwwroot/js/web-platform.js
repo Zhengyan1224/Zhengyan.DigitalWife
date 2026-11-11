@@ -2,12 +2,15 @@ let socket = null;
 let recorder = null;
 let recorderChunks = [];
 let speechGeneration=0,currentSpeech=null;
+const offlineUrl=new URL('./web-offline.js',import.meta.url);offlineUrl.search=new URL(import.meta.url).search;
+const offline=await import(offlineUrl.href);
 
 export function speak(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1) {
     speakWithCallback(text,language,rate,pitch,volume);
 }
 
 export function speakWithCallback(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1, dotNetReference, entityId = "", callbackName = "") {
+    if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName);return;}
     if (!window.speechSynthesis) throw new Error("SpeechSynthesis is not available.");
     stopSpeaking();const generation=++speechGeneration;
     const utterance = new SpeechSynthesisUtterance(text || "");
@@ -25,6 +28,7 @@ export function speakWithCallback(text, language = "zh-CN", rate = 1, pitch = 1,
 }
 
 export function stopSpeaking() {
+    if(offline.isEnabled()){offline.stopSpeaking();return;}
     speechGeneration++;
     if(currentSpeech){currentSpeech.reference?.invokeMethodAsync('OnSpeechFinished',currentSpeech.entityId).catch(()=>{});currentSpeech=null;}
     window.speechSynthesis?.cancel();
@@ -84,28 +88,10 @@ export function closeWebSocket() {
 export async function registerServiceWorker(path = "sw.js") {
     if (!navigator.serviceWorker) return false;
 
-    // Do not let a development Service Worker pin old fingerprinted assets.
-    // Production HTTPS deployments still use the cache-first asset strategy.
-    const localHost = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
-    if (localHost) {
-        try {
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            await Promise.all(registrations.map(registration => registration.unregister()));
-            if (globalThis.caches) {
-                const keys = await caches.keys();
-                await Promise.all(keys
-                    .filter(key => key.startsWith("zhengyan-web-runtime-"))
-                    .map(key => caches.delete(key)));
-            }
-        } catch {
-            // Service Worker cleanup is optional during local development.
-        }
-        return false;
-    }
-
     try {
+        const existing=await navigator.serviceWorker.getRegistration(path);
+        if(existing?.active){existing.update().catch(()=>{});return true;}
         const registration = await navigator.serviceWorker.register(path, { scope: "./", updateViaCache: "none" });
-        await registration.update();
         return true;
     } catch {
         // Offline cache is an enhancement; it must not prevent the game from starting.

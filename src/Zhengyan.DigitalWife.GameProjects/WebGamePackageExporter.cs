@@ -125,9 +125,16 @@ public static class WebGamePackageExporter
                 scene.LoadingScripts.Select(binding => (binding, string.Empty))
                     .Concat(scene.Entities.SelectMany(entity => entity.Scripts.Select(binding => (binding, entity.Id))));
             foreach ((ScriptBinding binding, string entityId) in bindings
-                .Where(item => item.Binding.Enabled && IsCSharp(item.Binding.Path, item.Binding.Language)))
+                .Where(item => item.Binding.Enabled && (IsCSharp(item.Binding.Path, item.Binding.Language) || item.Binding.Language.Equals("python",StringComparison.OrdinalIgnoreCase))))
             {
                 string source = NormalizeOptional(binding.Path, sourceRoot);
+                if(binding.Language.Equals("python",StringComparison.OrdinalIgnoreCase))
+                {
+                    string id=$"{scenePath}:{entityId}:{source}";
+                    if(scriptIds.Add(id) && assets.FirstOrDefault(a=>a.Path.Equals(source,StringComparison.OrdinalIgnoreCase)) is { } asset)
+                        scripts.Add(new{id,scene=scenePath,assembly=source,language="python",sha256=asset.Sha256,entity=entityId,apiVersion="1.0",targetFramework="wasm-python",dependencies=Array.Empty<string>()});
+                    continue;
+                }
                 string assembly = $"compiled/web/{Path.ChangeExtension(source, ".dll")}";
                 string fullAssembly = Path.Combine(sourceRoot, assembly.Replace('/', Path.DirectorySeparatorChar));
                 if (!File.Exists(fullAssembly)) continue;

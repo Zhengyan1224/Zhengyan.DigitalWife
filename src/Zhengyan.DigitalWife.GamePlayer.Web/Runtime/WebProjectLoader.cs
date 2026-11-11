@@ -39,6 +39,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
     public Action<string, RuntimeSpeechRequest>? SpeechRequestHandler { get; set; }
     public Func<PmxParsing, Vector3, Task<IPmxPhysicsBridge?>>? PhysicsFactory { get; set; }
     public Func<RuntimeScene, GameProject, Task>? InitializeServices { get; set; }
+    public Func<WebScriptEntry,string,IWebGameScript>? PythonFactory { get; set; }
     private Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality? _graphics;
 
     public IWebAssetStore Assets => _assets;
@@ -238,7 +239,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
             if (!normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase) && IsRegistered(normalized))
                 textures[path] = await _assets.GetUriAsync(normalized, cancellationToken);
         }
-        WebScriptRuntime scripts = new();
+        WebScriptRuntime scripts = new() { PythonFactory = PythonFactory };
         if (InitializeServices is not null) await InitializeServices(runtimeScene, project);
         await scripts.LoadAsync(_assets, manifest, runtimeScene, cancellationToken);
         await scripts.StartAsync();

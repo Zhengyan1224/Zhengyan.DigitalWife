@@ -2,6 +2,10 @@
 
 更新时间：2026-11-11
 
+## 浏览器离线续作
+
+已接入本地 Wllama/GGUF、Sherpa ONNX TTS/ASR、Pyodide Python 与版本化离线缓存，默认模式为 offline。原有浏览器语音与远程 Realtime 适配保留在 connected 模式。当前支持的模型、缓存方式及浏览器沙箱边界见 [离线运行说明](web-offline-runtime.md)；下方语音适配说明记录此前的 connected 模式，不再代表当前默认链路。
+
 ## 2026-11-11 场景与渲染补齐
 
 本次继续完成中断会话中的工作，使用 `artifacts/web-player/wwwroot/web-game` 的 DemoGame01 对照 PC。

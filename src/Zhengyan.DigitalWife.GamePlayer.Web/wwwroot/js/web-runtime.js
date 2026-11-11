@@ -12,6 +12,7 @@ const [{ createWebGl2Renderer }, { unlock: unlockAudio, setErrorHandler: setAudi
     import(moduleUrl("./webgl2-renderer.js")), import(moduleUrl("./web-audio.js")),
     import(moduleUrl("./web-platform.js")), import(moduleUrl("./web-gpu.js"))
 ]);
+const offline=await import(moduleUrl('./web-offline.js'));
 
 let runtime = null;
 const overlayImages = new Map();
@@ -328,6 +329,21 @@ export function setFrameState(frameState) {
 export function getRenderDiagnostics() { return runtime?.renderer?.getDiagnostics(); }
 export function getOverlayDiagnostics(){return {controls:(runtime?.overlayState.controls||[]).map(c=>({id:c.id,name:c.name,type:c.type,x:c.x,y:c.y,width:c.width,height:c.height})),
     bubbles:(runtime?.overlayState.bubbles||[]).map(b=>({text:b.text,header:b.header,visible:b.visible}))};}
+export function configureOffline(project,assetUris){offline.configure(project,assetUris);}
+export function clearOfflineAssetUrls(){offline.clearAssetUrls();}
+export function createOfflineAssetUrl(bytes){return offline.createAssetUrl(bytes);}
+export function setLanguageModelFile(input){return offline.setLanguageModelFiles(input.files||[]);}
+export const disposeOffline=offline.dispose;
+export async function cacheOfflineGame(){
+    if(!navigator.serviceWorker)throw new Error('当前浏览器不支持离线缓存。');
+    if(!await registerSw('./sw.js'))throw new Error('离线缓存初始化失败。请使用 HTTPS 或 localhost 打开播放器。');
+    let timeout;const registration=await Promise.race([navigator.serviceWorker.ready,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('离线缓存初始化超时。')),30000);})]).finally(()=>clearTimeout(timeout));
+    const worker=navigator.serviceWorker.controller||registration.active;
+    return new Promise((resolve,reject)=>{const channel=new MessageChannel();channel.port1.onmessage=event=>{
+        if(event.data.done){channel.port1.close();resolve(event.data.count);}
+        if(event.data.error){channel.port1.close();reject(new Error(event.data.error));}
+    };worker.postMessage({type:'cache-offline-game'},[channel.port2]);});
+}
 export async function decryptGamePackage(bytes,password){return await(await import(moduleUrl('./web-package-crypto.js'))).decryptGamePackage(bytes,password);}
 
 export function configureGame(width, height) {

@@ -35,6 +35,8 @@ if (args.Contains("--encrypted-fixture"))
 }
 
 if (args.Contains("--services")) { await WebScriptServiceTests.RunAsync(); return 0; }
+if (args.Contains("--python")) { await WebPythonBridgeTests.RunAsync(); return 0; }
+if(args is ["--refresh-manifest",string manifestDirectory]){var result=WebGamePackageExporter.RefreshManifest(manifestDirectory);Console.WriteLine($"Refreshed {result.AssetCount} assets and {result.ScriptCount} script bindings.");return 0;}
 
 if (args.Contains("--assets"))
 {
@@ -53,6 +55,7 @@ if (args.Contains("--surfaces"))
 }
 
 VerifyVertexUpdates();
+await WebPythonBridgeTests.RunAsync();
 await WebScriptServiceTests.RunAsync();
 await WebAssetCacheTests.RunAsync();
 VerifyModuleBuildVersion();

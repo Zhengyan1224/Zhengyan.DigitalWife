@@ -18,6 +18,11 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         return super().send_head()
 
 
+class PreviewServer(ThreadingHTTPServer):
+    # Browser startup requests many framework and model files concurrently.
+    request_queue_size = 128
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=5052)
@@ -25,7 +30,7 @@ def main():
     parser.add_argument("--directory", required=True)
     args = parser.parse_args()
     handler = partial(PreviewHandler, directory=args.directory)
-    with ThreadingHTTPServer((args.bind, args.port), handler) as server:
+    with PreviewServer((args.bind, args.port), handler) as server:
         try:
             server.serve_forever()
         except KeyboardInterrupt:

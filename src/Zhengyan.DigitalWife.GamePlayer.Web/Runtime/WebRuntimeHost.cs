@@ -46,6 +46,10 @@ public sealed class WebRuntimeHost(
     private string? _pressedGuiId;
     private string? _contextMenuTarget;
     private string? _hoveredSpriteId,_pressedSpriteId;
+    private readonly Dictionary<string,WebPythonBridge> _pythonBridges=new();
+    private string _offlineAssetIdentity = "";
+    private readonly Dictionary<string,string> _offlineAssetUris=new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string,string> _pythonProjectFiles=new(StringComparer.OrdinalIgnoreCase);
     private readonly WebSaveStore _saveStore = new(jsRuntime);
     private IJSObjectReference? _asrModule;
     private readonly ConcurrentQueue<(RuntimeScene Scene, WebScriptEvent Event)> _serviceEvents = new();
@@ -56,6 +60,11 @@ public sealed class WebRuntimeHost(
 
     public WebRuntimeSnapshot Snapshot { get; private set; } = WebRuntimeSnapshot.Initial;
     public event Action? Changed;
+    public async Task SetLanguageModelFilesAsync(ElementReference input)
+    {
+        if(_module is not null)await _module.InvokeVoidAsync("setLanguageModelFile",input);
+    }
+    public async Task<int> CacheOfflineGameAsync()=>_module is null?0:await _module.InvokeAsync<int>("cacheOfflineGame");
 
     public async Task LoadDwGameAsync(byte[] packageBytes, ElementReference canvas, ElementReference overlayCanvas, string? password = null)
     {
@@ -81,6 +90,10 @@ public sealed class WebRuntimeHost(
             SetSnapshot(Snapshot with { LastError = null, Status = "Initializing WebGL2" });
             _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"));
             _dotNetReference = DotNetObjectReference.Create(this);
+            _projectLoader.PythonFactory=(entry,source)=>new WebPythonScript(_jsRuntime,entry,source,_dotNetReference,(id,bridge)=>
+            {
+                if(bridge is null)_pythonBridges.Remove(id);else{bridge.ProjectFiles=_pythonProjectFiles;_pythonBridges[id]=bridge;}
+            });
             await _module.InvokeVoidAsync("start", canvas, overlayCanvas, _dotNetReference);
             await _module.InvokeVoidAsync("registerServiceWorker", "./sw.js");
             _started = true;
@@ -173,7 +186,7 @@ public sealed class WebRuntimeHost(
             catch (JSDisconnectedException) { }
             if (_loadedProject is not null)
             {
-                _loadedProject.Scripts.Dispose();
+                await _loadedProject.Scripts.DisposeAsync();
                 foreach (WebPmxAsset asset in _loadedProject.PmxAssets.Values) asset.Dispose();
                 _loadedProject.RuntimeScene.Dispose();
             }
@@ -690,6 +703,8 @@ public sealed class WebRuntimeHost(
             _speechCompletions.Clear(); _speechRequests.Clear();
             _lipSync.Stop();_speakingEntity=null;
             if (_asrModule is not null) await _asrModule.InvokeVoidAsync("stopAll");
+            if (_realtimeModule is not null) await _realtimeModule.InvokeVoidAsync("stopAll");
+            await _loadedProject.Scripts.DisposeAsync();
             var next = await _projectLoader.LoadAsync(scenePathOverride: path);
             await _audioService.StopAllAsync();
             await _speechService.StopAsync();
@@ -697,7 +712,6 @@ public sealed class WebRuntimeHost(
                 .Concat(next.SceneMeshes.Select(m => new WebPmxMeshInstance(m.Key, m.Value))).ToArray();
             await _module.InvokeVoidAsync("loadPmxMeshes", (object)meshes);
             foreach (var asset in _loadedProject.PmxAssets.Values) asset.Dispose();
-            _loadedProject.Scripts.Dispose();
             _loadedProject.RuntimeScene.Dispose();
             _loadedProject = next; _reportedScriptDiagnosticCount = 0;
             _lastTimestampMilliseconds = double.NaN;
@@ -944,6 +958,36 @@ public sealed class WebRuntimeHost(
 
     private async Task InitializeSceneServicesAsync(RuntimeScene scene, GameProject project)
     {
+        if(_module is not null)
+        {
+            var modelUris=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+            var paths=new[]{project.Voice.ModelPath,project.Voice.VocoderPath,project.Voice.TokensPath,project.Voice.LexiconPath,
+                project.Asr.Sherpa.EncoderPath,project.Asr.Sherpa.DecoderPath,project.Asr.Sherpa.JoinerPath,project.Asr.Sherpa.TokensPath,project.Asr.Sherpa.ModelPath,project.Web.LanguageModelPath};
+            var entries=_projectLoader.Assets.Manifest.Assets.Where(a=>paths.Contains(a.Path,StringComparer.OrdinalIgnoreCase)).OrderBy(a=>a.Path).ToArray();
+            string identity=System.Text.Json.JsonSerializer.Serialize(new{project.Name,project.Web,project.Voice,project.Asr,Assets=entries.Select(a=>new{a.Path,a.Sha256})});
+            if(identity!=_offlineAssetIdentity)
+            {
+                await _module.InvokeVoidAsync("disposeOffline");
+                await _module.InvokeVoidAsync("clearOfflineAssetUrls");
+                _offlineAssetUris.Clear();
+                _offlineAssetIdentity=identity;
+            }
+            foreach(string path in paths.Where(p=>!string.IsNullOrWhiteSpace(p)).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+                if(_projectLoader.Assets.Manifest.Assets.Any(a=>a.Path.Equals(path,StringComparison.OrdinalIgnoreCase)))
+                {
+                    if(!_offlineAssetUris.TryGetValue(path,out var uri))
+                        _offlineAssetUris[path]=uri=_projectLoader.Assets is WebMemoryAssetStore
+                            ?await _module.InvokeAsync<string>("createOfflineAssetUrl",await _projectLoader.Assets.ReadAllBytesAsync(path))
+                            :await _projectLoader.Assets.GetUriAsync(path);
+                    modelUris[path]=uri;
+                }
+            await _module.InvokeVoidAsync("configureOffline",project,modelUris,identity);
+        }
+        _pythonProjectFiles.Clear();
+        if(_projectLoader.Assets.Manifest.Scripts.Any(s=>s.Language.Equals("python",StringComparison.OrdinalIgnoreCase)))
+            foreach(var asset in _projectLoader.Assets.Manifest.Assets.Where(a=>a.Size<=4*1024*1024 &&
+                new[]{".py",".json",".txt",".md"}.Contains(Path.GetExtension(a.Path),StringComparer.OrdinalIgnoreCase)))
+                _pythonProjectFiles[asset.Path]=System.Text.Encoding.UTF8.GetString(await _projectLoader.Assets.ReadAllBytesAsync(asset.Path));
         scene.SetScreenSize(Snapshot.CanvasWidth,Snapshot.CanvasHeight,project.Window.Width,project.Window.Height);
         string kana="",vowels="";
         if(httpClient is not null && project.Voice.LipSync.Enabled)
@@ -1024,6 +1068,16 @@ public sealed class WebRuntimeHost(
         _loadedProject?.Scripts.DispatchEvent(new("speech",EntityId:entityId,CallbackName:callbackName,EventName:"error",PayloadJson:System.Text.Json.JsonSerializer.Serialize(new{error})),entityId);
         SetSnapshot(Snapshot with{LastError="Speech synthesis failed: "+error});return Task.CompletedTask;
     }
+
+    [JSInvokable]
+    public object? OnPythonCall(string scriptId,int handle,string operation,string name,string arguments,string value)
+        => _pythonBridges[scriptId].Invoke(new(handle,operation,name,System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(arguments),System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(value)));
+    [JSInvokable]
+    public Task<object?> OnPythonAwait(string scriptId,int handle)=>_pythonBridges[scriptId].Await(handle);
+    [JSInvokable]
+    public object OnPythonFiles(string scriptId)=>_pythonBridges[scriptId].Files();
+    [JSInvokable]
+    public void OnPythonSave(string scriptId,string files)=>_pythonBridges[scriptId].SaveFiles(files);
 
     private async Task SynchronizeSurfacesAsync(WebLoadedProject project)
     {
@@ -1109,7 +1163,7 @@ public sealed class WebRuntimeHost(
         _dotNetReference = null;
         if (_module is not null)
         {
-            try { await _module.DisposeAsync(); }
+            try { await _module.InvokeVoidAsync("disposeOffline");await _module.InvokeVoidAsync("clearOfflineAssetUrls");await _module.DisposeAsync(); }
             catch (JSDisconnectedException) { }
         }
         _module = null;

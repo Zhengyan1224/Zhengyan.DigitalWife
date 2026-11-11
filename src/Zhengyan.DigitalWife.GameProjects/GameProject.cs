@@ -27,6 +27,7 @@ public sealed class GameProject
     public GameProjectRealtimeVoiceSettings RealtimeVoice { get; set; } = new();
 
     public GameProjectLlmSettings Llm { get; set; } = new();
+    public GameProjectWebSettings Web { get; set; } = new();
 
     public GameWindowSettings Window { get; set; } = new();
 
@@ -80,6 +81,15 @@ public sealed class GameProjectScriptRuntime
     public string PreferredLanguage { get; set; } = "csharp";
 
     public List<string> ScriptSearchPaths { get; set; } = ["scripts"];
+}
+
+public sealed class GameProjectWebSettings
+{
+    public string RuntimeMode { get; set; } = "offline";
+    public string LanguageModelPath { get; set; } = "assets/models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+    public int LanguageModelContextSize { get; set; } = 2048;
+    public int LanguageModelThreads { get; set; } = 2;
+    public int LanguageModelGpuLayers { get; set; }
 }
 
 public sealed class GameProjectVoiceSettings
