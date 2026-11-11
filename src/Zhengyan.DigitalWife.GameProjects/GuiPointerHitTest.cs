@@ -12,7 +12,7 @@ public static class GuiPointerHitTest
             if (x >= rect.X && x < rect.X + rect.Width && y >= rect.Y && y < rect.Y + rect.Height)
                 return true;
         }
-        return scene.Sprites.Any(sprite => sprite.Visible && SpriteLayoutResolver.ContainsPoint(sprite,
+        return scene.Sprites.Any(sprite => SpriteLayoutResolver.IsInteractive(sprite) && SpriteLayoutResolver.ContainsPoint(sprite,
             x, y, actualWidth, actualHeight, referenceWidth, referenceHeight));
     }
 }

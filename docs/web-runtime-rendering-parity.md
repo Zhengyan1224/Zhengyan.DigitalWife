@@ -1,5 +1,7 @@
 # Web 静止人物、光照和镜头拖拽修复
 
+2026-11-11：DemoGame01 的背景 Sprite、服装骨骼、天空、水面/水下、粒子、多相机与 RenderTexture 续作见 [当前能力审计](web-runtime-capability-gap.md)。以下保留历次验证记录，不代表本次全部功能或性能结论。
+
 ## PC 行为依据
 
 `PmxModelComponent.UpdateAnimationStep` 只在 `IsPlaying && EnablePhysical && !_skipPhysicsOnNextPlayFrame && _motionLayers.Count != 0` 时推进物理。静止和暂停的姿势不需要反复求解或上传；停止后重新计算第 0 帧。

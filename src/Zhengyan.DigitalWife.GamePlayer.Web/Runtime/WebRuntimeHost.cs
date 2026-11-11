@@ -1,6 +1,8 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using System.Numerics;
+using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.GameProjects;
 
@@ -12,7 +14,8 @@ public sealed class WebRuntimeHost(
     WebProjectLoader projectLoader,
     WebAudioService audioService,
     WebSpeechService speechService,
-    WebPmxPhysicsService? physicsService = null) : IAsyncDisposable
+    WebPmxPhysicsService? physicsService = null,
+    HttpClient? httpClient = null) : IAsyncDisposable
 {
     private readonly IJSRuntime _jsRuntime = jsRuntime;
     private WebProjectLoader _projectLoader = projectLoader;
@@ -36,6 +39,20 @@ public sealed class WebRuntimeHost(
     private readonly Dictionary<string, float> _audioVolumes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _audioLoops = new(StringComparer.OrdinalIgnoreCase);
     private int _reportedScriptDiagnosticCount;
+    private bool _cursorVisible = true;
+    private bool _switchingScene;
+    private readonly WebSpeechLipSync _lipSync = new();
+    private string? _speakingEntity;
+    private string? _pressedGuiId;
+    private string? _contextMenuTarget;
+    private string? _hoveredSpriteId,_pressedSpriteId;
+    private readonly WebSaveStore _saveStore = new(jsRuntime);
+    private IJSObjectReference? _asrModule;
+    private readonly ConcurrentQueue<(RuntimeScene Scene, WebScriptEvent Event)> _serviceEvents = new();
+    private readonly ConcurrentQueue<(RuntimeScene Scene, RuntimeAsrCommand Command)> _asrCommands = new();
+    private string _saveKey = "";
+    private IJSObjectReference? _realtimeModule;
+    private readonly ConcurrentQueue<(RuntimeScene Scene, RuntimeRealtimeVoiceCommand Command)> _realtimeCommands = new();
 
     public WebRuntimeSnapshot Snapshot { get; private set; } = WebRuntimeSnapshot.Initial;
     public event Action? Changed;
@@ -44,6 +61,8 @@ public sealed class WebRuntimeHost(
     {
         ArgumentNullException.ThrowIfNull(packageBytes);
         if (_started) await StopAsync();
+        _module ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import",WebRuntimeModuleUrl.Resolve("web-runtime.js"));
+        packageBytes=await _module.InvokeAsync<byte[]>("decryptGamePackage",packageBytes,password??"");
         WebPackageLoadResult package = await WebDwGamePackageLoader.LoadAsync(packageBytes, password);
         _projectLoader = new WebProjectLoader(package.Store);
         await StartAsync(canvas, overlayCanvas);
@@ -58,6 +77,7 @@ public sealed class WebRuntimeHost(
         {
             _projectLoader.SpeechRequestHandler = QueueSpeechRequest;
             _projectLoader.PhysicsFactory = _physicsService.CreateAsync;
+            _projectLoader.InitializeServices = InitializeSceneServicesAsync;
             SetSnapshot(Snapshot with { LastError = null, Status = "Initializing WebGL2" });
             _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"));
             _dotNetReference = DotNetObjectReference.Create(this);
@@ -80,6 +100,8 @@ public sealed class WebRuntimeHost(
             }));
             WebLoadedProject loadedProject = await _projectLoader.LoadAsync(progress);
             _loadedProject = loadedProject;
+            await _module.InvokeVoidAsync("configureGame", loadedProject.Project.Window.Width, loadedProject.Project.Window.Height);
+            await _module.InvokeVoidAsync("loadSceneTextures", (object)loadedProject.SpriteUris.Values.ToArray());
             foreach (WebAudioAsset audio in loadedProject.AudioAssets.Values.DistinctBy(asset => asset.Alias))
                 await _audioService.PrepareAsync(audio.Alias, audio.Uri);
             await ProcessScriptCommandsAsync();
@@ -131,6 +153,10 @@ public sealed class WebRuntimeHost(
         if (!_started) return;
         try
         {
+            if (_loadedProject is not null) await PersistSaveAsync(_loadedProject.RuntimeScene);
+            _lipSync.Stop();_speakingEntity=null;
+            if (_asrModule is not null) await _asrModule.InvokeVoidAsync("stopAll");
+            if (_realtimeModule is not null) await _realtimeModule.InvokeVoidAsync("stopAll");
             if (_module is not null) await _module.InvokeVoidAsync("stop");
         }
         catch (JSDisconnectedException) { }
@@ -147,6 +173,7 @@ public sealed class WebRuntimeHost(
             catch (JSDisconnectedException) { }
             if (_loadedProject is not null)
             {
+                _loadedProject.Scripts.Dispose();
                 foreach (WebPmxAsset asset in _loadedProject.PmxAssets.Values) asset.Dispose();
                 _loadedProject.RuntimeScene.Dispose();
             }
@@ -185,7 +212,7 @@ public sealed class WebRuntimeHost(
     [JSInvokable]
     public async Task OnAnimationFrameWithInput(double timestampMilliseconds, WebPointerFrameInput? pointerInput)
     {
-        if (_disposed || !_started || !Snapshot.IsRunning || _loadedProject is null) return;
+        if (_disposed || !_started || !Snapshot.IsRunning || _loadedProject is null || _switchingScene) return;
         if (pointerInput is not null)
         {
             AccumulatePointerInput(pointerInput.LookX, pointerInput.LookY, pointerInput.PanX, pointerInput.PanY,
@@ -197,23 +224,36 @@ public sealed class WebRuntimeHost(
         double deltaSeconds = Math.Min(frameIntervalSeconds, 0.25);
         _lastTimestampMilliseconds = timestampMilliseconds;
         RuntimeCameraInput input = ConsumeInput();
+        if (pointerInput is not null) input = input with { Touches = pointerInput.Touches, TouchTransitions = pointerInput.TouchTransitions, IsTouchAvailable = pointerInput.TouchAvailable };
         ApplyKeyboardCameraMotion((float)deltaSeconds);
         _loadedProject.RuntimeScene.Update((float)deltaSeconds, input);
+        _loadedProject.RuntimeScene.ReportFrameInterval(frameIntervalSeconds);
         _loadedProject.Scripts.Update((float)deltaSeconds, timestampMilliseconds / 1000.0, input);
+        UpdateSpriteHover(input.PointerPosition);
+        while (_serviceEvents.TryDequeue(out var item))
+            if (ReferenceEquals(item.Scene, _loadedProject.RuntimeScene)) _loadedProject.Scripts.DispatchEvent(item.Event, item.Event.EntityId);
         await ProcessScriptCommandsAsync();
 
+        await SynchronizeSurfacesAsync(_loadedProject);
+
         WebPmxAsset[] assets = _loadedProject.PmxAssets.Values.ToArray();
-        List<WebPmxMeshUpdateInstance> changedMeshes = [];
+        _lipSync.Update((float)deltaSeconds);
+        HashSet<string> changedIds = new(StringComparer.OrdinalIgnoreCase);
         foreach (WebPmxAsset asset in assets)
         {
             if (asset.Update(timestampMilliseconds / 1000.0, (float)deltaSeconds))
-                changedMeshes.Add(new WebPmxMeshUpdateInstance(asset.Entity.Id, asset.Mesh.CreateUpdate()));
+                changedIds.Add(asset.Entity.Id);
         }
-        if (changedMeshes.Count > 0)
-            await _module!.InvokeVoidAsync("updatePmxMeshes", changedMeshes);
+        changedIds.UnionWith(WebPmxRelations.Apply(_loadedProject.RuntimeScene, _loadedProject.PmxAssets));
+        _loadedProject.Simulation.Update(_loadedProject.RuntimeScene, (float)deltaSeconds);
+        var changedMeshes = assets.Where(a => changedIds.Contains(a.Entity.Id))
+            .Select(a => new WebPmxMeshUpdateInstance(a.Entity.Id, a.Mesh.CreateUpdate())).ToArray();
+        if (changedMeshes.Length > 0)
+            await _module!.InvokeVoidAsync("updatePmxMeshes", (object)changedMeshes);
         WebPmxAsset? firstAsset = assets.FirstOrDefault();
         await UpdateRendererStateAsync(_loadedProject);
         await UpdateOverlayStateAsync(_loadedProject);
+        await _module!.InvokeVoidAsync("setCursorVisible", _cursorVisible);
 
         WebRuntimeSnapshot next = Snapshot with
         {
@@ -267,14 +307,25 @@ public sealed class WebRuntimeHost(
     [JSInvokable]
     public async Task OnGuiPointer(float x, float y, string phase, int button)
     {
-        if (_loadedProject is null
-            || button != 0
-            || !string.Equals(phase, "up", StringComparison.OrdinalIgnoreCase))
+        if (_loadedProject is null || button != 0)
         {
             return;
         }
 
         GuiControlSettings? control = ResolveGuiControl(x, y);
+        if (phase == "down")
+        {
+            _pressedGuiId = control?.Id;
+            if (control is not null) DispatchGuiEvent(control, "pressed", button);
+            await ProcessScriptCommandsAsync(); return;
+        }
+        if (_pressedGuiId is string pressedId)
+        {
+            var pressed = _loadedProject.SceneDefinition.GuiControls.FirstOrDefault(c => c.Id == pressedId);
+            if (pressed is not null) DispatchGuiEvent(pressed, "released", button);
+            _pressedGuiId = null;
+            if (control?.Id != pressedId || phase == "cancel") { await ProcessScriptCommandsAsync(); return; }
+        }
         if (control is null)
         {
             return;
@@ -307,12 +358,67 @@ public sealed class WebRuntimeHost(
         await UpdateOverlayStateAsync(_loadedProject);
     }
 
+    private void DispatchGuiEvent(GuiControlSettings control, string eventName, int button)
+    {
+        if (_loadedProject is null) return;
+        string? target = ResolveGuiTargetEntityId(control);
+        _loadedProject.Scripts.DispatchEvent(new("gui", EntityId:target??"",ControlId:control.Id,ControlName:control.Name,
+            EventName:eventName,PayloadJson:$"{{\"button\":{button}}}"),target);
+    }
+
+    [JSInvokable]
+    public async Task OnContextMenuRequest(float x,float y)
+    {
+        if (_loadedProject is null || _module is null) return;
+        var scene = _loadedProject.RuntimeScene; ContextMenuSettings? selected = null; string? entityId = null;
+        foreach (var menu in scene.Definition.ContextMenus.Where(m => m.Enabled).Reverse())
+        {
+            string type = menu.TargetType.Replace('-', '_').ToLowerInvariant();
+            if (type == "entity")
+            {
+                var ray = scene.MainCamera.ScreenPointToRay(x,y,Snapshot.CanvasWidth,Snapshot.CanvasHeight);
+                if (!scene.Physics.Raycast(ray,out var hit) || (menu.TargetId.Length>0 && hit.Entity.Id!=menu.TargetId && hit.Entity.Name!=menu.TargetId)
+                    || (menu.TargetCollider.Length>0 && hit.ColliderId!=menu.TargetCollider && hit.ColliderName!=menu.TargetCollider)) continue;
+                entityId=hit.Entity.Id;
+            }
+            else if (type is "gui_control" or "gui")
+            {
+                var control=ResolveGuiControl(x,y);if(control is null || (menu.TargetId.Length>0 && control.Id!=menu.TargetId && control.Name!=menu.TargetId))continue;
+                entityId=ResolveGuiTargetEntityId(control);
+            }
+            else if (type=="sprite")
+            {
+                var sprite=scene.Definition.Sprites.LastOrDefault(s=>(menu.TargetId.Length==0 || s.Id==menu.TargetId || s.Name==menu.TargetId)
+                    && SpriteLayoutResolver.ContainsPoint(s,x,y,Snapshot.CanvasWidth,Snapshot.CanvasHeight,_loadedProject.Project.Window.Width,_loadedProject.Project.Window.Height));
+                if(sprite is null)continue;entityId=scene.GetEntity(sprite.TargetEntity)?.Id;
+            }
+            selected=menu;break;
+        }
+        if(selected is null)return;
+        _contextMenuTarget=entityId??scene.SelectScriptTarget()?.Id;
+        float scale=LayoutResolver.IsRelative(selected.LayoutMode)?Math.Min(Snapshot.CanvasWidth/(float)_loadedProject.Project.Window.Width,Snapshot.CanvasHeight/(float)_loadedProject.Project.Window.Height):1;
+        float width=selected.Width*scale,itemHeight=selected.ItemHeight*scale,paddingY=selected.PaddingY*scale;
+        await _module.InvokeVoidAsync("showContextMenu",new{id=selected.Id,x=Math.Clamp(x,0,Math.Max(0,Snapshot.CanvasWidth-width)),
+            y=Math.Clamp(y,0,Math.Max(0,Snapshot.CanvasHeight-itemHeight*selected.Items.Count-paddingY*2)),width,itemHeight,paddingY,paddingX=selected.PaddingX*scale,
+            rounding=selected.Style.Rounding*scale,fontSize=selected.Style.FontSize*scale,background=ToCssColor(selected.Style.BackgroundColor),
+            border=ToCssColor(selected.Style.BorderColor),color=ToCssColor(selected.Style.TextColor),hover=ToCssColor(selected.Style.HoverColor),
+            items=selected.Items.Select(i=>new{id=i.Id,text=i.Text,enabled=i.Enabled}).ToArray()});
+    }
+
+    [JSInvokable]
+    public async Task OnContextMenuItem(string menuId,string itemId)
+    {
+        var menu=_loadedProject?.SceneDefinition.ContextMenus.FirstOrDefault(m=>m.Id==menuId && m.Enabled);
+        var item=menu?.Items.FirstOrDefault(i=>i.Id==itemId && i.Enabled);if(item is null)return;
+        _loadedProject!.Scripts.DispatchEvent(new("gui",EntityId:_contextMenuTarget??"",ControlId:menu!.Id,ControlName:menu.Name,
+            EventName:string.IsNullOrWhiteSpace(item.EventName)?"context_menu_clicked":item.EventName),_contextMenuTarget);
+        await ProcessScriptCommandsAsync();
+    }
+
     [JSInvokable]
     public async Task OnSpritePointer(float x, float y, string phase, int button)
     {
-        if (_loadedProject is null
-            || button != 0
-            || !string.Equals(phase, "up", StringComparison.OrdinalIgnoreCase))
+        if (_loadedProject is null || button != 0)
         {
             return;
         }
@@ -333,6 +439,11 @@ public sealed class WebRuntimeHost(
                 actualHeight,
                 referenceWidth,
                 referenceHeight));
+        var hit=sprite;
+        if(phase=="down")_pressedSpriteId=sprite?.Id;
+        else if(_pressedSpriteId is not null)sprite=_loadedProject.SceneDefinition.Sprites.FirstOrDefault(s=>s.Id==_pressedSpriteId);
+        bool clicked=phase=="up" && sprite is not null && hit?.Id==sprite.Id;
+        if(phase!="down")_pressedSpriteId=null;
         if (sprite is null || string.IsNullOrWhiteSpace(sprite.TargetEntity))
         {
             return;
@@ -347,9 +458,27 @@ public sealed class WebRuntimeHost(
                 EntityId: targetEntityId,
                 SpriteId: sprite.Id,
                 SpriteName: sprite.Name,
-                SpriteEventName: "clicked"),
+                SpriteEventName: phase == "down" ? "pressed" : "released"),
             targetEntityId);
+        if (clicked) _loadedProject.Scripts.DispatchEvent(new("sprite", EntityId: targetEntityId,
+            SpriteId: sprite.Id, SpriteName: sprite.Name, SpriteEventName: "clicked"), targetEntityId);
         await ProcessScriptCommandsAsync();
+    }
+
+    private void UpdateSpriteHover(Vector2 point)
+    {
+        if(_loadedProject is null)return;
+        var scene=_loadedProject.RuntimeScene;
+        var hovered=scene.Definition.Sprites.Where(s=>s.Visible && !string.IsNullOrWhiteSpace(s.TargetEntity))
+            .OrderByDescending(s=>s.DrawOrder).FirstOrDefault(s=>SpriteLayoutResolver.ContainsPoint(s,point.X,point.Y,
+                Snapshot.CanvasWidth,Snapshot.CanvasHeight,_loadedProject.Project.Window.Width,_loadedProject.Project.Window.Height));
+        if(hovered?.Id==_hoveredSpriteId)return;
+        foreach(var item in new[]{(_hoveredSpriteId,"exited"),(hovered?.Id,"entered")})
+        {
+            var sprite=scene.Definition.Sprites.FirstOrDefault(s=>s.Id==item.Item1);var entity=scene.GetEntity(sprite?.TargetEntity);
+            if(sprite is not null && entity is not null)_loadedProject.Scripts.DispatchEvent(new("sprite",EntityId:entity.Id,SpriteId:sprite.Id,SpriteName:sprite.Name,SpriteEventName:item.Item2),entity.Id);
+        }
+        _hoveredSpriteId=hovered?.Id;
     }
 
     [JSInvokable]
@@ -382,9 +511,9 @@ public sealed class WebRuntimeHost(
     public async Task SetInputCaptureAsync(bool captured) => await SetGuiInputCapture(captured);
 
     [JSInvokable]
-    public Task OnCanvasResized(int width, int height, double devicePixelRatio)
+    public async Task OnCanvasResized(int width, int height, double devicePixelRatio)
     {
-        if (_disposed) return Task.CompletedTask;
+        if (_disposed) return;
         SetSnapshot(Snapshot with
         {
             CanvasWidth = Math.Max(width, 0),
@@ -392,7 +521,12 @@ public sealed class WebRuntimeHost(
             DevicePixelRatio = Math.Max(devicePixelRatio, 1.0),
             Status = _started ? Snapshot.Status : "Canvas resized"
         });
-        return Task.CompletedTask;
+        if (_loadedProject is not null && Snapshot.RendererReady)
+        {
+            _loadedProject.RuntimeScene.SetScreenSize(width,height,_loadedProject.Project.Window.Width,_loadedProject.Project.Window.Height);
+            await UpdateRendererStateAsync(_loadedProject);
+            await UpdateOverlayStateAsync(_loadedProject);
+        }
     }
 
     [JSInvokable]
@@ -434,6 +568,16 @@ public sealed class WebRuntimeHost(
 
     private async Task ProcessScriptCommandsAsync()
     {
+        if (_loadedProject is not null)
+        {
+            while (_asrCommands.TryDequeue(out var item))
+                if (ReferenceEquals(item.Scene, _loadedProject.RuntimeScene) && _asrModule is not null)
+                    await _asrModule.InvokeVoidAsync("execute", item.Command, _dotNetReference);
+            await PersistSaveAsync(_loadedProject.RuntimeScene);
+            while (_realtimeCommands.TryDequeue(out var item))
+                if (ReferenceEquals(item.Scene, _loadedProject.RuntimeScene) && _realtimeModule is not null)
+                    await _realtimeModule.InvokeVoidAsync("execute", item.Command, _dotNetReference);
+        }
         if (_loadedProject is null)
         {
             return;
@@ -509,7 +653,8 @@ public sealed class WebRuntimeHost(
 
             try
             {
-                if (!string.IsNullOrWhiteSpace(callbackName) && _dotNetReference is not null)
+                if (request.Stop) { _lipSync.Stop();_speakingEntity=null;await _speechService.StopAsync(); _speechCompletions.Clear(); continue; }
+                if (_dotNetReference is not null)
                 {
                     await _speechService.SpeakWithCallbackAsync(
                         request.Text,
@@ -531,6 +676,38 @@ public sealed class WebRuntimeHost(
                 SetSnapshot(Snapshot with { LastError = $"Web speech command failed: {exception.GetBaseException().Message}" });
             }
         }
+        if (_loadedProject.RuntimeScene.ConsumeSceneRequest() is string scenePath && !_switchingScene)
+            await SwitchSceneAsync(scenePath);
+    }
+
+    private async Task SwitchSceneAsync(string path)
+    {
+        if (_module is null || _loadedProject is null) return;
+        _switchingScene = true;
+        try
+        {
+            await PersistSaveAsync(_loadedProject.RuntimeScene);
+            _speechCompletions.Clear(); _speechRequests.Clear();
+            _lipSync.Stop();_speakingEntity=null;
+            if (_asrModule is not null) await _asrModule.InvokeVoidAsync("stopAll");
+            var next = await _projectLoader.LoadAsync(scenePathOverride: path);
+            await _audioService.StopAllAsync();
+            await _speechService.StopAsync();
+            var meshes = next.PmxAssets.Values.Select(a => new WebPmxMeshInstance(a.Entity.Id, a.Mesh))
+                .Concat(next.SceneMeshes.Select(m => new WebPmxMeshInstance(m.Key, m.Value))).ToArray();
+            await _module.InvokeVoidAsync("loadPmxMeshes", (object)meshes);
+            foreach (var asset in _loadedProject.PmxAssets.Values) asset.Dispose();
+            _loadedProject.Scripts.Dispose();
+            _loadedProject.RuntimeScene.Dispose();
+            _loadedProject = next; _reportedScriptDiagnosticCount = 0;
+            _lastTimestampMilliseconds = double.NaN;
+            foreach (var audio in next.AudioAssets.Values.DistinctBy(a => a.Alias)) await _audioService.PrepareAsync(audio.Alias, audio.Uri);
+            await UpdateRendererStateAsync(next); await UpdateOverlayStateAsync(next);
+            SetSnapshot(Snapshot with { SceneName = next.RuntimeScene.Name, SceneEntityCount = next.RuntimeScene.Entities.Count(),
+                PmxEntityCount = next.PmxAssets.Count, LastError = null });
+        }
+        catch (Exception exception) { SetSnapshot(Snapshot with { LastError = $"Scene '{path}' failed to load: {exception.GetBaseException().Message}" }); }
+        finally { _switchingScene = false; }
     }
 
     private GuiControlSettings? ResolveGuiControl(float x, float y)
@@ -569,11 +746,7 @@ public sealed class WebRuntimeHost(
             return configured.Id;
         }
 
-        return _loadedProject.SceneDefinition.Entities
-            .Where(entity => entity.Scripts.Any(binding => binding.Enabled && IsCSharp(binding.Language, binding.Path)))
-            .OrderByDescending(entity => string.Equals(entity.Type, "pmx_model", StringComparison.OrdinalIgnoreCase))
-            .Select(entity => entity.Id)
-            .FirstOrDefault();
+        return _loadedProject.RuntimeScene.SelectScriptTarget()?.Id;
     }
 
     private async Task UpdateOverlayStateAsync(WebLoadedProject project)
@@ -620,11 +793,15 @@ public sealed class WebRuntimeHost(
                 background = ToCssColor(control.Style.BackgroundColor),
                 border = ToCssColor(control.Style.BorderColor),
                 color = ToCssColor(control.Style.TextColor),
-                fontSize
+                fontSize,
+                rounding = control.Style.Rounding,
+                alignment = control.Style.HorizontalAlignment,
+                verticalAlignment = control.Style.VerticalAlignment,
+                borderThickness = control.Style.BorderThickness
             };
         }).ToArray();
         object[] sprites = project.SceneDefinition.Sprites
-            .Where(sprite => project.SpriteUris.ContainsKey(sprite.Id))
+            .Where(sprite => sprite.Path.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) || project.TextureUris.ContainsKey(sprite.Path) || project.SpriteUris.ContainsKey(sprite.Id))
             .Select(sprite =>
             {
                 LayoutRect rect = SpriteLayoutResolver.Resolve(
@@ -636,7 +813,7 @@ public sealed class WebRuntimeHost(
                 return (object)new
                 {
                     id = sprite.Id,
-                    uri = project.SpriteUris[sprite.Id],
+                    uri = sprite.Path.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? sprite.Path : project.TextureUris.GetValueOrDefault(sprite.Path) ?? project.SpriteUris[sprite.Id],
                     x = rect.X,
                     y = rect.Y,
                     width = rect.Width,
@@ -644,6 +821,7 @@ public sealed class WebRuntimeHost(
                     rotation = sprite.RotationDegrees,
                     opacity = Math.Clamp(sprite.Opacity, 0.0f, 1.0f),
                     visible = sprite.Visible,
+                    interactive = !string.IsNullOrWhiteSpace(sprite.TargetEntity),
                     drawOrder = sprite.DrawOrder,
                     sourceX = sprite.SourceX,
                     sourceY = sprite.SourceY,
@@ -652,7 +830,43 @@ public sealed class WebRuntimeHost(
                 };
             })
             .ToArray();
-        await _module.InvokeVoidAsync("setOverlayState", new { controls, sprites, bubbles = Array.Empty<object>() });
+        object[] bubbles = project.RuntimeScene.Bubble.GetOrderedVisibleBubbles().Select(bubble =>
+        {
+            Vector2 anchor = bubble.ScreenPosition;
+            if (bubble.AnchorMode is "entity" or "world")
+            {
+                RuntimeEntity? entity = project.RuntimeScene.GetEntity(bubble.AnchorEntity);
+                Vector3 world = bubble.WorldPosition;
+                if (entity is not null)
+                {
+                    world = entity.Position;
+                    if (bubble.UseEntityTopAnchor && project.PmxAssets.TryGetValue(entity.Id, out var asset))
+                        world = Vector3.Transform(new Vector3(0, asset.Mesh.BoundsMax.Y, 0), entity.TransformMatrix);
+                }
+                world += bubble.WorldOffset;
+                var camera = project.RuntimeScene.MainCamera;
+                var clip = Vector4.Transform(new Vector4(world, 1), camera.CreateView() * camera.CreateProjection(actualWidth / actualHeight));
+                if (clip.W <= 0) return (object)new { visible = false };
+                anchor = new((clip.X / clip.W * .5f + .5f) * actualWidth, (.5f - clip.Y / clip.W * .5f) * actualHeight);
+            }
+            else if (bubble.LayoutMode == "relative") anchor *= new Vector2(actualWidth / referenceWidth, actualHeight / referenceHeight);
+            anchor += bubble.ScreenOffset;
+            float scale = bubble.LayoutMode == "relative" ? Math.Min(actualWidth / referenceWidth, actualHeight / referenceHeight) : 1;
+            return (object)new { x = anchor.X, y = anchor.Y, width = bubble.Width * scale,
+                pivot = new[] { bubble.Pivot.X, bubble.Pivot.Y }, text = bubble.Text, header = bubble.HeaderText, footer = bubble.FooterText,
+                fontSize = bubble.FontSize * scale, padding = new[] { bubble.PaddingX * scale, bubble.PaddingY * scale },
+                background = ToCssColor(Vector4Dto.FromVector4(bubble.BackgroundColor)), border = ToCssColor(Vector4Dto.FromVector4(bubble.BorderColor)),
+                color = ToCssColor(Vector4Dto.FromVector4(bubble.TextColor)), rounding = bubble.Rounding * scale, visible = true };
+        }).ToArray();
+        await _module.InvokeVoidAsync("setOverlayState", new { controls, sprites, bubbles });
+    }
+
+    [JSInvokable]
+    public Task OnGuiValueChanged(string id, string value)
+    {
+        var control = _loadedProject?.RuntimeScene.GetGuiControl(id);
+        if (control is not null) control.Value = value;
+        return Task.CompletedTask;
     }
 
     private static string NormalizeGuiType(string? type)
@@ -688,7 +902,7 @@ public sealed class WebRuntimeHost(
             _keys.Contains);
         _pendingInput = RuntimeCameraInput.None;
         _pointerDelta = Vector2.Zero;
-        return value;
+        return value with { CursorVisibility = visible => _cursorVisible = visible,CursorState=()=>_cursorVisible,DevicePixelRatio=(float)Snapshot.DevicePixelRatio };
     }
 
     private void ApplyKeyboardCameraMotion(float deltaSeconds)
@@ -724,7 +938,133 @@ public sealed class WebRuntimeHost(
             .ToArray();
         WebRenderFrame frame = WebRenderFrame.FromScene(project.RuntimeScene, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight,
             Snapshot.ElapsedSeconds, project.Project.Window.AntiAliasingSamples, project.Project.Shadows, project.RuntimeScene.Graphics.Capture());
+        frame = frame.WithSceneEffects(project, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight);
         await _module.InvokeVoidAsync("setFrameState", frame);
+    }
+
+    private async Task InitializeSceneServicesAsync(RuntimeScene scene, GameProject project)
+    {
+        scene.SetScreenSize(Snapshot.CanvasWidth,Snapshot.CanvasHeight,project.Window.Width,project.Window.Height);
+        string kana="",vowels="";
+        if(httpClient is not null && project.Voice.LipSync.Enabled)
+        {
+            string file=project.Voice.LipSync.DictionaryLanguage.Equals("Japanese",StringComparison.OrdinalIgnoreCase)?"kanadic.txt"
+                :project.Voice.LipSync.DictionaryLanguage.Equals("English",StringComparison.OrdinalIgnoreCase)?"en_kanadic.txt":"zh_kanadic.txt";
+            try { kana=await httpClient.GetStringAsync("engine/SpeechLipSyncDictionaries/"+file+"?v="+WebRuntimeModuleUrl.Version);vowels=await httpClient.GetStringAsync("engine/SpeechLipSyncDictionaries/voweldic.txt?v="+WebRuntimeModuleUrl.Version); }
+            catch(Exception exception){SetSnapshot(Snapshot with{LastError="Lip-sync dictionary load failed: "+exception.Message});}
+        }
+        _lipSync.Configure(project.Voice.LipSync,kana,vowels);
+        _saveKey = "game-save:" + project.Name;
+        try { scene.Save.Initialize(await _saveStore.LoadAsync<Dictionary<string, string>>(_saveKey)); }
+        catch (Exception exception) { SetSnapshot(Snapshot with { LastError = "Save load failed: " + exception.Message }); }
+        scene.Llm.Configure(project.Llm);
+        scene.Network.ConfigureStreamingRequest = request => request.SetBrowserResponseStreamingEnabled(true);
+        scene.Llm.ScriptEvent += (entity, value) => _serviceEvents.Enqueue((scene, new("llm", EntityId: entity.Id) { Llm = value }));
+        foreach (var asset in _projectLoader.Assets.Manifest.Assets.Where(a => a.Path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+            && (a.Path.StartsWith("skills/", StringComparison.OrdinalIgnoreCase) || a.Path.StartsWith("memory/", StringComparison.OrdinalIgnoreCase))))
+            scene.Llm.RegisterProjectText(asset.Path, System.Text.Encoding.UTF8.GetString(await _projectLoader.Assets.ReadAllBytesAsync(asset.Path)));
+        scene.Asr.Configure(project.Asr);
+        scene.RealtimeVoice.Configure(project.RealtimeVoice);
+        scene.RealtimeVoice.Command += command => _realtimeCommands.Enqueue((scene, command));
+        if (project.RealtimeVoice.Enabled)
+        {
+            _realtimeModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-realtime.js"));
+            await _realtimeModule.InvokeVoidAsync("configure", project.RealtimeVoice);
+        }
+        scene.Asr.Command += command => _asrCommands.Enqueue((scene, command));
+        if (project.Asr.Enabled)
+        {
+            _asrModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-asr.js"));
+            scene.Asr.MicrophoneInputAvailable = await _asrModule.InvokeAsync<bool>("isAvailable");
+            scene.Asr.MicrophoneUnavailableReason = scene.Asr.MicrophoneInputAvailable ? "" : "This browser does not provide speech recognition.";
+        }
+    }
+
+    private async Task PersistSaveAsync(RuntimeScene scene)
+    {
+        if (!scene.Save.HasChanges) return;
+        long revision = scene.Save.Revision;
+        try { await _saveStore.SaveAsync(_saveKey, scene.Save.Snapshot()); scene.Save.MarkPersisted(revision); }
+        catch (Exception exception) { SetSnapshot(Snapshot with { LastError = "Save write failed: " + exception.Message }); }
+    }
+
+    [JSInvokable]
+    public Task OnAsrEvent(string entityId, RuntimeAsrScriptEvent value)
+    {
+        if (_loadedProject is not null)
+        {
+            _loadedProject.RuntimeScene.Asr.Report(value);
+            _serviceEvents.Enqueue((_loadedProject.RuntimeScene, new("asr", EntityId: entityId) { Asr = value }));
+        }
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnRealtimeVoiceEvent(string entityId, RuntimeRealtimeVoiceScriptEvent value)
+    {
+        if (_loadedProject is not null && _loadedProject.RuntimeScene.GetEntity(entityId) is not null)
+            _serviceEvents.Enqueue((_loadedProject.RuntimeScene,new("realtime_voice",EntityId:entityId){RealtimeVoice=value}));
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnSpeechStarted(string entityId,string text,float rate)
+    {
+        if(_loadedProject?.PmxAssets.TryGetValue(entityId,out var asset)==true){_speakingEntity=entityId;_lipSync.Begin(asset,text,rate);}
+        return Task.CompletedTask;
+    }
+    [JSInvokable]
+    public Task OnSpeechBoundary(string entityId,int index,int length){if(entityId==_speakingEntity)_lipSync.Boundary(index,length);return Task.CompletedTask;}
+    [JSInvokable]
+    public Task OnSpeechFinished(string entityId){if(entityId==_speakingEntity){_lipSync.Stop();_speakingEntity=null;}return Task.CompletedTask;}
+    [JSInvokable]
+    public Task OnSpeechFailed(string entityId,string callbackName,string error)
+    {
+        OnSpeechFinished(entityId);_speechCompletions.Remove(callbackName);
+        _loadedProject?.Scripts.DispatchEvent(new("speech",EntityId:entityId,CallbackName:callbackName,EventName:"error",PayloadJson:System.Text.Json.JsonSerializer.Serialize(new{error})),entityId);
+        SetSnapshot(Snapshot with{LastError="Speech synthesis failed: "+error});return Task.CompletedTask;
+    }
+
+    private async Task SynchronizeSurfacesAsync(WebLoadedProject project)
+    {
+        if (_module is null || project.SceneMeshes is not Dictionary<string, WebPmxMesh> meshes) return;
+        if (project.PmxAssets is Dictionary<string, WebPmxAsset> models)
+        {
+            string[] removedModels = models.Keys.Where(id => project.RuntimeScene.GetEntity(id)?.IsPmxModel != true).ToArray();
+            foreach (string id in removedModels) { models[id].Dispose(); models.Remove(id); }
+            if (removedModels.Length > 0) await _module.InvokeVoidAsync("removeMeshes", (object)removedModels);
+            foreach (var entity in project.RuntimeScene.PmxModels.Where(e => !string.IsNullOrWhiteSpace(e.Definition.AssetPath)))
+            {
+                if (models.TryGetValue(entity.Id, out var existing) && existing.SourceAssetPath == entity.Definition.AssetPath) continue;
+                if(project.ModelRetryAfter.TryGetValue(entity.Id,out var retry) && DateTimeOffset.UtcNow<retry)continue;
+                try
+                {
+                    var asset = await _projectLoader.LoadRuntimeModelAsync(entity, project);
+                    existing?.Dispose(); models[entity.Id] = asset;
+                    project.ModelRetryAfter.Remove(entity.Id);
+                    await _module.InvokeVoidAsync("upsertMeshes", (object)new[] { new WebPmxMeshInstance(entity.Id, asset.Mesh) });
+                }
+                catch (Exception exception) { project.ModelRetryAfter[entity.Id]=DateTimeOffset.UtcNow.AddSeconds(5);SetSnapshot(Snapshot with { LastError = "Model load failed: " + exception.Message }); }
+            }
+        }
+        var entities = project.RuntimeScene.Entities.Where(e => e.IsTexturedPlane || e.IsWaterSurface).ToArray();
+        var active = entities.Select(e => e.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[] removed = meshes.Keys.Where(id => !active.Contains(id)).ToArray();
+        foreach (string id in removed) { meshes.Remove(id); project.SurfaceSignatures.Remove(id); }
+        if (removed.Length > 0) await _module.InvokeVoidAsync("removeMeshes", (object)removed);
+        List<WebPmxMeshInstance> changed = [];
+        foreach (var entity in entities)
+        {
+            var plane = entity.Definition.Plane; var water = entity.Definition.Water;
+            string signature = entity.IsWaterSurface ? $"{water.Size}:{water.GerstnerMeshResolution}"
+                : System.Text.Json.JsonSerializer.Serialize(new { plane.Width, plane.Height, plane.TexturePath, plane.Tint, plane.Opacity, plane.ReceiveShadow });
+            if (project.SurfaceSignatures.GetValueOrDefault(entity.Id) == signature) continue;
+            string? texture = plane.TexturePath.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? plane.TexturePath : project.TextureUris.GetValueOrDefault(plane.TexturePath);
+            WebPmxMesh mesh = entity.IsWaterSurface ? WebSceneSimulation.CreateWaterMesh(water)
+                : WebProjectLoader.CreateQuadMesh(Math.Max(.01f, plane.Width), Math.Max(.01f, plane.Height), plane.Tint, plane.Opacity, texture, plane.ReceiveShadow, true);
+            meshes[entity.Id] = mesh; project.SurfaceSignatures[entity.Id] = signature; changed.Add(new(entity.Id, mesh));
+        }
+        if (changed.Count > 0) await _module.InvokeVoidAsync("upsertMeshes", (object)changed.ToArray());
     }
 
     private async ValueTask SetErrorAsync(string status, Exception exception)
@@ -762,6 +1102,9 @@ public sealed class WebRuntimeHost(
         _disposed = true;
         await StopAsync();
         if (_ownsPhysicsService) await _physicsService.DisposeAsync();
+        await _saveStore.DisposeAsync();
+        if (_asrModule is not null) { await _asrModule.DisposeAsync(); _asrModule = null; }
+        if (_realtimeModule is not null) { await _realtimeModule.InvokeVoidAsync("dispose");await _realtimeModule.DisposeAsync();_realtimeModule=null; }
         _dotNetReference?.Dispose();
         _dotNetReference = null;
         if (_module is not null)

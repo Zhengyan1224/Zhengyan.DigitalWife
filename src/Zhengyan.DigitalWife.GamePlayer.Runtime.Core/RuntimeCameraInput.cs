@@ -1,4 +1,5 @@
 using System.Numerics;
+using Zhengyan.DigitalWife.Mmd.Game.Input;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
@@ -17,19 +18,32 @@ public readonly record struct RuntimeCameraInput(
     public static RuntimeCameraInput None => default;
 
     public float MouseX => PointerPosition.X;
+    public Action<bool>? CursorVisibility { get; init; }
+    public Func<bool>? CursorState { get; init; }
+    public bool CursorVisible { get => CursorState?.Invoke() ?? true; set => CursorVisibility?.Invoke(value); }
+    public bool IsCursorVisible => CursorVisible;
+    public void SetCursorVisible(bool visible) => CursorVisibility?.Invoke(visible);
     public float MouseY => PointerPosition.Y;
     public float MouseDeltaX => PointerDelta.X;
     public float MouseDeltaY => PointerDelta.Y;
     public float ScrollX => 0.0f;
     public float ScrollY => ZoomDelta;
-    public bool IsTouchAvailable => false;
-    public bool HasTouch => false;
-    public int TouchCount => 0;
-    public int ActiveTouchCount => 0;
-    public bool IsTouchDown => false;
-    public bool IsTouchStarted => false;
-    public bool IsTouchEnded => false;
-    public float TouchSlopPixels => 12.0f;
+    public IReadOnlyList<TouchPoint> Touches { get; init; } = [];
+    public IReadOnlyList<TouchPoint> TouchTransitions { get; init; } = [];
+    public bool IsTouchAvailable { get; init; }
+    public bool HasTouch => TouchCount > 0;
+    public int TouchCount => Touches?.Count ?? 0;
+    public int ActiveTouchCount => Touches?.Count(t => t.IsActive) ?? 0;
+    public bool IsTouchDown => ActiveTouchCount > 0;
+    public bool IsTouchStarted => TouchTransitions?.Any(t => t.Phase == TouchPhase.Started) == true;
+    public bool IsTouchEnded => TouchTransitions?.Any(t => t.IsEnded) == true;
+    public TouchPoint? PrimaryTouch => ActiveTouchCount>0 ? Touches.First(t=>t.IsActive) : null;
+    public bool TryGetTouch(int id, out TouchPoint touch) { touch = Touches?.FirstOrDefault(t => t.Id == id) ?? default; return Touches?.Any(t => t.Id == id) == true; }
+    public float DevicePixelRatio { get; init; } = 1;
+    public float TouchSlopPixels => 12.0f*Math.Max(1,DevicePixelRatio);
+    public bool IsAltDown => IsKeyDown("AltLeft") || IsKeyDown("AltRight");
+    public bool IsCtrlDown => IsKeyDown("ControlLeft") || IsKeyDown("ControlRight");
+    public bool IsShiftDown => IsKeyDown("ShiftLeft") || IsKeyDown("ShiftRight");
 
     public bool IsMouseButtonDown(string button)
     {
@@ -41,5 +55,5 @@ public readonly record struct RuntimeCameraInput(
                 : normalized is "middle" or "mousemiddle" or "button2" or "2" && MiddleButtonDown;
     }
 
-    public bool IsKeyDown(string key) => KeyState?.Invoke(key) == true;
+    public bool IsKeyDown(string key) => KeyState?.Invoke(key) == true || (key?.Length==1 && char.IsLetter(key[0]) && KeyState?.Invoke("Key"+key.ToUpperInvariant())==true);
 }

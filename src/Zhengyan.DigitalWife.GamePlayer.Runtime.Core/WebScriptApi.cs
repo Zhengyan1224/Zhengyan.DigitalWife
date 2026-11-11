@@ -5,6 +5,9 @@ public interface IWebGameScript
 {
     void Start(WebScriptContext context);
     void Update(WebScriptContext context, float deltaSeconds);
+    ValueTask StartAsync(WebScriptContext context) { Start(context); return ValueTask.CompletedTask; }
+    ValueTask UpdateAsync(WebScriptContext context, float deltaSeconds) { Update(context, deltaSeconds); return ValueTask.CompletedTask; }
+    ValueTask OnEventAsync(WebScriptContext context, WebScriptEvent gameEvent) { OnEvent(context, gameEvent); return ValueTask.CompletedTask; }
 
     void OnEvent(WebScriptContext context, WebScriptEvent gameEvent)
     {
@@ -106,6 +109,12 @@ public sealed record WebScriptEvent(
     public bool IsSpeechEvent => string.Equals(Name, "speech", StringComparison.OrdinalIgnoreCase);
 
     public bool IsSpriteEvent => string.Equals(Name, "sprite", StringComparison.OrdinalIgnoreCase);
+    public RuntimeAsrScriptEvent? Asr { get; init; }
+    public RuntimeLlmScriptEvent? Llm { get; init; }
+    public bool IsAsrEvent => Asr is not null;
+    public bool IsLlmEvent => Llm is not null;
+    public RuntimeRealtimeVoiceScriptEvent? RealtimeVoice { get; init; }
+    public bool IsRealtimeVoiceEvent => RealtimeVoice is not null;
 }
 
 public sealed record RuntimeSpeechRequest(
@@ -114,7 +123,8 @@ public sealed record RuntimeSpeechRequest(
     float Speed = 1.0f,
     float Volume = 1.0f,
     string CallbackName = "",
-    Action? Completion = null);
+    Action? Completion = null,
+    bool Stop = false);
 
 public sealed class WebScriptContext(RuntimeScene scene, RuntimeEntity? entity)
 {

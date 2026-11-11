@@ -22,6 +22,15 @@ public sealed record WebPmxMaterial(
 {
     [JsonIgnore] public Vector3 Specular { get; init; }
     public float SpecularPower { get; init; }
+    public float[] TextureMultiply { get; init; } = [1, 1, 1, 1];
+    public float[] TextureAdd { get; init; } = [0, 0, 0, 0];
+    public string? ToonTextureUri { get; init; }
+    public string? SphereTextureUri { get; init; }
+    public int SphereMode { get; init; }
+    public float[] ToonMultiply { get; init; } = [1, 1, 1, 1];
+    public float[] ToonAdd { get; init; } = [0, 0, 0, 0];
+    public float[] SphereMultiply { get; init; } = [1, 1, 1, 1];
+    public float[] SphereAdd { get; init; } = [0, 0, 0, 0];
 
     // JS interop does not serialize Numerics' public vector fields. Transfer
     // explicit arrays so material colors cannot silently become {}.
@@ -54,6 +63,10 @@ public sealed class WebPmxAsset : IDisposable
     private readonly int[] _morphVertices;
     private int _publishedMorphRevision = -1;
     private readonly IPmxPhysicsBridge? _physicsBridge;
+    private WebPmxAsset? _relationSource;
+    private long _relationRevision = -1;
+    private long _boundPoseRevision = -1;
+    public long PoseRevision { get; private set; }
 
     private WebPmxAsset(
         GameEntity entity,
@@ -66,6 +79,7 @@ public sealed class WebPmxAsset : IDisposable
         IPmxPhysicsBridge? physicsBridge)
     {
         _entity = entity;
+        SourceAssetPath = entity.AssetPath;
         _parsing = parsing;
         _pose = pose;
         Mesh = mesh;
@@ -81,6 +95,7 @@ public sealed class WebPmxAsset : IDisposable
     }
 
     public GameEntity Entity => _entity;
+    public string SourceAssetPath { get; }
     public PmxParsing Parsing => _parsing;
     public PmxPoseEvaluator Pose => _pose;
     public WebPmxMesh Mesh { get; }
@@ -88,6 +103,41 @@ public sealed class WebPmxAsset : IDisposable
     public string PhysicsBackend => _pose.PhysicsBackend == "disabled" ? "disabled" : _physicsBridge is WebPmxBulletPhysics ? "Bullet WASM" : _pose.PhysicsBackend;
     public IReadOnlyList<Vector3> PhysicsColliderPoints => _pose.PhysicsColliderPoints;
     public bool GpuSkinning => _gpuSkinning;
+    public void SetMorphWeight(string name, float weight)
+    {
+        foreach (var pose in _ownedPoses) pose.SetMorphWeight(name, weight);
+        _poseDirty = true;
+    }
+    public void ClearMorphWeight(string name) { foreach(var pose in _ownedPoses)pose.ClearMorphWeight(name);_poseDirty=true; }
+
+    public bool ApplyRelation(WebPmxAsset source)
+    {
+        if (_relationSource == source && _relationRevision == source.PoseRevision && _boundPoseRevision == PoseRevision) return false;
+        Pose.ApplyRelation(source.Pose);
+        if (_gpuSkinning) UpdateGpuPose();
+        else
+        {
+            Pose.WriteSkinnedVertices(_skinnedVertices);
+            Mesh.UpdateFromInterleaved(_skinnedVertices);
+        }
+        _relationSource = source; _relationRevision = source.PoseRevision;
+        PoseRevision++;
+        _boundPoseRevision = PoseRevision;
+        return true;
+    }
+
+    public void ClearRelation()
+    {
+        if (_relationSource is null) return;
+        _relationSource = null; _relationRevision = -1; _boundPoseRevision = -1; _poseDirty = true;
+    }
+
+    public Matrix4x4? GetBoneWorld(string name, Matrix4x4 world)
+    {
+        for (int i = 0; i < Pose.BoneNames.Count; i++)
+            if (Pose.BoneNames[i] == name) return Pose.GlobalPose[i] * world;
+        return null;
+    }
 
     public static WebPmxAsset Create(
         GameEntity entity,
@@ -136,6 +186,16 @@ public sealed class WebPmxAsset : IDisposable
         _preparedMotions.Add(path, prepared);
         _ownedPoses.Add(prepared);
         return true;
+    }
+
+    public void SetMotionLayers()
+    {
+        var layers = _entity.MotionLayers.Select(l => (Animation: _animationLoader(NormalizeMotionPath(l.Path)), l.Weight)).ToArray();
+        if (layers.Any(l => l.Animation is null)) return;
+        _pose = new(_parsing, layers.Select(l => (l.Animation!, l.Weight)).ToArray(), true, _entity.PhysicsGravity,
+            _entity.ResetPhysicsOnMotionLoop, _physicsBridge) { UsePartialIkUpdates = true, PhysicsSimulationEnabled = false };
+        _ownedPoses.Add(_pose); _poseDirty = true; _wasPlaying = false; _publishedMorphRevision = -1;
+        _skipPhysicsOnNextPlayFrame = true;
     }
 
     public bool ApplyMotion(string motionPath)
@@ -198,6 +258,8 @@ public sealed class WebPmxAsset : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ApplyPlaybackSettings(Pose, _entity);
+        for (int i = 0; i < Math.Min(Pose.MotionLayerCount, _entity.MotionLayers.Count); i++)
+            Pose.SetMotionLayerWeight(i, _entity.MotionLayers[i].Weight);
         bool playing = _entity.IsPlaying && Pose.MotionLayerCount > 0;
         if (playing && !_wasPlaying)
         {
@@ -226,6 +288,8 @@ public sealed class WebPmxAsset : IDisposable
         if (_gpuSkinning) UpdateGpuPose();
         else Mesh.UpdateFromInterleaved(_skinnedVertices);
         _poseDirty = false;
+        PoseRevision++;
+        _relationRevision = -1;
         _skipPhysicsOnNextPlayFrame = false;
         return true;
     }
@@ -478,7 +542,14 @@ public sealed class WebPmxMesh
                 string.IsNullOrWhiteSpace(material.Name) ? $"Material {i}" : material.Name)
             {
                 Specular = material.Specular,
-                SpecularPower = material.SpecularPower
+                SpecularPower = material.SpecularPower,
+                ToonTextureUri = material.ToonMode == PmxToonMode.Common && material.ToonTextureIndex is >= 0 and < 10
+                    ? $"./engine/MMD/toon{material.ToonTextureIndex + 1:00}.bmp"
+                    : material.ToonTextureIndex >= 0 && material.ToonTextureIndex < parsing.Textures.Length
+                        ? textureUriResolver?.Invoke(NormalizeTexturePath(directory, parsing.Textures[material.ToonTextureIndex].Name)) : null,
+                SphereTextureUri = material.SphereTextureIndex >= 0 && material.SphereTextureIndex < parsing.Textures.Length
+                    ? textureUriResolver?.Invoke(NormalizeTexturePath(directory, parsing.Textures[material.SphereTextureIndex].Name)) : null,
+                SphereMode = (int)material.SphereMode
             });
             start += count;
         }

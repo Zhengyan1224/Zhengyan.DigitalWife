@@ -5,10 +5,34 @@ using Zhengyan.DigitalWife.GameEditor;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
+if (args is ["--compile-web-script", string scriptPath, string assemblyPath])
+{
+    var compile = typeof(WebCSharpScriptPrecompiler).GetMethod("Compile", BindingFlags.NonPublic | BindingFlags.Static)!;
+    try
+    {
+        var bytes = (byte[])compile.Invoke(null, [Path.GetFullPath(scriptPath)])!;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(assemblyPath))!);
+        File.WriteAllBytes(assemblyPath, bytes);
+        Console.WriteLine($"Compiled Web script: {scriptPath}");
+        return 0;
+    }
+    catch (TargetInvocationException ex) { Console.Error.WriteLine(ex.InnerException?.Message); return 1; }
+}
+
 if (args is ["--export-project", string projectDirectory, string outputPath])
 {
     // Use a disposable project copy: export saves resources and precompiled scripts.
     ExportAndCheck(projectDirectory, outputPath);
+    return 0;
+}
+
+if (args is ["--refresh-web-export", string directory])
+{
+    var result = WebCSharpScriptPrecompiler.Precompile(directory, GameProjectStore.Load(directory));
+    foreach (string error in result.Errors) Console.Error.WriteLine(error);
+    if (result.Errors.Count > 0) return 1;
+    var manifest = WebGamePackageExporter.RefreshManifest(directory);
+    Console.WriteLine($"Refreshed {result.Entries.Count} Web script assemblies and {manifest.ScriptCount} scene bindings.");
     return 0;
 }
 

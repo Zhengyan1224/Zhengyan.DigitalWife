@@ -9,6 +9,8 @@ public sealed record WebLocalShadow(int PointLightIndex, int SpotLightIndex, int
 public sealed record WebPlanarReflection(string Id, float[] ViewProjection, float[] CameraPosition, float[] ClipPlane)
 {
     public int Samples { get; init; } = 1;
+    public float[]? SkyInverseViewProjection { get; init; }
+    public float[]? View { get; init; }
 }
 
 public sealed partial record WebRenderFrame
@@ -87,7 +89,7 @@ public sealed partial record WebRenderFrame
                 : !entity.IsTexturedPlane || !entity.Definition.Plane.MirrorReflectionEnabled
                   || entity.Definition.Plane.MirrorReflectionStrength <= .001f) continue;
             Matrix4x4 world = CreateRenderTransform(entity, camera);
-            Vector3 normal = water ? Vector3.UnitY
+            Vector3 normal = water ? Vector3.Cross(Vector3.TransformNormal(Vector3.UnitZ, world), Vector3.TransformNormal(Vector3.UnitX, world))
                 : Vector3.Cross(Vector3.TransformNormal(Vector3.UnitX, world), Vector3.TransformNormal(Vector3.UnitY, world));
             if (normal.LengthSquared() <= 1e-8f) continue;
             normal = Vector3.Normalize(normal);
@@ -96,11 +98,16 @@ public sealed partial record WebRenderFrame
             Vector3 position = ReflectPoint(camera.Position), target = ReflectPoint(camera.Target);
             Vector3 sourceUp = camera.Settings.VmdHasUp ? camera.Settings.VmdUp.ToVector3() : Vector3.UnitY;
             Vector3 up = sourceUp - 2 * Vector3.Dot(normal, sourceUp) * normal;
-            Matrix4x4 viewProjection = Matrix4x4.CreateLookAt(position, target, up) * ToGlProjection(camera.CreateProjection(aspect));
+            Matrix4x4 skyView = RuntimeCamera.CreateStableView(position, target, up);
+            Matrix4x4 viewProjection = skyView * CameraProjection(camera, aspect);
+            skyView.M41 = skyView.M42 = skyView.M43 = 0;
+            Matrix4x4.Invert(skyView * CameraProjection(camera, aspect), out var skyInverse);
             if (Vector3.Dot(normal, camera.Position) + distance < 0) { normal = -normal; distance = -distance; }
             reflections.Add(new(entity.Id, ToGlArray(viewProjection), ToVector(position), [normal.X, normal.Y, normal.Z, distance - .01f])
             {
                 Samples = water ? entity.Definition.Water.MirrorReflectionSamples : entity.Definition.Plane.MirrorReflectionSamples
+                , SkyInverseViewProjection = ToGlArray(skyInverse)
+                , View = ToGlArray(RuntimeCamera.CreateStableView(position, target, up))
             });
         }
         return reflections;

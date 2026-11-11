@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace Zhengyan.DigitalWife.GameProjects;
 
@@ -130,7 +131,8 @@ public static class WebGamePackageExporter
                 string assembly = $"compiled/web/{Path.ChangeExtension(source, ".dll")}";
                 string fullAssembly = Path.Combine(sourceRoot, assembly.Replace('/', Path.DirectorySeparatorChar));
                 if (!File.Exists(fullAssembly)) continue;
-                if (!scriptIds.Add(source)) continue;
+                string scriptId = $"{scenePath}:{entityId}:{source}";
+                if (!scriptIds.Add(scriptId)) continue;
                 byte[] bytes = File.ReadAllBytes(fullAssembly);
                 if (!assets.Any(asset => string.Equals(asset.Path, assembly, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -138,7 +140,8 @@ public static class WebGamePackageExporter
                 }
                 scripts.Add(new
                 {
-                    id = source,
+                    id = scriptId,
+                    scene = scenePath,
                     assembly,
                     type = string.Empty,
                     factory = string.Empty,
@@ -151,6 +154,29 @@ public static class WebGamePackageExporter
             }
         }
         return scripts;
+    }
+
+    /// <summary>Refreshes a development Web export after recompiling scripts, without copying or replacing game data.</summary>
+    public static WebGamePackageResult RefreshManifest(string outputDirectory)
+    {
+        string root = Path.GetFullPath(outputDirectory), manifestPath = Path.Combine(root, "web.manifest.json");
+        var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!.AsObject();
+        if (!string.IsNullOrEmpty(manifest["signature"]?.GetValue<string>()))
+            throw new InvalidOperationException("A signed Web export must be re-exported with its signing key.");
+        GameProject project = GameProjectStore.Load(root);
+        List<WebPackageAsset> assets = [];
+        foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            string path = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (path == "web.manifest.json" || IsIgnored(path)) continue;
+            using var stream = File.OpenRead(file);
+            assets.Add(new(path, GetKind(path), stream.Length, Convert.ToHexString(SHA256.HashData(stream))));
+        }
+        var scripts = BuildScriptManifest(project, root, assets);
+        manifest["assets"] = JsonSerializer.SerializeToNode(assets, JsonOptions);
+        manifest["scripts"] = JsonSerializer.SerializeToNode(scripts, JsonOptions);
+        File.WriteAllText(manifestPath, manifest.ToJsonString(JsonOptions));
+        return new(root, manifestPath, assets.Count, scripts.Count, assets.Sum(a => a.Size));
     }
 
     private static void CopyProjectFiles(string sourceRoot, string targetRoot, ISet<string> written, bool overwrite)
@@ -180,6 +206,8 @@ public static class WebGamePackageExporter
         foreach (GameEntity entity in scene.Entities)
         {
             entity.AssetPath = NormalizeOptional(entity.AssetPath, root);
+            entity.Plane.TexturePath = NormalizeOptional(entity.Plane.TexturePath, root);
+            entity.Particle.TexturePath = NormalizeOptional(entity.Particle.TexturePath, root);
             foreach (MotionLayerSettings layer in entity.MotionLayers) layer.Path = NormalizeOptional(layer.Path, root);
             entity.Scripts = entity.Scripts.Select(binding => NormalizeBinding(binding, root)).ToList();
         }
@@ -199,7 +227,7 @@ public static class WebGamePackageExporter
     private static string NormalizeOptional(string? path, string root)
     {
         if (string.IsNullOrWhiteSpace(path)) return string.Empty;
-        if (path.StartsWith("app:", StringComparison.OrdinalIgnoreCase)) return string.Empty;
+        if (path.StartsWith("app:", StringComparison.OrdinalIgnoreCase)) return path.Replace('\\', '/');
         return NormalizeRelative(path.StartsWith("project:", StringComparison.OrdinalIgnoreCase)
             ? path["project:".Length..]
             : Path.IsPathRooted(path) ? GameProjectPath.ToProjectRelative(root, path) : path);

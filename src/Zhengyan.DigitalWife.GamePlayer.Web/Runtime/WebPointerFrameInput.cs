@@ -8,4 +8,9 @@ public sealed record WebPointerFrameInput(
     float Zoom,
     float PointerX,
     float PointerY,
-    int Buttons);
+    int Buttons)
+{
+    public IReadOnlyList<Zhengyan.DigitalWife.Mmd.Game.Input.TouchPoint> Touches { get; init; } = [];
+    public IReadOnlyList<Zhengyan.DigitalWife.Mmd.Game.Input.TouchPoint> TouchTransitions { get; init; } = [];
+    public bool TouchAvailable { get; init; }
+}

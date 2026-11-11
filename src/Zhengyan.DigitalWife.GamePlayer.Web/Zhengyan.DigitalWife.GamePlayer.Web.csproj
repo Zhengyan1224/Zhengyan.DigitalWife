@@ -10,12 +10,21 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="../../assets/mmd/engine/Resources/Water/*" Link="wwwroot/engine/Water/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../assets/mmd/engine/Resources/Skybox/*" Link="wwwroot/engine/Skybox/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../assets/mmd/engine/Resources/Particles/*" Link="wwwroot/engine/Particles/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../assets/mmd/engine/Resources/MMD/toon*.bmp" Link="wwwroot/engine/MMD/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../assets/mmd/engine/Resources/SpeechLipSyncDictionaries/*" Link="wwwroot/engine/SpeechLipSyncDictionaries/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" PrivateAssets="all" />
     <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <TrimmerRootDescriptor Include="WebScriptTrimming.xml" />
     <!-- Game data uses reflection-based JSON, and exported Web scripts call
          the shared runtime API dynamically. Preserve these assembly contracts
          when trimming an AOT publication. -->
@@ -32,16 +41,21 @@
   <Target Name="VersionWebRuntimeAssets" BeforeTargets="CoreCompile">
     <ItemGroup>
       <_WebRuntimeJavaScript Include="wwwroot/js/*.js" />
+      <_WebRuntimeEngineAssets Include="../../assets/mmd/engine/Resources/Water/*;../../assets/mmd/engine/Resources/Skybox/*;../../assets/mmd/engine/Resources/Particles/*;../../assets/mmd/engine/Resources/MMD/toon*.bmp;../../assets/mmd/engine/Resources/SpeechLipSyncDictionaries/*" />
     </ItemGroup>
     <GetFileHash Files="@(_WebRuntimeJavaScript)" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="_WebRuntimeJavaScriptHashes" />
     </GetFileHash>
+    <GetFileHash Files="@(_WebRuntimeEngineAssets)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_WebRuntimeEngineHashes" />
+    </GetFileHash>
     <PropertyGroup>
       <_WebRuntimeAssetsHash>@(_WebRuntimeJavaScriptHashes->'%(FileHash)', '')</_WebRuntimeAssetsHash>
+      <_WebRuntimeEngineHash>@(_WebRuntimeEngineHashes->'%(FileHash)', '')</_WebRuntimeEngineHash>
     </PropertyGroup>
     <!-- A JS-only change must also change the module ID used by JS interop. -->
     <WriteLinesToFile File="$(IntermediateOutputPath)WebRuntimeAssets.g.cs"
-                      Lines="[assembly: System.Reflection.AssemblyMetadataAttribute(&quot;WebRuntimeAssets&quot;, &quot;$(_WebRuntimeAssetsHash)&quot;)]"
+                      Lines="[assembly: System.Reflection.AssemblyMetadataAttribute(&quot;WebRuntimeAssets&quot;, &quot;$(_WebRuntimeAssetsHash)&quot;)];[assembly: System.Reflection.AssemblyMetadataAttribute(&quot;WebEngineAssets&quot;, &quot;$(_WebRuntimeEngineHash)&quot;)]"
                       Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8" />
     <ItemGroup>
       <Compile Include="$(IntermediateOutputPath)WebRuntimeAssets.g.cs" />

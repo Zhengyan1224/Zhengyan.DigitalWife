@@ -139,6 +139,7 @@ public sealed class GameProjectRealtimeVoiceSettings
     public string BaseUrl { get; set; } = "http://127.0.0.1:5000";
 
     public string RealtimePath { get; set; } = "/v1/realtime";
+    public List<string> WebSocketProtocols { get; set; } = [];
 
     public string AudioSpeechPath { get; set; } = "/v1/audio/speech";
 

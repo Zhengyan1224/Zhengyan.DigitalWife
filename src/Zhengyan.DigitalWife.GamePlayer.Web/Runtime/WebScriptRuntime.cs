@@ -9,10 +9,15 @@ public sealed record WebLoadedScript(
     WebScriptEntry Manifest,
     Assembly Assembly,
     IWebGameScript? Module,
-    WebScriptContext Context);
-
-public sealed class WebScriptRuntime
+    WebScriptContext Context)
 {
+    public Task UpdateTask { get; set; } = Task.CompletedTask;
+    public Task EventTask { get; set; } = Task.CompletedTask;
+}
+
+public sealed class WebScriptRuntime : IDisposable
+{
+    private bool _disposed;
     private readonly List<WebLoadedScript> _scripts = [];
 
     public IReadOnlyList<WebLoadedScript> Scripts => _scripts;
@@ -49,6 +54,8 @@ public sealed class WebScriptRuntime
 
         foreach (WebScriptEntry entry in orderedEntries)
         {
+            if (!string.IsNullOrWhiteSpace(entry.Scene) && !string.Equals(entry.Scene, scene.ScenePath, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.IsNullOrWhiteSpace(entry.Entity) && scene.GetEntity(entry.Entity) is null) continue;
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
@@ -110,22 +117,29 @@ public sealed class WebScriptRuntime
         }
     }
 
+    public async Task StartAsync()
+    {
+        foreach (var script in _scripts)
+        {
+            if (script.Module is null) continue;
+            try { await script.Module.StartAsync(script.Context); }
+            catch (Exception exception) { _diagnostics.Add(new(script.Manifest.Id, "Start failed: " + exception.Message, true)); }
+        }
+    }
+
     public void Update(float deltaSeconds, double elapsedSeconds, RuntimeCameraInput input)
     {
+        if(_disposed)return;
         foreach (WebLoadedScript script in _scripts)
         {
             if (script.Module is null) continue;
+            if (!script.UpdateTask.IsCompleted || !script.EventTask.IsCompleted) continue;
             script.Context.UpdateFrame(elapsedSeconds, input);
-            try
+            script.UpdateTask = RunAsync();
+            async Task RunAsync()
             {
-                script.Module.Update(script.Context, deltaSeconds);
-            }
-            catch (Exception exception)
-            {
-                _diagnostics.Add(new WebScriptLoadDiagnostic(
-                    script.Manifest.Id,
-                    $"Update failed: {exception.Message}",
-                    IsError: true));
+                try { await script.Module.UpdateAsync(script.Context, deltaSeconds); }
+                catch (Exception exception) { _diagnostics.Add(new(script.Manifest.Id, "Update failed: " + exception.Message, true)); }
             }
         }
     }
@@ -143,6 +157,7 @@ public sealed class WebScriptRuntime
 
     public void DispatchEvent(WebScriptEvent gameEvent, string? targetEntityId = null)
     {
+        if(_disposed)return;
         ArgumentNullException.ThrowIfNull(gameEvent);
         foreach (WebLoadedScript script in _scripts)
         {
@@ -153,18 +168,21 @@ public sealed class WebScriptRuntime
                 continue;
             }
 
-            script.Context.SetEvent(gameEvent);
-            try { script.Module.OnEvent(script.Context, gameEvent); }
-            catch (Exception exception)
+            Task previous = script.EventTask;
+            script.EventTask = RunAsync();
+            async Task RunAsync()
             {
-                _diagnostics.Add(new WebScriptLoadDiagnostic(script.Manifest.Id, $"Event '{gameEvent.Name}' failed: {exception.Message}", true));
-            }
-            finally
-            {
-                script.Context.SetEvent(null);
+                await previous; await script.UpdateTask;
+                if(_disposed)return;
+                script.Context.SetEvent(gameEvent);
+                try { await script.Module.OnEventAsync(script.Context, gameEvent); }
+                catch (Exception exception) { _diagnostics.Add(new(script.Manifest.Id, $"Event '{gameEvent.Name}' failed: {exception.Message}", true)); }
+                finally { script.Context.SetEvent(null); }
             }
         }
     }
+
+    public void Dispose() { _disposed=true; }
 
     private static IEnumerable<WebScriptEntry> OrderEntries(IReadOnlyList<WebScriptEntry> entries)
     {

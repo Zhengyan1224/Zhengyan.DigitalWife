@@ -10,6 +10,32 @@ using Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd;
 
+if (args.Contains("--parity"))
+{
+    WebParityTests.Run();
+    return 0;
+}
+
+if (args.Contains("--script-bcl"))
+{
+    foreach(var type in new[]{typeof(DateTimeOffset),typeof(DateTime),typeof(TimeSpan),typeof(Guid),typeof(List<>),typeof(Dictionary<,>),typeof(Queue<>),typeof(HashSet<>),typeof(System.Text.StringBuilder),typeof(System.Linq.Enumerable)})
+        Console.WriteLine($"{type.FullName}: {type.Assembly.GetName().Name}");
+    return 0;
+}
+
+if (args.Contains("--encrypted-fixture"))
+{
+    string directory=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../../temp/web-debug/encrypted-fixture-project"));
+    Directory.CreateDirectory(Path.Combine(directory,"assets"));Directory.CreateDirectory(Path.Combine(directory,"scenes"));
+    File.WriteAllText(Path.Combine(directory,"game.project.json"),"{\"defaultScene\":\"scenes/main.scene.json\",\"scenes\":[\"scenes/main.scene.json\"]}");
+    File.WriteAllText(Path.Combine(directory,"scenes/main.scene.json"),"{\"name\":\"Encrypted fixture\"}");
+    File.WriteAllBytes(Path.Combine(directory,"assets/random.bin"),RandomNumberGenerator.GetBytes(2200000));
+    GameProjectPackage.Create(directory,new(){OutputPath=Path.Combine(directory,"../encrypted-fixture.dwgame"),Password="fixture-password"});
+    Console.WriteLine("Created native multi-chunk AES-GCM fixture.");return 0;
+}
+
+if (args.Contains("--services")) { await WebScriptServiceTests.RunAsync(); return 0; }
+
 if (args.Contains("--assets"))
 {
     await WebAssetCacheTests.RunAsync();
@@ -27,6 +53,7 @@ if (args.Contains("--surfaces"))
 }
 
 VerifyVertexUpdates();
+await WebScriptServiceTests.RunAsync();
 await WebAssetCacheTests.RunAsync();
 VerifyModuleBuildVersion();
 VerifyMaterialInterop();
@@ -166,10 +193,10 @@ static void VerifyMaterialInterop()
 
 static void VerifyIdlePhysicsAndPlayback()
 {
-    string data = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game"));
-    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data, "assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_kihon_natsu_e511.pmx"))
+    string data = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../assets/mmd/samples/GameData"));
+    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data, "Character/Body/标准身体.pmx"))
         ?? throw new InvalidDataException("Character fixture failed to parse.");
-    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data, "assets/motions/Lamb.vmd"))
+    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data, "Motion/Dance/Lamb/Lamb.vmd"))
         ?? throw new InvalidDataException("Motion fixture failed to parse.");
     WebPmxMesh materialMesh = WebPmxMesh.FromParsing(pmx);
     Check(materialMesh.Materials.Select(material => material.EnableShadow).SequenceEqual(
@@ -238,26 +265,26 @@ static void VerifyShadowCoverage()
 
 static void VerifyDanceScript()
 {
-    string data = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game"));
-    Assembly assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(data, "compiled/web/scripts/Nene_r2328_kihon_natsu_e511.dll")));
+    string data = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/web-player/wwwroot/web-game"));
+    Assembly assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(data, "compiled/web/scripts/MaidOutfit.dll")));
     Type type = assembly.GetTypes().First(t => typeof(Zhengyan.DigitalWife.GamePlayer.Runtime.IWebGameScript).IsAssignableFrom(t));
     var module = (Zhengyan.DigitalWife.GamePlayer.Runtime.IWebGameScript)Activator.CreateInstance(type)!;
-    int motions = 0;
+    int speech = 0;
     GameProjectScene definition = new() { Entities = [new GameEntity { Id = "actor", Type = "pmx_model" }] };
     using var scene = new Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeScene("test", definition, p => p,
-        motionCommand: (_, command) => { if (command.Operation == "apply") motions++; });
+        speechRequest: (_, request) => { if (!string.IsNullOrEmpty(request.Text) && request.Completion is not null) speech++; });
     var context = new Zhengyan.DigitalWife.GamePlayer.Runtime.WebScriptContext(scene, scene.GetEntity("actor"));
     module.OnEvent(context, new("gui", ControlName: "button_dance", EventName: "clicked"));
-    Check(motions == 1 && context.DrainAudioCommands().Count == 1, "The actual dance script did not emit one motion and audio command.");
-    Console.WriteLine("PASS actual exported dance script event starts motion and audio");
+    Check(speech == 1, "The actual exported GUI script did not emit a speech request and callback.");
+    Console.WriteLine("PASS actual exported GUI script speech event and callback");
 }
 
 static void VerifyGpuPlayback()
 {
     string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../.."));
-    string data = Path.Combine(root,"src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game");
-    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data,"assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_kihon_natsu_e511.pmx"))!;
-    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data,"assets/motions/Lamb.vmd"))!;
+    string data = Path.Combine(root,"assets/mmd/samples/GameData");
+    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data,"Character/Body/标准身体.pmx"))!;
+    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data,"Motion/Dance/Lamb/Lamb.vmd"))!;
     GameEntity definition = new() { IsPlaying = true, EnablePhysics = true };
     using WebPmxAsset gpu = WebPmxAsset.Create(definition,pmx,[(motion,1)],preferGpuSkinning:true);
     using PmxPoseEvaluator full = new(pmx,[(motion,1)],true,definition.PhysicsGravity,definition.ResetPhysicsOnMotionLoop);
@@ -302,9 +329,9 @@ static void VerifyGpuPlayback()
 static async Task VerifyBulletBridgeAsync()
 {
     string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../.."));
-    string data = Path.Combine(root,"src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/web-game");
-    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data,"assets/models/Nene_r2328_kihon_natsu_e511/Nene_r2328_kihon_natsu_e511.pmx"))!;
-    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data,"assets/motions/Lamb.vmd"))!;
+    string data = Path.Combine(root,"assets/mmd/samples/GameData");
+    PmxParsing pmx = PmxParsing.ParsingByFile(Path.Combine(data,"Character/Body/标准身体.pmx"))!;
+    VmdParsing motion = VmdParsing.ParsingByFile(Path.Combine(data,"Motion/Dance/Lamb/Lamb.vmd"))!;
     RecordingBulletModule module = new();
     WebPmxBulletPhysics physics = await WebPmxBulletPhysics.CreateAsync(module,pmx,new(0,-98,0));
     GameEntity entity = new() { IsPlaying=true,EnablePhysics=true };
@@ -382,7 +409,17 @@ static async Task VerifyFrameInputAndStartupAsync(bool includeModels = false)
     await host.OnAnimationFrameWithInput(1032, null);
     Check(moved.Zip(browser.LastFrame!.ViewProjection).All(pair => MathF.Abs(pair.First - pair.Second) < 1e-5f), "A gesture was consumed more than once.");
     Check(host.Snapshot.FrameCount == 3, "The frame counter did not advance.");
+    await host.OnCanvasResized(874, 491, 1);
+    Check(browser.LastFrame!.Cameras[0].Viewport.SequenceEqual(new[] {0,0,874,491}), "Resizing left the browser with an old camera viewport.");
     Console.WriteLine("PASS frame-batched camera input is applied once");
+    if(includeModels)
+    {
+        var loaded=(WebLoadedProject)typeof(WebRuntimeHost).GetField("_loadedProject",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(host)!;
+        foreach(var asset in loaded.PmxAssets.Values)asset.ResetPhysics();
+        await host.OnAnimationFrameWithInput(1048,null);
+        Check(browser.MeshUpdateArgumentCount==1 && browser.UpdatedMeshes?.Length==2,"Animated body/clothes updates were expanded into separate JavaScript arguments.");
+        Console.WriteLine("PASS all changed body/clothes poses cross JavaScript as one update array");
+    }
 
     await host.OnBrowserWarning("Unsupported optional texture");
     Check(host.Snapshot.IsRunning && host.Snapshot.RendererReady, "A texture warning disabled the renderer.");
@@ -402,6 +439,8 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     public WebRenderFrame? LastFrame { get; private set; }
     public int MeshUploadArgumentCount { get; private set; }
     public WebPmxMeshInstance[]? UploadedMeshes { get; private set; }
+    public int MeshUpdateArgumentCount { get; private set; }
+    public WebPmxMeshUpdateInstance[]? UpdatedMeshes { get; private set; }
 
     public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
         => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
@@ -425,6 +464,7 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
             MeshUploadArgumentCount = args!.Length;
             UploadedMeshes = args.Length == 1 ? args[0] as WebPmxMeshInstance[] : null;
         }
+        if(identifier=="updatePmxMeshes"){MeshUpdateArgumentCount=args!.Length;UpdatedMeshes=args.Length==1?args[0] as WebPmxMeshUpdateInstance[]:null;}
         object? result = identifier switch
         {
             "import" => this,

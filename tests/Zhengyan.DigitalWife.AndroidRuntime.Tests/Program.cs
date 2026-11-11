@@ -8,6 +8,8 @@ if (args is ["--scene-script-project", string sceneScriptProject])
     return 0;
 }
 
+if(args is ["--camera-project",string cameraProject]){AndroidCameraSpriteRegression.RunProject(cameraProject);return 0;}
+
 if (args is ["--navigation-project", string navigationProject])
 {
     AndroidNavigationTests.RunProject(navigationProject);

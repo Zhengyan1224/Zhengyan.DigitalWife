@@ -213,16 +213,16 @@ test('mirror passes exclude mirror surfaces, draw both sides and release resized
     assert.equal(state.draws.length,3);
     assert.equal(state.draws[0].clipEnabled,1);
     assert.equal(state.draws[0].texturedPlane,0);
-    assert.equal(state.draws[1].texturedPlane,1);
-    assert.equal(state.draws[1].reflectionStrength,.75);
-    assert.equal(state.draws[1].cullEnabled,false);
+    assert.equal(state.draws[2].texturedPlane,1);
+    assert.equal(state.draws[2].reflectionStrength,.75);
+    assert.equal(state.draws[2].cullEnabled,false);
     const target = state.uploads.find(u=>u.width===320).texture;
     renderer.resize(640,480); renderer.render();
     assert.ok(state.deletedTextures.includes(target));
     const resized = state.uploads.find(u=>u.width===640).texture;
     renderer.setFrameState({reflections:[]}); renderer.render();
     assert.ok(state.deletedTextures.includes(resized));
-    assert.equal(state.draws.at(-2).reflectionStrength,0);
+    assert.equal(state.draws.at(-1).reflectionStrength,0);
     renderer.dispose();
     assert.equal(new Set(state.deletedTextures).size,state.deletedTextures.length);
 });
@@ -317,6 +317,22 @@ function mockBitmap(t, implementation) {
         else delete globalThis.createImageBitmap;
     });
 }
+
+test('PNG water normals bearing DDS file names decode by their header', async t => {
+    const water=await readFile(new URL('../assets/mmd/engine/Resources/Water/Ocean0_N.dds',import.meta.url));
+    t.mock.method(globalThis,'fetch',async()=>new Response(water));
+    mockBitmap(t,async(blob)=>{assert.deepEqual([...new Uint8Array(await blob.slice(0,4).arrayBuffer())],[137,80,78,71]);return {width:256,height:256,close(){}};});
+    const {canvas,state}=createFakeGl(),renderer=createWebGl2Renderer(canvas,message=>assert.fail(message));
+    await renderer.uploadMesh(triangle(['Ocean0_N.dds']));renderer.render();assert.equal(state.draws.at(-1).hasTexture,1);renderer.dispose();
+});
+
+test('dynamic surfaces can replace or remove a mesh without deleting other scene models', async()=>{
+    const {canvas,state}=createFakeGl(),renderer=createWebGl2Renderer(canvas,message=>assert.fail(message));
+    await renderer.uploadMeshes([{id:'actor',mesh:triangle([null])}]);
+    await renderer.upsertMeshes([{id:'surface',mesh:triangle([null])}]);
+    renderer.setFrameState({meshes:[{id:'actor'},{id:'surface'}]});renderer.render();assert.equal(state.draws.length,2);
+    renderer.removeMeshes(['surface']);state.draws.length=0;renderer.render();assert.equal(state.draws.length,1);assert.equal(renderer.getDiagnostics().meshCount,1);renderer.dispose();
+});
 
 test('concurrent texture decoding cannot change the upload binding or lose material textures', async t => {
     const first = deferred();

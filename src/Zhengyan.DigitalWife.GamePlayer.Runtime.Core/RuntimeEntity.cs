@@ -10,6 +10,16 @@ public sealed class RuntimeEntity
     private readonly Func<string, Matrix4x4?>? _nodeWorldResolver;
     private readonly Action<string, RuntimeMotionCommand>? _motionCommand;
     private readonly Action<string, RuntimeSpeechRequest>? _speechRequest;
+    public Action<string, float>? MorphWeightSetter { get; set; }
+    public Func<string, float>? MorphWeightGetter { get; set; }
+    public void SetMorphWeight(string name, float weight) => MorphWeightSetter?.Invoke(name, weight);
+    public float GetMorphWeight(string name) => MorphWeightGetter?.Invoke(name) ?? 0;
+    public void BindRelation(string targetEntityIdOrName, bool bindComponentTransform = true, bool bindLighting = false)
+    {
+        Definition.Relation.Enabled = true; Definition.Relation.RelationEntity = targetEntityIdOrName;
+        Definition.Relation.BindComponentTransform = bindComponentTransform; Definition.Relation.BindLighting = bindLighting;
+    }
+    public void ClearRelationBinding() { Definition.Relation.Enabled = false; Definition.Relation.RelationEntity = ""; }
 
     public RuntimeEntity(GameEntity definition, Func<string, bool>? resetPmxPhysics = null, Func<ColliderSettings, RuntimeMeshCollider?>? meshColliderResolver = null, Func<string, Matrix4x4?>? nodeWorldResolver = null)
         : this(definition, resetPmxPhysics, meshColliderResolver, nodeWorldResolver, null, null)
@@ -33,6 +43,31 @@ public sealed class RuntimeEntity
     }
 
     public GameEntity Definition { get; }
+    public IReadOnlyList<MotionLayerSettings> MotionLayers => Definition.MotionLayers;
+    public void SetMotionLayers(IEnumerable<MotionLayerDefinition> layers)
+    {
+        Definition.MotionLayers = layers.Select(l => new MotionLayerSettings { Path = l.MotionPath, Weight = l.Weight,
+            ResetPhysicsOnLoop = l.ResetPhysicsOnLoop ?? Definition.ResetPhysicsOnMotionLoop }).ToList();
+        _motionCommand?.Invoke(Id, new RuntimeMotionCommand("layers"));
+    }
+    public void SetMotionLayerWeight(int index, float weight)
+    {
+        if ((uint)index < (uint)Definition.MotionLayers.Count) Definition.MotionLayers[index].Weight = Math.Clamp(weight, 0, 1);
+    }
+    public void SetMotionLayerWeight(string motionPath, float weight)
+    {
+        int index = Definition.MotionLayers.FindIndex(layer => layer.Path.Equals(motionPath, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0) SetMotionLayerWeight(index, weight);
+    }
+    public void SetMotionLayerResetPhysicsOnLoop(int index, bool reset)
+    {
+        if ((uint)index < (uint)Definition.MotionLayers.Count) Definition.MotionLayers[index].ResetPhysicsOnLoop = reset;
+    }
+    public void SetMotionLayerResetPhysicsOnLoop(string motionPath, bool reset)
+    {
+        int index = Definition.MotionLayers.FindIndex(layer => layer.Path.Equals(motionPath, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0) SetMotionLayerResetPhysicsOnLoop(index, reset);
+    }
 
     public string Id => Definition.Id;
 
@@ -286,6 +321,8 @@ public sealed class RuntimeEntity
 
     public void StopMotion()
         => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("stop"));
+
+    public void StopSpeaking() => _speechRequest?.Invoke(Id, new RuntimeSpeechRequest("", Stop: true));
 
     public void Speak(string text)
         => Speak(text, 0, 1.0f, 1.0f, null);

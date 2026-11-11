@@ -41,8 +41,10 @@ public sealed class RuntimeScene : IDisposable
         _motionCommand = motionCommand;
         _speechRequest = speechRequest;
         Physics = new RuntimeScenePhysics(() => Entities);
+        foreach (var camera in Cameras) { camera.Physics = Physics; camera.SceneOwner = this; }
         Navigation = new RuntimeSceneNavigation(() => Entities);
         Debug = new RuntimeDebug();
+        Llm = new(Save, Network);
         PointLights = new RuntimeLightCollection(this, spot: false);
         SpotLights = new RuntimeLightCollection(this, spot: true);
         foreach (GameEntity entity in definition.Entities) Register(CreateEntity(entity));
@@ -53,6 +55,12 @@ public sealed class RuntimeScene : IDisposable
 
     public string ScenePath { get; }
     public string Name => Definition.Name;
+    public double Fps { get; private set; }
+    public double ElapsedSeconds { get; private set; }
+    public string? PendingScenePath { get; private set; }
+    public void LoadScene(string path) => PendingScenePath = path;
+    public string? ConsumeSceneRequest() { var path = PendingScenePath; PendingScenePath = null; return path; }
+    public void ReportFrameInterval(double seconds) { if (seconds > 0) Fps = 1 / seconds; }
     public GameProjectScene Definition { get; }
     public IReadOnlyList<RuntimeCamera> Cameras { get; }
     public RuntimeLighting Lighting { get; }
@@ -68,12 +76,28 @@ public sealed class RuntimeScene : IDisposable
     public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics { get; }
     public RuntimeSceneNavigation Navigation { get; }
     public RuntimeDebug Debug { get; }
+    public RuntimeDialogueBubbleManager Bubble { get; } = new();
+    public RuntimeSaveStore Save { get; } = new();
+    public RuntimeNetwork Network { get; } = new();
+    public RuntimeAsr Asr { get; } = new();
+    public RuntimeLlm Llm { get; }
+    public RuntimeRealtimeVoice RealtimeVoice { get; } = new();
 
     public RuntimeCamera MainCamera => Cameras.FirstOrDefault(camera => camera.Enabled && camera.IsMain)
         ?? Cameras.FirstOrDefault(camera => camera.Enabled)
         ?? Cameras[0];
 
     public RuntimeCamera Camera => MainCamera;
+    public RuntimeEntity? SelectScriptTarget()
+    {
+        var scripted=Entities.Where(e=>e.Definition.Scripts.Any(s=>s.Enabled)).ToArray();
+        var relationTargets=PmxModels.Where(e=>e.Definition.Relation.Enabled)
+            .Select(e=>GetEntity(e.Definition.Relation.RelationEntity)?.Id).Where(id=>id is not null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return scripted.Where(e=>e.IsPmxModel).OrderByDescending(e=>relationTargets.Contains(e.Id))
+            .ThenBy(e=>e.Definition.Relation.Enabled).ThenBy(e=>e.Name,StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? scripted.FirstOrDefault();
+    }
+    private float _screenWidth=1280,_screenHeight=720,_referenceWidth=1280,_referenceHeight=720;
+    public void SetScreenSize(int width,int height,int referenceWidth,int referenceHeight){_screenWidth=Math.Max(1,width);_screenHeight=Math.Max(1,height);_referenceWidth=Math.Max(1,referenceWidth);_referenceHeight=Math.Max(1,referenceHeight);}
 
     public IEnumerable<RuntimeGuiControl> GuiControls
         => Definition.GuiControls.Select(control => new RuntimeGuiControl(control));
@@ -101,10 +125,7 @@ public sealed class RuntimeScene : IDisposable
 
     public bool IsScreenPointOverGui(float x, float y)
     {
-        const float actualWidth = 1280.0f;
-        const float actualHeight = 720.0f;
-        const float referenceWidth = 1280.0f;
-        const float referenceHeight = 720.0f;
+        float actualWidth = _screenWidth, actualHeight = _screenHeight, referenceWidth = _referenceWidth, referenceHeight = _referenceHeight;
         return Definition.GuiControls.Any(control =>
         {
             if (!control.Visible) return false;
@@ -225,6 +246,7 @@ public sealed class RuntimeScene : IDisposable
     {
         ThrowIfDisposed();
         _animations.Update(Definition, Math.Max(deltaSeconds, 0.0f));
+        ElapsedSeconds += Math.Max(deltaSeconds, 0);
         Debug.Update(Math.Max(deltaSeconds, 0.0f));
         RuntimeCamera mainCamera = MainCamera;
         foreach (RuntimeCamera camera in Cameras.Where(camera => camera.Enabled))
@@ -247,6 +269,8 @@ public sealed class RuntimeScene : IDisposable
         _entitiesById.Clear();
         _entitiesByName.Clear();
         Debug.Clear();
+        Asr.Dispose(); Llm.Dispose(); RealtimeVoice.Dispose(); Network.Dispose();
+        Bubble.Clear();
     }
 
     private void Register(RuntimeEntity entity)

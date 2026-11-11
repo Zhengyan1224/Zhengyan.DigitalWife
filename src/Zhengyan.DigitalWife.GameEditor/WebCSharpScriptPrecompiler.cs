@@ -99,17 +99,21 @@ internal static class WebCSharpScriptPrecompiler
         string body = File.ReadAllText(path);
         if (string.Equals(body.Trim(), "return null;", StringComparison.Ordinal)) body = string.Empty;
         (string usings, string members, string statements) = SplitScriptBody(body, path);
+        statements = NormalizeLocalOverloads(statements);
         string source = $$"""
             using System;
             using System.Collections.Generic;
             using System.Linq;
             using System.Numerics;
             using System.Text;
+            using System.Text.RegularExpressions;
             using System.Threading;
             using System.Threading.Tasks;
             using Zhengyan.DigitalWife.GameProjects;
             using Zhengyan.DigitalWife.GamePlayer.Runtime;
+            using RuntimeDialogueBubble = Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeDialogueBubble;
             using Zhengyan.DigitalWife.Mmd;
+            using Zhengyan.DigitalWife.Mmd.Game.Input;
             {{usings}}
 
             namespace Zhengyan.GeneratedWebScripts;
@@ -117,10 +121,13 @@ internal static class WebCSharpScriptPrecompiler
             public sealed class Script : IWebGameScript
             {
                 {{members}}
-                public void Start(WebScriptContext context) => Execute(context, 0.0f, true, false, null);
-                public void Update(WebScriptContext context, float deltaSeconds) => Execute(context, deltaSeconds, false, true, null);
-                public void OnEvent(WebScriptContext context, WebScriptEvent GameEvent) => Execute(context, 0.0f, false, false, GameEvent);
-                private void Execute(WebScriptContext context, float DeltaSeconds, bool IsStart, bool IsUpdate, WebScriptEvent? GameEvent)
+                public void Start(WebScriptContext context) => _ = ExecuteAsync(context, 0.0f, true, false, null);
+                public void Update(WebScriptContext context, float deltaSeconds) => _ = ExecuteAsync(context, deltaSeconds, false, true, null);
+                public void OnEvent(WebScriptContext context, WebScriptEvent GameEvent) => _ = ExecuteAsync(context, 0.0f, false, false, GameEvent);
+                public ValueTask StartAsync(WebScriptContext context) => new(ExecuteAsync(context, 0.0f, true, false, null));
+                public ValueTask UpdateAsync(WebScriptContext context, float deltaSeconds) => new(ExecuteAsync(context, deltaSeconds, false, true, null));
+                public ValueTask OnEventAsync(WebScriptContext context, WebScriptEvent GameEvent) => new(ExecuteAsync(context, 0.0f, false, false, GameEvent));
+                private async Task ExecuteAsync(WebScriptContext context, float DeltaSeconds, bool IsStart, bool IsUpdate, WebScriptEvent? GameEvent)
                 {
                     RuntimeScene Scene = context.Scene;
                     var Graphics = context.Graphics;
@@ -137,6 +144,38 @@ internal static class WebCSharpScriptPrecompiler
                     string SpriteId = GameEvent?.SpriteId ?? string.Empty;
                     string SpriteName = GameEvent?.SpriteName ?? string.Empty;
                     string SpriteEventName = GameEvent?.SpriteEventName ?? string.Empty;
+                    bool IsAsrEvent = GameEvent?.IsAsrEvent == true;
+                    var AsrEvent = GameEvent?.Asr;
+                    string AsrCallbackName = AsrEvent?.CallbackName ?? "";
+                    string AsrRequestId = AsrEvent?.RequestId ?? "";
+                    string AsrEventName = AsrEvent?.EventName ?? "";
+                    string AsrText = AsrEvent?.Text ?? "";
+                    string AsrError = AsrEvent?.Error ?? "";
+                    string AsrWakeWord = AsrEvent?.WakeWord ?? "";
+                    bool AsrIsFinal = AsrEvent?.IsFinal ?? false;
+                    bool IsLlmEvent = GameEvent?.IsLlmEvent == true;
+                    var LlmEvent = GameEvent?.Llm;
+                    string LlmCallbackName = LlmEvent?.CallbackName ?? "";
+                    string LlmRequestId = LlmEvent?.RequestId ?? "";
+                    string LlmEventName = LlmEvent?.EventName ?? "";
+                    string LlmText = LlmEvent?.AccumulatedText ?? "";
+                    string LlmDelta = LlmEvent?.Delta ?? "";
+                    string LlmError = LlmEvent?.Error ?? "";
+                    string LlmToolName = LlmEvent?.ToolCall?.Name ?? "";
+                    string LlmToolArgumentsJson = LlmEvent?.ToolCall?.ArgumentsJson ?? "";
+                    string LlmToolResult = LlmEvent?.ToolResult ?? "";
+                    bool LlmIsFinal = LlmEvent?.IsFinal ?? false;
+                    bool IsRealtimeVoiceEvent = GameEvent?.IsRealtimeVoiceEvent == true;
+                    var RealtimeVoiceEvent = GameEvent?.RealtimeVoice;
+                    string RealtimeVoiceRequestId = RealtimeVoiceEvent?.RequestId ?? "";
+                    string RealtimeVoiceEventName = RealtimeVoiceEvent?.EventName ?? "";
+                    string RealtimeVoiceCallbackName = RealtimeVoiceEvent?.CallbackName ?? "";
+                    string RealtimeVoiceText = RealtimeVoiceEvent?.Text ?? "";
+                    string RealtimeVoiceDelta = RealtimeVoiceEvent?.Delta ?? "";
+                    string RealtimeVoiceAccumulatedText = RealtimeVoiceEvent?.AccumulatedText ?? "";
+                    string RealtimeVoiceError = RealtimeVoiceEvent?.Error ?? "";
+                    string RealtimeVoiceWakeWord = RealtimeVoiceEvent?.WakeWord ?? "";
+                    bool RealtimeVoiceIsFinal = RealtimeVoiceEvent?.IsFinal ?? false;
                     {{statements}}
                 }
             }
@@ -205,14 +244,50 @@ internal static class WebCSharpScriptPrecompiler
             typeof(Enumerable).Assembly,
             typeof(List<>).Assembly,
             typeof(Vector3).Assembly,
+            typeof(System.Text.RegularExpressions.Regex).Assembly,
+            typeof(Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality).Assembly,
             typeof(RuntimeCore.RuntimeScene).Assembly,
-            typeof(GameProject).Assembly,
-            typeof(VmdParsing).Assembly
+            typeof(RuntimeCore.RuntimeScene).GetProperty("Definition")!.PropertyType.Assembly
         ];
-        foreach (Assembly assembly in assemblies.Concat(AppDomain.CurrentDomain.GetAssemblies()))
+        Queue<Assembly> pending = new(assemblies);
+        HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
+        while (pending.TryDequeue(out Assembly? assembly))
         {
+            if (!visited.Add(assembly.FullName!)) continue;
             if (assembly.IsDynamic || string.IsNullOrWhiteSpace(assembly.Location) || !File.Exists(assembly.Location)) continue;
             if (paths.Add(assembly.Location)) yield return MetadataReference.CreateFromFile(assembly.Location);
+            foreach (var reference in assembly.GetReferencedAssemblies()) pending.Enqueue(Assembly.Load(reference));
+        }
+    }
+
+    private static string NormalizeLocalOverloads(string statements)
+    {
+        var unit = CSharpSyntaxTree.ParseText("class Host { void Run() { " + statements + "\n} }").GetCompilationUnitRoot();
+        var block = unit.DescendantNodes().OfType<MethodDeclarationSyntax>().Single().Body!;
+        var groups = block.Statements.OfType<LocalFunctionStatementSyntax>().GroupBy(f => f.Identifier.ValueText)
+            .Where(g => g.Count() > 1).ToDictionary(g => g.Key, g => g.ToArray());
+        if (groups.Count == 0) return statements;
+        var rewritten = (BlockSyntax)new LocalOverloadRewriter(groups).Visit(block)!;
+        return string.Join(Environment.NewLine, rewritten.Statements.Select(s => s.ToFullString()));
+    }
+
+    private sealed class LocalOverloadRewriter(Dictionary<string, LocalFunctionStatementSyntax[]> groups) : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
+        {
+            var rewritten = (LocalFunctionStatementSyntax)base.VisitLocalFunctionStatement(node)!;
+            if (!groups.TryGetValue(node.Identifier.ValueText, out var overloads)) return rewritten;
+            int index = Array.FindIndex(overloads, f => f.ParameterList.ToFullString() == node.ParameterList.ToFullString());
+            return index < 0 ? rewritten : rewritten.WithIdentifier(SyntaxFactory.Identifier(node.Identifier.ValueText + "__web" + index).WithTriviaFrom(node.Identifier));
+        }
+        public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
+        {
+            var rewritten = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+            if (node.Expression is not IdentifierNameSyntax name || !groups.TryGetValue(name.Identifier.ValueText, out var overloads)) return rewritten;
+            int index = Array.FindIndex(overloads, f => node.ArgumentList.Arguments.Count >= f.ParameterList.Parameters.Count(p => p.Default is null)
+                && node.ArgumentList.Arguments.Count <= f.ParameterList.Parameters.Count
+                && node.ArgumentList.Arguments.Where(a => a.NameColon is not null).All(a => f.ParameterList.Parameters.Any(p => p.Identifier.ValueText == a.NameColon!.Name.Identifier.ValueText)));
+            return index < 0 ? rewritten : rewritten.WithExpression(SyntaxFactory.IdentifierName(name.Identifier.ValueText + "__web" + index).WithTriviaFrom(name));
         }
     }
 

@@ -83,6 +83,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Pointer clicks distinguish taps, dragging, multi-touch and GUI capture", PointerClickTests.TestGestures),
             ("Pointer camera rays match mouse, touch, viewport and surface resize", PointerClickTests.TestCameraRays),
             ("Pointer camera preserves GUI capture while dragging", PointerClickTests.TestCameraGuiCapture),
+            ("Pointer camera ignores decorative background sprites", AndroidCameraSpriteRegression.Run),
             ("Pointer physics ignores Android script entity wrappers", PointerClickTests.TestIgnoredEntity),
             ("Android navigation LookAt matches desktop heading", AndroidNavigationTests.TestLookAt),
             ("Android navigation samples finite triangles like desktop", AndroidNavigationTests.TestSampling),

@@ -13,6 +13,19 @@ public sealed class RuntimeCamera
     }
 
     public SceneCameraSettings Definition { get; }
+    internal RuntimeScenePhysics? Physics { get; set; }
+    internal RuntimeScene? SceneOwner { get; set; }
+    private float _screenX, _screenY, _screenWidth=1280, _screenHeight=720;
+    public IReadOnlyList<string> CameraNames => SceneOwner?.Cameras.Select(c=>c.Name).ToArray() ?? [];
+    public IReadOnlyList<string> RenderTextureNames => SceneOwner?.Definition.RenderTextures.Select(r=>r.Name).ToArray() ?? [];
+    public string RenderTexture(string name) => name.StartsWith("rt:",StringComparison.OrdinalIgnoreCase)?name:"rt:"+name;
+    public void SetMainCamera(string name){var selected=SceneOwner?.GetCamera(name);if(selected is not null)foreach(var camera in SceneOwner!.Cameras)camera.Definition.IsMain=ReferenceEquals(camera,selected);}
+    public void BindRenderTextureCamera(string name,string cameraName){var rt=SceneOwner?.Definition.RenderTextures.FirstOrDefault(r=>r.Name==name || r.Id==name);if(rt is not null)rt.Camera=cameraName;}
+    public bool RaycastEntity(RuntimeRay ray, out RuntimeRaycastHit hit, float maxDistance = float.MaxValue)
+    {
+        hit = default;
+        return Physics?.Raycast(ray, out hit, maxDistance) == true;
+    }
 
     public string Id => Definition.Id;
 
@@ -73,8 +86,9 @@ public sealed class RuntimeCamera
 
     public void SeekVmd(float frame) => Settings.Vmd.Frame = Math.Max(frame, 0.0f);
 
-    public RuntimeRay ScreenPointToRay(float screenX, float screenY, float viewportWidth = 1280.0f, float viewportHeight = 720.0f)
+    public RuntimeRay ScreenPointToRay(float screenX, float screenY, float viewportWidth = 0, float viewportHeight = 0)
     {
+        if(viewportWidth<=0 || viewportHeight<=0){screenX-=_screenX;screenY-=_screenY;viewportWidth=_screenWidth;viewportHeight=_screenHeight;}
         float width = Math.Max(viewportWidth, 1.0f);
         float height = Math.Max(viewportHeight, 1.0f);
         float x = screenX / width * 2.0f - 1.0f;
@@ -85,7 +99,7 @@ public sealed class RuntimeCamera
             return new RuntimeRay(Position, Vector3.Normalize(Target - Position));
         }
 
-        Vector3 near = TransformClipPoint(new Vector3(x, y, -1.0f), inverse);
+        Vector3 near = TransformClipPoint(new Vector3(x, y, ProjectionMode=="orthographic" ? 0 : -1), inverse);
         Vector3 far = TransformClipPoint(new Vector3(x, y, 1.0f), inverse);
         return new RuntimeRay(near, far - near).Normalized;
     }
@@ -94,9 +108,17 @@ public sealed class RuntimeCamera
     {
         Vector3 position = Settings.Position.ToVector3();
         Vector3 target = Settings.Target.ToVector3();
-        if (Vector3.DistanceSquared(position, target) < 1e-8f) target = position - Vector3.UnitZ;
         Vector3 up = Settings.VmdHasUp ? Settings.VmdUp.ToVector3() : Vector3.UnitY;
+        return CreateStableView(position, target, up);
+    }
+
+    public static Matrix4x4 CreateStableView(Vector3 position, Vector3 target, Vector3 up)
+    {
+        if (Vector3.DistanceSquared(position, target) < 1e-8f) target = position - Vector3.UnitZ;
         if (!IsFinite(up) || up.LengthSquared() < 1e-8f) up = Vector3.UnitY;
+        Vector3 forward = Vector3.Normalize(target - position);
+        if (Vector3.Cross(forward, Vector3.Normalize(up)).LengthSquared() < 1e-8f)
+            up = MathF.Abs(forward.Z) < .9f ? Vector3.UnitZ : Vector3.UnitX;
         return Matrix4x4.CreateLookAt(position, target, Vector3.Normalize(up));
     }
 
@@ -122,6 +144,7 @@ public sealed class RuntimeCamera
 
     public RuntimeViewport ResolveViewport(int actualWidth, int actualHeight, int referenceWidth, int referenceHeight)
     {
+        _screenX=_screenY=0;_screenWidth=Math.Max(1,actualWidth);_screenHeight=Math.Max(1,actualHeight);
         if (!Definition.Viewport.Enabled)
         {
             return new RuntimeViewport(0, 0, Math.Max(actualWidth, 1), Math.Max(actualHeight, 1));
@@ -137,6 +160,7 @@ public sealed class RuntimeCamera
         int yTop = Math.Clamp((int)MathF.Round(Definition.Viewport.Y * scaleY), 0, Math.Max(actualHeight - 1, 0));
         int width = Math.Clamp((int)MathF.Round(Definition.Viewport.Width * scaleX), 1, Math.Max(actualWidth - x, 1));
         int height = Math.Clamp((int)MathF.Round(Definition.Viewport.Height * scaleY), 1, Math.Max(actualHeight - yTop, 1));
+        _screenX=x;_screenY=yTop;_screenWidth=width;_screenHeight=height;
         return new RuntimeViewport(x, actualHeight - yTop - height, width, height);
     }
 

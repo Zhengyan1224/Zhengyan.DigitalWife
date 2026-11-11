@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
+using MotionLayerDefinition = Zhengyan.DigitalWife.Mmd.Game.Pmx.MotionLayerDefinition;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 

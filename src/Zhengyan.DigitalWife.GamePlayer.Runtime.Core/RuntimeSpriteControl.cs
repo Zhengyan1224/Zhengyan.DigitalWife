@@ -19,4 +19,6 @@ public sealed class RuntimeSpriteControl
     public float Height { get => _sprite.Height; set => _sprite.Height = Math.Max(value, 1.0f); }
     public float Opacity { get => _sprite.Opacity; set => _sprite.Opacity = Math.Clamp(value, 0.0f, 1.0f); }
     public float RotationDegrees { get => _sprite.RotationDegrees; set => _sprite.RotationDegrees = value; }
+    public int DrawOrder { get => _sprite.DrawOrder; set => _sprite.DrawOrder = value; }
+    public void SetRenderTexture(string name) => Path = name.StartsWith("rt:", StringComparison.OrdinalIgnoreCase) ? name : "rt:" + name;
 }

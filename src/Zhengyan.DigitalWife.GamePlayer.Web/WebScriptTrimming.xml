@@ -1,0 +1,28 @@
+<linker>
+  <!-- Precompiled scripts are loaded after publication. Preserve the portable
+       BCL contracts that their calls cannot expose to the static linker. -->
+  <assembly fullname="System.Private.CoreLib">
+    <type fullname="System.DateTime" preserve="all" />
+    <type fullname="System.DateTimeOffset" preserve="all" />
+    <type fullname="System.TimeSpan" preserve="all" />
+    <type fullname="System.Guid" preserve="all" />
+    <type fullname="System.String" preserve="all" />
+    <type fullname="System.Char" preserve="all" />
+    <type fullname="System.Math" preserve="all" />
+    <type fullname="System.MathF" preserve="all" />
+    <type fullname="System.Convert" preserve="all" />
+    <type fullname="System.StringComparer" preserve="all" />
+    <type fullname="System.Text.StringBuilder" preserve="all" />
+    <type fullname="System.Collections.Generic.List`1" preserve="all" />
+    <type fullname="System.Collections.Generic.Dictionary`2" preserve="all" />
+    <type fullname="System.Collections.Generic.Queue`1" preserve="all" />
+    <type fullname="System.Collections.Generic.HashSet`1" preserve="all" />
+    <type fullname="System.Threading.CancellationToken" preserve="all" />
+    <type fullname="System.Threading.CancellationTokenSource" preserve="all" />
+    <type fullname="System.Threading.Tasks.Task" preserve="all" />
+    <type fullname="System.Threading.Tasks.Task`1" preserve="all" />
+  </assembly>
+  <assembly fullname="System.Collections"><type fullname="System.Collections.Generic.Stack`1" preserve="all" /></assembly>
+  <assembly fullname="System.Linq"><type fullname="System.Linq.Enumerable" preserve="all" /></assembly>
+  <assembly fullname="System.Text.RegularExpressions"><type fullname="System.Text.RegularExpressions.Regex" preserve="all" /></assembly>
+</linker>

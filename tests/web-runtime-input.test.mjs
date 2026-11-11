@@ -75,6 +75,27 @@ test('a thousand mouse moves are accumulated in one frame call without losing mo
     assert.equal(app.input(), null);
 });
 
+test('touch transitions retain taps between frames, scale with DPR and cancel on blur', async t => {
+    const app=setup(t,2);
+    app.pointer('pointerdown',{pointerType:'touch',pointerId:7,clientX:20,clientY:30,pressure:.5});
+    app.pointer('pointerup',{pointerType:'touch',pointerId:7,clientX:21,clientY:31,buttons:0});
+    await app.frame();
+    assert.deepEqual(app.input().touchTransitions.map(t=>[t.id,t.phase,t.x,t.y]),[[7,0,20,20],[7,3,22,22]]);
+    assert.equal(app.input().touches.length,0);
+    app.pointer('pointerdown',{pointerType:'touch',pointerId:8});await app.frame(32);
+    assert.equal(app.input().touches.length,1);
+    app.browser.emit('blur',{});await app.frame(48);
+    assert.equal(app.input().touches.length,0);assert.equal(app.input().touchTransitions[0].phase,4);
+});
+
+test('two fingers pan around their center and pinch without also orbiting',async t=>{
+    const app=setup(t,2);
+    app.pointer('pointerdown',{pointerType:'touch',pointerId:1,clientX:30,clientY:30});
+    app.pointer('pointerdown',{pointerType:'touch',pointerId:2,clientX:70,clientY:30});await app.frame();
+    app.pointer('pointermove',{pointerType:'touch',pointerId:2,clientX:90,clientY:30});await app.frame(32);
+    assert.equal(app.input().lookX,0);assert.equal(app.input().panX,10);assert.equal(app.input().zoom,-.2);
+});
+
 test('right dragging and wheel motion preserve the final button state', async t => {
     const app = setup(t);
     app.pointer('pointerdown', { button: 2, buttons: 2 });
@@ -129,7 +150,7 @@ test('GUI and sprite clicks remain separate from camera gestures', async t => {
     app.pointer('pointerup', { clientX: 18, clientY: 28, buttons: 0 });
     await app.frame();
     assert.equal(app.input(), null);
-    assert.deepEqual(app.calls.find(call => call.method === 'OnGuiPointer').args, [8, 8, 'up', 0]);
+    assert.deepEqual(app.calls.filter(call => call.method === 'OnGuiPointer').map(c=>c.args), [[5,5,'down',0],[8,8,'up',0]]);
     runtime.setOverlayState({ sprites: [{ x: 0, y: 0, width: 20, height: 20 }] });
     app.pointer('pointerdown', { clientX: 15, clientY: 25 });
     app.pointer('pointerup', { clientX: 15, clientY: 25, buttons: 0 });

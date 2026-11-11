@@ -2,6 +2,9 @@ namespace Zhengyan.DigitalWife.GameProjects;
 
 public static class SpriteLayoutResolver
 {
+    public static bool IsInteractive(SpriteSettings sprite)
+        => sprite.Visible && !string.IsNullOrWhiteSpace(sprite.TargetEntity);
+
     public static LayoutRect Resolve(
         SpriteSettings sprite,
         float actualWidth,

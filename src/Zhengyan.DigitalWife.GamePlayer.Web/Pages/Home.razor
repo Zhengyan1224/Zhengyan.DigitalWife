@@ -9,7 +9,7 @@
         <div>
             <p class="eyebrow">Zhengyan.DigitalWife</p>
             <h1>Web GamePlayer</h1>
-            <p class="subtitle">阶段 4/5：内存包、IndexedDB 和预编译 Web 脚本</p>
+            <p class="subtitle">WebGL2 游戏播放器</p>
         </div>
         <span class="runtime-badge @(RuntimeHost.Snapshot.IsRunning ? "running" : "idle")">
             @RuntimeHost.Snapshot.Status
@@ -36,6 +36,7 @@
                 打开 .dwgame 内存包
                 <InputFile accept=".dwgame,application/octet-stream" OnChange="OnPackageSelected" />
             </label>
+            <label class="package-picker">加密游戏包密码<input type="password" @bind="_packagePassword" autocomplete="off" /></label>
             @if (!string.IsNullOrWhiteSpace(_packageError))
             {
                 <div class="runtime-error" role="alert"><strong>包加载错误</strong><span>@_packageError</span></div>
@@ -90,7 +91,7 @@
     </section>
 
     <p class="runtime-note">
-        阶段 4/5 已接入未加密 .dwgame 内存包、IndexedDB 缓存、manifest 校验和 Web 脚本 ABI；阶段 3 的 PMX/VMD、材质和输入能力继续复用。
+        支持加载 Web 游戏项目和 .dwgame 游戏包。
     </p>
 </main>
 
@@ -98,6 +99,7 @@
     private ElementReference _canvas;
     private ElementReference _overlayCanvas;
     private string _packageError = string.Empty;
+    private string _packagePassword = string.Empty;
 
     protected override void OnInitialized()
     {
@@ -125,7 +127,7 @@
             using Stream source = args.File.OpenReadStream(maxAllowedSize: 1024L * 1024L * 1024L);
             using MemoryStream buffer = new();
             await source.CopyToAsync(buffer);
-            await RuntimeHost.LoadDwGameAsync(buffer.ToArray(), _canvas, _overlayCanvas);
+            await RuntimeHost.LoadDwGameAsync(buffer.ToArray(), _canvas, _overlayCanvas,_packagePassword);
         }
         catch (Exception exception)
         {

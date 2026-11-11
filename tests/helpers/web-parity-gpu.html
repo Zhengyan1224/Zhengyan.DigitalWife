@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Web renderer parity regression</title>
+<pre id="result">Running WebGL2 pixel tests…</pre>
+<script type="module">
+import { createWebGl2Renderer } from '../../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/js/webgl2-renderer.js';
+import { verifyParityGpu } from './web-parity-gpu-fixture.mjs';
+import { verifyReflectionSamplingGpu } from './web-surface-gpu-fixture.mjs';
+try {
+    const result = { parity: await verifyParityGpu(createWebGl2Renderer), reflections: await verifyReflectionSamplingGpu(createWebGl2Renderer) };
+    document.getElementById('result').textContent = JSON.stringify(result, null, 2);
+    document.documentElement.dataset.testResult = 'passed';
+} catch (error) {
+    document.getElementById('result').textContent = error.stack;
+    document.documentElement.dataset.testResult = 'failed';
+    throw error;
+}
+</script>
+</html>

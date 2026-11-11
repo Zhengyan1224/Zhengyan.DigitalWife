@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\Zhengyan.DigitalWife.Mmd.Game\Input\TouchPoint.cs" Link="Input/TouchPoint.cs" />
+    <Compile Include="..\Zhengyan.DigitalWife.Mmd.Game\Input\PointerClickGesture.cs" Link="Input/PointerClickGesture.cs" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 

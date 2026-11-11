@@ -15,6 +15,7 @@ public sealed record WebRenderMesh(
     public bool TexturedPlane { get; init; }
     public bool WaterSurface { get; init; }
     public float MirrorReflectionStrength { get; init; }
+    public IReadOnlyList<WebPmxMaterial>? Materials { get; init; }
 }
 
 public sealed record WebParticle(float[] Position, float[] Color, float Size);
@@ -139,7 +140,7 @@ public sealed partial record WebRenderFrame(
         int localShadowResolution = globalShadows ? runtimeGraphics?.LocalLightResolution ?? shadows!.NormalizedLocalLightResolution : 1024;
         Matrix4x4 lightViewProjection = CreateLightViewProjection(modelArray, lightDirection, out float normalOffset, shadowResolution);
         return new WebRenderFrame(
-            ToGlArray(scene.MainCamera.CreateView() * ToGlProjection(scene.MainCamera.CreateProjection(aspect))),
+            ToGlArray(scene.MainCamera.CreateView() * CameraProjection(scene.MainCamera, aspect)),
             first.Model,
             ToGlArray(lightViewProjection),
             ToVector(lightDirection),

@@ -33,6 +33,7 @@ public sealed class WebAssetEntry
 
 public sealed class WebScriptEntry
 {
+    public string Scene { get; set; } = string.Empty;
     public string Id { get; set; } = string.Empty;
     public string Assembly { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;

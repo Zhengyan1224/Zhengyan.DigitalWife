@@ -1,31 +1,32 @@
 let socket = null;
 let recorder = null;
 let recorderChunks = [];
+let speechGeneration=0,currentSpeech=null;
 
 export function speak(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1) {
-    if (!window.speechSynthesis) throw new Error("SpeechSynthesis is not available.");
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text || "");
-    utterance.lang = language;
-    utterance.rate = Math.max(.1, Math.min(10, rate));
-    utterance.pitch = Math.max(0, Math.min(2, pitch));
-    utterance.volume = Math.max(0, Math.min(1, volume));
-    window.speechSynthesis.speak(utterance);
+    speakWithCallback(text,language,rate,pitch,volume);
 }
 
 export function speakWithCallback(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1, dotNetReference, entityId = "", callbackName = "") {
     if (!window.speechSynthesis) throw new Error("SpeechSynthesis is not available.");
-    window.speechSynthesis.cancel();
+    stopSpeaking();const generation=++speechGeneration;
     const utterance = new SpeechSynthesisUtterance(text || "");
     utterance.lang = language;
     utterance.rate = Math.max(.1, Math.min(10, rate));
     utterance.pitch = Math.max(0, Math.min(2, pitch));
     utterance.volume = Math.max(0, Math.min(1, volume));
-    utterance.onend = () => dotNetReference?.invokeMethodAsync("OnSpeechCompleted", entityId, callbackName).catch(() => {});
+    const notify=(name,...args)=>dotNetReference?.invokeMethodAsync(name,...args).catch(()=>{});
+    currentSpeech={reference:dotNetReference,entityId};
+    utterance.onstart=()=>{if(generation===speechGeneration)notify('OnSpeechStarted',entityId,text||'',rate);};
+    utterance.onboundary=event=>{if(generation===speechGeneration)notify('OnSpeechBoundary',entityId,event.charIndex||0,event.charLength||1);};
+    utterance.onend=()=>{if(generation!==speechGeneration)return;currentSpeech=null;notify('OnSpeechFinished',entityId);notify('OnSpeechCompleted',entityId,callbackName);};
+    utterance.onerror=event=>{if(generation!==speechGeneration)return;currentSpeech=null;notify('OnSpeechFinished',entityId);notify('OnSpeechFailed',entityId,callbackName,event.error||'Speech synthesis failed.');};
     window.speechSynthesis.speak(utterance);
 }
 
 export function stopSpeaking() {
+    speechGeneration++;
+    if(currentSpeech){currentSpeech.reference?.invokeMethodAsync('OnSpeechFinished',currentSpeech.entityId).catch(()=>{});currentSpeech=null;}
     window.speechSynthesis?.cancel();
 }
 

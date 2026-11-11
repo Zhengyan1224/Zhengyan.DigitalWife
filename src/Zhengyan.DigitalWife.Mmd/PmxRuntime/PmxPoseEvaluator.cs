@@ -26,6 +26,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private readonly bool[] _layerLoops;
     private readonly MorphState[] _morphs;
     private readonly float[] _sourceMorphWeights;
+    private readonly Dictionary<string, float> _manualMorphs = new(StringComparer.Ordinal);
     private readonly float[] _effectiveMorphWeights;
     private readonly float[] _previousEffectiveMorphWeights;
     private readonly Vector3[] _morphPositions;
@@ -195,6 +196,10 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     }
 
     public int MotionLayerCount => _layerFrames.Length;
+    public void SetMorphWeight(string name, float weight) => _manualMorphs[name] = Math.Clamp(weight, 0, 1);
+    public float GetMorphWeight(string name) => _manualMorphs.TryGetValue(name, out var value) ? value : MorphWeights.GetValueOrDefault(name);
+    public void ClearMorphWeight(string name) => _manualMorphs.Remove(name);
+    public bool TryGetManualMorphWeight(string name, out float weight) => _manualMorphs.TryGetValue(name, out weight);
 
     public float GetMotionLayerFrame(int layerIndex) => _layerFrames[ValidateLayerIndex(layerIndex)];
 
@@ -406,7 +411,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                     value += track.Evaluate(_layerFrames[layer], _layerLoops[layer]) * _layerWeights[layer];
                 }
             }
-            _sourceMorphWeights[i] = Math.Clamp(value, 0.0f, 1.0f);
+            _sourceMorphWeights[i] = _manualMorphs.TryGetValue(_morphs[i].Source.Name, out float manual) ? manual : Math.Clamp(value, 0.0f, 1.0f);
         }
 
         Array.Clear(_effectiveMorphWeights);

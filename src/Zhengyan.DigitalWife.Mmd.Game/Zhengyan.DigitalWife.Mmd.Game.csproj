@@ -5,6 +5,8 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Remove="Input\TouchPoint.cs" />
+        <Compile Remove="Input\PointerClickGesture.cs" />
         <PackageReference Include="Silk.NET.Input" />
         <PackageReference Include="Silk.NET.OpenAL" />
         <PackageReference Include="Silk.NET.OpenGLES" />

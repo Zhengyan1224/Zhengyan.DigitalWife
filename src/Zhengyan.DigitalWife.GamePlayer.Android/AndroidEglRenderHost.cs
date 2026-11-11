@@ -542,7 +542,7 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
 
             if (!handled)
             {
-                foreach (SpriteSettings sprite in scene.Definition.Sprites.Where(sprite => sprite.Visible).Reverse())
+                foreach (SpriteSettings sprite in scene.Definition.Sprites.Where(SpriteLayoutResolver.IsInteractive).Reverse())
                 {
                     if (!SpriteLayoutResolver.ContainsPoint(sprite, x, y, _width, _height,
                         _project?.Window.Width ?? _width, _project?.Window.Height ?? _height))
