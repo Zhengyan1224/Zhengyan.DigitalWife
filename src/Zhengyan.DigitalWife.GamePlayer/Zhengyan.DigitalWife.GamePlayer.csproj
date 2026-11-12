@@ -43,12 +43,12 @@
 
     <Target Name="PatchVeldridTransparentSwapchainBuild" AfterTargets="Build"
             Condition="Exists('$(TargetDir)Veldrid.dll')">
-        <Exec Command="dotnet &quot;$(MSBuildProjectDirectory)\..\..\tools\VeldridTransparentSwapchainPatch\bin\$(Configuration)\net10.0\VeldridTransparentSwapchainPatch.dll&quot; &quot;$(TargetDir)Veldrid.dll&quot;" />
+        <Exec Command="dotnet &quot;$(MSBuildProjectDirectory)/../../tools/VeldridTransparentSwapchainPatch/bin/$(Configuration)/net10.0/VeldridTransparentSwapchainPatch.dll&quot; &quot;$(TargetDir)Veldrid.dll&quot;" />
     </Target>
 
     <Target Name="PatchVeldridTransparentSwapchainPublish" AfterTargets="Publish"
             Condition="Exists('$(PublishDir)Veldrid.dll')">
-        <Exec Command="dotnet &quot;$(MSBuildProjectDirectory)\..\..\tools\VeldridTransparentSwapchainPatch\bin\$(Configuration)\net10.0\VeldridTransparentSwapchainPatch.dll&quot; &quot;$(PublishDir)Veldrid.dll&quot;" />
+        <Exec Command="dotnet &quot;$(MSBuildProjectDirectory)/../../tools/VeldridTransparentSwapchainPatch/bin/$(Configuration)/net10.0/VeldridTransparentSwapchainPatch.dll&quot; &quot;$(PublishDir)Veldrid.dll&quot;" />
     </Target>
 
 </Project>

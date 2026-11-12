@@ -38,6 +38,8 @@ if (args is ["--refresh-web-export", string directory])
 
 (string Name, Action Run)[] tests =
 [
+    ("Desktop sprite OpenGL preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.OpenGl),
+    ("Desktop sprite Vulkan preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.Vulkan),
     ("Android GLES presents the scene before EGL swap", AndroidGlesPresentationRegression.HostOrder),
     ("Android GLES hosted graphics frames advance after quality switches", AndroidGlesPresentationRegression.AnimatedFrames),
     ("Water ripple contacts match Android and throttle per particle", WaterRippleRegression.ContactParity),

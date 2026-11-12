@@ -46,12 +46,26 @@ public static class RendererFactory
 
     public static void ConfigureWindow(ref WindowOptions options, GraphicsBackend backend)
     {
+        bool transparentLinuxWindow = OperatingSystem.IsLinux()
+            && !OperatingSystem.IsAndroid()
+            && options.TransparentFramebuffer;
         options.API = backend switch
         {
             GraphicsBackend.OpenGL => new GraphicsAPI(ContextAPI.OpenGLES, new APIVersion(3, 0)),
+            // GLFW's X11 no-context window uses the opaque default visual. A GLES
+            // context selects an ARGB visual; Veldrid creates its Xlib surface directly.
+            GraphicsBackend.Vulkan when transparentLinuxWindow
+                => new GraphicsAPI(ContextAPI.OpenGLES, new APIVersion(3, 0)),
             GraphicsBackend.Vulkan => GraphicsAPI.None,
             _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, null)
         };
+        options.ShouldSwapAutomatically = backend == GraphicsBackend.OpenGL;
+        if (transparentLinuxWindow)
+        {
+            // GLX may choose an opaque visual even for a one-sample request.
+            // Scene MSAA is provided by the renderer's RGBA offscreen target.
+            options.Samples = 0;
+        }
     }
 
     private sealed class OpenGlRendererFactory : IRendererFactory

@@ -459,6 +459,7 @@ public sealed class VulkanRenderer : IRenderer
     {
         try
         {
+            LinuxVulkanLoader.EnsureInitialized();
             if (!VeldridDevice.IsBackendSupported(Veldrid.GraphicsBackend.Vulkan))
             {
                 reason = "Veldrid did not find a Vulkan loader or a compatible physical device.";
@@ -478,6 +479,7 @@ public sealed class VulkanRenderer : IRenderer
     public void Initialize(IWindow window, Vector2D<int> backBufferSize, int requestedSamples)
     {
         ArgumentNullException.ThrowIfNull(window);
+        LinuxVulkanLoader.EnsureInitialized();
         if (_device is not null)
         {
             throw new InvalidOperationException("The Vulkan renderer is already initialized.");

@@ -76,6 +76,7 @@ public sealed class OpenGlRenderer : IRenderer
         _supportedSamples.IntersectWith(QuerySamples(GLEnum.Depth24Stencil8));
         _supportedSamples.Add(1);
         Resize(backBufferSize);
+        SetAntiAliasingSamples(RequestedAntiAliasingSamples);
     }
 
     public void SetAntiAliasingSamples(int requestedSamples)

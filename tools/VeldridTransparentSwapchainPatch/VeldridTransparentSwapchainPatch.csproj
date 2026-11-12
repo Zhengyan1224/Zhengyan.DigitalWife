@@ -17,6 +17,7 @@
     <Compile Include="..\VeldridAndroidPatch\VulkanPresentationVerification.cs" Link="VulkanPresentationVerification.cs" />
     <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="Veldrid" />
+    <PackageReference Include="Newtonsoft.Json" />
   </ItemGroup>
 
 </Project>

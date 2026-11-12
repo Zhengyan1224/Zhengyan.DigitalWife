@@ -106,6 +106,8 @@ LLM 服务地址、模型名和密钥来自工程配置。RealtimeVoice 将语�
 
 Windows、macOS 和 Linux 使用各自窗口实现。Linux 点击穿透目前依赖 X11；Wayland 原生输入区域没有接入。图形后端和窗口管理器也会影响透明效果。
 
+Linux 桌面精灵需要运行中的桌面合成器和可用的 OpenGL ES 3.0 驱动。播放器使用带 alpha 的窗口，并通过离屏目标提供场景 MSAA；Vulkan 模式也借助 GLES 选择透明窗口格式，由 Vulkan 交换链呈现场景。系统依赖安装见[主 README](../../README.md#linux-运行依赖)。
+
 ## 发布桌面播放器
 
 在仓库根目录执行，以 Windows x64 为例：

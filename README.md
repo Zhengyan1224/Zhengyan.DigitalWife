@@ -157,15 +157,38 @@ Skills 和记忆是两组独立可选能力。游戏项目的 `skills/` 保存�
 
 ## Linux 运行依赖
 
-以下是 Debian / Ubuntu 系发行版的安装示例；其它发行版请使用对应包管理器，个别包名可能不同。
+以下命令适用于 Linux Mint 22.x / Ubuntu 24.04，以及使用相同包名的 Debian 系发行版。其它发行版请使用对应包管理器。源码构建还需要前文所述的 .NET 10 SDK；桌面播放器需要可用的图形桌面会话。
+
+先安装音频、OpenGL ES、窗口和字体依赖：
 
 ```bash
 sudo apt update
 sudo apt install -y libopenal1 libportaudio2 libsndfile1 ca-certificates
-sudo apt install -y libgl1-mesa-dri libegl1 libgles2 libx11-6 libxi6 libxcursor1 libxinerama1 libxrandr2 libxxf86vm1 libfontconfig1 fonts-noto-cjk
+sudo apt install -y libsdl2-2.0-0 libgl1-mesa-dri libegl1 libgles2 libx11-6 libxi6 libxcursor1 libxinerama1 libxrandr2 libxxf86vm1 libfontconfig1 fonts-noto-cjk
 ```
 
-使用 Python 脚本再安装 `python3`。使用 Vulkan 需要可用的 Vulkan 驱动；支持 OpenGL 的机器不一定支持 Vulkan。
+Intel / AMD 显卡使用 Vulkan 时，再安装系统加载器、Mesa 驱动和检测工具：
+
+```bash
+sudo apt install -y libvulkan1 mesa-vulkan-drivers vulkan-tools
+vulkaninfo --summary
+```
+
+`libvulkan1` 提供 `libvulkan.so.1`，`mesa-vulkan-drivers` 提供显卡的 Vulkan 驱动，`vulkan-tools` 提供 `vulkaninfo`。NVIDIA 显卡请通过发行版的驱动管理器安装适用于显卡的 NVIDIA 驱动，并安装 `libvulkan1 vulkan-tools`，随后执行同一检测命令。
+
+检查 `vulkaninfo --summary` 的 `Devices`：应列出实际显卡名称和驱动，例如 `Intel(R) HD Graphics 520`。如果只有 `llvmpipe`，使用的是 CPU 软件渲染，需要继续检查显卡驱动和设备访问权限。如果提示无法连接 X server，请在登录图形桌面的终端中执行；如果无法枚举设备，请检查加载器和驱动安装，并确认容器或远程会话能访问显卡。
+
+引擎已兼容当前 glibc 发行版的 `libdl.so.2` 库名。旧版播放器可能因 Vulkan 绑定加载 `libdl` 失败而报告 `Veldrid did not find a Vulkan loader or a compatible physical device`，即使 `vulkaninfo` 正常；遇到此情况请更新并重新构建播放器。运行引擎只需上述运行库，`libvulkan-dev` 和完整 Vulkan SDK 用于原生 Vulkan 开发。
+
+在仓库根目录验证游戏包；用实际路径替换示例，并保留路径两侧的引号：
+
+```bash
+dotnet run --project src/Zhengyan.DigitalWife.GamePlayer -- "/path/to/DemoGame01_Vulkan.dwgame" --graphics-backend Vulkan
+```
+
+显式指定 Vulkan 时，设备不支持会报错。可用 `--graphics-backend OpenGL` 检查 OpenGL 路径，或使用 `--graphics-backend Auto` 让引擎检测后端。OpenCL 是 OpenGL 路径的可选模型计算能力，依赖独立的 OpenCL 驱动；Vulkan 后端的 Compute 蒙皮使用 Vulkan。
+
+使用 Python 脚本时安装 `python3`。支持 OpenGL 的机器不一定支持 Vulkan。
 
 麦克风排查先验证系统能录音，再查看 PortAudio 设备索引。硬件特定案例见[Linux 内置麦克风记录](docs/linux-mint-lenovo-e41-80-microphone.md)，该文档中的驱动参数不适用于所有设备。
 
