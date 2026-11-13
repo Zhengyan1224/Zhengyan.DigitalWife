@@ -45,11 +45,11 @@ public sealed class AndroidScriptInput : AndroidScriptInputApi
         }, touch.Kind, touch.Pressure);
 
     public override bool IsKeyDown(string key)
-        => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);
+        => TryKey(key,out var parsed) && _snapshot.DeviceInput.IsKeyDown(parsed);
     public override bool IsKeyPressed(string key)
-        => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyPressed(parsed);
+        => TryKey(key,out var parsed) && _snapshot.DeviceInput.IsKeyPressed(parsed);
     public override bool IsKeyReleased(string key)
-        => Enum.TryParse(key, true, out global::Android.Views.Keycode parsed) && _snapshot.DeviceInput.IsKeyReleased(parsed);
+        => TryKey(key,out var parsed) && _snapshot.DeviceInput.IsKeyReleased(parsed);
 
     public override float MouseX => _snapshot.DeviceInput.MousePosition.X;
     public override float MouseY => _snapshot.DeviceInput.MousePosition.Y;
@@ -57,11 +57,15 @@ public sealed class AndroidScriptInput : AndroidScriptInputApi
     public override float MouseDeltaY => _snapshot.DeviceInput.MouseDelta.Y;
     public override float ScrollX => _snapshot.DeviceInput.ScrollDelta.X;
     public override float ScrollY => _snapshot.DeviceInput.ScrollDelta.Y;
-    public override bool CursorVisible { get => _cursorVisible; set => _cursorVisible = value; }
+    public override bool CursorVisible { get => _cursorVisible; set => TrySetCursorVisible(value); }
+    public override bool IsCursorLocked=>AndroidWindowPlatform.CursorLocked;
+    public override bool TrySetCursorLocked(bool locked,bool rawInput=false)=>AndroidWindowPlatform.SetCursorLocked(locked);
+    public override bool TrySetCursorVisible(bool visible){if(!AndroidWindowPlatform.SetCursorVisible(visible))return false;_cursorVisible=visible;return true;}
     public override bool IsMouseButtonDown(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.IsMouseButtonDown(value);
     public override bool IsMouseButtonPressed(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.PressedMouseButtons.Contains(value);
     public override bool IsMouseButtonReleased(string button) => TryMouseButton(button, out int value) && _snapshot.DeviceInput.ReleasedMouseButtons.Contains(value);
     public override bool HasGamepad => _snapshot.DeviceInput.Gamepad.Connected;
+    public override int GamepadIndex=>HasGamepad?_snapshot.DeviceInput.Gamepad.Index:-1;
     public override string GamepadName => _snapshot.DeviceInput.Gamepad.Name;
     public override float LeftStickX => _snapshot.DeviceInput.Gamepad.LeftStick.X;
     public override float LeftStickY => _snapshot.DeviceInput.Gamepad.LeftStick.Y;
@@ -104,6 +108,7 @@ public sealed class AndroidScriptInput : AndroidScriptInputApi
                 return string.Empty;
             }
         }
+        set=>SetClipboardText(value);
     }
 
     public override bool HasClipboardText => ClipboardText.Length > 0;
@@ -128,5 +133,7 @@ public sealed class AndroidScriptInput : AndroidScriptInputApi
     }
 
     public override void SetClipboardText(string text) => _ = TrySetClipboardText(text);
+    private static bool TryKey(string key,out global::Android.Views.Keycode value)
+    {if(key.StartsWith("Key",StringComparison.Ordinal)&&key.Length==4)key=key[3..];key=key switch{"ControlLeft"=>"CtrlLeft","ControlRight"=>"CtrlRight","ArrowUp"=>"DpadUp","ArrowDown"=>"DpadDown","ArrowLeft"=>"DpadLeft","ArrowRight"=>"DpadRight","Backspace"=>"Del",_=>key};return Enum.TryParse(key,true,out value);}
 }
 

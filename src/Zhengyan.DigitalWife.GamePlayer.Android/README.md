@@ -379,3 +379,4 @@ dotnet run --project tests/Zhengyan.DigitalWife.AndroidRuntime.Tests -- --verify
 - [项目总览](../../README.md)
 - [GameEditor](../Zhengyan.DigitalWife.GameEditor/README.md)
 - [当前能力与验证范围](../../docs/android-render-parity.md)
+- [PC、Android、Web 脚本 API 对照](../../docs/script-api-platform-parity.md)

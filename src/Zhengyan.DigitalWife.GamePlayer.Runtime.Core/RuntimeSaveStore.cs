@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
 /// <summary>Script-visible synchronous state, persisted by the platform host.</summary>
-public sealed class RuntimeSaveStore
+public sealed partial class RuntimeSaveStore
 {
     private readonly Dictionary<string, string> _files = new(StringComparer.OrdinalIgnoreCase);
     private long _revision, _persistedRevision;

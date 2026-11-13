@@ -25,11 +25,11 @@ public sealed record RuntimeLlmTool(string Name, string Description, string Para
         : this(name, description, parametersJsonSchema, (call, _) => Task.FromResult(handler(call.ArgumentsJson))) { }
     public RuntimeLlmTool(string name, string description, string parametersJsonSchema, Func<string, CancellationToken, Task<string>> handler)
         : this(name, description, parametersJsonSchema, (call, cancellation) => handler(call.ArgumentsJson, cancellation)) { }
-    public Task<string> InvokeAsync(RuntimeLlmToolCall call, CancellationToken cancellationToken) => Handler(call, cancellationToken);
+    public Task<string> InvokeAsync(RuntimeLlmToolCall toolCall, CancellationToken cancellationToken) => Handler(toolCall, cancellationToken);
 }
 
 /// <summary>Portable HTTP/SSE chat, tools, cancellation and script events.</summary>
-public sealed class RuntimeLlm : IDisposable
+public sealed partial class RuntimeLlm : IDisposable
 {
     private sealed class Request(CancellationTokenSource cancellation) { public CancellationTokenSource Cancellation = cancellation; public Task Task = Task.CompletedTask; public bool UserCancelled; }
     private sealed class ToolBuilder { public string Id = "", Name = ""; public StringBuilder Arguments = new(); }
@@ -56,28 +56,33 @@ public sealed class RuntimeLlm : IDisposable
     public void CancelRequest(string requestId) { if (_requests.TryRemove(requestId, out var request)) { request.UserCancelled = true; request.Cancellation.Cancel(); } }
     public void CancelAllRequests() { foreach (string id in _requests.Keys) CancelRequest(id); }
     public Task WaitForRequestsAsync() => Task.WhenAll(_requests.Values.Select(r => r.Task));
-    public string StartChat(RuntimeEntity callbackTarget, IReadOnlyList<RuntimeLlmChatMessage> messages, string? requestId = null,
-        string? onDeltaCallback = "llm_delta", string? onCompletedCallback = "llm_completed", string? onErrorCallback = "llm_error")
-        => StartChatWithTools(callbackTarget, messages, [], requestId, onDeltaCallback, onCompletedCallback, onErrorCallback);
-    public string StartChat(RuntimeEntity callbackTarget, string userText, string? systemPrompt = null, string? requestId = null,
-        string? onDeltaCallback = "llm_delta", string? onCompletedCallback = "llm_completed", string? onErrorCallback = "llm_error")
+    public string StartChat(RuntimeEntity callbackTarget, IReadOnlyList<RuntimeLlmChatMessage> messages, string? requestId,
+        string? onDeltaCallback, string? onCompletedCallback, string? onErrorCallback)
+        => StartChatWithTools(callbackTarget, messages, [], requestId, onDeltaCallback, onCompletedCallback, onErrorCallback,"llm_tool_call","llm_tool_result",8);
+    public string StartChat(RuntimeEntity callbackTarget, string userText, string? systemPrompt, string? requestId,
+        string? onDeltaCallback, string? onCompletedCallback, string? onErrorCallback)
         => StartChat(callbackTarget, Messages(userText, systemPrompt), requestId, onDeltaCallback, onCompletedCallback, onErrorCallback);
     public string StartChatWithTools(RuntimeEntity callbackTarget, IReadOnlyList<RuntimeLlmChatMessage> messages, IReadOnlyList<RuntimeLlmTool> tools,
-        string? requestId = null, string? onDeltaCallback = "llm_delta", string? onCompletedCallback = "llm_completed", string? onErrorCallback = "llm_error",
-        string? onToolCallCallback = "llm_tool_call", string? onToolResultCallback = "llm_tool_result", int maxToolRounds = 8)
+        string? requestId, string? onDeltaCallback, string? onCompletedCallback, string? onErrorCallback,
+        string? onToolCallCallback, string? onToolResultCallback, int maxToolRounds)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         string id = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId;
         CancelRequest(id);
         var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)));
         Request request = new(cancellation); _requests[id] = request;
+        var scriptOptions=_scriptOptions.Value;
         request.Task = RunAsync();
         return id;
 
         void Emit(string eventName, string callback, string text = "", string delta = "", RuntimeLlmToolCall? tool = null, string? result = null, string error = "")
         {
             if (!_disposed && !request.UserCancelled && (!cancellation.IsCancellationRequested || eventName == "error") && _requests.TryGetValue(id, out var current) && ReferenceEquals(current, request))
-                ScriptEvent?.Invoke(callbackTarget, new(id, eventName, delta, text, eventName == "completed", error, callback, tool, result));
+            {
+                var previous=_scriptOptions.Value;_scriptOptions.Value=null;
+                try{ScriptEvent?.Invoke(callbackTarget, new(id, eventName, delta, text, eventName == "completed", error, callback, tool, result));if(eventName=="delta")scriptOptions?.Delta?.Invoke(new(delta,text,false));else if(eventName=="completed")scriptOptions?.Completed?.Invoke(new(id,text));else if(eventName=="error")scriptOptions?.Error?.Invoke(new InvalidOperationException(error));}
+                finally{_scriptOptions.Value=previous;}
+            }
         }
         async Task RunAsync()
         {
@@ -142,7 +147,7 @@ public sealed class RuntimeLlm : IDisposable
     private async IAsyncEnumerable<RuntimeLlmStreamUpdate> StreamRoundAsync(IReadOnlyList<RuntimeLlmChatMessage> messages, IReadOnlyList<RuntimeLlmTool> tools,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var body = new Dictionary<string, object?> { ["model"] = Model, ["stream"] = true,
+        var body = new Dictionary<string, object?> { ["model"] = _scriptOptions.Value?.Model??Model, ["stream"] = true,
             ["messages"] = messages.Select(m =>
             {
                 var value = new Dictionary<string, object?> { ["role"] = m.Role, ["content"] = m.Content };
@@ -150,7 +155,7 @@ public sealed class RuntimeLlm : IDisposable
                 if (m.ToolCalls.Count > 0) value["tool_calls"] = m.ToolCalls.Select(c => new { id = c.Id, type = "function", function = new { name = c.Name, arguments = c.ArgumentsJson } }).ToArray();
                 return value;
             }).ToArray() };
-        if (_settings.DefaultTemperature is float temperature) body["temperature"] = temperature;
+        if ((_scriptOptions.Value?.Temperature??_settings.DefaultTemperature) is float temperature) body["temperature"] = temperature;
         if (tools.Count > 0) body["tools"] = tools.Select(t => new { type = "function", function = new { name = t.Name, description = t.Description, parameters = JsonSerializer.Deserialize<JsonElement>(t.ParametersJsonSchema) } }).ToArray();
         using HttpRequestMessage request = new(HttpMethod.Post, new Uri(new Uri(BaseUrl.TrimEnd('/') + "/"), _settings.ChatCompletionsPath.TrimStart('/')))
         { Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json") };

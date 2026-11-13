@@ -6,7 +6,8 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
 internal readonly record struct AndroidBubbleFontMetrics(float Top, float Bottom, float LineHeight);
 internal sealed record AndroidBubbleTextLine(string Text, float X, float Baseline, float FontSize, int Part);
-internal sealed record AndroidBubbleTextLayout(Vector2 Size, float Padding, IReadOnlyList<AndroidBubbleTextLine> Lines);
+internal sealed record AndroidBubbleTextLayout(Vector2 Size, float Padding, IReadOnlyList<AndroidBubbleTextLine> Lines)
+{ public float PaddingX {get;init;}=Padding; public float PaddingY {get;init;}=Padding; }
 
 internal static class AndroidDialogueBubbleTextLayout
 {
@@ -18,9 +19,9 @@ internal static class AndroidDialogueBubbleTextLayout
             Math.Min(160, canvasSize.X * .9f), canvasSize.X * .9f);
         float scale = LayoutResolver.IsRelative(bubble.LayoutMode)
             ? MathF.Min(canvasSize.X / Math.Max(1, referenceSize.X), canvasSize.Y / Math.Max(1, referenceSize.Y)) : 1;
-        float padding = Math.Min(Math.Max(4, 14 * scale), width * .2f);
-        float contentWidth = Math.Max(1, width - padding * 2);
-        float y = padding;
+        float paddingX = Math.Min(bubble.PaddingX * scale,width*.4f),paddingY=bubble.PaddingY*scale;
+        float contentWidth = Math.Max(1, width - paddingX * 2);
+        float y = paddingY;
         List<AndroidBubbleTextLine> lines = [];
         string[] blocks = [bubble.HeaderText, bubble.Text, bubble.FooterText];
         float[] sizes = [bubble.HeaderFontSize, bubble.FontSize, bubble.FooterFontSize];
@@ -32,7 +33,7 @@ internal static class AndroidDialogueBubbleTextLayout
                 canvasSize.X, canvasSize.Y, referenceSize.X, referenceSize.Y);
             AndroidBubbleFontMetrics font = metrics(fontSize);
             float lineHeight = Math.Max(font.LineHeight, font.Bottom - font.Top);
-            foreach (string text in Wrap(blocks[part], contentWidth, value => measure(value, fontSize)))
+            foreach (string text in bubble.WordWrap?Wrap(blocks[part], contentWidth, value => measure(value, fontSize)):blocks[part].Replace("\r\n","\n").Split('\n'))
             {
                 float textWidth = measure(text, fontSize);
                 float x = bubble.TextAlignment.ToLowerInvariant() switch
@@ -41,11 +42,11 @@ internal static class AndroidDialogueBubbleTextLayout
                     "center" => Math.Max(0, (contentWidth - textWidth) * .5f),
                     _ => 0
                 };
-                lines.Add(new(text, padding + x, y - font.Top, fontSize, part));
+                lines.Add(new(text, paddingX + x, y - font.Top, fontSize, part));
                 y += lineHeight;
             }
         }
-        return new(new(width, y + padding), padding, lines);
+        return new(new(width, y + paddingY),Math.Min(paddingX,paddingY), lines){PaddingX=paddingX,PaddingY=paddingY};
     }
 
     internal static IReadOnlyList<string> Wrap(string text, float width, Func<string, float> measure)

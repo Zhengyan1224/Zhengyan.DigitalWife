@@ -40,6 +40,11 @@ public sealed class WebRuntimeHost(
     private readonly Dictionary<string, bool> _audioLoops = new(StringComparer.OrdinalIgnoreCase);
     private int _reportedScriptDiagnosticCount;
     private bool _cursorVisible = true;
+    private bool _cursorLocked,_rawMouseInput;
+    private string _clipboardText=string.Empty;
+    private RuntimeGamepadInput _gamepadInput=new();
+    private readonly HashSet<string> _registeredCustomShaders=[];
+    private WebScriptRuntime? _loadingRuntime;
     private bool _switchingScene;
     private readonly ConcurrentQueue<(RuntimeScene Scene, RuntimeWindowCommand Command)> _windowCommands = new();
     private readonly WebSpeechLipSync _lipSync = new();
@@ -82,11 +87,16 @@ public sealed class WebRuntimeHost(
         try
         {
             _projectLoader.SpeechRequestHandler = QueueSpeechRequest;
+            _projectLoader.ScriptWarningHandler = message=>SetSnapshot(Snapshot with {LastError=message});
             _projectLoader.PhysicsFactory = _physicsService.CreateAsync;
             _projectLoader.InitializeServices = InitializeSceneServicesAsync;
+            _projectLoader.InitializeModels=async(scene,project)=>{if(_module is not null)await _module.InvokeVoidAsync("preloadModels",_dotNetReference);};
+            _projectLoader.ScriptRuntimeCreated=scripts=>_loadingRuntime=scripts;
             _projectLoader.ConfigureLoadingScreen = ConfigureLoadingScreenAsync;
             SetSnapshot(Snapshot with { IsLoading = true, LastError = null, Status = "正在加载游戏", LoadingMessage = "正在初始化渲染器" });
-            _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"));
+            _module = _jsRuntime is IJSInProcessRuntime
+                ? await _jsRuntime.InvokeAsync<IJSInProcessObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"))
+                : await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"));
             _dotNetReference = DotNetObjectReference.Create(this);
             _projectLoader.PythonFactory=(entry,source)=>new WebPythonScript(_jsRuntime,entry,source,_dotNetReference,(id,bridge)=>
             {
@@ -112,6 +122,7 @@ public sealed class WebRuntimeHost(
             foreach (WebAudioAsset audio in loadedProject.AudioAssets.Values.DistinctBy(asset => asset.Alias))
                 await _audioService.PrepareAsync(audio.Alias, audio.Uri);
             await ProcessScriptCommandsAsync();
+            if (!_started) return;
             WebPmxAsset? firstAsset = loadedProject.PmxAssets.Values.FirstOrDefault();
             if (loadedProject.PmxAssets.Count > 0 || loadedProject.SceneMeshes.Count > 0)
             {
@@ -127,6 +138,8 @@ public sealed class WebRuntimeHost(
             await UpdateRendererStateAsync(loadedProject);
             await UpdateOverlayStateAsync(loadedProject);
             await _module.InvokeVoidAsync("presentScene");
+            loadedProject.Scripts.PublishLoading("completed",1,"Scene ready");
+            await loadedProject.Scripts.FlushLoadingEventsAsync();_loadingRuntime=null;
             await _module.InvokeVoidAsync("setInputCapture", false);
 
             SetSnapshot(Snapshot with
@@ -181,18 +194,24 @@ public sealed class WebRuntimeHost(
             _reportedScriptDiagnosticCount = 0;
             try { await _audioService.StopAllAsync(); }
             catch (JSDisconnectedException) { }
+            try { await _speechService.StopAsync(); }
+            catch (JSDisconnectedException) { }
             if (_loadedProject is not null)
             {
                 await _loadedProject.Scripts.DisposeAsync();
                 foreach (WebPmxAsset asset in _loadedProject.PmxAssets.Values) asset.Dispose();
                 _loadedProject.RuntimeScene.Dispose();
             }
+            if (_loadingRuntime is not null && !ReferenceEquals(_loadingRuntime,_loadedProject?.Scripts))
+                await _loadingRuntime.DisposeAsync();
+            _loadingRuntime=null;
             _loadedProject = null;
             _pendingInput = RuntimeCameraInput.None;
             _pointerPosition = Vector2.Zero;
             _pointerDelta = Vector2.Zero;
             _pointerButtons = 0;
             _keys.Clear();
+            _registeredCustomShaders.Clear();_cursorLocked=false;_rawMouseInput=false;_gamepadInput=new();
             SetSnapshot(Snapshot with
             {
                 IsRunning = false,
@@ -226,6 +245,7 @@ public sealed class WebRuntimeHost(
         if (_disposed || !_started || !Snapshot.IsRunning || _loadedProject is null || _switchingScene) return;
         if (pointerInput is not null)
         {
+            if(pointerInput.Gamepad is not null)_gamepadInput=pointerInput.Gamepad;
             AccumulatePointerInput(pointerInput.LookX, pointerInput.LookY, pointerInput.PanX, pointerInput.PanY,
                 pointerInput.Zoom, pointerInput.PointerX, pointerInput.PointerY, pointerInput.Buttons);
         }
@@ -233,13 +253,16 @@ public sealed class WebRuntimeHost(
             ? 0.0
             : Math.Max((timestampMilliseconds - _lastTimestampMilliseconds) / 1000.0, 0.0);
         double deltaSeconds = Math.Min(frameIntervalSeconds, 0.25);
+        bool fixedAnimationStep = _loadedProject.RuntimeScene.Window.TimingMode == GameProjectTiming.FrameRateDependent;
+        if (fixedAnimationStep) deltaSeconds = 1.0 / 30.0;
+        double animationSeconds = fixedAnimationStep ? _loadedProject.RuntimeScene.ElapsedSeconds + deltaSeconds : timestampMilliseconds / 1000.0;
         _lastTimestampMilliseconds = timestampMilliseconds;
         RuntimeCameraInput input = ConsumeInput();
-        if (pointerInput is not null) input = input with { Touches = pointerInput.Touches, TouchTransitions = pointerInput.TouchTransitions, IsTouchAvailable = pointerInput.TouchAvailable };
+        if (pointerInput is not null) input = input with { Touches = pointerInput.Touches, TouchTransitions = pointerInput.TouchTransitions, IsTouchAvailable = pointerInput.TouchAvailable,HorizontalScroll=pointerInput.ScrollX };
         ApplyKeyboardCameraMotion((float)deltaSeconds);
         _loadedProject.RuntimeScene.Update((float)deltaSeconds, input);
         _loadedProject.RuntimeScene.ReportFrameInterval(frameIntervalSeconds);
-        _loadedProject.Scripts.Update((float)deltaSeconds, timestampMilliseconds / 1000.0, input);
+        _loadedProject.Scripts.Update((float)deltaSeconds, animationSeconds, input);
         UpdateSpriteHover(input.PointerPosition);
         while (_serviceEvents.TryDequeue(out var item))
             if (ReferenceEquals(item.Scene, _loadedProject.RuntimeScene)) _loadedProject.Scripts.DispatchEvent(item.Event, item.Event.EntityId);
@@ -254,7 +277,7 @@ public sealed class WebRuntimeHost(
         HashSet<string> changedIds = new(StringComparer.OrdinalIgnoreCase);
         foreach (WebPmxAsset asset in assets)
         {
-            if (asset.Update(timestampMilliseconds / 1000.0, (float)deltaSeconds))
+            if (asset.Update(fixedAnimationStep ? _loadedProject.RuntimeScene.ElapsedSeconds : animationSeconds, (float)deltaSeconds))
                 changedIds.Add(asset.Entity.Id);
         }
         changedIds.UnionWith(WebPmxRelations.Apply(_loadedProject.RuntimeScene, _loadedProject.PmxAssets));
@@ -271,7 +294,7 @@ public sealed class WebRuntimeHost(
         WebRuntimeSnapshot next = Snapshot with
         {
             FrameCount = Snapshot.FrameCount + 1,
-            ElapsedSeconds = timestampMilliseconds / 1000.0,
+            ElapsedSeconds = fixedAnimationStep ? _loadedProject.RuntimeScene.ElapsedSeconds : animationSeconds,
             LastDeltaSeconds = frameIntervalSeconds,
             ScriptDiagnosticCount = _loadedProject.Scripts.Diagnostics.Count,
             PhysicsBackend = firstAsset?.PhysicsBackend ?? "disabled",
@@ -583,10 +606,25 @@ public sealed class WebRuntimeHost(
     {
         while (_windowCommands.TryDequeue(out var window))
             if (ReferenceEquals(window.Scene, _loadedProject?.RuntimeScene) && _module is not null)
-                if (window.Command.Operation == "size")
+                if (window.Command.Operation == "exit")
+                {
+                    await StopAsync();
+                    return;
+                }
+                else if (window.Command.Operation == "size")
+                {
+                    _loadedProject!.Project.Window.Width=window.Command.Width;
+                    _loadedProject.Project.Window.Height=window.Command.Height;
                     await _module.InvokeVoidAsync("setGameSize", window.Command.Width, window.Command.Height);
+                }
                 else if (window.Command.Operation == "fullscreen")
                     await _module.InvokeVoidAsync("setGameFullscreen", window.Command.Fullscreen);
+                else if (window.Command.Operation == "title")
+                    await _module.InvokeVoidAsync("setGameTitle", window.Command.Text);
+                else if (window.Command.Operation == "visible")
+                    await _module.InvokeVoidAsync("setGameVisible", window.Command.Flag);
+                else if (window.Command.Operation == "resizable")
+                    await _module.InvokeVoidAsync("setGameResizable", window.Command.Flag);
         if (_loadedProject is not null)
         {
             while (_asrCommands.TryDequeue(out var item))
@@ -683,7 +721,7 @@ public sealed class WebRuntimeHost(
                         request.Volume,
                         _dotNetReference,
                         entityId,
-                        callbackName);
+                        callbackName,request.SpeakerId);
                 }
                 else
                 {
@@ -695,7 +733,7 @@ public sealed class WebRuntimeHost(
                 SetSnapshot(Snapshot with { LastError = $"Web speech command failed: {exception.GetBaseException().Message}" });
             }
         }
-        if (_loadedProject.RuntimeScene.ConsumeSceneRequest() is string scenePath && !_switchingScene)
+        if (Snapshot.IsRunning && _loadedProject.RuntimeScene.ConsumeSceneRequest() is string scenePath && !_switchingScene)
             await SwitchSceneAsync(scenePath);
     }
 
@@ -729,11 +767,18 @@ public sealed class WebRuntimeHost(
             await _module.InvokeVoidAsync("loadSceneTextures", (object)next.SpriteUris.Values.ToArray());
             await UpdateRendererStateAsync(next); await UpdateOverlayStateAsync(next);
             await _module.InvokeVoidAsync("presentScene");
+            next.Scripts.PublishLoading("completed",1,"场景加载完成");
+            await next.Scripts.FlushLoadingEventsAsync();
+            _loadingRuntime=null;
             SetSnapshot(Snapshot with { IsLoading = false, IsRunning = true, LoadingProgress = 1,
                 LoadingStage = "ready", LoadingMessage = "场景加载完成", SceneName = next.RuntimeScene.Name, SceneEntityCount = next.RuntimeScene.Entities.Count(),
                 PmxEntityCount = next.PmxAssets.Count });
         }
-        catch (Exception exception) { SetSnapshot(Snapshot with { IsLoading = false, IsRunning = false, LastError = $"Scene '{path}' failed to load: {exception.GetBaseException().Message}" }); }
+        catch (Exception exception)
+        {
+            if(_loadingRuntime is not null){await _loadingRuntime.DisposeAsync();_loadingRuntime=null;}
+            SetSnapshot(Snapshot with { IsLoading = false, IsRunning = false, LastError = $"Scene '{path}' failed to load: {exception.GetBaseException().Message}" });
+        }
         finally { _switchingScene = false; await _module.InvokeVoidAsync("setInputCapture", false); }
     }
 
@@ -817,6 +862,9 @@ public sealed class WebRuntimeHost(
                 progress = control.Progress,
                 selectedIndex = control.SelectedIndex,
                 items = control.Items,
+                multiline=control.Multiline,wordWrap=control.WordWrap,
+                cursorPosition=control.CursorPosition,selectionStart=control.SelectionStart,selectionEnd=control.SelectionEnd,
+                compositionStart=control.CompositionStart,compositionEnd=control.CompositionEnd,
                 background = ToCssColor(control.Style.BackgroundColor),
                 border = ToCssColor(control.Style.BorderColor),
                 color = ToCssColor(control.Style.TextColor),
@@ -881,7 +929,10 @@ public sealed class WebRuntimeHost(
             float scale = bubble.LayoutMode == "relative" ? Math.Min(actualWidth / referenceWidth, actualHeight / referenceHeight) : 1;
             return (object)new { x = anchor.X, y = anchor.Y, width = bubble.Width * scale,
                 pivot = new[] { bubble.Pivot.X, bubble.Pivot.Y }, text = bubble.Text, header = bubble.HeaderText, footer = bubble.FooterText,
-                fontSize = bubble.FontSize * scale, padding = new[] { bubble.PaddingX * scale, bubble.PaddingY * scale },
+                fontSize = bubble.FontSize * scale,headerFontSize=bubble.HeaderFontSize*scale,footerFontSize=bubble.FooterFontSize*scale,
+                wordWrap=bubble.WordWrap,textAlignment=bubble.TextAlignment,borderThickness=bubble.BorderThickness*scale,
+                headerColor=ToCssColor(Vector4Dto.FromVector4(bubble.HeaderTextColor)),footerColor=ToCssColor(Vector4Dto.FromVector4(bubble.FooterTextColor)),
+                padding = new[] { bubble.PaddingX * scale, bubble.PaddingY * scale },
                 background = ToCssColor(Vector4Dto.FromVector4(bubble.BackgroundColor)), border = ToCssColor(Vector4Dto.FromVector4(bubble.BorderColor)),
                 color = ToCssColor(Vector4Dto.FromVector4(bubble.TextColor)), rounding = bubble.Rounding * scale, visible = true };
         }).ToArray();
@@ -891,8 +942,24 @@ public sealed class WebRuntimeHost(
     [JSInvokable]
     public Task OnGuiValueChanged(string id, string value)
     {
+        if(Snapshot.IsLoading)return Task.CompletedTask;
         var control = _loadedProject?.RuntimeScene.GetGuiControl(id);
-        if (control is not null) control.Value = value;
+        if (control is not null && control.Value!=value)
+        {
+            control.Value=value;
+            var definition=_loadedProject!.SceneDefinition.GuiControls.First(c=>c.Id==id);
+            var target=ResolveGuiTargetEntityId(definition);
+            _loadedProject.Scripts.DispatchEvent(new WebScriptEvent("gui",EntityId:target??"",ControlId:id,ControlName:control.Name,
+                EventName:string.IsNullOrWhiteSpace(control.EventName)?"changed":control.EventName),target);
+        }
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnGuiSelectionChanged(string id,int start,int end,int compositionStart=-1,int compositionEnd=-1)
+    {
+        var control=_loadedProject?.SceneDefinition.GuiControls.FirstOrDefault(c=>c.Id==id);
+        if(control is not null){int length=(control.Text??"").Length;control.SelectionStart=Math.Clamp(start,0,length);control.SelectionEnd=Math.Clamp(end,0,length);control.CursorPosition=control.SelectionEnd;control.CompositionStart=compositionStart;control.CompositionEnd=compositionEnd;}
         return Task.CompletedTask;
     }
 
@@ -929,7 +996,11 @@ public sealed class WebRuntimeHost(
             _keys.Contains);
         _pendingInput = RuntimeCameraInput.None;
         _pointerDelta = Vector2.Zero;
-        return value with { CursorVisibility = visible => _cursorVisible = visible,CursorState=()=>_cursorVisible,DevicePixelRatio=(float)Snapshot.DevicePixelRatio };
+        return value with { CursorVisibility = visible => _cursorVisible = visible,CursorState=()=>_cursorVisible,DevicePixelRatio=(float)Snapshot.DevicePixelRatio,
+            Gamepad=_gamepadInput,ClipboardReader=()=>_clipboardText,ClipboardWriter=text=>_module is IJSInProcessObjectReference sync&&sync.Invoke<bool>("trySetClipboardText",text),
+            ClipboardAsyncReader=()=>_module?.InvokeAsync<string>("readClipboardText").AsTask()??Task.FromResult(_clipboardText),
+            CursorLockReader=()=>_cursorLocked,RawMouseReader=()=>_rawMouseInput,
+            CursorLockSetter=(locked,raw)=>_module is IJSInProcessObjectReference sync&&sync.Invoke<bool>("trySetCursorLocked",locked,raw)};
     }
 
     private void ApplyKeyboardCameraMotion(float deltaSeconds)
@@ -954,6 +1025,18 @@ public sealed class WebRuntimeHost(
     private async Task UpdateRendererStateAsync(WebLoadedProject project)
     {
         if (_module is null) return;
+        foreach(var asset in project.PmxAssets.Values)
+            if(asset.CustomShaderSource is {} shader&&_registeredCustomShaders.Add(shader.Id))
+                await _module.InvokeAsync<bool>("registerCustomShader",shader.Id,shader.Vertex,shader.Fragment);
+        foreach(var surface in project.SurfaceScriptApis.Values)
+            if(surface.CustomShaderSource is {} shader&&_registeredCustomShaders.Add(shader.Id))
+                await _module.InvokeAsync<bool>("registerCustomShader",shader.Id,shader.Vertex,shader.Fragment);
+        if(project.PmxAssets.Values.Any(a=>a.ScriptMeshReloadRequested))
+        {
+            var reload=project.PmxAssets.Values.Select(a=>new WebPmxMeshInstance(a.Entity.Id,a.Mesh)).Concat(project.SceneMeshes.Select(p=>new WebPmxMeshInstance(p.Key,p.Value))).ToArray();
+            await _module.InvokeVoidAsync("loadPmxMeshes",(object)reload);
+            foreach(var asset in project.PmxAssets.Values)asset.ScriptMeshReloadRequested=false;
+        }
         (RuntimeEntity Entity, WebPmxMesh Mesh)[] models = project.PmxAssets.Values
             .Select(asset => (Entity: project.RuntimeScene.GetEntity(asset.Entity.Id), Asset: asset))
             .Where(item => item.Entity is not null)
@@ -966,6 +1049,7 @@ public sealed class WebRuntimeHost(
         WebRenderFrame frame = WebRenderFrame.FromScene(project.RuntimeScene, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight,
             Snapshot.ElapsedSeconds, project.Project.Window.AntiAliasingSamples, project.Project.Shadows, project.RuntimeScene.Graphics.Capture());
         frame = frame.WithSceneEffects(project, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight);
+        frame=frame with{Meshes=frame.Meshes.Select(m=>m with{CustomShader=project.PmxAssets.GetValueOrDefault(m.Id)?.CustomShader??project.SurfaceScriptApis.GetValueOrDefault(m.Id)?.CustomShader}).ToArray()};
         if (project.Project.Window.DesktopSpriteMode)
             frame = frame with { ClearColor = [0, 0, 0, 0], Sky = null, Features = frame.Features with { Skybox = false } };
         await _module.InvokeVoidAsync("setFrameState", frame);
@@ -973,8 +1057,12 @@ public sealed class WebRuntimeHost(
 
     private async Task InitializeSceneServicesAsync(RuntimeScene scene, GameProject project)
     {
-        scene.Window.Configure(_loadedProject?.RuntimeScene.Window.Width ?? project.Window.Width,
-            _loadedProject?.RuntimeScene.Window.Height ?? project.Window.Height);
+        scene.Runtime.Configure(project.Runtime,".",()=>_loadedProject?.PmxAssets.Values.Any(a=>a.GpuSkinning)==true?"WebGL2 vertex skinning":"WASM");
+        scene.ScriptToolInvoker=(entity,name,tool)=>ReferenceEquals(_loadedProject?.RuntimeScene,scene)
+            ?_loadedProject.Scripts.InvokeLlmToolAsync(entity,name,tool):Task.FromException<string?>(new InvalidOperationException("The tool callback scene is not ready or is no longer active."));
+        foreach(var actor in scene.Entities)actor.ConfigureVoice(project.Voice);
+        if (_loadedProject is null) scene.Window.Configure(project.Window);
+        else scene.Window.Configure(_loadedProject.RuntimeScene.Window);
         scene.Window.Command += command => _windowCommands.Enqueue((scene, command));
         scene.Window.ReportState((int)(Snapshot.CanvasWidth / Math.Max(1, Snapshot.DevicePixelRatio)),
             (int)(Snapshot.CanvasHeight / Math.Max(1, Snapshot.DevicePixelRatio)), _loadedProject?.RuntimeScene.Window.Fullscreen ?? false);
@@ -1009,7 +1097,6 @@ public sealed class WebRuntimeHost(
                     modelUris[path]=uri;
                 }
             await _module.InvokeVoidAsync("configureOffline",project,modelUris,identity);
-            await _module.InvokeVoidAsync("preloadModels", _dotNetReference);
         }
         _pythonProjectFiles.Clear();
         if(_projectLoader.Assets.Manifest.Scripts.Any(s=>s.Language.Equals("python",StringComparison.OrdinalIgnoreCase)))
@@ -1074,6 +1161,10 @@ public sealed class WebRuntimeHost(
     }
 
     [JSInvokable]
+    public Task OnClipboardChanged(string text){_clipboardText=text??string.Empty;return Task.CompletedTask;}
+    [JSInvokable]
+    public Task OnCursorLockStateChanged(bool locked,bool raw){_cursorLocked=locked;_rawMouseInput=raw;return Task.CompletedTask;}
+    [JSInvokable]
     public Task OnWindowStateChanged(int width, int height, bool fullscreen)
     {
         _loadedProject?.RuntimeScene.Window.ReportState(width, height, fullscreen);
@@ -1086,6 +1177,7 @@ public sealed class WebRuntimeHost(
         if (!Snapshot.IsLoading) return Task.CompletedTask;
         SetSnapshot(Snapshot with { LoadingStage = "models", LoadingProgress = kind == "tts" ? 0.80f : kind == "asr" ? 0.85f : 0.88f,
             LoadingMessage = message, Status = message });
+        _loadingRuntime?.PublishLoading("progress",Snapshot.LoadingProgress,message);
         return Task.CompletedTask;
     }
 

@@ -35,6 +35,7 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android
         public System.Numerics.Vector2 ScrollDelta => default;
         public IReadOnlySet<int> PressedMouseButtons { get; } = new HashSet<int>();
         public IReadOnlySet<int> ReleasedMouseButtons { get; } = new HashSet<int>();
+        public IReadOnlySet<global::Android.Views.Keycode> Keys { get; init; } = new HashSet<global::Android.Views.Keycode>();
         public AndroidGamepadSnapshot Gamepad { get; } = new();
         public bool IsKeyDown(global::Android.Views.Keycode key) => false;
         public bool IsKeyPressed(global::Android.Views.Keycode key) => false;
@@ -45,10 +46,18 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android
     {
         public bool Connected => false;
         public string Name => "";
+        public int Index => -1;
+        public IReadOnlySet<global::Android.Views.Keycode> Buttons { get; init; } = new HashSet<global::Android.Views.Keycode>();
         public System.Numerics.Vector2 LeftStick => default;
         public System.Numerics.Vector2 RightStick => default;
         public float LeftTrigger => 0;
         public float RightTrigger => 0;
         public bool IsButtonDown(global::Android.Views.Keycode key) => false;
+    }
+    internal static class AndroidWindowPlatform
+    {
+        internal static bool CursorLocked => false;
+        internal static bool SetCursorLocked(bool locked) => !locked;
+        internal static bool SetCursorVisible(bool visible) => true;
     }
 }

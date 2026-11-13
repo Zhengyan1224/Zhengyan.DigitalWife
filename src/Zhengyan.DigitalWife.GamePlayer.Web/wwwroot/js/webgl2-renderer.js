@@ -1133,7 +1133,7 @@ export function createWebGl2Renderer(canvas, reportError) {
     const toonSampler = createTextureSampler(gl, true);
     const vao = gl.createVertexArray();
     if (!vao) throw new Error("WebGL2 could not allocate the empty mesh VAO.");
-    const locations = {
+    let locations = {
         ...skinningLocations(gl, program),
         position: gl.getAttribLocation(program, "a_position"),
         normal: gl.getAttribLocation(program, "a_normal"),
@@ -1188,6 +1188,42 @@ export function createWebGl2Renderer(canvas, reportError) {
         lightViewProjection: gl.getUniformLocation(shadowProgram, "u_lightViewProjection"),
         model: gl.getUniformLocation(shadowProgram, "u_model")
     };
+    const defaultLocations=locations,customShaders=new Map();
+    function registerCustomShader(id,vertex,fragment){
+        if(customShaders.has(id))return true;
+        let custom;
+        try{
+            const vs=compileShader(gl,gl.VERTEX_SHADER,vertex,'Custom vertex'),fs=compileShader(gl,gl.FRAGMENT_SHADER,fragment,'Custom fragment');
+            custom=gl.createProgram();gl.attachShader(custom,vs);gl.attachShader(custom,fs);
+            gl.bindAttribLocation(custom,0,'a_position');gl.bindAttribLocation(custom,1,'a_normal');gl.bindAttribLocation(custom,2,'a_uv');
+            gl.linkProgram(custom);gl.deleteShader(vs);gl.deleteShader(fs);
+            if(!gl.getProgramParameter(custom,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(custom));
+            const refs={};for(const key of Object.keys(defaultLocations))refs[key]=gl.getUniformLocation(custom,'u_'+key);
+            customShaders.set(id,{program:custom,locations:refs,uniforms:new Map()});return true;
+        }catch(error){if(custom)gl.deleteProgram(custom);reportError('WebGL2 custom shader failed: '+error.message);return false;}
+    }
+    function customFrame(shader,viewProjection,cameraPosition,clipPlane){
+        const l=shader.locations;
+        gl.uniformMatrix4fv(l.viewProjection,false,viewProjection);gl.uniformMatrix4fv(l.lightViewProjection,false,frameState.lightViewProjection);
+        gl.uniform3fv(l.cameraPosition,cameraPosition||[0,0,0]);gl.uniform3fv(l.lightDirection,frameState.lightDirection);gl.uniform3fv(l.lightColor,frameState.lightColor);
+        gl.uniform3fv(l.ambientColor,frameState.ambientColor);gl.uniform1f(l.ambientStrength,frameState.ambientStrength);
+        gl.uniform1i(l.clipEnabled,clipPlane?1:0);gl.uniform4fv(l.clipPlane,clipPlane||[0,0,0,0]);
+        gl.uniform1i(l.shadowMap,1);gl.uniform1i(l.localShadowAtlas,2);
+    }
+    function customUniforms(shader,values){
+        const current=values||{};
+        for(const [name,value]of Object.entries(shader.lastValues||{}))if(!(name in current)){
+            const location=shader.uniforms.get(name),v=value.values||[];
+            if(value.integer)gl.uniform1i(location,0);else if(v.length===1)gl.uniform1f(location,0);else if(v.length===2)gl.uniform2fv(location,[0,0]);else if(v.length===3)gl.uniform3fv(location,[0,0,0]);else if(v.length===4)gl.uniform4fv(location,[0,0,0,0]);
+        }
+        for(const [name,value]of Object.entries(values||{})){
+            if(!shader.uniforms.has(name))shader.uniforms.set(name,gl.getUniformLocation(shader.program,name));
+            const location=shader.uniforms.get(name),v=value.values||[];
+            if(value.integer)gl.uniform1i(location,v[0]||0);
+            else if(v.length===1)gl.uniform1f(location,v[0]);else if(v.length===2)gl.uniform2fv(location,v);else if(v.length===3)gl.uniform3fv(location,v);else if(v.length===4)gl.uniform4fv(location,v);
+        }
+        shader.lastValues=current;
+    }
     const particleLocations = {
         position: gl.getAttribLocation(particleProgram, "a_position"),
         color: gl.getAttribLocation(particleProgram, "a_color"),
@@ -1214,7 +1250,7 @@ export function createWebGl2Renderer(canvas, reportError) {
         model: identity,
         lightViewProjection: identity,
         lightDirection: [0.5, -1, 0.5], lightColor: [1, 1, 1], ambientColor: [0.65, 0.65, 0.65],
-        ambientStrength: 0.25, clearColor: [0.035, 0.055, 0.1, 1], meshes: []
+        ambientStrength: 0.25, clearColor: [0.035, 0.055, 0.1, 1], meshes: undefined
     };
     let shadowDirty = true;
     let shadowStateKey = "";
@@ -1271,7 +1307,7 @@ export function createWebGl2Renderer(canvas, reportError) {
             gl.depthMask(true);
             gl.enable(gl.CULL_FACE);
             gl.cullFace(gl.BACK);
-            const frameMeshes = Array.isArray(frameState.meshes) && frameState.meshes.length > 0
+            const frameMeshes = Array.isArray(frameState.meshes)
                 ? frameState.meshes
                 : [{ id: "default", model: frameState.model, shadowEnabled: frameState.shadowEnabled, receiveShadow: true, edgeEnabled: true }];
             const features = frameState.features || {};
@@ -1367,6 +1403,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                 shadowDirty = false;
             }
             const drawColor = (viewProjection, cameraPosition, clipPlane = null, skyInverse = frameState.skyInverseViewProjection, view = frameState.view) => {
+                locations=defaultLocations;
                 gl.enable(gl.DEPTH_TEST);gl.disable(gl.SCISSOR_TEST);gl.disable(gl.BLEND);
                 gl.colorMask(true, true, true, true);
                 gl.depthMask(true);
@@ -1465,6 +1502,10 @@ export function createWebGl2Renderer(canvas, reportError) {
                 for (const entry of renderEntries.slice().sort((a,b)=>(a.frame.waterSurface?120:a.frame.texturedPlane?115:100)-(b.frame.waterSurface?120:b.frame.texturedPlane?115:100))) {
                     const mesh = entry.mesh;
                     const meshFrame = entry.frame;
+                    const custom=customShaders.get(meshFrame.customShader?.id);
+                    locations=custom?.locations||defaultLocations;
+                    gl.useProgram(custom?.program||program);
+                    if(custom){customFrame(custom,viewProjection,cameraPosition,clipPlane);customUniforms(custom,meshFrame.customShader.uniforms);}
                     // Desktop excludes all mirror planes from reflection passes.
                     if (clipPlane && (meshFrame.texturedPlane || meshFrame.waterSurface) && meshFrame.mirrorReflectionStrength > 0) continue;
                     const reflection = !clipPlane ? reflectionTargets.get(entry.key) : null;
@@ -1531,6 +1572,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                         // by blending textured materials as well.
                         if (group.texture || diffuse[3] < 0.999) gl.enable(gl.BLEND); else gl.disable(gl.BLEND);
                         gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+                        if(custom)customUniforms(custom,meshFrame.customShader.uniforms);
                         gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
                     }
                 }
@@ -1633,6 +1675,7 @@ export function createWebGl2Renderer(canvas, reportError) {
 
     return {
         info,
+        registerCustomShader,
         getDiagnostics() { return { width, height,rippleCapacity,canvasSize:frameState.canvasSize,time:frameState.time,cameras: frameState.cameras?.map(c=>({id:c.id,viewport:c.viewport})),
             renderTextures:frameState.renderTextures?.map(r=>({id:r.id,viewport:r.camera.viewport})),meshCount:meshes.size }; },
         async loadSceneTextures(uris) { await Promise.all(toEntryArray(uris).map(ensureTexture)); },
@@ -1647,6 +1690,7 @@ export function createWebGl2Renderer(canvas, reportError) {
             if (disposed || !nextState) return;
             frameState = { ...frameState, ...nextState };
             ensureTexture(frameState.sky?.textureUri);
+            for(const mesh of frameState.meshes||[])for(const material of mesh.materials||[])ensureTexture(material.textureUri);
             if(frameState.waters?.length) {
                 for(let i=0;i<4;i++)ensureTexture(`./engine/Water/Ocean${i}_N.dds`);
                 ensureTexture("./engine/Water/Sky.dds");
@@ -1786,6 +1830,7 @@ export function createWebGl2Renderer(canvas, reportError) {
             const scenes = new Set([sceneTarget,...[...cameraTargets.values()].map(r=>r.scene)].filter(Boolean));
             for(const target of scenes)deleteRenderTarget(gl,target);
             if(scenePresenter) { gl.deleteProgram(scenePresenter.program); gl.deleteVertexArray(scenePresenter.vao); }
+            for(const shader of customShaders.values())gl.deleteProgram(shader.program);customShaders.clear();
             for(const target of renderTextureTargets.values()) {
                 for(const alias of target.aliases)textures.delete(alias);
                 deleteRenderTarget(gl,target);

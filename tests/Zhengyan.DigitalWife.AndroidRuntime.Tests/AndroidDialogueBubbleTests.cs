@@ -3,6 +3,7 @@ using System.Globalization;
 using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
+using RuntimeDialogueBubble = Zhengyan.DigitalWife.GamePlayer.Android.RuntimeDialogueBubble;
 
 internal static class AndroidDialogueBubbleTests
 {

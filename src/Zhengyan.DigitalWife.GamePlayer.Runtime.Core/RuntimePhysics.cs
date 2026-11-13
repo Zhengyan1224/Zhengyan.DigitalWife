@@ -6,6 +6,11 @@ namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 public readonly record struct RuntimeRay(Vector3 Origin, Vector3 Direction)
 {
     public RuntimeRay Normalized => new(Origin, Direction.LengthSquared() <= 0.000001f ? -Vector3.UnitZ : Vector3.Normalize(Direction));
+    public Vector3 GetPoint(float distance)=>Origin+Normalized.Direction*distance;
+    public bool TryIntersectPlaneY(float y,out Vector3 point)
+    {point=default;var direction=Normalized.Direction;if(MathF.Abs(direction.Y)<1e-6f)return false;float distance=(y-Origin.Y)/direction.Y;if(distance<0)return false;point=GetPoint(distance);return true;}
+    public bool TryIntersectSphere(Vector3 center,float radius,out float distance)
+    {distance=0;var offset=Origin-center;var d=Normalized.Direction;float b=Vector3.Dot(offset,d),c=offset.LengthSquared()-Math.Max(0,radius)*Math.Max(0,radius),det=b*b-c;if(det<0)return false;float near=-b-MathF.Sqrt(det),far=-b+MathF.Sqrt(det);distance=near>=0?near:far;return distance>=0;}
 }
 
 public readonly record struct RuntimeRaycastHit(RuntimeEntity Entity, string ColliderId, string ColliderName, string ColliderShape, float Distance, Vector3 Point);
@@ -73,6 +78,11 @@ public static class RuntimePhysics
             if (a.Shape != "mesh" && b.Shape != "mesh") { found = true; best = MathF.Min(best, CollisionGeometry.DistanceBetweenColliders(ToGeometry(a), ToGeometry(b))); }
         return found ? best : Vector3.Distance(left.Position, right.Position);
     }
+    public static bool CheckCapsuleCollision(RuntimeCapsule left,RuntimeCapsule right)=>CollisionGeometry.CheckColliderCollision(CapsuleCollider(left),CapsuleCollider(right));
+    public static float DistanceBetweenCapsules(RuntimeCapsule left,RuntimeCapsule right)=>CollisionGeometry.DistanceBetweenColliders(CapsuleCollider(left),CapsuleCollider(right));
+    private static ColliderGeometry CapsuleCollider(RuntimeCapsule capsule)=>new("","","capsule",new CapsuleGeometry(capsule.Start,capsule.End,capsule.Radius),default);
+    public static bool TryRaycastCollider(RuntimeRay ray,RuntimeCollider collider,out float distance,out Vector3 point)
+        =>collider.Shape=="mesh"?TryRaycastMesh(ray,collider.Mesh,out distance,out point):CollisionGeometry.TryRaycastCollider(ray.Origin,ray.Direction,ToGeometry(collider),out distance,out point);
 
     public static bool TryRaycastMesh(RuntimeRay ray, RuntimeMeshCollider mesh, out float distance, out Vector3 point)
     {

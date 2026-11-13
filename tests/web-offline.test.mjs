@@ -54,6 +54,18 @@ test('wake monitoring retains the microphone across silence endpoints',async t=>
     assert.equal(app.tracks[0].stops,0);
 });
 
+test('wake timing and tail padding finish a segment without closing the microphone',async t=>{
+    const app=await microphoneFixture(t);
+    Object.assign(app.command,{chunkDurationSeconds:.1,extensionDurationSeconds:0,trailingSilencePaddingSeconds:.1});
+    app.offline.executeAsr(app.command,app.reference);await tick();
+    app.sample();await tick();await app.result();
+    app.sample();await tick();await app.result();
+    const finish=app.workers[0].messages.filter(m=>m.type==='asr').at(-1);
+    assert.equal(finish.finished,true);assert.equal(finish.samples.length,1600);
+    await app.result('hello');assert.equal(app.events.at(-1)[2].wakeWord,'hello');
+    assert.equal(app.tracks[0].stops,0);
+});
+
 test('a stale endpoint cannot stop a replacement microphone or emit callbacks',async t=>{
     const app=await microphoneFixture(t);
     app.offline.executeAsr({...app.command,operation:'start',finishOnEndpoint:true},app.reference);await tick();

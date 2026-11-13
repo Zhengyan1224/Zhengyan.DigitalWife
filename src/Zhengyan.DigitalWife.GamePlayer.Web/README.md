@@ -65,6 +65,8 @@ if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButt
 
 `SetFullscreen(true)` 使用浏览器原生全屏，让整个游戏画布（含 GUI）占满屏幕，`false` 退出，用户也可以按 Esc。`Scene.Window.Fullscreen` 反映浏览器实际状态。浏览器要求全屏由用户操作触发：点击事件中的脚本通常可直接进入；初始化或定时脚本请求全屏时，画布会显示“点击进入全屏”按钮，等待用户确认点击。iframe 必须允许 `fullscreen`，上层页面的 Permissions-Policy 也不能禁止它；浏览器拒绝时会显示具体错误。参见 [Fullscreen API 的要求](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen#security)。
 
+`Scene.Window.Exit()` 和 `Quit()` 停止 Web 游戏、音频和麦克风采集，保留宿主网页。Web 没有操作系统托盘：为兼容桌面精灵脚本，Web 预编译器提供 `IsTrayMenuEvent=false`，以及值为空字符串的 `TrayMenuItemId`、`TrayMenuItemText`、`TrayMenuEventName`。这些桌面托盘分支可以保留在共用脚本里，浏览器不会触发它们。
+
 语音功能需要 HTTPS（本地可用 localhost）、iframe 的 `microphone` 权限，以及用户授予麦克风权限。`allow="autoplay"` 不是绕过浏览器音频限制的开关；首次使用仍建议点击游戏区域。若宿主站点设置了 `Permissions-Policy`，也需要允许该游戏来源使用相应功能。
 
 ### 透明的网页宠物
@@ -693,3 +695,4 @@ API 密钥不要写入 `wwwroot`、`web.manifest.json`、脚本 DLL 或公开的
 - [`docs/web-runtime-phase8.md`](../../docs/web-runtime-phase8.md)：语音、网络和 Service Worker；
 - [`docs/web-runtime-phase9.md`](../../docs/web-runtime-phase9.md)：WebGPU 能力评估。
 
+- [`docs/script-api-platform-parity.md`](../../docs/script-api-platform-parity.md)：PC、Android、Web 脚本 API 清单、接口行为与平台限制；

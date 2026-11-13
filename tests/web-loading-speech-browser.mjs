@@ -50,11 +50,11 @@ try{
                 }else if(p.request.url.includes('web-audio.js')){
                     body+='\nglobalThis.__gameAudio=()=>[...sounds].map(([key,entry])=>({key,paused:entry.audio.paused,time:entry.audio.currentTime}));\n';
                 }else if(p.request.url.includes('web-platform.js') && !realSpeech){
-                    body=body.replace("if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName);return;}",
+                    body=body.replace("if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName,speakerId);return;}",
                         "globalThis.__speechCalls??=[];__speechCalls.push(text);dotNetReference?.invokeMethodAsync('OnSpeechCompleted',entityId,callbackName);return;");
                 }else if(p.request.url.includes('web-platform.js')){
-                    body=body.replace("if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName);return;}",
-                        "globalThis.__speechRequests??=[];__speechRequests.push(text);const original=dotNetReference;dotNetReference={invokeMethodAsync:(name,...args)=>{globalThis.__speechEvents??=[];__speechEvents.push({name,args});return original.invokeMethodAsync(name,...args);}};if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName);return;}");
+                    body=body.replace("if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName,speakerId);return;}",
+                        "globalThis.__speechRequests??=[];__speechRequests.push(text);const original=dotNetReference;dotNetReference={invokeMethodAsync:(name,...args)=>{globalThis.__speechEvents??=[];__speechEvents.push({name,args});return original.invokeMethodAsync(name,...args);}};if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName,speakerId);return;}");
                 }else if(p.request.url.includes('web-offline.js')){
                     body=body.replace("if(m.type==='result')", "if(this.kind==='asr'&&m.type==='result')globalThis.__asrResults=(globalThis.__asrResults||0)+1;if(m.type==='result')");
                     body+='\nglobalThis.__modelsWarm=()=>tts.warmed&&asr.warmed;\n';
@@ -90,7 +90,7 @@ try{
         await send('Input.dispatchMouseEvent',{type:'mousePressed',...position,button:'left',buttons:1,clickCount:1});
         await send('Input.dispatchMouseEvent',{type:'mouseReleased',...position,button:'left',buttons:0,clickCount:1});
     }
-    await evaluate(`(()=>{const input=document.querySelector('textarea[aria-label="PromptInput"]');input.value='只回复一个字：好。';input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await evaluate(`(()=>{const input=document.querySelector('[aria-label="PromptInput"]');input.value='只回复一个字：好。';input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await click('SendButton');
     await until(()=>evaluate("globalThis.__speechEvents?.some(e=>e.name==='OnSpeechCompleted')"),120000);
     assert(!(await evaluate("JSON.stringify(__webRuntimeState().overlayState.bubbles)")).includes('LLM 出错'));

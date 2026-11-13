@@ -29,10 +29,12 @@ public sealed class RuntimeLightCollection : IReadOnlyCollection<RuntimeEntity>
         Vector3 position,
         Vector3 color,
         float intensity = 1.0f,
-        float range = 8.0f)
-        => _spot
-            ? _scene.AddSpotLight(name, position, Vector3.Zero, color, intensity, range)
-            : _scene.AddPointLight(name, position, color, intensity, range);
+        float range = 8.0f,
+        bool enabled = true)
+    {
+        var entity=_spot?_scene.AddSpotLight(name,position,Vector3.Zero,color,intensity,range):_scene.AddPointLight(name,position,color,intensity,range);
+        entity.Enabled=enabled;return entity;
+    }
 
     public RuntimeEntity Add(
         string name,
@@ -42,10 +44,9 @@ public sealed class RuntimeLightCollection : IReadOnlyCollection<RuntimeEntity>
         float intensity = 1.0f,
         float range = 12.0f,
         float innerConeAngleDegrees = 18.0f,
-        float outerConeAngleDegrees = 28.0f)
-        => _spot
-            ? _scene.AddSpotLight(name, position, DirectionToEuler(direction), color, intensity, range, innerConeAngleDegrees, outerConeAngleDegrees)
-            : _scene.AddPointLight(name, position, color, intensity, range);
+        float outerConeAngleDegrees = 28.0f,
+        bool enabled = true)
+    {var entity=_spot?_scene.AddSpotLight(name,position,DirectionToEuler(direction),color,intensity,range,innerConeAngleDegrees,outerConeAngleDegrees):_scene.AddPointLight(name,position,color,intensity,range);entity.Enabled=enabled;return entity;}
 
     public bool Remove(string idOrName)
     {

@@ -57,11 +57,20 @@ public sealed class MainActivity : Activity
     private int _projectLoadVersion;
     private bool _openingProject;
     private bool _packagePickerActive;
+    private bool? _scriptFullscreen;
+    internal bool ScriptFullscreen => _scriptFullscreen ?? true;
+    internal bool CanCaptureCursor=>Build.VERSION.SdkInt>=BuildVersionCodes.O&&_gameView is not null;
+    internal bool ScriptCursorLocked=>OperatingSystem.IsAndroidVersionAtLeast(26)&&_gameView?.HasPointerCapture==true;
+    internal void SetScriptCursorLocked(bool locked)
+    {if(!OperatingSystem.IsAndroidVersionAtLeast(26)||_gameView is null)return;if(locked){_gameView.RequestFocus();_gameView.RequestPointerCapture();}else _gameView.ReleasePointerCapture();}
+    internal void SetScriptCursorVisible(bool visible)
+    {if(Build.VERSION.SdkInt>=BuildVersionCodes.N&&_gameView is not null)_gameView.PointerIcon=PointerIcon.GetSystemIcon(this,visible?PointerIconType.Arrow:PointerIconType.Null);}
     private const int PackagePickerRequestCode = 7002;
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        AndroidWindowPlatform.Register(this);
         global::Android.Util.Log.Info("ZhengyanGamePlayer",
             $"Managed runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}; " +
             $"architecture={System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}; " +
@@ -88,7 +97,7 @@ public sealed class MainActivity : Activity
     protected override void OnResume()
     {
         base.OnResume();
-        EnterImmersiveMode();
+        if (ScriptFullscreen) EnterImmersiveMode(); else LeaveImmersiveMode();
         _gameView?.ResumeRendering();
     }
 
@@ -101,6 +110,7 @@ public sealed class MainActivity : Activity
 
     protected override void OnDestroy()
     {
+        AndroidWindowPlatform.Unregister(this);
         _projectLoadVersion++;
         _packagePasswordDialog?.Dismiss();
         if (_gameView is not null)
@@ -170,6 +180,7 @@ public sealed class MainActivity : Activity
             editor.TextChanged += (_, _) =>
             {
                 string value = editor.Text ?? string.Empty;
+                bool changed=control.Text!=value;
                 control.Text = value;
                 control.CursorPosition = Math.Clamp(editor.SelectionStart, 0, value.Length);
                 control.SelectionStart = Math.Clamp(editor.SelectionStart, 0, value.Length);
@@ -177,6 +188,7 @@ public sealed class MainActivity : Activity
                 control.CompositionStart = editor.CompositionStart;
                 control.CompositionEnd = editor.CompositionEnd;
                 _gameView?.InvalidateOverlay();
+                if(changed)_gameView?.DispatchGuiControlChanged(control);
             };
             editor.SelectionChanged += (_, _) =>
             {
@@ -246,6 +258,11 @@ public sealed class MainActivity : Activity
             editor.Text = control.Text ?? string.Empty;
             int length = editor.Text.Length;
             editor.SetSelection(Math.Clamp(start, 0, length), Math.Clamp(end, 0, length));
+        }
+        else if(editor.SelectionStart!=control.SelectionStart||editor.SelectionEnd!=control.SelectionEnd)
+        {
+            int length=(editor.Text??string.Empty).Length;
+            editor.SetSelection(Math.Clamp(control.SelectionStart,0,length),Math.Clamp(control.SelectionEnd,0,length));
         }
         if (editor.LayoutParameters is FrameLayout.LayoutParams layout)
         {
@@ -414,6 +431,42 @@ public sealed class MainActivity : Activity
             | SystemUiFlags.LayoutHideNavigation
             | SystemUiFlags.LayoutStable;
 #pragma warning restore CA1422
+    }
+
+    private void LeaveImmersiveMode()
+    {
+        if (Window?.DecorView is not { } decor) return;
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.R) Window.InsetsController?.Show(WindowInsets.Type.SystemBars());
+#pragma warning disable CA1422
+        decor.SystemUiFlags = SystemUiFlags.Visible;
+#pragma warning restore CA1422
+    }
+
+    internal void ApplyScriptWindowCommand(Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeWindowCommand command)
+    {
+        if (IsFinishing || IsDestroyed) return;
+        var settings = _projectLoadResult?.Project?.Window;
+        switch (command.Operation)
+        {
+            case "exit": CloseTextEditor(); _gameView?.PauseRendering(); Finish(); break;
+            case "title": Title = command.Text; if (settings is not null) settings.Title = command.Text; break;
+            case "fullscreen":
+                _scriptFullscreen = command.Fullscreen;
+                if (settings is not null) settings.Fullscreen = command.Fullscreen;
+                if (command.Fullscreen) EnterImmersiveMode(); else LeaveImmersiveMode();
+                break;
+            case "size":
+                if (settings is not null) { settings.Width = command.Width; settings.Height = command.Height; }
+                if (_gameView is not null) _gameView.LayoutParameters = new FrameLayout.LayoutParams(command.Width, command.Height);
+                if (_guiOverlay is not null) _guiOverlay.LayoutParameters = new FrameLayout.LayoutParams(command.Width, command.Height);
+                break;
+            case "visible":
+                if (_gameView is not null) _gameView.Visibility = command.Flag ? ViewStates.Visible : ViewStates.Invisible;
+                if (_guiOverlay is not null) _guiOverlay.Visibility = command.Flag ? ViewStates.Visible : ViewStates.Invisible;
+                break;
+            case "resizable": if (settings is not null) settings.Resizable = command.Flag; break;
+            case "timing": if (settings is not null) settings.TimingMode = command.Text; break;
+        }
     }
 
     private async Task LoadProjectAsync(Intent? intent)

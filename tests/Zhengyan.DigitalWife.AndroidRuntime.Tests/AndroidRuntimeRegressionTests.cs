@@ -17,6 +17,7 @@ using Zhengyan.DigitalWife.GamePlayer.Android;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Llm.OpenAI;
+using RuntimeLlmScriptTool = Zhengyan.DigitalWife.GamePlayer.RuntimeLlmScriptTool;
 
 internal static class AndroidRuntimeRegressionTests
 {
@@ -69,6 +70,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Android RealtimeVoice wake words and native capture", AndroidRealtimeVoiceTests.TestWakeWordAndCapture),
             ("Android local speech ASR conversation and idle stop", AndroidLocalSpeechTests.TestConversation),
             ("Android local speech wake matching and capture handoff", AndroidLocalSpeechTests.TestWakeAndSwitch),
+            ("Android local speech wake timing overrides and continuous capture", AndroidLocalSpeechTests.TestWakeTimingOverrides),
             ("Android local speech cancellation and permission errors", AndroidLocalSpeechTests.TestCancellationAndFailures),
             ("Android local speech TTS playback completion and cancellation", AndroidLocalSpeechTests.TestTtsPlaybackAndCancel),
             ("Android local speech model paths and unsupported providers", AndroidLocalSpeechTests.TestModelPaths),
@@ -835,7 +837,7 @@ internal static class AndroidRuntimeRegressionTests
         public override float LeftTrigger => 0;
         public override float RightTrigger => 0;
         public override bool IsGamepadButtonDown(string button) => false;
-        public override string ClipboardText => "";
+        public override string ClipboardText {get=>"";set {}}
         public override bool HasClipboardText => false;
         public override bool TrySetClipboardText(string text) => false;
         public override void SetClipboardText(string text) { }

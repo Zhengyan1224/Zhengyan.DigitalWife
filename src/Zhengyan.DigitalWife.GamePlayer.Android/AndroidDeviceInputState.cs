@@ -10,7 +10,8 @@ public readonly record struct AndroidGamepadSnapshot(
     Vector2 RightStick,
     float LeftTrigger,
     float RightTrigger,
-    IReadOnlySet<Keycode> Buttons)
+    IReadOnlySet<Keycode> Buttons,
+    int Index=-1)
 {
     public static AndroidGamepadSnapshot Empty { get; } = new(false, string.Empty, Vector2.Zero, Vector2.Zero, 0, 0, new HashSet<Keycode>());
     public bool IsButtonDown(Keycode key) => Buttons.Contains(key);
@@ -54,6 +55,7 @@ internal sealed class AndroidDeviceInputState
     private float _rightTrigger;
     private string _gamepadName = string.Empty;
     private bool _gamepadConnected;
+    private int _gamepadIndex=-1;
 
     public void ApplyKey(KeyEvent? keyEvent, bool down)
     {
@@ -66,6 +68,7 @@ internal sealed class AndroidDeviceInputState
             {
                 _gamepadConnected = true;
                 _gamepadName = keyEvent.Device?.Name ?? _gamepadName;
+                _gamepadIndex=keyEvent.DeviceId;
                 if (IsGamepadButton(key)) { if (down) _gamepadButtons.Add(key); else _gamepadButtons.Remove(key); }
             }
             if (down) { if (_keys.Add(key)) _pressedKeys.Add(key); } else { if (_keys.Remove(key)) _releasedKeys.Add(key); }
@@ -90,6 +93,7 @@ internal sealed class AndroidDeviceInputState
             {
                 _gamepadConnected = true;
                 _gamepadName = motionEvent.Device?.Name ?? _gamepadName;
+                _gamepadIndex=motionEvent.DeviceId;
                 _leftStick = new Vector2(DeadZone(motionEvent.GetAxisValue(Axis.X)), DeadZone(motionEvent.GetAxisValue(Axis.Y)));
                 _rightStick = new Vector2(DeadZone(motionEvent.GetAxisValue(Axis.Z)), DeadZone(motionEvent.GetAxisValue(Axis.Rz)));
                 _leftTrigger = NormalizeTrigger(motionEvent.GetAxisValue(Axis.Ltrigger));
@@ -106,6 +110,8 @@ internal sealed class AndroidDeviceInputState
             else { _mouseButtons.Remove(button); _releasedMouseButtons.Add(button); }
         }
     }
+    public void ApplyCapturedPointer(MotionEvent input)
+    {lock(_sync)_mouseDelta+=new Vector2(input.GetX(),input.GetY());}
 
     public AndroidDeviceInputSnapshot BeginFrame()
     {
@@ -128,7 +134,7 @@ internal sealed class AndroidDeviceInputState
 
             AndroidDeviceInputSnapshot result = new(new HashSet<Keycode>(_keys), new HashSet<Keycode>(_pressedKeys), new HashSet<Keycode>(_releasedKeys), _mousePosition, _mouseDelta, _scrollDelta,
                 new HashSet<int>(_mouseButtons), new HashSet<int>(_pressedMouseButtons), new HashSet<int>(_releasedMouseButtons),
-                new AndroidGamepadSnapshot(_gamepadConnected, _gamepadName, _leftStick, _rightStick, _leftTrigger, _rightTrigger, new HashSet<Keycode>(_gamepadButtons)));
+                new AndroidGamepadSnapshot(_gamepadConnected, _gamepadName, _leftStick, _rightStick, _leftTrigger, _rightTrigger, new HashSet<Keycode>(_gamepadButtons),_gamepadIndex));
             _mouseDelta = Vector2.Zero; _scrollDelta = Vector2.Zero; _pressedMouseButtons.Clear(); _releasedMouseButtons.Clear(); _pressedKeys.Clear(); _releasedKeys.Clear();
             return result;
         }

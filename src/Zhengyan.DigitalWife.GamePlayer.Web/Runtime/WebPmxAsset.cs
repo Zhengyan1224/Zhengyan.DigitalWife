@@ -45,18 +45,18 @@ public sealed record WebPmxMaterial(
 /// intentionally kept in the platform-neutral Mmd.Core project so PC,
 /// Android and Web consume the same morph, IK, append-bone and skinning code.
 /// </summary>
-public sealed class WebPmxAsset : IDisposable
+public sealed partial class WebPmxAsset : IDisposable, Zhengyan.DigitalWife.GamePlayer.Runtime.IRuntimePmxScriptApi
 {
     private readonly GameEntity _entity;
     private readonly PmxParsing _parsing;
     private PmxPoseEvaluator _pose;
     private readonly Func<string, VmdParsing?> _animationLoader;
-    private readonly float[] _skinnedVertices;
+    private float[] _skinnedVertices;
     private bool _disposed;
     private bool _poseDirty;
     private bool _wasPlaying;
     private bool _skipPhysicsOnNextPlayFrame = true;
-    private readonly bool _gpuSkinning;
+    private bool _gpuSkinning;
     private readonly Dictionary<string, PmxPoseEvaluator> _preparedMotions = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<PmxPoseEvaluator> _ownedPoses = [];
     private readonly Vector3[] _publishedMorphs;
@@ -183,6 +183,7 @@ public sealed class WebPmxAsset : IDisposable
         if (animation is null) return false;
         PmxPoseEvaluator prepared = new(_parsing, [(animation, 1.0f)], true, _entity.PhysicsGravity, _entity.ResetPhysicsOnMotionLoop, _physicsBridge)
         { PhysicsSimulationEnabled = false, UsePartialIkUpdates = true };
+        prepared.CopyScriptStateFrom(_pose);
         _preparedMotions.Add(path, prepared);
         _ownedPoses.Add(prepared);
         return true;
@@ -192,8 +193,10 @@ public sealed class WebPmxAsset : IDisposable
     {
         var layers = _entity.MotionLayers.Select(l => (Animation: _animationLoader(NormalizeMotionPath(l.Path)), l.Weight)).ToArray();
         if (layers.Any(l => l.Animation is null)) return;
+        var previous = _pose;
         _pose = new(_parsing, layers.Select(l => (l.Animation!, l.Weight)).ToArray(), true, _entity.PhysicsGravity,
             _entity.ResetPhysicsOnMotionLoop, _physicsBridge) { UsePartialIkUpdates = true, PhysicsSimulationEnabled = false };
+        _pose.CopyScriptStateFrom(previous);
         _ownedPoses.Add(_pose); _poseDirty = true; _wasPlaying = false; _publishedMorphRevision = -1;
         _skipPhysicsOnNextPlayFrame = true;
     }
@@ -257,7 +260,7 @@ public sealed class WebPmxAsset : IDisposable
     public bool Update(double timeSeconds, float deltaSeconds)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ApplyPlaybackSettings(Pose, _entity);
+        ApplyPlaybackSettings(Pose, _entity, _wasPlaying != (_entity.IsPlaying && Pose.MotionLayerCount > 0));
         for (int i = 0; i < Math.Min(Pose.MotionLayerCount, _entity.MotionLayers.Count); i++)
             Pose.SetMotionLayerWeight(i, _entity.MotionLayers[i].Weight);
         bool playing = _entity.IsPlaying && Pose.MotionLayerCount > 0;
@@ -294,11 +297,11 @@ public sealed class WebPmxAsset : IDisposable
         return true;
     }
 
-    private static void ApplyPlaybackSettings(PmxPoseEvaluator pose, GameEntity entity)
+    private static void ApplyPlaybackSettings(PmxPoseEvaluator pose, GameEntity entity, bool updatePlaying = true)
     {
         for (int layer = 0; layer < pose.MotionLayerCount; layer++)
         {
-            pose.SetMotionLayerPlaying(layer, entity.IsPlaying);
+            if(updatePlaying)pose.SetMotionLayerPlaying(layer, entity.IsPlaying);
             pose.SetMotionLayerLoop(layer, entity.LoopMotion);
             pose.SetMotionLayerResetPhysicsOnLoop(layer, layer < entity.MotionLayers.Count
                 ? entity.MotionLayers[layer].ResetPhysicsOnLoop : entity.ResetPhysicsOnMotionLoop);
@@ -424,7 +427,7 @@ public sealed class WebPmxMesh
     public Vector3 BoundsMin { get; }
     public Vector3 BoundsMax { get; }
     public string ModelName { get; }
-    public IReadOnlyList<WebPmxMaterial> Materials { get; }
+    public IReadOnlyList<WebPmxMaterial> Materials { get; internal set; }
     public WebPmxMeshUpdate CreateUpdate()
     {
         if (_skinningUpdate is not null) return _skinningUpdate;

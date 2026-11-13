@@ -35,4 +35,5 @@ internal interface IAndroidRenderHost : IDisposable
     bool RequestRenderTextureRefresh(string idOrName);
 
     void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y);
+    void DispatchGuiControlChanged(GuiControlSettings control);
 }

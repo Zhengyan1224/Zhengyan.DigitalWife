@@ -9,8 +9,8 @@ export function speak(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1)
     speakWithCallback(text,language,rate,pitch,volume);
 }
 
-export function speakWithCallback(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1, dotNetReference, entityId = "", callbackName = "") {
-    if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName);return;}
+export function speakWithCallback(text, language = "zh-CN", rate = 1, pitch = 1, volume = 1, dotNetReference, entityId = "", callbackName = "",speakerId=null) {
+    if(offline.isEnabled()){offline.speak(text||'',rate,volume,dotNetReference,entityId,callbackName,speakerId);return;}
     if (!window.speechSynthesis) throw new Error("SpeechSynthesis is not available.");
     stopSpeaking();const generation=++speechGeneration;
     const utterance = new SpeechSynthesisUtterance(text || "");

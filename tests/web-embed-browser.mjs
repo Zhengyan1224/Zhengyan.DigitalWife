@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdirSync, writeFileSync} from 'node:fs';
+import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import assert from 'node:assert/strict';
 
@@ -8,10 +8,10 @@ const root=process.cwd(), temp=resolve(root,'temp/web-debug');
 // Uses an empty local fixture to check iframe transparency without API calls.
 const realSpeech=true;
 mkdirSync(temp,{recursive:true});
-const port=5066, debugPort=9236, base=`http://127.0.0.1:${port}`;
+const port=5067, debugPort=9237, base=`http://127.0.0.1:${port}`;
 const server=spawn('python',['scripts/web-preview-server.py','--port',String(port),'--bind','127.0.0.1','--directory','artifacts/web-player/wwwroot'],{windowsHide:true,stdio:'ignore'});
 const browser=spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',[
-    '--headless=new',`--remote-debugging-port=${debugPort}`,`--user-data-dir=${resolve(temp,'edge-check-profile-'+Date.now())}`,
+    '--headless=new',`--remote-debugging-port=${debugPort}`,`--user-data-dir=${resolve(temp,'edge-embed-profile-'+Date.now())}`,
     '--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-extensions',
     ...(realSpeech?[]:['--autoplay-policy=no-user-gesture-required']),'--window-size=1440,1000','about:blank'
 ],{windowsHide:true,stdio:'ignore'});
@@ -26,7 +26,7 @@ function send(method,params={}){return new Promise((ok,fail)=>{
 });}
 async function evaluate(expression){const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw new Error(r.exceptionDetails.text);return r.result.value;}
 try{
-    const page=await until(async()=>{const r=await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank`,{method:'PUT'});return r.ok&&await r.json();},20000);
+    const page=await until(async()=>{const r=await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank`,{method:'PUT'});return r.ok&&await r.json();},60000);
     ws=new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((ok,fail)=>{ws.onopen=ok;ws.onerror=fail;});
     ws.onmessage=async e=>{
@@ -43,9 +43,9 @@ try{
                 const response=await send('Fetch.getResponseBody',{requestId:p.requestId});
                 let body=response.base64Encoded?Buffer.from(response.body,'base64').toString():response.body;
                 if(p.request.url.includes('web-runtime.js'))body+='\nglobalThis.__webRuntimeState=()=>runtime;globalThis.__windowTest={setGameFullscreen};\n';
-                else if(p.request.url.includes('web.manifest.json'))body=JSON.stringify({formatVersion:1,entryScene:'scenes/main.scene.json',assets:[{path:'game.project.json',size:-1},{path:'scenes/main.scene.json',size:-1}],scripts:[]});
+                else if(p.request.url.includes('web.manifest.json'))body=JSON.stringify({formatVersion:1,entryScene:'scenes/main.scene.json',assets:[{path:'game.project.json',size:-1},{path:'scenes/main.scene.json',size:-1},{path:'compiled/web/api-fixture.dll',size:-1}],scripts:[{id:'api',source:'api-fixture.csx',assembly:'compiled/web/api-fixture.dll',entity:'actor',apiVersion:'1.0',type:'Zhengyan.GeneratedWebScripts.Script'}]});
                 else if(p.request.url.includes('game.project.json'))body=JSON.stringify({name:'embed-fixture',defaultScene:'scenes/main.scene.json',window:{desktopSpriteMode:true},voice:{enabled:false},asr:{enabled:false},llm:{enabled:false}});
-                else if(p.request.url.includes('/scenes/'))body=JSON.stringify({name:'Transparent fixture',skybox:{enabled:true,texturePath:'app:Resources/Skybox/dark_starry_moon.jpg'}});
+                else if(p.request.url.includes('/scenes/'))body=JSON.stringify({name:'Transparent fixture',entities:[{id:'actor',type:'empty',scripts:[{path:'api-fixture.csx',language:'csharp',enabled:true}]}],guiControls:[{id:'api-run',name:'api-run',type:'button',text:'Run API',x:20,y:20,width:140,height:40,targetEntity:'actor'}],skybox:{enabled:true,texturePath:'app:Resources/Skybox/dark_starry_moon.jpg'}});
                 await send('Fetch.fulfillRequest',{requestId:p.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:p.request.url.includes('.json')?'application/json':'text/javascript'}],body:Buffer.from(body).toString('base64')});
             }catch(err){logs.push({type:'interception',message:err.message});await send('Fetch.continueRequest',{requestId:p.requestId});}
         }
@@ -61,6 +61,8 @@ try{
         }).observe(document,{childList:true,subtree:true,characterData:true});
     `});
     await send('Fetch.enable',{patterns:[{urlPattern:'*js/web-runtime.js*',requestStage:'Response'},{urlPattern:'*web.manifest.json*',requestStage:'Response'},{urlPattern:'*game.project.json*',requestStage:'Response'},{urlPattern:'*web-game/scenes/*.json*',requestStage:'Response'}]});
+    mkdirSync(resolve(root,'artifacts/web-player/wwwroot/web-game/compiled/web'),{recursive:true});
+    writeFileSync(resolve(root,'artifacts/web-player/wwwroot/web-game/compiled/web/api-fixture.dll'),readFileSync(resolve(temp,'api-fixture.dll')));
     writeFileSync(resolve(root,'artifacts/web-player/wwwroot/embed-regression.html'),`<!doctype html><body style="margin:0;background:rgb(234,90,130)"><h1>Host page</h1><iframe title="Pet" src="/?embed=1" allow="microphone; autoplay; fullscreen" allowfullscreen style="width:640px;height:480px;border:0;background:transparent"></iframe></body>`);
     await send('Page.navigate',{url:base+'/embed-regression.html'});
     await until(()=>evaluate("document.querySelector('iframe')?.contentDocument?.querySelector('.renderer-ready')&&!document.querySelector('iframe').contentDocument.querySelector('.web-loading-screen')"),90000);
@@ -82,6 +84,15 @@ try{
     await evaluate("document.querySelector('iframe').contentWindow.__windowTest.setGameFullscreen(false)");
     await until(()=>evaluate("!document.querySelector('iframe').contentDocument.fullscreenElement"),10000);
     console.log('PASS native iframe fullscreen via a trusted button click and exit');
+    assert.equal(await evaluate("document.querySelector('iframe').contentWindow.__webRuntimeState().overlayState.bubbles.find(b=>b.text==='api-ready')?.text"),'api-ready','AOT script API did not reject native capabilities or expose script time');
+    const gui=await evaluate("(()=>{const a=document.querySelector('iframe').getBoundingClientRect();return{x:a.x+90,y:a.y+40};})()");
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...gui,button:'left',buttons:1,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',...gui,button:'left',buttons:0,clickCount:1});
+    await until(()=>evaluate("document.querySelector('iframe').contentWindow.__webRuntimeState().overlayState.bubbles.some(b=>b.text===JSON.stringify({answer:42}))"),10000);
+    console.log('PASS AOT script API and reentrant C# script tool return values');
+    writeFileSync(resolve(root,'artifacts/web-player/wwwroot/script-api-gpu-fixture.mjs'),readFileSync(resolve(root,'tests/helpers/web-script-api-gpu-fixture.mjs')));
+    const shader=await evaluate("(async()=>{const f=await import('/script-api-gpu-fixture.mjs'),r=await import('/js/webgl2-renderer.js');return f.verifyScriptShader(r.createWebGl2Renderer);})()");
+    console.log('PASS real WebGL2 custom shader, uniform updates, clearing and standard shader restoration',JSON.stringify(shader));
 }catch(error){
     console.error('Browser failure:',error.message);
     if(ws?.readyState===1)console.error(await evaluate("({error:document.querySelector('.runtime-error')?.innerText,loading:document.querySelector('.web-loading-screen')?.innerText,asr:globalThis.__asrDebug?.(),speech:globalThis.__speechEvents,logs:globalThis.__loadingHistory})").catch(()=>null));

@@ -31,6 +31,7 @@ function invoke(method, ...args) {
 function updateCanvasMetrics() {
     if (!runtime?.canvas || !runtime.dotNetReference) return;
     const rect = runtime.canvas.getBoundingClientRect();
+    if(rect.width<=0 || rect.height<=0)return;
     const devicePixelRatio = Math.max(window.devicePixelRatio || 1, 1);
     const width = Math.max(Math.round(rect.width * devicePixelRatio), 1);
     const height = Math.max(Math.round(rect.height * devicePixelRatio), 1);
@@ -146,15 +147,16 @@ function installInputHandlers() {
         if(runtime.touches.has(event.pointerId))updateTouch(event,1);
         const active = runtime.pointers.has(event.pointerId);
         const previous = runtime.pointers.get(event.pointerId) || { x: event.clientX, y: event.clientY };
-        const dx = event.clientX - previous.x;
-        const dy = event.clientY - previous.y;
+        const locked=globalThis.document?.pointerLockElement===canvas;
+        const dx = locked?(event.movementX||0):event.clientX - previous.x;
+        const dy = locked?(event.movementY||0):event.clientY - previous.y;
         if (active || event.buttons) runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         const buttons = event.pointerType === "touch" && active
             ? (event.buttons || 1)
             : (event.buttons || 0);
         runtime.lastPointerButtons = buttons;
-        const look = buttons & 1 ? 1 : 0;
-        const pan = buttons & 2 || event.pointerType === "touch" ? 1 : 0;
+        const look = locked || buttons & 1 ? 1 : 0;
+        const pan = !locked&&(buttons & 2 || event.pointerType === "touch") ? 1 : 0;
         const [moveX, moveY] = canvasPoint(event);
         if((buttons&2) && runtime.rightDown && Math.hypot(moveX-runtime.rightDown[0],moveY-runtime.rightDown[1])>12*(runtime.devicePixelRatio||1))runtime.rightDragged=true;
         if (!runtime.guiPointerActive && !runtime.spritePointerActive) {
@@ -183,6 +185,7 @@ function installInputHandlers() {
         event.preventDefault();
         const [wheelX, wheelY] = canvasPoint(event);
         queuePointerInput(0, 0, 0, 0, event.deltaY * 0.01, wheelX, wheelY, runtime.lastPointerButtons);
+        if(runtime.pendingPointerInput)runtime.pendingPointerInput.scrollX=(runtime.pendingPointerInput.scrollX||0)+(event.deltaX||0)*.01;
     };
     runtime.onContextMenu = event => {event.preventDefault();if(!runtime.rightDragged){const [x,y]=canvasPoint(event);invoke("OnContextMenuRequest",x,y);}runtime.rightDragged=false;};
     runtime.onKeyDown = event => {
@@ -234,6 +237,9 @@ function frame(timestamp) {
         for(const [id,touch] of current.touches)current.touches.set(id,{...touch,phase:2,deltaX:0,deltaY:0});
     }
     current.pendingPointerInput = null;
+    const gamepad=globalThis.navigator?.getGamepads?.()?.find(p=>p?.connected);
+    if(gamepad||current.hadGamepad){input??={lookX:0,lookY:0,panX:0,panY:0,zoom:0,pointerX:0,pointerY:0,buttons:0};input.gamepad=gamepad?{connected:true,name:gamepad.id,index:gamepad.index,axes:Array.from(gamepad.axes),buttons:gamepad.buttons.map(b=>b.value)}:{connected:false};}
+    current.hadGamepad=!!gamepad;
     // Sample the accumulated gesture once per frame, in the same call that
     // advances the scene. High-rate mouse events never queue .NET callbacks.
     current.dotNetReference.invokeMethodAsync("OnAnimationFrameWithInput", timestamp, input)
@@ -282,6 +288,10 @@ export function start(canvas, overlayCanvas, dotNetReference) {
     runtime.onWindowResize = scheduleCanvasMetrics;
     window.addEventListener("resize", runtime.onWindowResize, { passive: true });
     globalThis.document?.addEventListener('fullscreenchange', reportWindowState);
+    runtime.onPointerLockChange=()=>{const locked=document.pointerLockElement===runtime?.canvas;if(locked){runtime.cursorLockButton?.remove();runtime.cursorLockButton=null;}invoke('OnCursorLockStateChanged',locked,locked&&!!runtime.rawPointerInput);};
+    globalThis.document?.addEventListener('pointerlockchange',runtime.onPointerLockChange);
+    runtime.onClipboardPaste=event=>invoke('OnClipboardChanged',event.clipboardData?.getData('text/plain')||'');
+    window.addEventListener('paste',runtime.onClipboardPaste);
     runtime.onError = event => {
         const message = event?.error?.message || event?.message || "Unhandled browser exception";
         if (isBenignBrowserError(message)) return;
@@ -331,6 +341,7 @@ export function setFrameState(frameState) {
     runtime?.renderer?.setFrameState(frameState);
 }
 export function getRenderDiagnostics() { return runtime?.renderer?.getDiagnostics(); }
+export function registerCustomShader(id,vertex,fragment){return runtime?.renderer?.registerCustomShader(id,vertex,fragment)??false;}
 export function getOverlayDiagnostics(){return {controls:(runtime?.overlayState.controls||[]).map(c=>({id:c.id,name:c.name,type:c.type,x:c.x,y:c.y,width:c.width,height:c.height})),
     bubbles:(runtime?.overlayState.bubbles||[]).map(b=>({text:b.text,header:b.header,visible:b.visible}))};}
 export function configureOffline(project,assetUris,identity){return offline.configure(project,assetUris,identity);}
@@ -374,6 +385,37 @@ export function setGameSize(width, height) {
     frame.style.height=`${Math.max(240,height)}px`;
     frame.style.aspectRatio='auto';
     scheduleCanvasMetrics();
+}
+
+export function setGameTitle(title){document.title=title||'Zhengyan Web GamePlayer';}
+export function setGameVisible(visible){const frame=runtime?.canvas?.parentElement;if(frame){if(!visible)setGameFullscreen(false);frame.hidden=!visible;scheduleCanvasMetrics();}}
+export function setGameResizable(resizable){const frame=runtime?.canvas?.parentElement;if(frame)frame.style.resize=resizable?'both':'none';}
+
+export function trySetClipboardText(text){
+    if(typeof document==='undefined' || !document.execCommand)return false;
+    const previous=document.activeElement,field=document.createElement('textarea');field.value=text||'';
+    Object.assign(field.style,{position:'fixed',opacity:'0',pointerEvents:'none'});document.body.append(field);field.select();
+    let copied=false;try{copied=document.execCommand('copy');}catch{}finally{field.remove();previous?.focus?.();}
+    if(copied)invoke('OnClipboardChanged',text||'');return copied;
+}
+export async function readClipboardText(){if(!navigator.clipboard?.readText)throw new Error('Clipboard reading requires a supported secure browser context.');const text=await navigator.clipboard.readText();invoke('OnClipboardChanged',text);return text;}
+export function trySetCursorLocked(locked,rawInput=false){
+    const current=runtime,canvas=current?.canvas;if(!canvas)return false;
+    if(!locked){current.cursorLockButton?.remove();current.cursorLockButton=null;if(document.pointerLockElement===canvas)document.exitPointerLock();return true;}
+    if(document.pointerLockElement===canvas)return true;
+    if(!canvas.requestPointerLock){reportError('此浏览器不支持鼠标捕获。',false);return false;}
+    const request=()=>{
+        current.rawPointerInput=rawInput;
+        const result=canvas.requestPointerLock(rawInput?{unadjustedMovement:true}:undefined);
+        if(!result?.then)current.rawPointerInput=false;
+        Promise.resolve(result).catch(error=>{
+            if(rawInput&&error.name==='NotSupportedError'){current.rawPointerInput=false;return canvas.requestPointerLock();}
+            throw error;
+        }).catch(error=>reportError('鼠标捕获失败：'+error.message,false));
+    };
+    if(navigator.userActivation?.isActive)request();
+    else if(!current.cursorLockButton){const button=document.createElement('button');button.className='game-pointer-lock-prompt';button.textContent='点击捕获鼠标（Esc 释放）';button.addEventListener('click',request);canvas.parentElement.append(button);current.cursorLockButton=button;}
+    return true;
 }
 
 function reportWindowState() {
@@ -457,12 +499,22 @@ function updateGuiEditors() {
     for(const [id,editor] of runtime.editors)if(!active.has(id)){editor.remove();runtime.editors.delete(id);}
     const ratio=runtime.devicePixelRatio||1;
     for(const control of controls) {
+        const multiline=control.multiline===true||control.type==="textarea";
         let editor=runtime.editors.get(control.id);
-        if(!editor){editor=document.createElement("textarea");editor.setAttribute("aria-label",control.name||control.id);
-            editor.addEventListener("input",()=>invoke("OnGuiValueChanged",control.id,editor.value));
+        if(editor&&editor.tagName!==(multiline?"TEXTAREA":"INPUT")){editor.remove();runtime.editors.delete(control.id);editor=null;}
+        if(!editor){editor=document.createElement(multiline?"textarea":"input");editor.setAttribute("aria-label",control.name||control.id);
+            const selection=()=>invoke('OnGuiSelectionChanged',control.id,editor.selectionStart||0,editor.selectionEnd||0,editor.compositionStart??-1,editor.compositionStart>=0?editor.selectionEnd:-1);
+            editor.addEventListener("input",()=>{invoke("OnGuiValueChanged",control.id,editor.value);selection();});
+            editor.addEventListener('select',selection);
+            editor.addEventListener('compositionstart',()=>{editor.compositionStart=editor.selectionStart;selection();});
+            editor.addEventListener('compositionend',()=>{editor.compositionStart=-1;selection();});
             editor.addEventListener("focus",()=>setInputCapture(true));editor.addEventListener("blur",()=>setInputCapture(false));
             parent.append(editor);runtime.editors.set(control.id,editor);}
-        if(document.activeElement!==editor && editor.value!==(control.text||""))editor.value=control.text||"";
+        const remoteText=control.text||'';
+        if(editor.remoteText!==remoteText){if(editor.value!==remoteText)editor.value=remoteText;editor.remoteText=remoteText;}
+        const range=[control.selectionStart||0,control.selectionEnd||0];
+        if(editor.remoteRange?.[0]!==range[0]||editor.remoteRange?.[1]!==range[1]){editor.setSelectionRange(...range);editor.remoteRange=range;}
+        editor.wrap=control.wordWrap===false?'off':'soft';
         Object.assign(editor.style,{position:"absolute",left:`${control.x/ratio}px`,top:`${control.y/ratio}px`,width:`${control.width/ratio}px`,height:`${control.height/ratio}px`,
             background:control.background,color:control.color,border:`${(control.borderThickness||1)/ratio}px solid ${control.border}`,
             borderRadius:`${(control.rounding||0)/ratio}px`,font:`${control.fontSize/ratio}px sans-serif`,padding:`${4/ratio}px`,resize:"none",boxSizing:"border-box",zIndex:"2"});
@@ -531,20 +583,28 @@ function renderOverlay() {
     }
     for (const bubble of state.bubbles || []) {
         if(bubble.visible===false)continue;
-        const font=bubble.fontSize||14,padding=bubble.padding||[12,10],lines=[];
-        context.font=`${font}px sans-serif`;context.textAlign="left";context.textBaseline="top";
-        for(const paragraph of [bubble.header,bubble.text,bubble.footer].filter(Boolean).join("\n").split("\n")) {
-            let line="";for(const character of paragraph){if(line && context.measureText(line+character).width>(bubble.width||240)-padding[0]*2){lines.push(line);line="";}line+=character;}lines.push(line);
+        const padding=bubble.padding||[12,10],lines=[],width=bubble.width||240,contentWidth=Math.max(1,width-padding[0]*2);
+        let contentHeight=0;
+        const blocks=[[bubble.header,bubble.headerFontSize||bubble.fontSize,bubble.headerColor||bubble.color],[bubble.text,bubble.fontSize,bubble.color],[bubble.footer,bubble.footerFontSize||bubble.fontSize,bubble.footerColor||bubble.color]];
+        for(const [text,size,color]of blocks){
+            if(!text)continue;
+            if(lines.length)contentHeight+=6;
+            const font=size||14;context.font=`${font}px sans-serif`;
+            const add=line=>{lines.push({text:line,font,color:color||'#f8fafc',y:contentHeight});contentHeight+=font*1.3;};
+            for(const paragraph of text.split('\n')){
+                if(bubble.wordWrap===false){add(paragraph);continue;}
+                const chars=globalThis.Intl?.Segmenter?[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(paragraph)].map(s=>s.segment):[...paragraph];
+                let line='';for(const character of chars){if(line&&context.measureText(line+character).width>contentWidth){add(line);line='';}line+=character;}add(line);
+            }
         }
-        const height=lines.length*font*1.3+padding[1]*2,pivot=bubble.pivot||[0,0];
-        const x=(bubble.x||0)-(bubble.width||240)*pivot[0],y=(bubble.y||0)-height*pivot[1];
-        context.fillStyle = bubble.background||"rgba(15,23,42,.88)";
-        context.strokeStyle = bubble.border||"rgba(226,232,240,.85)";
-        context.beginPath();
-        context.roundRect(x,y,bubble.width||240,height,bubble.rounding||10);
-        context.fill(); context.stroke();
-        context.fillStyle = bubble.color||"#f8fafc";
-        lines.forEach((line,i)=>context.fillText(line,x+padding[0],y+padding[1]+i*font*1.3));
+        const height=contentHeight+padding[1]*2,pivot=bubble.pivot||[0,0];
+        const x=(bubble.x||0)-width*pivot[0],y=(bubble.y||0)-height*pivot[1];
+        context.save();context.fillStyle=bubble.background||'rgba(15,23,42,.88)';context.strokeStyle=bubble.border||'rgba(226,232,240,.85)';
+        context.lineWidth=bubble.borderThickness??1;context.beginPath();context.roundRect(x,y,width,height,bubble.rounding??10);context.fill();if(context.lineWidth>0)context.stroke();
+        context.beginPath();context.rect(x+padding[0],y+padding[1],contentWidth,contentHeight);context.clip();
+        const alignment=['left','center','right'].includes(bubble.textAlignment)?bubble.textAlignment:'left';context.textAlign=alignment;context.textBaseline='top';
+        const textX=x+padding[0]+(alignment==='center'?contentWidth*.5:alignment==='right'?contentWidth:0);
+        for(const line of lines){context.font=`${line.font}px sans-serif`;context.fillStyle=line.color;context.fillText(line.text,textX,y+padding[1]+line.y);}context.restore();
     }
 }
 
@@ -562,6 +622,10 @@ export function stop() {
 
     if (runtime.onWindowResize) window.removeEventListener("resize", runtime.onWindowResize);
     globalThis.document?.removeEventListener('fullscreenchange', reportWindowState);
+    globalThis.document?.removeEventListener('pointerlockchange',runtime.onPointerLockChange);
+    window.removeEventListener('paste',runtime.onClipboardPaste);
+    if(globalThis.document?.pointerLockElement===runtime.canvas)document.exitPointerLock();
+    runtime.cursorLockButton?.remove();
     runtime.fullscreenButton?.remove();
     if (runtime.onError) window.removeEventListener("error", runtime.onError);
     if (runtime.onUnhandledRejection) window.removeEventListener("unhandledrejection", runtime.onUnhandledRejection);

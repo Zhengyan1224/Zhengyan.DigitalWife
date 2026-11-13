@@ -253,6 +253,7 @@ dd {
 .canvas-frame { max-width:100%; }
 .canvas-frame:fullscreen { width:100vw !important; height:100vh !important; max-width:none; border:0; border-radius:0; }
 .game-fullscreen-prompt { position:absolute; right:1rem; top:1rem; z-index:40; padding:.65rem 1rem; cursor:pointer; }
+.game-pointer-lock-prompt { position:absolute; left:1rem; top:1rem; z-index:40; padding:.65rem 1rem; cursor:pointer; }
 .game-embedded, .game-transparent { background:transparent; color-scheme:normal; }
 .game-embedded body, .game-transparent body { min-width:0; background:transparent; }
 .game-embedded .web-runtime-page, .game-transparent .web-runtime-page { width:100%; margin:0; padding:0; }

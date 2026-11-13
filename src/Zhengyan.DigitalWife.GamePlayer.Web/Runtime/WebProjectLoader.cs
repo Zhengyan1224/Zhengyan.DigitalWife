@@ -19,6 +19,7 @@ public sealed record WebLoadedProject(
     WebScriptRuntime Scripts)
 {
     public IReadOnlyDictionary<string, string> TextureUris { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string,WebSurfaceScriptApi> SurfaceScriptApis {get;init;}=new Dictionary<string,WebSurfaceScriptApi>();
     public WebSceneSimulation Simulation { get; } = new();
     public Dictionary<string, string> SurfaceSignatures { get; } = new();
     public IReadOnlyDictionary<string, VmdParsing> Animations { get; init; } = new Dictionary<string, VmdParsing>();
@@ -37,8 +38,11 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
     private readonly IWebAssetStore _assets = assets;
 
     public Action<string, RuntimeSpeechRequest>? SpeechRequestHandler { get; set; }
+    public Action<string>? ScriptWarningHandler { get; set; }
     public Func<PmxParsing, Vector3, Task<IPmxPhysicsBridge?>>? PhysicsFactory { get; set; }
     public Func<RuntimeScene, GameProject, Task>? InitializeServices { get; set; }
+    public Func<RuntimeScene,GameProject,Task>? InitializeModels {get;set;}
+    public Action<WebScriptRuntime>? ScriptRuntimeCreated {get;set;}
     public Func<GameProject, GameProjectScene, Task>? ConfigureLoadingScreen { get; set; }
     public Func<WebScriptEntry,string,IWebGameScript>? PythonFactory { get; set; }
     private Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality? _graphics;
@@ -50,6 +54,9 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
         CancellationToken cancellationToken = default,
         string? scenePathOverride = null)
     {
+        WebScriptRuntime? loadingRuntime=null;
+        var externalProgress=progress;
+        progress=new ScriptLoadProgress(value=>{externalProgress?.Report(value);loadingRuntime?.PublishLoading("progress",value.Value,value.Message);});
         progress?.Report(new("manifest", 0.02f, "web.manifest.json", "Reading Web manifest"));
         WebAssetManifest manifest = await _assets.LoadManifestAsync(cancellationToken);
         progress?.Report(new("project", 0.12f, "game.project.json", "Reading game project"));
@@ -130,6 +137,12 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
             speechRequest: (entityId, request) => SpeechRequestHandler?.Invoke(entityId, request),
             graphics: _graphics ??= project.CreateRuntimeGraphicsQuality());
         runtimeScenePlaceholder = runtimeScene;
+        if(InitializeServices is not null)await InitializeServices(runtimeScene,project);
+        WebScriptRuntime scripts=new(){PythonFactory=PythonFactory};
+        await scripts.LoadAsync(_assets,manifest,runtimeScene,cancellationToken);
+        loadingRuntime=scripts;ScriptRuntimeCreated?.Invoke(scripts);
+        await scripts.StartLoadingAsync();
+        scripts.PublishLoading("started",.4f,"Loading scene assets");
 
         Dictionary<string, WebAudioAsset> audioAssets = new(StringComparer.OrdinalIgnoreCase);
         foreach (AudioAsset audio in sceneDefinition.Audio.Where(item => !string.IsNullOrWhiteSpace(item.Path)))
@@ -226,6 +239,9 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
             if (parsing.Bones.Length > 0)
                 foreach (MotionAsset motion in sceneDefinition.Motions) asset.PrepareMotion(motion.Path);
             pmxAssets[entity.Id] = asset;
+            entity.PmxScriptApi = asset;
+            entity.ScriptAssetPathResolver = WebHttpAssetStore.NormalizeRelativePath;
+            asset.ScriptWarning = ScriptWarningHandler;
             entity.MorphWeightSetter = asset.SetMorphWeight;
             entity.MorphWeightGetter = name => asset.Pose.GetMorphWeight(name);
         }
@@ -241,12 +257,23 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
             if (!normalized.StartsWith("app:", StringComparison.OrdinalIgnoreCase) && IsRegistered(normalized))
                 textures[path] = await _assets.GetUriAsync(normalized, cancellationToken);
         }
-        WebScriptRuntime scripts = new() { PythonFactory = PythonFactory };
-        if (InitializeServices is not null) await InitializeServices(runtimeScene, project);
-        await scripts.LoadAsync(_assets, manifest, runtimeScene, cancellationToken);
+        foreach(var asset in pmxAssets.Values)asset.ScriptTextureResolver=path=>ResolveScriptTexture(path,textures);
+        var shaderSources=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+        foreach(var entry in manifest.Assets.Where(a=>a.Size<=1024*1024&&new[]{".glsl",".vert",".frag",".vsh",".fsh"}.Contains(Path.GetExtension(a.Path).ToLowerInvariant())))
+            shaderSources[entry.Path]=System.Text.Encoding.UTF8.GetString(await _assets.ReadAllBytesAsync(entry.Path,cancellationToken));
+        foreach(var asset in pmxAssets.Values)asset.ScriptShaderResolver=path=>shaderSources.GetValueOrDefault(WebHttpAssetStore.NormalizeRelativePath(path));
+        var surfaceApis=new Dictionary<string,WebSurfaceScriptApi>();
+        foreach(var entity in runtimeScene.TexturedPlanes)
+        {
+            var api=new WebSurfaceScriptApi(sceneMeshes[entity.Id],path=>shaderSources.GetValueOrDefault(WebHttpAssetStore.NormalizeRelativePath(path)));
+            entity.ScriptAssetPathResolver=WebHttpAssetStore.NormalizeRelativePath;
+            entity.PmxScriptApi=api;surfaceApis[entity.Id]=api;
+        }
+        if(InitializeModels is not null)await InitializeModels(runtimeScene,project);
+        await scripts.FlushLoadingEventsAsync();
         await scripts.StartAsync();
         progress?.Report(new("renderer", 0.90f, scenePath, "正在准备场景画面"));
-        return new WebLoadedProject(project, sceneDefinition, runtimeScene, manifest, pmxAssets, sceneMeshes, audioAssets, spriteUris, scripts) { TextureUris = textures, Animations = animations };
+        return new WebLoadedProject(project, sceneDefinition, runtimeScene, manifest, pmxAssets, sceneMeshes, audioAssets, spriteUris, scripts) { TextureUris = textures, Animations = animations,SurfaceScriptApis=surfaceApis };
     }
 
     public async Task<WebPmxAsset> LoadRuntimeModelAsync(RuntimeEntity entity, WebLoadedProject project)
@@ -258,8 +285,21 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
             .Select(l => (project.Animations[l.Path], l.Weight)).ToArray();
         var physics = PhysicsFactory is null ? null : await PhysicsFactory(parsing, entity.Definition.PhysicsGravity);
         var asset = WebPmxAsset.Create(entity.Definition, parsing, layers, mesh, p => project.Animations.GetValueOrDefault(p), true, physics);
+        entity.PmxScriptApi = asset; entity.ScriptAssetPathResolver = WebHttpAssetStore.NormalizeRelativePath;
+        asset.ScriptTextureResolver = path=>ResolveScriptTexture(path,project.TextureUris); asset.ScriptWarning = ScriptWarningHandler;
         entity.MorphWeightSetter = asset.SetMorphWeight; entity.MorphWeightGetter = asset.Pose.GetMorphWeight;
         return asset;
+    }
+
+    private sealed class ScriptLoadProgress(Action<WebLoadProgress> report):IProgress<WebLoadProgress>
+    {public void Report(WebLoadProgress value)=>report(value);}
+
+    private static string? ResolveScriptTexture(string path,IReadOnlyDictionary<string,string> textures)
+    {
+        if(path.StartsWith("rt:",StringComparison.OrdinalIgnoreCase))return path;
+        if(path.StartsWith("app:",StringComparison.OrdinalIgnoreCase))return "./engine/"+path[4..].Replace("Resources/","").Replace('\\','/');
+        string normalized=WebHttpAssetStore.NormalizeRelativePath(path);
+        return textures.GetValueOrDefault(path)??textures.GetValueOrDefault(normalized);
     }
 
     internal static WebPmxMesh CreateQuadMesh(

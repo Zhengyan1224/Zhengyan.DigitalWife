@@ -3,7 +3,7 @@ using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
-public sealed class RuntimeEntity
+public sealed partial class RuntimeEntity
 {
     private readonly Func<string, bool>? _resetPmxPhysics;
     private readonly Func<ColliderSettings, RuntimeMeshCollider?>? _meshColliderResolver;
@@ -12,8 +12,8 @@ public sealed class RuntimeEntity
     private readonly Action<string, RuntimeSpeechRequest>? _speechRequest;
     public Action<string, float>? MorphWeightSetter { get; set; }
     public Func<string, float>? MorphWeightGetter { get; set; }
-    public void SetMorphWeight(string name, float weight) => MorphWeightSetter?.Invoke(name, weight);
-    public float GetMorphWeight(string name) => MorphWeightGetter?.Invoke(name) ?? 0;
+    public void SetMorphWeight(string name, float weight) { if(PmxScriptApi is not null)TrySetMorphWeight(name,weight);else MorphWeightSetter?.Invoke(name,weight); }
+    public float GetMorphWeight(string name) => PmxScriptApi is not null ? MorphWeights.GetValueOrDefault(name) : MorphWeightGetter?.Invoke(name) ?? 0;
     public void BindRelation(string targetEntityIdOrName, bool bindComponentTransform = true, bool bindLighting = false)
     {
         Definition.Relation.Enabled = true; Definition.Relation.RelationEntity = targetEntityIdOrName;
@@ -48,24 +48,27 @@ public sealed class RuntimeEntity
     {
         Definition.MotionLayers = layers.Select(l => new MotionLayerSettings { Path = l.MotionPath, Weight = l.Weight,
             ResetPhysicsOnLoop = l.ResetPhysicsOnLoop ?? Definition.ResetPhysicsOnMotionLoop }).ToList();
-        _motionCommand?.Invoke(Id, new RuntimeMotionCommand("layers"));
+        if(PmxScriptApi is not null)PmxAction("SetMotionLayers",Definition.MotionLayers.Select(l=>new MotionLayerDefinition(l.Path,l.Weight,l.ResetPhysicsOnLoop)).ToArray());
+        else _motionCommand?.Invoke(Id, new RuntimeMotionCommand("layers"));
     }
     public void SetMotionLayerWeight(int index, float weight)
     {
         if ((uint)index < (uint)Definition.MotionLayers.Count) Definition.MotionLayers[index].Weight = Math.Clamp(weight, 0, 1);
+        if((uint)index<(uint)Definition.MotionLayers.Count)PmxAction("SetMotionLayerWeight",ScriptAssetPathResolver(Definition.MotionLayers[index].Path),Math.Clamp(weight,0,1));
     }
     public void SetMotionLayerWeight(string motionPath, float weight)
     {
-        int index = Definition.MotionLayers.FindIndex(layer => layer.Path.Equals(motionPath, StringComparison.OrdinalIgnoreCase));
+        int index = Definition.MotionLayers.FindIndex(layer => ScriptAssetPathResolver(layer.Path).Equals(ScriptAssetPathResolver(motionPath), StringComparison.OrdinalIgnoreCase));
         if (index >= 0) SetMotionLayerWeight(index, weight);
     }
     public void SetMotionLayerResetPhysicsOnLoop(int index, bool reset)
     {
         if ((uint)index < (uint)Definition.MotionLayers.Count) Definition.MotionLayers[index].ResetPhysicsOnLoop = reset;
+        if((uint)index<(uint)Definition.MotionLayers.Count)PmxAction("SetMotionLayerResetPhysicsOnLoop",ScriptAssetPathResolver(Definition.MotionLayers[index].Path),reset);
     }
     public void SetMotionLayerResetPhysicsOnLoop(string motionPath, bool reset)
     {
-        int index = Definition.MotionLayers.FindIndex(layer => layer.Path.Equals(motionPath, StringComparison.OrdinalIgnoreCase));
+        int index = Definition.MotionLayers.FindIndex(layer => ScriptAssetPathResolver(layer.Path).Equals(ScriptAssetPathResolver(motionPath), StringComparison.OrdinalIgnoreCase));
         if (index >= 0) SetMotionLayerResetPhysicsOnLoop(index, reset);
     }
 
@@ -309,26 +312,32 @@ public sealed class RuntimeEntity
     {
         if (!string.IsNullOrWhiteSpace(motionPath))
         {
-            _motionCommand?.Invoke(Id, new RuntimeMotionCommand("apply", motionPath));
+            if(PmxScriptApi is not null)PmxAction("ApplyMotion",ScriptAssetPathResolver(motionPath));
+            else _motionCommand?.Invoke(Id, new RuntimeMotionCommand("apply", motionPath));
         }
     }
 
     public void PlayMotion(bool restart = false)
-        => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("play", Restart: restart));
+    { if(PmxScriptApi is not null)PmxAction("PlayMotion",restart);else _motionCommand?.Invoke(Id,new RuntimeMotionCommand("play",Restart:restart)); }
 
     public void PauseMotion()
-        => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("pause"));
+    { if(PmxScriptApi is not null)PmxAction("PauseMotion");else _motionCommand?.Invoke(Id,new RuntimeMotionCommand("pause")); }
 
     public void StopMotion()
-        => _motionCommand?.Invoke(Id, new RuntimeMotionCommand("stop"));
+    { if(PmxScriptApi is not null)PmxAction("StopMotion");else _motionCommand?.Invoke(Id,new RuntimeMotionCommand("stop")); }
 
-    public void StopSpeaking() => _speechRequest?.Invoke(Id, new RuntimeSpeechRequest("", Stop: true));
+    public Action<RuntimeSpeechRequest>? SpeechRequestHandler { get; set; }
+    private GameProjectVoiceSettings _voiceSettings = new();
+    public void ConfigureVoice(GameProjectVoiceSettings settings) => _voiceSettings = settings;
+    private void EmitSpeech(RuntimeSpeechRequest request){if(SpeechRequestHandler is not null)SpeechRequestHandler(request);else _speechRequest?.Invoke(Id,request);}
+    public void StopSpeaking() => EmitSpeech(new RuntimeSpeechRequest("", Stop: true));
+    public void Speak(string text,RuntimeVoiceOptions options)=>Speak(text,options.SpeakerId??_voiceSettings.DefaultSpeakerId,options.Speed??_voiceSettings.DefaultSpeed,options.Volume??_voiceSettings.DefaultVolume,options.OnCompleted);
 
     public void Speak(string text)
-        => Speak(text, 0, 1.0f, 1.0f, null);
+        => Speak(text, _voiceSettings.DefaultSpeakerId, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, null);
 
     public void Speak(string text, Action onCompleted)
-        => Speak(text, 0, 1.0f, 1.0f, onCompleted);
+        => Speak(text, _voiceSettings.DefaultSpeakerId, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, onCompleted);
 
     public void Speak(string text, int speakerId)
         => Speak(text, speakerId, 1.0f, 1.0f, null);
@@ -357,7 +366,7 @@ public sealed class RuntimeEntity
             return;
         }
 
-        _speechRequest?.Invoke(Id, new RuntimeSpeechRequest(
+        EmitSpeech(new RuntimeSpeechRequest(
             text,
             speakerId,
             Math.Max(speed, 0.1f),
@@ -372,10 +381,13 @@ public sealed class RuntimeEntity
             return;
         }
 
-        _speechRequest?.Invoke(Id, new RuntimeSpeechRequest(
+        EmitSpeech(new RuntimeSpeechRequest(
             text,
             CallbackName: callbackName ?? string.Empty));
     }
+
+    public void SpeakWithCallback(string text,int speakerId,float speed,float volume,string callbackName)
+        =>EmitSpeech(new RuntimeSpeechRequest(text,speakerId,speed,volume,callbackName));
 
     private static string NormalizeType(string? value) => (value ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_');
 

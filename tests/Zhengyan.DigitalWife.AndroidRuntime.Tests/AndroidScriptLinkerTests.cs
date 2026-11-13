@@ -45,8 +45,20 @@ internal static class AndroidScriptLinkerTests
         using FileStream file = File.OpenRead(path);
         using PEReader pe = new(file);
         MetadataReader metadata = pe.GetMetadataReader();
-        TypeDefinition type = metadata.TypeDefinitions.Select(metadata.GetTypeDefinition).Single(type =>
-            metadata.GetString(type.Namespace) == ns && metadata.GetString(type.Name) == name);
+        var matches=metadata.TypeDefinitions.Select(metadata.GetTypeDefinition).Where(type=>metadata.GetString(type.Namespace)==ns&&metadata.GetString(type.Name)==name).ToArray();
+        if(matches.Length==0)
+        {
+            foreach(var handle in metadata.ExportedTypes)
+            {
+                var forwarded=metadata.GetExportedType(handle);
+                if(metadata.GetString(forwarded.Namespace)!=ns||metadata.GetString(forwarded.Name)!=name||forwarded.Implementation.Kind!=HandleKind.AssemblyReference)continue;
+                string assembly=metadata.GetString(metadata.GetAssemblyReference((AssemblyReferenceHandle)forwarded.Implementation).Name);
+                VerifyMembers(Path.Combine(Path.GetDirectoryName(path)!,assembly+".dll"),ns,name,methods,fields);
+                return;
+            }
+            throw new InvalidOperationException($"Android trimming removed type {ns}.{name} from {path}.");
+        }
+        TypeDefinition type=matches.Single();
         HashSet<string> actualMethods = type.GetMethods().Select(handle => metadata.GetString(metadata.GetMethodDefinition(handle).Name)).ToHashSet();
         HashSet<string> actualFields = type.GetFields().Select(handle => metadata.GetString(metadata.GetFieldDefinition(handle).Name)).ToHashSet();
         foreach (string method in methods)

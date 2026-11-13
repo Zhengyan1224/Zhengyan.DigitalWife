@@ -28,7 +28,19 @@ export async function executeScript(id,frame){
     try{await py.runPythonAsync(script.code,{globals:script.scope});}finally{saveFiles(py,id,script);}
     });
 }
-export async function callCallback(id,callback){return serial(async()=>{const script=scripts.get(id);if(script){interpreter.FS.chdir(script.root);script.baseline=script.reference.invokeMethod('OnPythonFiles',id).save||{};replaceFiles(interpreter,script.root+'/save',script.baseline);try{await interpreter.runPythonAsync(`__callbacks[${callback}]()`,{globals:script.scope});}finally{saveFiles(interpreter,id,script);}}});}
+export async function callCallback(id,callback,value){return serial(async()=>{const script=scripts.get(id);if(script){interpreter.FS.chdir(script.root);script.baseline=script.reference.invokeMethod('OnPythonFiles',id).save||{};replaceFiles(interpreter,script.root+'/save',script.baseline);try{script.scope.set("__callback_value",interpreter.toPy(value??null));await interpreter.runPythonAsync(value===undefined?`__callbacks[${callback}]()`:`__callbacks[${callback}](_decode(__callback_value))`,{globals:script.scope});}finally{saveFiles(interpreter,id,script);}}});}
+// A tool may execute while its caller awaits the LLM. Give that invocation
+// its own globals and bypass the queue which contains the waiting caller.
+export async function executeToolScript(id,frame){
+    const py=await runtime(),script=scripts.get(id);if(!script)return null;
+    const scope=py.runPython('dict(globals())',{globals:script.scope});
+    try{
+        for(const [name,value]of Object.entries(frame)){const key=name[0].toUpperCase()+name.slice(1);scope.set('__frame_'+key,py.toPy(value));py.runPython(`${key} = _decode(__frame_${key})`,{globals:scope});}
+        scope.set('ToolResult',null);
+        await py.runPythonAsync(script.code,{globals:scope});
+        return py.runPython('ToolResult if isinstance(ToolResult, str) else (json.dumps(ToolResult, ensure_ascii=False) if ToolResult is not None else None)',{globals:scope});
+    }finally{scope.destroy();}
+}
 export async function removeScript(id){return serial(()=>{const script=scripts.get(id);if(!script)return;script.scope.set('__project_root',script.root);interpreter.runPython("sys.path[:] = [p for p in sys.path if p != __project_root]\nfor key, module in list(sys.modules.items()):\n    if str(getattr(module, '__file__', '')).startswith(__project_root + '/'):\n        del sys.modules[key]",{globals:script.scope});script.scope.destroy();interpreter.unregisterJsModule(script.name);removeTree(interpreter,script.root);scripts.delete(id);});}
 function serial(action){const result=execution.then(action);execution=result.catch(()=>{});return result;}
 function writeFiles(py,root,files){for(const [path,text]of Object.entries(files)){if(path.startsWith('/') || path.split('/').some(p=>p==='..') || path.includes(':'))throw new Error('Invalid Python project path: '+path);const target=root+'/'+path;py.FS.mkdirTree(target.slice(0,target.lastIndexOf('/')));py.FS.writeFile(target,text);}}

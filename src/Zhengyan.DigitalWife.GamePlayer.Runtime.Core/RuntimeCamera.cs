@@ -5,7 +5,7 @@ namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
 public readonly record struct RuntimeViewport(int X, int Y, int Width, int Height);
 
-public sealed class RuntimeCamera
+public sealed partial class RuntimeCamera
 {
     internal RuntimeCamera(SceneCameraSettings definition)
     {
@@ -21,7 +21,7 @@ public sealed class RuntimeCamera
     public string RenderTexture(string name) => name.StartsWith("rt:",StringComparison.OrdinalIgnoreCase)?name:"rt:"+name;
     public void SetMainCamera(string name){var selected=SceneOwner?.GetCamera(name);if(selected is not null)foreach(var camera in SceneOwner!.Cameras)camera.Definition.IsMain=ReferenceEquals(camera,selected);}
     public void BindRenderTextureCamera(string name,string cameraName){var rt=SceneOwner?.Definition.RenderTextures.FirstOrDefault(r=>r.Name==name || r.Id==name);if(rt is not null)rt.Camera=cameraName;}
-    public bool RaycastEntity(RuntimeRay ray, out RuntimeRaycastHit hit, float maxDistance = float.MaxValue)
+    public bool RaycastEntity(RuntimeRay ray, out RuntimeRaycastHit hit, float maxDistance)
     {
         hit = default;
         return Physics?.Raycast(ray, out hit, maxDistance) == true;
@@ -168,6 +168,7 @@ public sealed class RuntimeCamera
     {
         string mode = (Settings.ControlMode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_');
         if (mode is "vmd") return;
+        if(ApplyScriptCameraMode(scene,deltaSeconds,input,mode))return;
 
         if (mode is "editor" or "custom")
         {
@@ -249,7 +250,7 @@ public sealed class RuntimeCamera
         {
             up = Vector3.UnitY;
         }
-        float panScale = radius * 0.0025f;
+        float panScale = radius * 0.0025f * _panSensitivity;
         Vector3 pan = (-right * input.PanDelta.X + up * -input.PanDelta.Y) * panScale;
         target += pan;
         Settings.Target = Vector3Dto.FromVector3(target);

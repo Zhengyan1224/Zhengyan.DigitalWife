@@ -40,6 +40,23 @@ public abstract class AndroidScriptInputApi
     public abstract float ScrollX { get; }
     public abstract float ScrollY { get; }
     public abstract bool CursorVisible { get; set; }
+    public virtual bool IsCursorVisible=>CursorVisible;
+    public virtual bool CursorLocked {get=>IsCursorLocked;set=>SetCursorLocked(value);}
+    public virtual bool IsCursorLocked=>false;
+    public virtual bool IsRawMouseInput=>false;
+    public virtual string CursorMode=>IsCursorLocked?"locked":CursorVisible?"normal":"hidden";
+    public bool IsAltDown=>IsKeyDown("AltLeft")||IsKeyDown("AltRight");
+    public bool IsControlDown=>IsKeyDown("ControlLeft")||IsKeyDown("ControlRight");
+    public bool IsShiftDown=>IsKeyDown("ShiftLeft")||IsKeyDown("ShiftRight");
+    public virtual int GamepadIndex=>HasGamepad?0:-1;
+    public void HideCursor()=>SetCursorVisible(false);
+    public void ShowCursor()=>SetCursorVisible(true);
+    public void SetCursorVisible(bool visible)=>TrySetCursorVisible(visible);
+    public virtual bool TrySetCursorVisible(bool visible){CursorVisible=visible;return true;}
+    public void SetCursorLocked(bool locked,bool rawInput=false)=>TrySetCursorLocked(locked,rawInput);
+    public virtual bool TrySetCursorLocked(bool locked,bool rawInput=false)=>!locked;
+    public void LockCursor(bool rawInput=false)=>SetCursorLocked(true,rawInput);
+    public void UnlockCursor()=>SetCursorLocked(false);
     public abstract bool IsMouseButtonDown(string button);
     public abstract bool IsMouseButtonPressed(string button);
     public abstract bool IsMouseButtonReleased(string button);
@@ -52,7 +69,8 @@ public abstract class AndroidScriptInputApi
     public abstract float LeftTrigger { get; }
     public abstract float RightTrigger { get; }
     public abstract bool IsGamepadButtonDown(string button);
-    public abstract string ClipboardText { get; }
+    public abstract string ClipboardText { get; set; }
+    public bool TryGetClipboardText(out string text){text=ClipboardText;return text.Length>0;}
     public abstract bool HasClipboardText { get; }
     public abstract bool TrySetClipboardText(string text);
     public abstract void SetClipboardText(string text);
@@ -71,18 +89,27 @@ public interface IAndroidScriptAsr
     bool Enabled { get; }
     bool IsAvailable { get; }
     bool IsListening { get; }
+    bool IsRecording => IsListening && !IsWakeWordMonitoring;
+    string Provider => "sherpa";
+    int? InputDeviceIndex => null;
+    float PartialResultIntervalSeconds => .2f;
+    bool MicrophoneInputAvailable => IsAvailable;
+    string MicrophoneUnavailableReason => IsAvailable ? string.Empty : "No usable microphone input is available.";
+    void Preload() { }
+    void StopAllStreamingRecognitions() => Stop();
     string LastText { get; }
     event Action<string>? PartialResult;
     event Action<string>? Result;
     event Action<int>? Error;
-    string StartStreamingRecognition(AndroidScriptEntity entity, string? requestId = null, string? onPartialCallback = "asr_partial", string? onCompletedCallback = "asr_completed", string? onErrorCallback = "asr_error", string eventType = "asr");
-    string StartWakeWordMonitoring(AndroidScriptEntity entity, IEnumerable<string> wakeWords, string? requestId = null, float? chunkDurationSeconds = null, float? extensionDurationSeconds = null, float? trailingSilencePaddingSeconds = null, string? onDetectedCallback = "asr_wake_word_detected", string? onErrorCallback = "asr_wake_word_error");
+    string StartStreamingRecognition(AndroidScriptEntity callbackTarget, string? requestId = null, string? onPartialCallback = "asr_partial", string? onCompletedCallback = "asr_completed", string? onErrorCallback = "asr_error", string eventType = "asr");
+    string StartWakeWordMonitoring(AndroidScriptEntity callbackTarget, IEnumerable<string> wakeWords, string? requestId = null, float? chunkDurationSeconds = null, float? extensionDurationSeconds = null, float? trailingSilencePaddingSeconds = null, string? onDetectedCallback = "asr_wake_word_detected", string? onErrorCallback = "asr_wake_word_error");
     bool IsWakeWordMonitoring { get; }
     void StopWakeWordMonitoring();
-    void StopStreamingRecognition(string requestId);
+    void StopStreamingRecognition(string? requestId = null);
     bool Start(string language = "");
     void Stop();
     void Cancel();
+    void Dispose() => Cancel();
 }
 
 public interface IAndroidScriptRealtimeVoice
@@ -97,19 +124,20 @@ public interface IAndroidScriptRealtimeVoice
     string MicrophoneUnavailableReason { get; }
     bool IsWakeWordMonitoring { get; }
     int? InputDeviceIndex { get; }
-    string StartWakeWordMonitoring(AndroidScriptEntity entity, string onDetectedCallback = "wake_word_detected", string onErrorCallback = "wake_word_error");
+    string StartWakeWordMonitoring(AndroidScriptEntity callbackTarget, string onDetectedCallback = "wake_word_detected", string onErrorCallback = "wake_word_error");
     void StopWakeWordMonitoring();
-    string StartTranscription(AndroidScriptEntity entity, float timeoutSeconds, string onCompletedCallback = "realtime_voice_transcription_completed", string onTimeoutCallback = "realtime_voice_timeout", string onErrorCallback = "realtime_voice_error");
-    string StartTranscription(AndroidScriptEntity entity, string? requestId = null, float? timeoutSeconds = null, string? onCompletedCallback = "realtime_voice_transcription_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error");
+    string StartTranscription(AndroidScriptEntity callbackTarget, float timeoutSeconds, string onCompletedCallback = "realtime_voice_transcription_completed", string onTimeoutCallback = "realtime_voice_timeout", string onErrorCallback = "realtime_voice_error");
+    string StartTranscription(AndroidScriptEntity callbackTarget, string? requestId = null, float? timeoutSeconds = null, string? onCompletedCallback = "realtime_voice_transcription_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error");
     void CancelRequest(string requestId);
     void CancelAllRequests();
-    string StartResponse(AndroidScriptEntity entity, string userText, string onDeltaCallback = "realtime_voice_delta", string onCompletedCallback = "realtime_voice_completed", string onErrorCallback = "realtime_voice_error");
-    string StartResponse(AndroidScriptEntity entity, string userText, string? requestId, string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onErrorCallback = "realtime_voice_error");
-    string StartSpeakText(AndroidScriptEntity entity, string text, float speed, string onCompletedCallback = "realtime_voice_speech_completed", string onErrorCallback = "realtime_voice_error");
-    string StartSpeakText(AndroidScriptEntity entity, string text, float? speed = null, string? requestId = null, string? onCompletedCallback = "realtime_voice_speech_completed", string? onErrorCallback = "realtime_voice_error");
-    string StartVoiceTurn(AndroidScriptEntity entity, string? requestId = null, float? timeoutSeconds = 30, string? onTranscriptionCompletedCallback = "realtime_voice_transcription_completed", string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error");
+    string StartResponse(AndroidScriptEntity callbackTarget, string userText, string onDeltaCallback = "realtime_voice_delta", string onCompletedCallback = "realtime_voice_completed", string onErrorCallback = "realtime_voice_error");
+    string StartResponse(AndroidScriptEntity callbackTarget, string userText, string? requestId, string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onErrorCallback = "realtime_voice_error");
+    string StartSpeakText(AndroidScriptEntity callbackTarget, string text, float speed, string onCompletedCallback = "realtime_voice_speech_completed", string onErrorCallback = "realtime_voice_error");
+    string StartSpeakText(AndroidScriptEntity callbackTarget, string text, float? speed = null, string? requestId = null, string? onCompletedCallback = "realtime_voice_speech_completed", string? onErrorCallback = "realtime_voice_error");
+    string StartVoiceTurn(AndroidScriptEntity callbackTarget, string? requestId = null, float? timeoutSeconds = 30, string? onTranscriptionCompletedCallback = "realtime_voice_transcription_completed", string? onDeltaCallback = "realtime_voice_delta", string? onCompletedCallback = "realtime_voice_completed", string? onTimeoutCallback = "realtime_voice_timeout", string? onErrorCallback = "realtime_voice_error");
     Task ResetConversationAsync();
     Task ResetConversationAsync(CancellationToken cancellationToken);
+    void Dispose() { StopWakeWordMonitoring(); CancelAllRequests(); }
 }
 
 public interface IAndroidScriptRealtime

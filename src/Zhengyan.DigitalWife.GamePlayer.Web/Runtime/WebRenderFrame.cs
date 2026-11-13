@@ -11,6 +11,7 @@ public sealed record WebRenderMesh(
     bool ReceiveShadow,
     bool EdgeEnabled)
 {
+    public WebCustomShader? CustomShader {get;init;}
     public bool ShadowToon { get; init; }
     public bool TexturedPlane { get; init; }
     public bool WaterSurface { get; init; }
@@ -87,7 +88,7 @@ public sealed partial record WebRenderFrame(
         Zhengyan.DigitalWife.Scripting.RuntimeGraphicsSnapshot? runtimeGraphics = null)
     {
         (RuntimeEntity Entity, WebPmxMesh Mesh)[] modelArray = models.ToArray();
-        WebRenderMesh[] meshes = modelArray
+        WebRenderMesh[] meshes = modelArray.Where(item=>item.Entity.Visible)
             .Select(item => new WebRenderMesh(
                 item.Entity.Id,
                 ToGlArray(CreateRenderTransform(item.Entity, scene.MainCamera)),

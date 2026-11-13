@@ -18,8 +18,8 @@ public sealed class RuntimeDebug
         => DrawLine(new Vector3(startX, startY, startZ), new Vector3(endX, endY, endZ), color, durationSeconds);
     public void DrawRay(Vector3 origin, Vector3 direction, float length = 10, Vector4? color = null, float durationSeconds = .1f)
         => DrawLine(origin, origin + (direction.LengthSquared() <= .000001f ? -Vector3.UnitZ : Vector3.Normalize(direction)) * Math.Max(0, length), color ?? new Vector4(1, .2f, .1f, 1), durationSeconds);
-    public void DrawRay(float ox, float oy, float oz, float dx, float dy, float dz, float length = 10, float durationSeconds = .1f)
-        => DrawRay(new Vector3(ox, oy, oz), new Vector3(dx, dy, dz), length, null, durationSeconds);
+    public void DrawRay(float originX, float originY, float originZ, float directionX, float directionY, float directionZ, float length = 10, float durationSeconds = .1f)
+        => DrawRay(new Vector3(originX, originY, originZ), new Vector3(directionX, directionY, directionZ), length, null, durationSeconds);
     public void Clear() { lock (_sync) _lines.Clear(); }
     public void DrawCollider(RuntimeEntity entity, Vector4? color = null, float durationSeconds = 0.1f)
     {

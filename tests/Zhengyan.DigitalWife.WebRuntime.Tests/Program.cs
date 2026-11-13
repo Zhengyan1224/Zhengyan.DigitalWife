@@ -35,6 +35,7 @@ if (args.Contains("--encrypted-fixture"))
 }
 
 if (args.Contains("--services")) { await WebScriptServiceTests.RunAsync(); return 0; }
+if (args.Contains("--portable-api")) { await PortableScriptApiTests.RunAsync(); return 0; }
 if (args.Contains("--python")) { await WebPythonBridgeTests.RunAsync(); return 0; }
 if(args is ["--refresh-manifest",string manifestDirectory]){var result=WebGamePackageExporter.RefreshManifest(manifestDirectory);Console.WriteLine($"Refreshed {result.AssetCount} assets and {result.ScriptCount} script bindings.");return 0;}
 
@@ -57,6 +58,7 @@ if (args.Contains("--surfaces"))
 VerifyVertexUpdates();
 await WebPythonBridgeTests.RunAsync();
 await WebScriptServiceTests.RunAsync();
+await PortableScriptApiTests.RunAsync();
 await WebAssetCacheTests.RunAsync();
 VerifyModuleBuildVersion();
 VerifyMaterialInterop();
@@ -69,6 +71,7 @@ await VerifyBulletBridgeAsync();
 await VerifyMissingScriptsAsync();
 await VerifyLoadingLifecycleAsync();
 await VerifyWindowAndSkyAsync();
+await VerifyScriptExitAsync();
 await VerifyFrameInputAndStartupAsync();
 await VerifyFrameInputAndStartupAsync(includeModels: true);
 Console.WriteLine("Web runtime C# regression tests passed.");
@@ -413,6 +416,41 @@ static async Task VerifyWindowAndSkyAsync()
     Console.WriteLine("PASS night sky, script size/fullscreen requests and transparent pet rendering");
 }
 
+static async Task VerifyScriptExitAsync()
+{
+    foreach (bool quitOnStart in new[] { false, true })
+    {
+        Dictionary<string, byte[]> assets = new()
+        {
+            ["game.project.json"] = Encoding.UTF8.GetBytes("{\"defaultScene\":\"scenes/main.scene.json\"}"),
+            ["scenes/main.scene.json"] = Encoding.UTF8.GetBytes("{}")
+        };
+        if (quitOnStart) assets["compiled/web/quit.dll"] = File.ReadAllBytes(typeof(QuitOnStartWebScript).Assembly.Location);
+        WebAssetManifest manifest = new()
+        {
+            Assets = assets.Select(a => new WebAssetEntry { Path = a.Key, Size = a.Value.Length }).ToList(),
+            Scripts = quitOnStart ? [new() { Id = "quit", Assembly = "compiled/web/quit.dll", Type = nameof(QuitOnStartWebScript) }] : []
+        };
+        WebMemoryAssetStore store = new(manifest);
+        foreach (var asset in assets) store.Add(asset.Key, asset.Value);
+        FakeBrowser browser = new();
+        await using WebRuntimeHost host = new(browser, new WebProjectLoader(store), new WebAudioService(browser), new WebSpeechService(browser));
+        await host.StartAsync(default, default);
+        if (!quitOnStart)
+        {
+            var loaded = (WebLoadedProject)typeof(WebRuntimeHost).GetField("_loadedProject", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(host)!;
+            loaded.RuntimeScene.Window.Quit();
+            await host.OnAnimationFrame(1000);
+        }
+        Check(!host.Snapshot.IsRunning && !host.Snapshot.IsLoading && host.Snapshot.FrameCount == 0 && host.Snapshot.LastError is null,
+            "Quit restarted or advanced a stopped game, or failed during startup.");
+        Check(browser.SpeechStopCalls > 0, "Quit did not stop speech playback.");
+        await host.OnAnimationFrame(2000);
+        Check(host.Snapshot.FrameCount == 0, "The stopped game resumed updating.");
+    }
+    Console.WriteLine("PASS script Quit stops game and speech during startup and gameplay");
+}
+
 static async Task VerifyMissingScriptsAsync()
 {
     Dictionary<string, byte[]> assets = new()
@@ -577,6 +615,7 @@ static void Check(bool condition, string message)
 
 sealed class FakeBrowser : IJSRuntime, IJSObjectReference
 {
+    public int SpeechStopCalls { get; private set; }
     public List<(string Name, object?[] Args)> WindowCalls { get; } = [];
     private WebRuntimeHost? _host;
     public bool StartupFrameAttempted { get; private set; }
@@ -594,6 +633,7 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (identifier == "stopSpeaking") SpeechStopCalls++;
         if(identifier is "setGameSize" or "setGameFullscreen") WindowCalls.Add((identifier,args!));
         if (identifier == "preloadModels") { ModelLoadingCalls++; if (ModelLoadingGate is not null) await ModelLoadingGate.Task; }
         if (identifier == "start")
@@ -624,6 +664,13 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+public sealed class QuitOnStartWebScript : Zhengyan.DigitalWife.GamePlayer.Runtime.IWebGameScript
+{
+    public void Start(Zhengyan.DigitalWife.GamePlayer.Runtime.WebScriptContext context) => context.Scene.Window.Quit();
+    public void Update(Zhengyan.DigitalWife.GamePlayer.Runtime.WebScriptContext context, float deltaSeconds)
+        => throw new InvalidOperationException("A script ran after requesting Quit during startup.");
 }
 
 sealed class RecordingBulletModule : IJSInProcessObjectReference

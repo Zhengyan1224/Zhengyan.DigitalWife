@@ -4,6 +4,8 @@ using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
 using Zhengyan.DigitalWife.Mmd.Game.Pmx;
 using MotionLayerDefinition = Zhengyan.DigitalWife.Mmd.Game.Pmx.MotionLayerDefinition;
+using MotionLayerInfo = Zhengyan.DigitalWife.Mmd.Game.Pmx.MotionLayerInfo;
+using PmxNodeState = Zhengyan.DigitalWife.Mmd.Game.Pmx.PmxNodeState;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
@@ -23,7 +25,8 @@ public sealed record AndroidRuntimeEvent(
     bool IsFinal = false,
     string WakeWord = "",
     string RecognizedText = "",
-    string Delta = "")
+    string Delta = "",
+    double OffsetSeconds=0)
 {
     internal static AndroidRuntimeEvent FromLlm(AndroidScriptEntity entity, RuntimeLlmScriptEvent value)
         => new("llm", value.RequestId, value.EventName, Vector2.Zero, value.Delta,
@@ -57,7 +60,7 @@ public sealed record AndroidQualityBudgetInfo(
     int AdaptiveParticleLimit,
     bool ReflectionsEnabled);
 
-public sealed class AndroidScriptScene
+public sealed partial class AndroidScriptScene
 {
     private readonly RuntimeScene _scene;
     private readonly Action<string> _requestSceneChange;
@@ -80,10 +83,20 @@ public sealed class AndroidScriptScene
 
     public string Name => _scene.Name;
     public double Fps => _getFps();
-    public double RawFps => Fps;
-    public double DeltaSeconds => 0.0;
-    public long FrameCount => 0;
+    public double RawFps => _scene.RawFps;
+    public double DeltaSeconds => _scene.DeltaSeconds;
+    public long FrameCount => _scene.FrameCount;
+    public RuntimePerformance Performance => _scene.Performance;
+    public RuntimeProjectControl Runtime => _scene.Runtime;
     public AndroidScriptCamera Camera { get; }
+    public RuntimeWindowControl Window => _scene.Window;
+    public IEnumerable<RuntimeEntity> Entities => _scene.Entities;
+    public RuntimeLighting Lighting => _scene.Lighting;
+    public AndroidScriptNetwork Network => Services.Network;
+    public AndroidScriptSaveStore Save => Services.Save;
+    public RuntimeLightCollection PointLights => _scene.PointLights;
+    public RuntimeLightCollection SpotLights => _scene.SpotLights;
+    public string RenderTexture(string renderTextureName) => _scene.Camera.RenderTexture(renderTextureName);
     internal AndroidScriptServices Services { get; }
     public RuntimeLlm Llm => Services.Llm;
     public IAndroidScriptAsr Asr => Services.Asr;
@@ -113,77 +126,35 @@ public sealed class AndroidScriptScene
     internal Task<string?> InvokeLlmToolAsync(AndroidScriptEntity entity, string callbackName, RuntimeLlmToolCall toolCall)
         => entity.InvokeLlmToolAsync(callbackName, toolCall);
     public RuntimeEntity? GetEntity(string idOrName) => _scene.GetEntity(idOrName);
-    public IEnumerable<AndroidScriptSprite> Sprites => _scene.Definition.Sprites.Select(sprite => new AndroidScriptSprite(sprite));
+    public IEnumerable<AndroidScriptSprite> Sprites => _scene.Definition.Sprites.Select(sprite => new AndroidScriptSprite(sprite,_getSurfaceSize,_windowSettings));
     public AndroidScriptSprite? GetSprite(string idOrName)
     {
         if (string.IsNullOrWhiteSpace(idOrName)) return null;
         SpriteSettings? sprite = _scene.Definition.Sprites.FirstOrDefault(item =>
             string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
             || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
-        return sprite is null ? null : new AndroidScriptSprite(sprite);
+        return sprite is null ? null : new AndroidScriptSprite(sprite,_getSurfaceSize,_windowSettings);
     }
 }
 
-public sealed class RuntimeGuiControl
+public sealed class RuntimeGuiControl : Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeGuiControl
 {
-    private readonly GuiControlSettings _control;
-    internal RuntimeGuiControl(GuiControlSettings control) => _control = control;
-    public string Id => _control.Id;
-    public string Name { get => _control.Name; set => _control.Name = value ?? string.Empty; }
-    public string Type { get => _control.Type; set => _control.Type = value ?? string.Empty; }
-    public string Text { get => _control.Text; set => _control.Text = value ?? string.Empty; }
-    public string Value { get => Text; set => Text = value; }
-    public bool Visible { get => _control.Visible; set => _control.Visible = value; }
-    public float X { get => _control.X; set => _control.X = Math.Max(0, value); }
-    public float Y { get => _control.Y; set => _control.Y = Math.Max(0, value); }
-    public float Width { get => _control.Width; set => _control.Width = Math.Max(1, value); }
-    public float Height { get => _control.Height; set => _control.Height = Math.Max(1, value); }
-    public float Progress { get => _control.Progress; set => _control.Progress = Math.Clamp(value, 0, 1); }
-    public bool Checked { get => _control.Checked; set => _control.Checked = value; }
-    public void SetValue(string value) => Text = value;
-    public void SetText(string value) => Text = value;
-    public void SetPosition(float x, float y) { X = x; Y = y; }
-    public void SetSize(float width, float height) { Width = width; Height = height; }
-    public void Show() => Visible = true;
-    public void Hide() => Visible = false;
+    internal RuntimeGuiControl(GuiControlSettings control) : base(control) { }
 }
 
-public sealed class AndroidScriptSprite
+public sealed partial class AndroidScriptSprite : RuntimeSpriteControl
 {
-    private readonly SpriteSettings _sprite;
-
-    internal AndroidScriptSprite(SpriteSettings sprite) => _sprite = sprite;
-
-    public string Id => _sprite.Id;
-    public string Name { get => _sprite.Name; set => _sprite.Name = value ?? string.Empty; }
-    public bool Visible { get => _sprite.Visible; set => _sprite.Visible = value; }
-    public float X { get => _sprite.X; set => _sprite.X = value; }
-    public float Y { get => _sprite.Y; set => _sprite.Y = value; }
-    public float Width { get => _sprite.Width; set => _sprite.Width = Math.Max(1.0f, value); }
-    public float Height { get => _sprite.Height; set => _sprite.Height = Math.Max(1.0f, value); }
-    public float RotationDegrees { get => _sprite.RotationDegrees; set => _sprite.RotationDegrees = value; }
-    public float Opacity { get => _sprite.Opacity; set => _sprite.Opacity = Math.Clamp(value, 0.0f, 1.0f); }
-    public int DrawOrder { get => _sprite.DrawOrder; set => _sprite.DrawOrder = value; }
-    public string Texture { get => _sprite.Path; set => _sprite.Path = value ?? string.Empty; }
-    public string Path { get => _sprite.Path; set => _sprite.Path = value ?? string.Empty; }
-    public string LayoutMode { get => _sprite.LayoutMode; set => _sprite.LayoutMode = value ?? "absolute"; }
-    public float SourceX { get => _sprite.SourceX; set => _sprite.SourceX = Math.Max(0.0f, value); }
-    public float SourceY { get => _sprite.SourceY; set => _sprite.SourceY = Math.Max(0.0f, value); }
-    public float SourceWidth { get => _sprite.SourceWidth; set => _sprite.SourceWidth = Math.Max(0.0f, value); }
-    public float SourceHeight { get => _sprite.SourceHeight; set => _sprite.SourceHeight = Math.Max(0.0f, value); }
-
-    public void SetPosition(float x, float y) { X = x; Y = y; }
-    public void SetSize(float width, float height) { Width = width; Height = height; }
-    public void SetSourceRect(float x, float y, float width, float height)
-    {
-        SourceX = x; SourceY = y; SourceWidth = width; SourceHeight = height;
-    }
-    public void ResetSourceRect() => SetSourceRect(0.0f, 0.0f, 0.0f, 0.0f);
-    public void Show() => Visible = true;
-    public void Hide() => Visible = false;
+    private readonly Func<Vector2> _surface;
+    private readonly GameWindowSettings _window;
+    internal AndroidScriptSprite(SpriteSettings sprite,Func<Vector2>? surface=null,GameWindowSettings? window=null) : base(sprite)
+    { _window=window??new();_surface=surface??(()=>new(_window.Width,_window.Height)); }
+    protected override (float Width,float Height,float ReferenceWidth,float ReferenceHeight) ScriptViewport
+    {get{var size=_surface();return(size.X,size.Y,_window.Width,_window.Height);}}
+    public bool ContainsMouse(AndroidScriptInputApi input)=>ContainsPoint(input.MouseX,input.MouseY);
+    public bool ContainsTouch(AndroidScriptInputApi input)=>input.Touches.Any(t=>t.IsActive&&ContainsPoint(t.X,t.Y));
 }
 
-public sealed class AndroidScriptEntity
+public sealed partial class AndroidScriptEntity
 {
     private readonly RuntimeEntity _entity;
     public int ReflectionSamples { get => _entity.ReflectionSamples; set => _entity.ReflectionSamples = value; }
@@ -213,6 +184,7 @@ public sealed class AndroidScriptEntity
         GameProjectVoiceSettings? voiceSettings = null)
     {
         _entity = entity;
+        lock(ScriptEntityWrappers){ScriptEntityWrappers.Remove(entity);ScriptEntityWrappers.Add(entity,this);}
         _applyMotion = applyMotion;
         _setMotionState = setMotionState;
         _resolvePmxModel = resolvePmxModel;
@@ -222,6 +194,8 @@ public sealed class AndroidScriptEntity
         _invokeLlmTool = invokeLlmTool ?? ((_, _) => Task.FromResult<string?>(null));
         _speak = speak ?? ((text, _, _, _, _, callback) => _speakWithCallback(text, callback));
         _voiceSettings = voiceSettings ?? new();
+        _entity.ScriptAssetPathResolver = _resolveAssetPath;
+        if(_entity.IsPmxModel)_entity.PmxScriptApi = new AndroidPmxScriptApi(()=>_resolvePmxModel(),_entity);
     }
 
     public string Id => _entity.Id;
@@ -392,7 +366,7 @@ public sealed class AndroidScriptEntity
     public void SetMotionLayerTime(string motionPath, float timeSeconds) => RequirePmx().SetMotionLayerTime(_resolveAssetPath(motionPath), Math.Max(timeSeconds, 0.0f));
     public void SetMotionLayerFrame(string motionPath, float frame) => RequirePmx().SetMotionLayerFrame(_resolveAssetPath(motionPath), Math.Max(frame, 0.0f));
     public void SetMotionLayerWeight(string motionPath, float weight) => RequirePmx().SetMotionLayerWeight(_resolveAssetPath(motionPath), weight);
-    public void SetMotionLayerResetPhysicsOnLoop(string motionPath, bool reset) => RequirePmx().SetMotionLayerResetPhysicsOnLoop(_resolveAssetPath(motionPath), reset);
+    public void SetMotionLayerResetPhysicsOnLoop(string motionPath, bool resetPhysicsOnLoop) => RequirePmx().SetMotionLayerResetPhysicsOnLoop(_resolveAssetPath(motionPath), resetPhysicsOnLoop);
     public bool TrySetMotionLayerPlaying(string motionPath, bool isPlaying) => Pmx?.TrySetMotionLayerPlaying(_resolveAssetPath(motionPath), isPlaying) == true;
     public bool TrySetMotionLayerTime(string motionPath, float timeSeconds) => Pmx?.TrySetMotionLayerTime(_resolveAssetPath(motionPath), timeSeconds) == true;
     public bool TrySetMotionLayerFrame(string motionPath, float frame) => Pmx?.TrySetMotionLayerFrame(_resolveAssetPath(motionPath), frame) == true;
@@ -419,21 +393,21 @@ public sealed class AndroidScriptEntity
     public bool TryGetNodeState(string nodeName, out PmxNodeState state) { state = default; return Pmx?.TryGetNodeState(nodeName, out state) == true; }
     public bool TryGetNodeWorld(string nodeName, out Matrix4x4 world) { world = default; return Pmx?.TryGetNodeWorld(nodeName, out world) == true; }
     public PmxNodeState GetNodeState(string nodeName) => RequirePmx().GetNodeState(nodeName);
-    public bool TrySetNodeTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => Pmx?.TrySetNodeTranslate(nodeName, value, overrideAnimation) == true;
-    public void SetNodeTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => RequirePmx().SetNodeTranslate(nodeName, value, overrideAnimation);
+    public bool TrySetNodeTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true) => Pmx?.TrySetNodeTranslate(nodeName, translate, overrideAnimation) == true;
+    public void SetNodeTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true) => RequirePmx().SetNodeTranslate(nodeName, translate, overrideAnimation);
     public void SetNodeTranslate(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeTranslate(nodeName, new Vector3(x, y, z), overrideAnimation);
-    public bool TrySetNodeRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => Pmx?.TrySetNodeRotate(nodeName, value, overrideAnimation) == true;
-    public void SetNodeRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => RequirePmx().SetNodeRotate(nodeName, value, overrideAnimation);
-    public void SetNodeRotateEuler(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeRotate(nodeName, Quaternion.CreateFromYawPitchRoll(y * MathF.PI / 180.0f, x * MathF.PI / 180.0f, z * MathF.PI / 180.0f), overrideAnimation);
-    public bool TrySetNodeScale(string nodeName, Vector3 value, bool overrideAnimation = true) => Pmx?.TrySetNodeScale(nodeName, value, overrideAnimation) == true;
-    public void SetNodeScale(string nodeName, Vector3 value, bool overrideAnimation = true) => RequirePmx().SetNodeScale(nodeName, value, overrideAnimation);
+    public bool TrySetNodeRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true) => Pmx?.TrySetNodeRotate(nodeName, rotate, overrideAnimation) == true;
+    public void SetNodeRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true) => RequirePmx().SetNodeRotate(nodeName, rotate, overrideAnimation);
+    public void SetNodeRotateEuler(string nodeName, float xDegrees, float yDegrees, float zDegrees, bool overrideAnimation = true) => SetNodeRotate(nodeName, Quaternion.CreateFromYawPitchRoll(yDegrees * MathF.PI / 180.0f, xDegrees * MathF.PI / 180.0f, zDegrees * MathF.PI / 180.0f), overrideAnimation);
+    public bool TrySetNodeScale(string nodeName, Vector3 scale, bool overrideAnimation = true) => Pmx?.TrySetNodeScale(nodeName, scale, overrideAnimation) == true;
+    public void SetNodeScale(string nodeName, Vector3 scale, bool overrideAnimation = true) => RequirePmx().SetNodeScale(nodeName, scale, overrideAnimation);
     public void SetNodeScale(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeScale(nodeName, new Vector3(x, y, z), overrideAnimation);
-    public bool TrySetNodeAnimTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => Pmx?.TrySetNodeAnimTranslate(nodeName, value, overrideAnimation) == true;
-    public void SetNodeAnimTranslate(string nodeName, Vector3 value, bool overrideAnimation = true) => RequirePmx().SetNodeAnimTranslate(nodeName, value, overrideAnimation);
+    public bool TrySetNodeAnimTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true) => Pmx?.TrySetNodeAnimTranslate(nodeName, translate, overrideAnimation) == true;
+    public void SetNodeAnimTranslate(string nodeName, Vector3 translate, bool overrideAnimation = true) => RequirePmx().SetNodeAnimTranslate(nodeName, translate, overrideAnimation);
     public void SetNodeAnimTranslate(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeAnimTranslate(nodeName, new Vector3(x, y, z), overrideAnimation);
-    public bool TrySetNodeAnimRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => Pmx?.TrySetNodeAnimRotate(nodeName, value, overrideAnimation) == true;
-    public void SetNodeAnimRotate(string nodeName, Quaternion value, bool overrideAnimation = true) => RequirePmx().SetNodeAnimRotate(nodeName, value, overrideAnimation);
-    public void SetNodeAnimRotateEuler(string nodeName, float x, float y, float z, bool overrideAnimation = true) => SetNodeAnimRotate(nodeName, Quaternion.CreateFromYawPitchRoll(y * MathF.PI / 180.0f, x * MathF.PI / 180.0f, z * MathF.PI / 180.0f), overrideAnimation);
+    public bool TrySetNodeAnimRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true) => Pmx?.TrySetNodeAnimRotate(nodeName, rotate, overrideAnimation) == true;
+    public void SetNodeAnimRotate(string nodeName, Quaternion rotate, bool overrideAnimation = true) => RequirePmx().SetNodeAnimRotate(nodeName, rotate, overrideAnimation);
+    public void SetNodeAnimRotateEuler(string nodeName, float xDegrees, float yDegrees, float zDegrees, bool overrideAnimation = true) => SetNodeAnimRotate(nodeName, Quaternion.CreateFromYawPitchRoll(yDegrees * MathF.PI / 180.0f, xDegrees * MathF.PI / 180.0f, zDegrees * MathF.PI / 180.0f), overrideAnimation);
     public bool SaveNodeBaseAnimation(string nodeName) => Pmx?.SaveNodeBaseAnimation(nodeName) == true;
     public bool LoadNodeBaseAnimation(string nodeName) => Pmx?.LoadNodeBaseAnimation(nodeName) == true;
     public bool ClearNodeBaseAnimation(string nodeName) => Pmx?.ClearNodeBaseAnimation(nodeName) == true;
@@ -448,12 +422,14 @@ public sealed class AndroidScriptEntity
     public void ClearMaterialTextureOverrides() => Pmx?.ClearMaterialTextureOverrides();
     public bool SetCustomShader(string vertexShaderPath, string fragmentShaderPath)
     {
+        if(_entity.IsTexturedPlane)return _entity.SetCustomShader(vertexShaderPath,fragmentShaderPath);
         if (Pmx is not { } model) return false;
         model.SetCustomShader(_resolveAssetPath(vertexShaderPath), _resolveAssetPath(fragmentShaderPath));
         return true;
     }
     public bool SetCustomShader(string openGlVertexShaderPath, string openGlFragmentShaderPath, string vulkanVertexSpirvPath, string vulkanFragmentSpirvPath)
     {
+        if(_entity.IsTexturedPlane)return _entity.SetCustomShader(openGlVertexShaderPath,openGlFragmentShaderPath,vulkanVertexSpirvPath,vulkanFragmentSpirvPath);
         if (Pmx is not { } model) return false;
         model.SetCustomShader(
             _resolveAssetPath(openGlVertexShaderPath),
@@ -462,19 +438,20 @@ public sealed class AndroidScriptEntity
             _resolveAssetPath(vulkanFragmentSpirvPath));
         return true;
     }
-    public void SetCustomShaderFloat(string name, float value) => Pmx?.SetCustomShaderFloat(name, value);
-    public void SetCustomShaderInt(string name, int value) => Pmx?.SetCustomShaderInt(name, value);
-    public void SetCustomShaderVector2(string name, float x, float y) => Pmx?.SetCustomShaderVector2(name, x, y);
-    public void SetCustomShaderVector3(string name, float x, float y, float z) => Pmx?.SetCustomShaderVector3(name, x, y, z);
-    public void SetCustomShaderVector4(string name, float x, float y, float z, float w) => Pmx?.SetCustomShaderVector4(name, x, y, z, w);
+    public void SetCustomShaderFloat(string name, float value) { if(_entity.IsTexturedPlane)_entity.SetCustomShaderFloat(name, value);else Pmx?.SetCustomShaderFloat(name, value); }
+    public void SetCustomShaderInt(string name, int value) { if(_entity.IsTexturedPlane)_entity.SetCustomShaderInt(name, value);else Pmx?.SetCustomShaderInt(name, value); }
+    public void SetCustomShaderVector2(string name, float x, float y) { if(_entity.IsTexturedPlane)_entity.SetCustomShaderVector2(name, x, y);else Pmx?.SetCustomShaderVector2(name, x, y); }
+    public void SetCustomShaderVector3(string name, float x, float y, float z) { if(_entity.IsTexturedPlane)_entity.SetCustomShaderVector3(name, x, y, z);else Pmx?.SetCustomShaderVector3(name, x, y, z); }
+    public void SetCustomShaderVector4(string name, float x, float y, float z, float w) { if(_entity.IsTexturedPlane)_entity.SetCustomShaderVector4(name, x, y, z, w);else Pmx?.SetCustomShaderVector4(name, x, y, z, w); }
     public void SetCustomShaderColor(string name, float r, float g, float b, float a = 1.0f) => SetCustomShaderVector4(name, r, g, b, a);
-    public void ClearCustomShaderUniform(string name) => Pmx?.ClearCustomShaderUniform(name);
-    public void ClearCustomShaderUniforms() => Pmx?.ClearCustomShaderUniforms();
-    public void ClearCustomShader() => Pmx?.ClearCustomShader();
+    public void ClearCustomShaderUniform(string name) { if(_entity.IsTexturedPlane)_entity.ClearCustomShaderUniform(name);else Pmx?.ClearCustomShaderUniform(name); }
+    public void ClearCustomShaderUniforms() { if(_entity.IsTexturedPlane)_entity.ClearCustomShaderUniforms();else Pmx?.ClearCustomShaderUniforms(); }
+    public void ClearCustomShader() { if(_entity.IsTexturedPlane)_entity.ClearCustomShader();else Pmx?.ClearCustomShader(); }
 
     public void Speak(string text, Action? onCompleted = null) => _speak(text, _voiceSettings.DefaultSpeakerId, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, onCompleted, string.Empty);
     public void Speak(string text, int speakerId = 0, float speed = 1.0f, float volume = 1.0f, Action? onCompleted = null)
         => _speak(text, speakerId, speed, volume, onCompleted, string.Empty);
+    public void Speak(string text,RuntimeVoiceOptions options)=>_speak(text,options.SpeakerId??_voiceSettings.DefaultSpeakerId,options.Speed??_voiceSettings.DefaultSpeed,options.Volume??_voiceSettings.DefaultVolume,options.OnCompleted,string.Empty);
     public void SpeakWithCallback(string text, string callbackName) => _speak(text, _voiceSettings.DefaultSpeakerId, _voiceSettings.DefaultSpeed, _voiceSettings.DefaultVolume, null, callbackName);
     public void SpeakWithCallback(string text, int speakerId, float speed, float volume, string callbackName) => _speak(text, speakerId, speed, volume, null, callbackName);
     public void StopSpeaking() => _stopSpeaking();
@@ -500,28 +477,32 @@ public sealed class AndroidScriptAudio
     private readonly Func<string, bool, bool> _setLoop;
     private readonly Func<string, bool> _isPlaying;
     private readonly Func<string, float, bool> _playOneShot;
+    private readonly Func<string,bool> _getLoop;
+    private readonly Dictionary<string,bool> _loops=new(StringComparer.OrdinalIgnoreCase);
 
-    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop, Func<string, float, bool>? setVolume = null, Func<string, bool, bool>? setLoop = null, Func<string, bool>? isPlaying = null, Func<string, float, bool>? playOneShot = null)
+    internal AndroidScriptAudio(Func<string, bool> play, Func<string, bool> pause, Func<string, bool> stop, Func<string, float, bool>? setVolume = null, Func<string, bool, bool>? setLoop = null, Func<string, bool>? isPlaying = null, Func<string, float, bool>? playOneShot = null,Func<string,bool>? getLoop=null)
     {
         _play = play;
         _pause = pause;
         _stop = stop;
         _setVolume = setVolume ?? ((_, _) => false);
         _setLoop = setLoop ?? ((_, _) => false);
+        _getLoop=getLoop??(name=>_loops.GetValueOrDefault(name));
         _isPlaying = isPlaying ?? (_ => false);
         _playOneShot = playOneShot ?? ((_, _) => false);
     }
 
-    public bool Play(string idOrName) => _play(idOrName);
-    public bool PlayOneShot(string idOrName, float volumeScale = 1.0f) => _playOneShot(idOrName, volumeScale);
-    public bool Pause(string idOrName) => _pause(idOrName);
-    public bool Stop(string idOrName) => _stop(idOrName);
-    public bool SetVolume(string idOrName, float volume) => _setVolume(idOrName, volume);
-    public bool SetLoop(string idOrName, bool loop) => _setLoop(idOrName, loop);
+    public bool Play(string nameOrPath) => _play(nameOrPath);
+    public bool PlayOneShot(string nameOrPath, float volumeScale = 1.0f) => _playOneShot(nameOrPath, volumeScale);
+    public bool Pause(string nameOrPath) => _pause(nameOrPath);
+    public bool Stop(string nameOrPath) => _stop(nameOrPath);
+    public bool SetVolume(string nameOrPath, float volume) => _setVolume(nameOrPath, volume);
+    public bool SetLoop(string nameOrPath, bool loop){bool changed=_setLoop(nameOrPath,loop);if(changed)_loops[nameOrPath]=loop;return changed;}
+    public bool GetLoop(string nameOrPath)=>_getLoop(nameOrPath);
     public bool IsPlaying(string idOrName) => _isPlaying(idOrName);
 }
 
-public sealed class AndroidScriptCamera
+public sealed partial class AndroidScriptCamera
 {
     private readonly RuntimeScene _scene;
     private readonly string _projectDirectory;
@@ -629,7 +610,7 @@ public sealed class AndroidScriptCamera
         || string.Equals(camera.Name, idOrName, StringComparison.OrdinalIgnoreCase));
 }
 
-public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
+public sealed partial class AndroidScriptGlobals : AndroidScriptGlobalsContract
 {
     public AndroidScriptGlobals(
         AndroidScriptScene scene,
@@ -746,7 +727,7 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new RuntimeLlmScriptEvent? LlmEvent => IsLlmEvent
         ? new(LlmRequestId, LlmEventName, LlmDelta, LlmText, LlmIsFinal, LlmError, LlmCallbackName, Event!.ToolCall, Event.ToolResult)
         : null;
-    public dynamic? AsrEvent => IsAsrEvent ? Event : null;
+    public dynamic? AsrEvent => IsAsrEvent ? new RuntimeAsrScriptEvent(AsrRequestId,AsrEventName,AsrText,AsrIsFinal,AsrError,AsrCallbackName,AsrOffsetSeconds,AsrWakeWord,AsrRecognizedText) : null;
     public RuntimeRealtimeVoiceScriptEvent? RealtimeVoiceEvent => IsRealtimeVoiceEvent
         ? new(RealtimeVoiceRequestId, RealtimeVoiceEventName, RealtimeVoiceText, RealtimeVoiceDelta,
             RealtimeVoiceAccumulatedText, RealtimeVoiceIsFinal, RealtimeVoiceError, RealtimeVoiceCallbackName,
@@ -769,7 +750,7 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new bool AsrIsFinal => IsAsrEvent && Event!.IsFinal;
     public new string AsrError => IsAsrEvent ? Event!.Error : string.Empty;
     public new string AsrCallbackName => IsAsrEvent ? Event!.CallbackName : string.Empty;
-    public double AsrOffsetSeconds => 0.0;
+    public double AsrOffsetSeconds => IsAsrEvent?Event!.OffsetSeconds:0.0;
     public string AsrWakeWord => IsAsrEvent ? Event!.WakeWord : string.Empty;
     public string AsrRecognizedText => IsAsrEvent ? Event!.RecognizedText : string.Empty;
     public new string RealtimeVoiceRequestId => IsRealtimeVoiceEvent ? Event!.Id : string.Empty;
@@ -860,7 +841,7 @@ public sealed class AndroidScriptGlobals : AndroidScriptGlobalsContract
     }
 }
 
-public sealed class AndroidScriptServices : IDisposable
+public sealed partial class AndroidScriptServices : IDisposable
 {
     private readonly RuntimeScene _scene;
     private readonly Action<string> _requestSceneChange;
@@ -921,7 +902,7 @@ public sealed class AndroidScriptServices : IDisposable
         Asr = asr;
     }
 
-    public void Dispose() => Llm.Dispose();
+    public void Dispose() { Llm.Dispose(); Network.Dispose(); }
 
     public RuntimeEntity? FindEntity(string idOrName) => _scene.GetEntity(idOrName);
     public RuntimeEntity AddPointLight(string name, Vector3 position, Vector3 color, float intensity = 1, float range = 8)

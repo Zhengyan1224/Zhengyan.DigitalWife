@@ -21,6 +21,7 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
     private bool _disposed;
     public Func<WebScriptEntry,string,IWebGameScript>? PythonFactory { get; set; }
     private readonly List<WebLoadedScript> _scripts = [];
+    private readonly HashSet<string> _startedScripts=[];
 
     public IReadOnlyList<WebLoadedScript> Scripts => _scripts;
     public IReadOnlyList<WebScriptLoadDiagnostic> Diagnostics => _diagnostics;
@@ -35,6 +36,7 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(assets);
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(scene);
+        var loadingEntity=new RuntimeEntity(new(){Id="__scene_loading__",Name=scene.Name,Type="scene"});
 
         manifest.Validate();
         if (!WebManifestSignature.Verify(manifest))
@@ -70,7 +72,7 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
                 {
                     if(PythonFactory is null)throw new NotSupportedException("Python runtime is not configured.");
                     var pythonModule=PythonFactory(entry,System.Text.Encoding.UTF8.GetString(bytes));
-                    _scripts.Add(new(entry,typeof(WebScriptRuntime).Assembly,pythonModule,new(scene,scene.GetEntity(entry.Entity))));continue;
+                    _scripts.Add(new(entry,typeof(WebScriptRuntime).Assembly,pythonModule,new(scene,string.IsNullOrWhiteSpace(entry.Entity)?loadingEntity:scene.GetEntity(entry.Entity))));continue;
                 }
                 Assembly assembly = Assembly.Load(bytes);
                 WebScriptCompatibilityReport compatibility = WebScriptCompatibility.Analyze(assembly);
@@ -78,7 +80,7 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
                     throw new InvalidOperationException(compatibility.Message);
                 IWebGameScript? module = CreateModule(assembly, entry);
                 RuntimeEntity? entity = string.IsNullOrWhiteSpace(entry.Entity)
-                    ? null
+                    ? loadingEntity
                     : scene.GetEntity(entry.Entity);
                 WebLoadedScript loaded = new(entry, assembly, module, new WebScriptContext(scene, entity));
                 _scripts.Add(loaded);
@@ -112,7 +114,7 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
     {
         foreach (WebLoadedScript script in _scripts)
         {
-            if (script.Module is null) continue;
+            if (script.Module is null || !_startedScripts.Add(script.Manifest.Id)) continue;
             try
             {
                 script.Module.Start(script.Context);
@@ -131,11 +133,18 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
     {
         foreach (var script in _scripts)
         {
-            if (script.Module is null) continue;
+            if (script.Module is null || !_startedScripts.Add(script.Manifest.Id)) continue;
             try { await script.Module.StartAsync(script.Context); }
             catch (Exception exception) { _diagnostics.Add(new(script.Manifest.Id, "Start failed: " + exception.Message, true)); }
         }
     }
+    public async Task StartLoadingAsync()
+    {
+        foreach(var script in _scripts.Where(s=>string.IsNullOrWhiteSpace(s.Manifest.Entity)))
+        {if(script.Module is null||!_startedScripts.Add(script.Manifest.Id))continue;try{await script.Module.StartAsync(script.Context);}catch(Exception error){_diagnostics.Add(new(script.Manifest.Id,"Loading start failed: "+error.Message,true));}}
+    }
+    public void PublishLoading(string name,float progress,string message)=>DispatchEvent(new("loading",EventName:"loading_"+name){LoadingProgress=progress,LoadingMessage=message});
+    public Task FlushLoadingEventsAsync()=>Task.WhenAll(_scripts.Where(s=>string.IsNullOrWhiteSpace(s.Manifest.Entity)).Select(s=>s.EventTask));
 
     public void Update(float deltaSeconds, double elapsedSeconds, RuntimeCameraInput input)
     {
@@ -172,6 +181,7 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
         foreach (WebLoadedScript script in _scripts)
         {
             if (script.Module is null) continue;
+            if (gameEvent.IsLoadingEvent && !string.IsNullOrWhiteSpace(script.Manifest.Entity)) continue;
             if (!string.IsNullOrWhiteSpace(targetEntityId)
                 && !string.Equals(script.Context.Entity?.Id, targetEntityId, StringComparison.OrdinalIgnoreCase))
             {
@@ -190,6 +200,25 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
                 finally { script.Context.SetEvent(null); }
             }
         }
+    }
+
+    public async Task<string?> InvokeLlmToolAsync(RuntimeEntity entity,string callbackName,RuntimeLlmToolCall tool)
+    {
+        if(_disposed)throw new ObjectDisposedException(nameof(WebScriptRuntime));
+        var candidates=_scripts.Where(s=>s.Module is not null&&s.Context.Entity?.Id==entity.Id).ToArray();
+        if(candidates.Length==0)throw new InvalidOperationException("No script is bound to the tool callback entity.");
+        // A tool can be called while the same script awaits its LLM request.
+        // Use a separate invocation context instead of waiting on that event.
+        foreach(var script in candidates)
+        {
+            var context=new WebScriptContext(script.Context.Scene,entity);
+            context.UpdateFrame(script.Context.ElapsedSeconds,script.Context.Input);
+            var value=new WebScriptEvent("llm",EntityId:entity.Id){IsScriptToolCall=true,Llm=new(tool.Id,"tool_execute","","",false,"",callbackName,tool)};
+            context.SetEvent(value);
+            await script.Module!.OnEventAsync(context,value);
+            if(context.ReturnValue is not null)return context.ReturnValue is string text?text:System.Text.Json.JsonSerializer.Serialize(context.ReturnValue);
+        }
+        return null;
     }
 
     public void Dispose() { _disposed=true; }

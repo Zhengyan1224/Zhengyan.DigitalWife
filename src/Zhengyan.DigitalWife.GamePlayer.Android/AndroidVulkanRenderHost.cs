@@ -19,7 +19,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private RuntimeSceneManager? _sceneManager;
     private AndroidCSharpScriptHost? _scriptHost;
     private readonly AndroidGuiPointerEvents _guiPointerEvents = new();
-    private readonly AndroidCameraTouchInput _cameraTouchInput = new();
+    private readonly AndroidCameraTouchInput _cameraTouchInput = new(){CursorLockReader=()=>AndroidWindowPlatform.CursorLocked,CursorLockSetter=(locked,raw)=>AndroidWindowPlatform.SetCursorLocked(locked)};
     private AndroidAudioHost? _audioHost;
     private GameProject? _project;
     private string _projectDirectory = string.Empty;
@@ -101,7 +101,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 voiceSettings: project.Voice,
                 asrSettings: project.Asr,
                 playOneShot: (scene, name, volumeScale) => _audioHost?.PlayOneShot(scene, name, volumeScale) == true,
-                getSurfaceSize: () => new(_width, _height), windowSettings: project.Window);
+                getSurfaceSize: () => new(_width, _height), windowSettings: project.Window,getAudioLoop:name=>_audioHost?.GetLoop(name)==true);
             _sceneManager.SceneChanged += OnSceneChanged;
             _sceneManager.SceneLoadFailed += failure =>
                 Log.Warn(LogTag, $"Runtime scene load failed '{failure.ScenePath}': {failure.Error.Message}");
@@ -245,6 +245,9 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             return _game?.RequestRenderTextureRefresh(idOrName) == true;
         }
     }
+
+    public void DispatchGuiControlChanged(GuiControlSettings control)
+    {if(_sceneManager?.Current is {} scene)_scriptHost?.DispatchEvent(scene,new AndroidRuntimeEvent("gui",control.Id,string.IsNullOrWhiteSpace(control.EventName)?"changed":control.EventName,Vector2.Zero,control.Name,TargetEntity:control.TargetEntity));}
 
     public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)
     {

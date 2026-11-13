@@ -13,6 +13,7 @@
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\PmxRuntimeDiagnostics.cs" Link="PmxRuntime\PmxRuntimeDiagnostics.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\IPmxPoseEvaluator.cs" Link="PmxRuntime\IPmxPoseEvaluator.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\PmxPoseEvaluator.cs" Link="PmxRuntime\PmxPoseEvaluator.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.Mmd\PmxRuntime\PmxPoseEvaluator.ScriptApi.cs" Link="PmxRuntime\PmxPoseEvaluator.ScriptApi.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.Mmd\Helpers\BinaryReaderExtensions.cs" Link="Helpers\BinaryReaderExtensions.cs" />
     </ItemGroup>
 

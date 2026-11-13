@@ -121,6 +121,9 @@ internal sealed class AndroidAudioHost : IDisposable
         try { player.Looping = loop; return true; } catch { return false; }
     }
 
+    public bool GetLoop(string idOrName)
+    {try{return _players.TryGetValue(ResolveKey(idOrName),out var player)&&player.Looping;}catch{return false;}}
+
     public bool IsPlaying(string idOrName)
     {
         string key = ResolveKey(idOrName);

@@ -86,6 +86,16 @@ public static class AndroidScriptCompiler
             + "using Zhengyan.DigitalWife.GamePlayer.Android;\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Pmx;\n\n"
             + "using Zhengyan.DigitalWife.Mmd.Game.Input;\n"
+            + "using MotionLayerDefinition = Zhengyan.DigitalWife.Mmd.Game.Pmx.MotionLayerDefinition;\n"
+            + "using MotionLayerInfo = Zhengyan.DigitalWife.Mmd.Game.Pmx.MotionLayerInfo;\n"
+            + "using PmxNodeState = Zhengyan.DigitalWife.Mmd.Game.Pmx.PmxNodeState;\n"
+            + "using RuntimeInput = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptInputApi;\n"
+            + "using RuntimeAudio = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptAudio;\n"
+            + "using RuntimeScene = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptScene;\n"
+            + "using RuntimeCamera = Zhengyan.DigitalWife.GamePlayer.Android.AndroidScriptCamera;\n"
+            + "using RuntimeLlm = Zhengyan.DigitalWife.GamePlayer.RuntimeLlm;\n"
+            + "using RuntimeAsr = Zhengyan.DigitalWife.GamePlayer.Android.IAndroidScriptAsr;\n"
+            + "using RuntimeRealtimeVoice = Zhengyan.DigitalWife.GamePlayer.Android.IAndroidScriptRealtimeVoice;\n"
             + "#line 1 \"" + path.Replace('\\', '/').Replace("\"", "\\\"") + "\"\n"
             + compilationBody;
         CSharpParseOptions parseOptions = new(LanguageVersion.Latest, kind: SourceCodeKind.Script);
@@ -120,6 +130,9 @@ public static class AndroidScriptCompiler
         // Desktop .NET 10 overload resolution can choose params ReadOnlySpan<T>
         // and lower expanded arguments to private CoreLib InlineArray types.
         // Pass an explicit array instead, preserving arguments and evaluation.
+        var legacyParameters=new LegacyParameterRewriter(compilation.GetSemanticModel(syntaxTree)).Visit(syntaxTree.GetRoot())!;
+        if(!ReferenceEquals(legacyParameters,syntaxTree.GetRoot()))
+        {var changed=CSharpSyntaxTree.Create((CSharpSyntaxNode)legacyParameters,parseOptions,path,parsedTree.Encoding);compilation=compilation.ReplaceSyntaxTree(syntaxTree,changed);syntaxTree=changed;}
         SyntaxNode portableCalls = new PortableParamsRewriter(compilation.GetSemanticModel(syntaxTree))
             .Visit(syntaxTree.GetRoot())!;
         SyntaxTree portableTree = CSharpSyntaxTree.Create((CSharpSyntaxNode)portableCalls, parseOptions, path, parsedTree.Encoding);
@@ -151,21 +164,51 @@ public static class AndroidScriptCompiler
         return image.ToArray();
     }
 
+    private sealed class LegacyParameterRewriter(SemanticModel model):CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
+        {
+            if(node.Expression is not MemberAccessExpressionSyntax member)return base.VisitInvocationExpression(node);
+            string? type=model.GetTypeInfo(member.Expression).Type?.Name;
+            var visited=(InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+            if(type is null)return visited;
+            var args=visited.ArgumentList.Arguments.Select(argument=>
+            {
+                if(argument.NameColon is null)return argument;
+                var replacement=AndroidScriptParameterAliases.Resolve(type,member.Name.Identifier.ValueText,argument.NameColon.Name.Identifier.ValueText);
+                return replacement is null?argument:argument.WithNameColon(argument.NameColon.WithName(SyntaxFactory.IdentifierName(replacement)));
+            });
+            return visited.WithArgumentList(visited.ArgumentList.WithArguments(SyntaxFactory.SeparatedList(args)));
+        }
+    }
+
     private sealed class ScriptApiTypeRewriter(SemanticModel model) : CSharpSyntaxRewriter
     {
-        private const string GuiControlType = "global::Zhengyan.DigitalWife.GamePlayer.Android.RuntimeGuiControl";
+        private static readonly Dictionary<string,string> PortableTypes=new()
+        {
+            ["RuntimeGuiControl"]="global::Zhengyan.DigitalWife.GamePlayer.Android.RuntimeGuiControl",
+            ["RuntimeDialogueBubble"]="global::Zhengyan.DigitalWife.GamePlayer.Android.RuntimeDialogueBubble",
+            ["RuntimeLlmTool"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmTool",
+            ["RuntimeLlmScriptTool"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmScriptTool",
+            ["RuntimeLlmResult"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmResult",
+            ["RuntimeLlmChatMessage"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmChatMessage",
+            ["RuntimeLlmStreamUpdate"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmStreamUpdate",
+            ["RuntimeLlmToolCall"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmToolCall",
+            ["RuntimeLlmScriptEvent"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeLlmScriptEvent",
+            ["RuntimeRealtimeVoiceScriptEvent"]="global::Zhengyan.DigitalWife.GamePlayer.RuntimeRealtimeVoiceScriptEvent"
+        };
 
         public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
         {
-            if (node.Identifier.ValueText != "RuntimeGuiControl") return base.VisitIdentifierName(node);
+            if (!PortableTypes.TryGetValue(node.Identifier.ValueText,out var resolvedType)) return base.VisitIdentifierName(node);
             SymbolInfo symbol = model.GetSymbolInfo(node);
             if (symbol.CandidateReason != CandidateReason.Ambiguous
                 || !symbol.CandidateSymbols.OfType<INamedTypeSymbol>().Any(type =>
-                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == GuiControlType))
+                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == resolvedType))
                 return base.VisitIdentifierName(node);
             ExpressionSyntax resolved = SyntaxFacts.IsInTypeOnlyContext(node)
-                ? SyntaxFactory.ParseName(GuiControlType)
-                : SyntaxFactory.ParseExpression(GuiControlType);
+                ? SyntaxFactory.ParseName(resolvedType)
+                : SyntaxFactory.ParseExpression(resolvedType);
             return resolved.WithTriviaFrom(node);
         }
     }

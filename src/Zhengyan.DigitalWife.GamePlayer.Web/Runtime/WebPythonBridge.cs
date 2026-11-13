@@ -17,24 +17,32 @@ public sealed class WebPythonBridge
     private RuntimeSaveStore? _save;
     public IReadOnlyDictionary<string,string> ProjectFiles { get; set; } = new Dictionary<string,string>();
     public Action<int>? Callback { get; set; }
+    public Action<int,object?>? CallbackWithValue {get;set;}
     public object Frame(WebScriptContext context,float delta,bool start,WebScriptEvent? gameEvent)
     {
         _objects[1]=context.Scene;_objects[2]=context.Entity;_objects[3]=context.Input;_objects[4]=context.Audio;
         _save=context.Scene.Save;
         return new {Scene=new{__handle=1},Entity=context.Entity is null?null:new{__handle=2},Input=new{__handle=3},Audio=new{__handle=4},
-            Graphics=Encode(context.Graphics),GameEvent=Encode(gameEvent),ElapsedSeconds=context.ElapsedSeconds,
+            Graphics=Encode(context.Graphics),Time=Encode(context.Time),GameEvent=Encode(gameEvent),ElapsedSeconds=context.ElapsedSeconds,
+            IsAndroid=false,IsWindows=false,IsLinux=false,IsMacOS=false,IsWeb=true,PlatformName="Web",
+            IsTrayMenuEvent=false,TrayMenuItemId="",TrayMenuItemText="",TrayMenuEventName="",
+            IsLoadingEvent=gameEvent?.IsLoadingEvent??false,LoadingEventName=gameEvent?.IsLoadingEvent==true?gameEvent.EventName:"",
+            LoadingProgress=gameEvent?.LoadingProgress??0,LoadingMessage=gameEvent?.LoadingMessage??"",
             DeltaSeconds=delta,IsStart=start,IsUpdate=gameEvent is null && !start,IsGuiEvent=gameEvent?.IsGuiEvent??false,
             GuiControlId=gameEvent?.ControlId??"",GuiControlName=gameEvent?.ControlName??"",GuiEventName=gameEvent?.EventName??"",
             IsSpeechEvent=gameEvent?.IsSpeechEvent??false,SpeechCallbackName=gameEvent?.CallbackName??"",
             IsAsrEvent=gameEvent?.IsAsrEvent??false,AsrText=gameEvent?.Asr?.Text??"",AsrCallbackName=gameEvent?.Asr?.CallbackName??"",
             IsSpriteEvent=gameEvent?.IsSpriteEvent??false,SpriteId=gameEvent?.SpriteId??"",SpriteName=gameEvent?.SpriteName??"",SpriteEventName=gameEvent?.SpriteEventName??"",
             AsrEvent=Encode(gameEvent?.Asr),AsrRequestId=gameEvent?.Asr?.RequestId??"",AsrEventName=gameEvent?.Asr?.EventName??"",AsrError=gameEvent?.Asr?.Error??"",AsrWakeWord=gameEvent?.Asr?.WakeWord??"",AsrIsFinal=gameEvent?.Asr?.IsFinal??false,
+            AsrOffsetSeconds=gameEvent?.Asr?.OffsetSeconds??0,AsrRecognizedText=gameEvent?.Asr?.RecognizedText??"",
             IsLlmEvent=gameEvent?.IsLlmEvent??false,LlmText=gameEvent?.Llm?.AccumulatedText??"",LlmDelta=gameEvent?.Llm?.Delta??"",LlmCallbackName=gameEvent?.Llm?.CallbackName??"",
             LlmEvent=Encode(gameEvent?.Llm),LlmRequestId=gameEvent?.Llm?.RequestId??"",LlmEventName=gameEvent?.Llm?.EventName??"",LlmError=gameEvent?.Llm?.Error??"",LlmIsFinal=gameEvent?.Llm?.IsFinal??false,
+            LlmToolCall=Encode(gameEvent?.Llm?.ToolCall),LlmToolName=gameEvent?.Llm?.ToolCall?.Name??"",LlmToolCallId=gameEvent?.Llm?.ToolCall?.Id??"",
+            LlmToolArgumentsJson=gameEvent?.Llm?.ToolCall?.ArgumentsJson??"",LlmToolResult=gameEvent?.Llm?.ToolResult??"",
             IsRealtimeVoiceEvent=gameEvent?.IsRealtimeVoiceEvent??false,RealtimeVoiceEvent=Encode(gameEvent?.RealtimeVoice),RealtimeVoiceRequestId=gameEvent?.RealtimeVoice?.RequestId??"",
             RealtimeVoiceEventName=gameEvent?.RealtimeVoice?.EventName??"",RealtimeVoiceCallbackName=gameEvent?.RealtimeVoice?.CallbackName??"",RealtimeVoiceText=gameEvent?.RealtimeVoice?.Text??"",
             RealtimeVoiceDelta=gameEvent?.RealtimeVoice?.Delta??"",RealtimeVoiceAccumulatedText=gameEvent?.RealtimeVoice?.AccumulatedText??"",RealtimeVoiceError=gameEvent?.RealtimeVoice?.Error??"",
-            RealtimeVoiceWakeWord=gameEvent?.RealtimeVoice?.WakeWord??"",RealtimeVoiceIsFinal=gameEvent?.RealtimeVoice?.IsFinal??false};
+            RealtimeVoiceWakeWord=gameEvent?.RealtimeVoice?.WakeWord??"",RealtimeVoiceRecognizedText=gameEvent?.RealtimeVoice?.RecognizedText??"",RealtimeVoiceIsFinal=gameEvent?.RealtimeVoice?.IsFinal??false};
     }
     public object Files()=>new{Project=ProjectFiles,Save=_save?.Snapshot()};
     public void SaveFiles(string json)
@@ -112,8 +120,17 @@ public sealed class WebPythonBridge
         if(type.IsByRef)type=type.GetElementType()!;
         type=Nullable.GetUnderlyingType(type)??type;
         if(json.ValueKind==JsonValueKind.Null)return null;
-        if(json.ValueKind==JsonValueKind.Object && json.TryGetProperty("__handle",out var handle))return _objects[handle.GetInt32()];
-        if(type==typeof(Action) && json.ValueKind==JsonValueKind.Object && json.TryGetProperty("__callback",out var callback))return (Action)(()=>Callback?.Invoke(callback.GetInt32()));
+        if(json.ValueKind==JsonValueKind.Object && json.TryGetProperty("__handle",out var handle))
+        {var instance=_objects[handle.GetInt32()];if(instance is not null&&!type.IsInstanceOfType(instance))throw new ArgumentException("The object does not match this overload.");return instance;}
+        if(json.ValueKind==JsonValueKind.Object && json.TryGetProperty("__callback",out var callback))
+        {
+            int id=callback.GetInt32();
+            if(type==typeof(Action))return (Action)(()=>Callback?.Invoke(id));
+            if(type==typeof(Action<RuntimeLlmStreamUpdate>))return (Action<RuntimeLlmStreamUpdate>)(value=>CallbackWithValue?.Invoke(id,Encode(value)));
+            if(type==typeof(Action<RuntimeLlmResult>))return (Action<RuntimeLlmResult>)(value=>CallbackWithValue?.Invoke(id,Encode(value)));
+            if(type==typeof(Action<Exception>))return (Action<Exception>)(value=>CallbackWithValue?.Invoke(id,value.Message));
+            throw new ArgumentException("The callback does not match this overload.");
+        }
         if(json.ValueKind==JsonValueKind.Object && json.TryGetProperty("__vector",out var vector))
         {
             float[] v=vector.EnumerateArray().Select(x=>x.GetSingle()).ToArray();

@@ -24,6 +24,27 @@ if (args is ["--compile-web-script", string scriptPath, string assemblyPath])
     catch (TargetInvocationException ex) { Console.Error.WriteLine(ex.InnerException?.Message); return 1; }
 }
 
+if (args is ["--script-api-audit", string auditPath])
+{
+    ScriptApiAudit.Write(auditPath);
+    return 0;
+}
+if (args is ["--generate-android-camera-api", string cameraApiPath])
+{
+    ScriptApiAudit.GenerateAndroidCamera(cameraApiPath);
+    return 0;
+}
+if (args is ["--generate-android-entity-api", string entityApiPath])
+{
+    ScriptApiAudit.GenerateAndroidEntity(entityApiPath);
+    return 0;
+}
+if(args is ["--normalize-android-api-parameters",string apiPath,string aliasesPath])
+{
+    ScriptApiAudit.NormalizeAndroidParameters(apiPath,aliasesPath);
+    return 0;
+}
+
 if (args is ["--export-project", string projectDirectory, string outputPath])
 {
     // Use a disposable project copy: export saves resources and precompiled scripts.
@@ -54,6 +75,7 @@ if (args is ["--publish-web-project", string sourceDirectory, string targetDirec
 
 (string Name, Action Run)[] tests =
 [
+    ("Desktop script API parity compiles Android and Web", ScriptApiAudit.Verify),
     ("Desktop sprite OpenGL preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.OpenGl),
     ("Desktop sprite Vulkan preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.Vulkan),
     ("Android GLES presents the scene before EGL swap", AndroidGlesPresentationRegression.HostOrder),
@@ -333,6 +355,12 @@ static void TestWebAbiPrecompile()
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, """
             Scene.GetGuiControl("fps")?.SetValue($"FPS: {Scene.Fps:F1}");
+            if (IsTrayMenuEvent && TrayMenuEventName == "tray_quit_menu_item")
+            {
+                Scene.Window.Quit();
+            }
+            if (IsTrayMenuEvent || TrayMenuItemId != "" || TrayMenuItemText != "" || TrayMenuEventName != "")
+                throw new InvalidOperationException("Web dispatched a native tray event.");
             var ray = Scene.Camera.ScreenPointToRay(Input.MouseX, Input.MouseY);
             Input.CursorVisible = !Scene.Camera.RaycastEntity(ray, out RuntimeRaycastHit hit);
             if (IsGuiEvent && GuiEventName == "clicked")
@@ -345,6 +373,7 @@ static void TestWebAbiPrecompile()
                     Entity.ApplyMotion("assets/motions/Lamb.vmd");
                 });
                 if (GuiControlName == "switch") Entity.Speak("准备进入下一个场景", () => Scene.LoadScene("scenes/next.scene.json"));
+                if (GuiControlName == "quit") Scene.Window.Quit();
             }
             if (IsSpeechEvent && SpeechCallbackName == "after_speak")
             {
@@ -362,6 +391,8 @@ static void TestWebAbiPrecompile()
         using CoreRuntime.RuntimeScene scene = new("scenes/main.scene.json", CoreStore.LoadScene(root, "scenes/main.scene.json"),
             path => path, speechRequest: (_, request) => speech.Add(request), motionCommand: (_, command) => motions.Add(command));
         CoreRuntime.WebScriptContext context = new(scene, scene.GetEntity("avatar"));
+        List<CoreRuntime.RuntimeWindowCommand> window = [];
+        scene.Window.Command += command => window.Add(command);
         var assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(root, "compiled", "web", "scripts", "body.dll")));
         var script = (CoreRuntime.IWebGameScript)assembly.CreateInstance("Zhengyan.GeneratedWebScripts.Script")!;
         scene.ReportFrameInterval(0.02);
@@ -388,6 +419,11 @@ static void TestWebAbiPrecompile()
             }
             if (control == "switch") Check(scene.ConsumeSceneRequest() == "scenes/next.scene.json", "The speech callback did not request the next scene.");
         }
+        Check(window.Count == 0, "The desktop tray branch quit the Web game during normal events.");
+        script.OnEventAsync(context, new("gui", ControlName: "quit", EventName: "clicked")).GetAwaiter().GetResult();
+        Check(window.Single().Operation == "exit", "The compiled Quit call did not request game shutdown.");
+        scene.Window.Exit();
+        Check(window.Count == 2 && window[1].Operation == "exit", "Exit and Quit did not share the shutdown contract.");
     }
     finally
     {

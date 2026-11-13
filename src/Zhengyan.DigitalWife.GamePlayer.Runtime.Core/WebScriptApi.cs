@@ -31,6 +31,8 @@ public sealed class WebScriptAudio
 {
     private readonly List<WebAudioCommand> _commands = [];
     private readonly Dictionary<string, bool> _loops = new(StringComparer.OrdinalIgnoreCase);
+    public WebScriptAudio(IEnumerable<Zhengyan.DigitalWife.GameProjects.AudioAsset>? assets=null)
+    {foreach(var asset in assets??[]){_loops[asset.Name]=asset.Loop;if(!string.IsNullOrWhiteSpace(asset.Path))_loops[asset.Path]=asset.Loop;}}
 
     public void Play(string nameOrPath)
         => Enqueue("play", nameOrPath);
@@ -115,6 +117,10 @@ public sealed record WebScriptEvent(
     public bool IsLlmEvent => Llm is not null;
     public RuntimeRealtimeVoiceScriptEvent? RealtimeVoice { get; init; }
     public bool IsRealtimeVoiceEvent => RealtimeVoice is not null;
+    public bool IsLoadingEvent => string.Equals(Name, "loading", StringComparison.OrdinalIgnoreCase);
+    public float LoadingProgress { get; init; }
+    public string LoadingMessage { get; init; } = string.Empty;
+    public bool IsScriptToolCall {get;init;}
 }
 
 public sealed record RuntimeSpeechRequest(
@@ -129,12 +135,14 @@ public sealed record RuntimeSpeechRequest(
 public sealed class WebScriptContext(RuntimeScene scene, RuntimeEntity? entity)
 {
     public RuntimeScene Scene { get; } = scene;
+    public Zhengyan.DigitalWife.Scripting.ScriptTime Time { get; } = new();
     public Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality Graphics => Scene.Graphics;
     public RuntimeEntity? Entity { get; } = entity;
     public double ElapsedSeconds { get; private set; }
     public RuntimeCameraInput Input { get; private set; }
-    public WebScriptAudio Audio { get; } = new();
+    public WebScriptAudio Audio { get; } = new(scene.Definition.Audio);
     public WebScriptEvent? Event { get; private set; }
+    public object? ReturnValue {get;set;}
 
     public void UpdateFrame(double elapsedSeconds, RuntimeCameraInput input)
     {

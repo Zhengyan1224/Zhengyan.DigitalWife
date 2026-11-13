@@ -32,6 +32,14 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
     public bool Enabled => !_disposed && _settings.Enabled;
     public bool IsAvailable => Enabled && string.Equals(_settings.Provider, "sherpa", StringComparison.OrdinalIgnoreCase) && _microphoneAvailable();
     public bool IsListening { get { lock (_sync) return _current is not null; } }
+    public bool IsRecording {get{lock(_sync)return _current is {WakeWords.Length:0};}}
+    public string Provider=>_settings.Provider;
+    public int? InputDeviceIndex=>_settings.InputDeviceIndex;
+    public float PartialResultIntervalSeconds=>_settings.PartialResultIntervalSeconds;
+    public bool MicrophoneInputAvailable=>_microphoneAvailable();
+    public string MicrophoneUnavailableReason=>MicrophoneInputAvailable?string.Empty:"No usable Android microphone input or permission is available.";
+    public void Preload()=>PreloadAsync(force:true).GetAwaiter().GetResult();
+    public void StopAllStreamingRecognitions()=>StopStreamingRecognition();
     public bool IsWakeWordMonitoring { get { lock (_sync) return _current?.WakeWords.Length > 0; } }
     public string LastText { get { lock (_sync) return _lastText; } }
     public event Action<string>? PartialResult;
@@ -41,11 +49,11 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
     internal void ConfigureCallbacks(Action<AndroidRuntimeEvent> dispatch, Action<Action>? post = null)
     { lock (_sync) { _dispatch = dispatch; _post = post; } }
 
-    internal Task PreloadAsync()
+    internal Task PreloadAsync(bool force=false)
     {
         lock (_sync)
         {
-            if (_disposed || !_settings.Enabled || !_settings.PreloadOnSceneLoad) return Task.CompletedTask;
+            if (_disposed || !_settings.Enabled || (!force&&!_settings.PreloadOnSceneLoad)) return Task.CompletedTask;
             Task previous = _operation;
             return _operation = Task.Run(async () =>
             {
@@ -64,12 +72,12 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
         }
     }
 
-    public string StartStreamingRecognition(AndroidScriptEntity entity, string? requestId = null,
+    public string StartStreamingRecognition(AndroidScriptEntity callbackTarget, string? requestId = null,
         string? onPartialCallback = "asr_partial", string? onCompletedCallback = "asr_completed",
         string? onErrorCallback = "asr_error", string eventType = "asr")
-        => StartRequest(entity.Id, requestId, onPartialCallback, onCompletedCallback, onErrorCallback, eventType, [], null);
+        => StartRequest(callbackTarget.Id, requestId, onPartialCallback, onCompletedCallback, onErrorCallback, eventType, [], null);
 
-    public string StartWakeWordMonitoring(AndroidScriptEntity entity, IEnumerable<string> wakeWords,
+    public string StartWakeWordMonitoring(AndroidScriptEntity callbackTarget, IEnumerable<string> wakeWords,
         string? requestId = null, float? chunkDurationSeconds = null, float? extensionDurationSeconds = null,
         float? trailingSilencePaddingSeconds = null, string? onDetectedCallback = "asr_wake_word_detected",
         string? onErrorCallback = "asr_wake_word_error")
@@ -77,21 +85,21 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
         string[] words = wakeWords.Where(word => !string.IsNullOrWhiteSpace(word) && Normalize(word).Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (words.Length == 0 || words.All(word => Normalize(word).Length == 0))
             throw new ArgumentException("At least one meaningful wake word is required.", nameof(wakeWords));
-        return StartRequest(entity.Id, requestId, "", onDetectedCallback, onErrorCallback, "asr", words, null);
+        return StartRequest(callbackTarget.Id, requestId, "", onDetectedCallback, onErrorCallback, "asr", words, null,chunkDurationSeconds,extensionDurationSeconds,trailingSilencePaddingSeconds);
     }
 
     public bool Start(string language = "")
         => StartRequest("", null, "", "", "", "asr", [], language).Length > 0;
 
     private string StartRequest(string entityId, string? requestId, string? partial, string? completed,
-        string? error, string type, string[] words, string? language)
+        string? error, string type, string[] words, string? language,float? chunkDuration=null,float? extensionDuration=null,float? trailingPadding=null)
     {
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             CancelCurrent();
             Request request = new(++_generation, entityId, string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId,
-                partial ?? "", completed ?? "", error ?? "", type, words, language);
+                partial ?? "", completed ?? "", error ?? "", type, words, language,chunkDuration,extensionDuration,trailingPadding);
             _current = request;
             _lastText = "";
             Task previous = _operation;
@@ -106,8 +114,8 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
         }
     }
 
-    public void StopStreamingRecognition(string requestId)
-    { lock (_sync) { if (_current is { } request && request.WakeWords.Length == 0 && request.Id == requestId) request.CaptureStop.Cancel(); } }
+    public void StopStreamingRecognition(string? requestId = null)
+    { lock (_sync) { if (_current is { } request && request.WakeWords.Length == 0 && (requestId is null||request.Id == requestId)) request.CaptureStop.Cancel(); } }
     public void StopWakeWordMonitoring()
     { lock (_sync) { if (_current?.WakeWords.Length > 0) { ++_generation; CancelCurrent(); } } }
     public void Stop()
@@ -130,6 +138,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
             };
             // Switching wake/question modes waits for the previous capture and
             // stream to close. The two requests never share a Sherpa stream.
+            await using var microphone=CaptureBufferedAsync(capture,request.Lifetime.Token,request.CaptureStop.Token).GetAsyncEnumerator(request.Lifetime.Token);
             while (!request.Lifetime.IsCancellationRequested)
             {
                 await using IStreamingSpeechRecognitionSession session = recognizer.CreateStreamingSession(new()
@@ -147,6 +156,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
                 {
                     await foreach (SpeechRecognitionUpdate update in session.GetUpdatesAsync(updateLifetime.Token).ConfigureAwait(false))
                     {
+                        request.OffsetSeconds=update.Offset.TotalSeconds;
                         if (update.IsFinal) finalText = update.Text;
                         else if (!string.IsNullOrWhiteSpace(update.Text))
                         {
@@ -166,19 +176,27 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
                 double speechDuration = 0;
                 Queue<AudioChunk> preRoll = new();
                 double preRollSeconds = 0;
+                double elapsed=0;
+                bool ended=false;
+                double? deadline=request.ChunkDuration is not null||request.ExtensionDuration is not null?Math.Clamp(request.ChunkDuration??2.0f,.1f,30f):null;
                 try
                 {
                     if (!request.CaptureStop.IsCancellationRequested)
                     {
-                        await foreach (AudioChunk chunk in CaptureBufferedAsync(capture, segmentStop.Token, request.CaptureStop.Token).ConfigureAwait(false))
+                        while (!segmentStop.IsCancellationRequested)
                         {
+                            if(!await microphone.MoveNextAsync().ConfigureAwait(false)){ended=true;break;}
+                            AudioChunk chunk=microphone.Current;
+                            elapsed+=chunk.Duration.TotalSeconds;
                             bool speech = Rms(chunk) >= Math.Clamp(_settings.SpeechRmsThreshold, .0001f, 1f);
+                            if(speech&&deadline is not null)deadline=Math.Min(30,Math.Max(deadline.Value,elapsed+Math.Clamp(request.ExtensionDuration??1.2f,0,30)));
                             if (!heardSpeech && !speech)
                             {
                                 preRoll.Enqueue(chunk);
                                 preRollSeconds += chunk.Duration.TotalSeconds;
                                 while (preRollSeconds > .25 && preRoll.Count > 1)
                                     preRollSeconds -= preRoll.Dequeue().Duration.TotalSeconds;
+                                if(deadline is {} quietEnd&&elapsed+1e-6>=quietEnd)break;
                                 continue;
                             }
                             if (!heardSpeech)
@@ -191,6 +209,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
                                 silence = speech ? 0 : silence + chunk.Duration.TotalSeconds;
                             }
                             await session.WriteAsync(chunk, request.Lifetime.Token).ConfigureAwait(false);
+                            if(deadline is {} end&&elapsed+1e-6>=end)break;
                             if (heardSpeech && (silence + 1e-6 >= Math.Clamp(_settings.EndpointSilenceSeconds, .1f, 10f) || speechDuration >= 30)) break;
                         }
                     }
@@ -200,7 +219,12 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
                 {
                     try
                     {
-                        if (!request.Lifetime.IsCancellationRequested) await session.CompleteAsync(request.Lifetime.Token).ConfigureAwait(false);
+                        if (!request.Lifetime.IsCancellationRequested)
+                        {
+                            if(request.TrailingPadding is {} padding&&padding>0)
+                                await session.WriteAsync(new(new float[(int)(capture.SampleRate*capture.Channels*Math.Clamp(padding,0,2))],new(capture.SampleRate,capture.Channels),TimeSpan.FromSeconds(elapsed)),request.Lifetime.Token).ConfigureAwait(false);
+                            await session.CompleteAsync(request.Lifetime.Token).ConfigureAwait(false);
+                        }
                     }
                     catch { updateLifetime.Cancel(); throw; }
                     finally
@@ -217,7 +241,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
                     if (!string.IsNullOrWhiteSpace(wakeText)) text = wakeText;
                     string normalized = Normalize(text);
                     string? matched = detectedWakeWord ?? request.WakeWords.FirstOrDefault(word => normalized.Contains(Normalize(word), StringComparison.OrdinalIgnoreCase));
-                    if (matched is null) continue;
+                    if (matched is null){if(ended)throw new InvalidOperationException("Android microphone capture ended.");continue;}
                     Finish(request);
                     Publish(request, "wake_word_detected", text, wakeWord: matched);
                     return;
@@ -230,6 +254,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
                 }
                 // Silence or an unrecognized utterance is not an error. Resume
                 // capture without resetting the deadline owned by the script.
+                if(ended)throw new InvalidOperationException("Android microphone capture ended.");
             }
         }
         catch (OperationCanceledException) when (request.Lifetime.IsCancellationRequested) { }
@@ -292,7 +317,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
             else if (eventName == "error") Error?.Invoke(-1);
             string callback = eventName == "partial" ? request.PartialCallback : eventName == "error" ? request.ErrorCallback : request.CompletedCallback;
             _dispatch?.Invoke(new(request.Type, request.Id, eventName, Vector2.Zero, text, request.EntityId,
-                Error: error, CallbackName: callback, IsFinal: eventName != "partial", WakeWord: wakeWord, RecognizedText: text));
+                Error: error, CallbackName: callback, IsFinal: eventName != "partial", WakeWord: wakeWord, RecognizedText: text,OffsetSeconds:request.OffsetSeconds));
         }
         if (_post is { } post) post(Deliver); else Deliver();
     }
@@ -326,7 +351,7 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
             });
         }
     }
-    private sealed class Request(int generation, string entityId, string id, string partial, string completed, string error, string type, string[] words, string? language) : IDisposable
+    private sealed class Request(int generation, string entityId, string id, string partial, string completed, string error, string type, string[] words, string? language,float? chunkDuration,float? extensionDuration,float? trailingPadding) : IDisposable
     {
         internal int Generation { get; } = generation;
         internal string EntityId { get; } = entityId;
@@ -337,6 +362,10 @@ public sealed class AndroidScriptAsr : IAndroidScriptAsr, IDisposable
         internal string Type { get; } = type;
         internal string[] WakeWords { get; } = words;
         internal string? Language { get; } = language;
+        internal float? ChunkDuration {get;}=chunkDuration;
+        internal float? ExtensionDuration {get;}=extensionDuration;
+        internal float? TrailingPadding {get;}=trailingPadding;
+        internal double OffsetSeconds {get;set;}
         internal CancellationTokenSource Lifetime { get; } = new();
         internal CancellationTokenSource CaptureStop { get; } = new();
         public void Dispose() { Lifetime.Dispose(); CaptureStop.Dispose(); }

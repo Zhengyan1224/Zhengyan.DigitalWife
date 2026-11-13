@@ -99,7 +99,8 @@ internal static class PointerClickTests
         RuntimeCameraInput Read(AndroidInputSnapshot input) => camera.GetInput(scene, input, 1000, 1000, 1000, 1000);
         Read(Snapshot(down, down));
         AndroidTouchPoint moved = down with { PixelPosition = new(200, 200), Delta = new(180, 180), Phase = AndroidTouchPhase.Moved };
-        Check(Read(Snapshot(moved)) == RuntimeCameraInput.None, "Dragging outside a GUI control rotated the camera.");
+        var captured=Read(Snapshot(moved));
+        Check(captured.LookDelta==Vector2.Zero&&captured.PanDelta==Vector2.Zero&&captured.ZoomDelta==0, "Dragging outside a GUI control rotated the camera.");
         AndroidTouchPoint ended = moved with { Phase = AndroidTouchPhase.Ended };
         Read(Snapshot(ended, ended));
         down = moved with { Phase = AndroidTouchPhase.Began, Delta = Vector2.Zero };

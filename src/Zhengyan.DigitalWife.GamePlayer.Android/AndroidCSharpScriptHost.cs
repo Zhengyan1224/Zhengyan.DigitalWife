@@ -24,6 +24,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly string _projectDirectory;
     private readonly Func<Vector2>? _getSurfaceSize;
     private readonly GameWindowSettings? _windowSettings;
+    private readonly HashSet<RuntimeScene> _windowScenes = [];
     private readonly Action<string> _requestSceneChange;
     private readonly Func<RuntimeScene, string, bool> _playAudio;
     private readonly Func<string, bool> _pauseAudio;
@@ -38,6 +39,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
     private readonly Func<string, float, bool> _setAudioVolume;
     private readonly Func<string, bool, bool> _setAudioLoop;
     private readonly Func<string, bool> _isAudioPlaying;
+    private readonly Func<string,bool> _getAudioLoop;
     private readonly Func<RuntimeScene, string, float, bool> _playOneShot;
     private readonly GameProjectLlmSettings _llmSettings;
     private readonly GameProjectRealtimeVoiceSettings _realtimeVoiceSettings;
@@ -110,11 +112,13 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         GameProjectAsrSettings? asrSettings = null,
         Func<RuntimeScene, string, float, bool>? playOneShot = null,
         Func<Vector2>? getSurfaceSize = null,
-        GameWindowSettings? windowSettings = null)
+        GameWindowSettings? windowSettings = null,
+        Func<string,bool>? getAudioLoop=null)
     {
         _projectDirectory = projectDirectory;
         _getSurfaceSize = getSurfaceSize;
         _windowSettings = windowSettings;
+        _getAudioLoop=getAudioLoop??(_=>false);
         _requestSceneChange = requestSceneChange;
         _playAudio = playAudio;
         _pauseAudio = pauseAudio;
@@ -159,6 +163,14 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     public void StartLoading(RuntimeScene scene)
     {
+        if (_activeScene is not null && !ReferenceEquals(_activeScene,scene))
+        {
+            scene.Window.Configure(_activeScene.Window);
+            _activeScene.Window.Command -= AndroidWindowPlatform.Apply;
+            _windowScenes.Remove(_activeScene);
+        }
+        else scene.Window.Configure(_windowSettings ?? new());
+        if(_windowScenes.Add(scene))scene.Window.Command += AndroidWindowPlatform.Apply;
         _realtimeVoice?.ClearScene();
         StopSpeech();
         AndroidScriptBubbleManager.Shared.Clear();
@@ -218,6 +230,10 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
 
     public void Update(RuntimeScene scene, float deltaSeconds, AndroidInputSnapshot? input = null)
     {
+        scene.ReportFrameInterval(deltaSeconds);
+        Vector2 size = _getSurfaceSize?.Invoke() ?? new(_windowSettings?.Width ?? 1280, _windowSettings?.Height ?? 720);
+        scene.Window.ReportState((int)size.X, (int)size.Y, AndroidWindowPlatform.Fullscreen);
+        scene.SetScreenSize((int)size.X,(int)size.Y,_windowSettings?.Width??1280,_windowSettings?.Height??720);
         if (deltaSeconds > 0.0001f)
         {
             double instant = 1.0 / deltaSeconds;
@@ -329,6 +345,23 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         AndroidInputSnapshot input,
         AndroidCompiledScript? script = null)
     {
+        if (_windowScenes.Add(scene))
+        {
+            scene.Window.Configure(_windowSettings ?? new());
+            scene.Window.Command += AndroidWindowPlatform.Apply;
+        }
+        if(entity.SpeechRequestHandler is null)
+        {
+            foreach(var actor in scene.Entities)
+            {
+                actor.ConfigureVoice(_voiceSettings);
+                actor.SpeechRequestHandler = request =>
+                {
+                    if(request.Stop)StopSpeech();
+                    else _ = SpeakAsync(scene,actor,request.Text,request.Speed,request.Volume,request.Completion,request.CallbackName,request.SpeakerId);
+                };
+            }
+        }
         AndroidScriptServices services = new(
             scene,
             _projectDirectory,
@@ -366,7 +399,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 voiceSettings: _voiceSettings),
             scriptInput,
             new AndroidScriptAudio(name => _playAudio(scene, name), _pauseAudio, _stopAudio, _setAudioVolume, _setAudioLoop, _isAudioPlaying,
-                (name, volumeScale) => _playOneShot(scene, name, volumeScale)),
+                (name, volumeScale) => _playOneShot(scene, name, volumeScale),_getAudioLoop),
             0.0f,
             false,
             false,
@@ -807,5 +840,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         foreach (AndroidScriptExecutionContext context in _executionContexts.Values)
             context.Dispose();
         _executionContexts.Clear();
+        foreach (var scene in _windowScenes) scene.Window.Command -= AndroidWindowPlatform.Apply;
+        _windowScenes.Clear();
     }
 }

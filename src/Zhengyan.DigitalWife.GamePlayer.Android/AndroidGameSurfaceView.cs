@@ -156,6 +156,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     public event Action<GuiControlSettings, LayoutRect>? TextInputRequested;
     public event Action<ContextMenuSettings, float, float>? ContextMenuRequested;
     public void InvalidateOverlay() => OverlayInvalidated?.Invoke();
+    public void DispatchGuiControlChanged(GuiControlSettings control)=>_renderHost.DispatchGuiControlChanged(control);
 
     public override bool OnTouchEvent(MotionEvent? e)
     {
@@ -180,6 +181,15 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     {
         _deviceInputState.ApplyKey(e, true);
         return base.OnKeyDown(keyCode, e);
+    }
+
+    public override bool OnCapturedPointerEvent(MotionEvent? e)
+    {
+        if(e is null)return false;
+        _deviceInputState.ApplyCapturedPointer(e);
+        if(e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
+            _deviceInputState.SetMouseButton(MapMouseButton((int)e.ActionButton),e.ActionMasked==MotionEventActions.ButtonPress);
+        return true;
     }
 
     public override bool OnKeyUp(Keycode keyCode, KeyEvent? e)

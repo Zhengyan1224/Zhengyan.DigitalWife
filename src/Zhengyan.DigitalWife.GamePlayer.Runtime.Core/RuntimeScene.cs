@@ -4,7 +4,7 @@ using Zhengyan.DigitalWife.Mmd;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
-public sealed class RuntimeScene : IDisposable
+public sealed partial class RuntimeScene : IDisposable
 {
     private readonly Dictionary<string, RuntimeEntity> _entitiesById = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RuntimeEntity> _entitiesByName = new(StringComparer.OrdinalIgnoreCase);
@@ -55,12 +55,22 @@ public sealed class RuntimeScene : IDisposable
 
     public string ScenePath { get; }
     public string Name => Definition.Name;
-    public double Fps { get; private set; }
+    public RuntimePerformance Performance { get; } = new();
+    public RuntimeProjectControl Runtime { get; } = new();
+    public Func<RuntimeEntity,string,RuntimeLlmToolCall,Task<string?>>? ScriptToolInvoker {get;set;}
+    public Task<string?> InvokeLlmToolAsync(RuntimeEntity entity,string callbackName,RuntimeLlmToolCall toolCall)
+        =>ScriptToolInvoker?.Invoke(entity,callbackName,toolCall)??Task.FromException<string?>(new InvalidOperationException("No script tool callback host is configured."));
+    public double Fps => Performance.Fps;
+    public double RawFps => Performance.RawFps;
+    public double DeltaSeconds => Performance.DeltaSeconds;
+    public long FrameCount => Performance.FrameCount;
     public double ElapsedSeconds { get; private set; }
     public string? PendingScenePath { get; private set; }
     public void LoadScene(string path) => PendingScenePath = path;
+    public void LoadScene(string scenePath,bool desktopParameterNames=true)=>LoadScene(scenePath);
     public string? ConsumeSceneRequest() { var path = PendingScenePath; PendingScenePath = null; return path; }
-    public void ReportFrameInterval(double seconds) { if (seconds > 0) Fps = 1 / seconds; }
+    public void ReportFrameInterval(double seconds) => Performance.Report(seconds, ElapsedSeconds);
+    public string RenderTexture(string renderTextureName) => Camera.RenderTexture(renderTextureName);
     public GameProjectScene Definition { get; }
     public IReadOnlyList<RuntimeCamera> Cameras { get; }
     public RuntimeLighting Lighting { get; }
@@ -113,7 +123,7 @@ public sealed class RuntimeScene : IDisposable
     }
 
     public IEnumerable<RuntimeSpriteControl> Sprites
-        => Definition.Sprites.Select(sprite => new RuntimeSpriteControl(sprite));
+        => Definition.Sprites.Select(sprite => new RuntimeSpriteControl(sprite,Window,()=> (_screenWidth,_screenHeight,_referenceWidth,_referenceHeight)));
 
     public RuntimeSpriteControl? GetSprite(string idOrName)
     {
@@ -121,7 +131,7 @@ public sealed class RuntimeScene : IDisposable
         SpriteSettings? sprite = Definition.Sprites.FirstOrDefault(item =>
             string.Equals(item.Id, idOrName, StringComparison.OrdinalIgnoreCase)
             || string.Equals(item.Name, idOrName, StringComparison.OrdinalIgnoreCase));
-        return sprite is null ? null : new RuntimeSpriteControl(sprite);
+        return sprite is null ? null : new RuntimeSpriteControl(sprite,Window,()=> (_screenWidth,_screenHeight,_referenceWidth,_referenceHeight));
     }
 
     public bool IsScreenPointOverGui(float x, float y)
@@ -276,6 +286,7 @@ public sealed class RuntimeScene : IDisposable
 
     private void Register(RuntimeEntity entity)
     {
+        entity.SceneOwner = this;
         _entitiesById[entity.Id] = entity;
         if (!string.IsNullOrWhiteSpace(entity.Name)) _entitiesByName.TryAdd(entity.Name, entity);
         EntityRevision++;

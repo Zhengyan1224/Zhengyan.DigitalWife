@@ -6,7 +6,7 @@ namespace Zhengyan.DigitalWife.Mmd;
 // Shared PMX animation evaluator. It mirrors PMX's order: morphs, bone tracks,
 // append transforms, IK, then vertex skinning. Physics is intentionally kept
 // as a separate post-solver seam so it can be replaced without changing VMD.
-public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
+public sealed partial class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 {
     private readonly PmxParsing _pmx;
     private readonly PmxVertex[] _vertices;
@@ -316,8 +316,9 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
                     totalWeight += weight;
                 }
             }
-            ApplyBoneMorphs(i, ref poses[i]);
         }
+        ApplyScriptNodeOverrides(poses);
+        for(int i=0;i<poses.Length;i++)ApplyBoneMorphs(i,ref poses[i]);
         if (_physicsBridge is null)
         {
             IntegrateFallbackPhysics(poses, deltaSeconds);
@@ -412,7 +413,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     {
         for (int i = 0; i < _morphs.Length; i++)
         {
-            float value = 0.0f;
+            float value = _scriptBaseMorphs?.GetValueOrDefault(_morphs[i].Source.Name) ?? 0.0f;
             for (int layer = 0; layer < _morphTracks.Length; layer++)
             {
                 if (_morphTracks[layer].TryGetValue(i, out MorphTrack? track))
@@ -869,6 +870,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             Quaternion localRotation = Quaternion.Normalize(_ikRotations[index] * pose.Rotation);
             Matrix4x4 local = Matrix4x4.CreateFromQuaternion(localRotation)
                 * Matrix4x4.CreateTranslation(bone.RestTranslation + pose.Translation);
+            if(_scriptNodes?.TryGetValue(index,out var scriptNode)==true)local=Matrix4x4.CreateScale(scriptNode.Scale)*local;
             Matrix4x4 parent = bone.ParentIndex >= 0 && bone.ParentIndex < _globals.Length ? _globals[bone.ParentIndex] : Matrix4x4.Identity;
             _globals[index] = local * parent;
         }

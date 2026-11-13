@@ -80,10 +80,10 @@ async function context(){const ctx=audioContext??=new (globalThis.AudioContext||
 export async function unlockAudio(){if(enabled)await context();}
 const notify=(reference,name,...args)=>reference?.invokeMethodAsync(name,...args).catch(()=>{});
 export function stopSpeaking(){speechGeneration++;audioSource?.stop();audioSource=null;if(speaking){notify(speaking.reference,'OnSpeechFinished',speaking.entityId);speaking=null;}}
-export function speak(text,rate,volume,reference,entityId,callbackName){
+export function speak(text,rate,volume,reference,entityId,callbackName,speakerId=null){
     stopSpeaking();const generation=speechGeneration;
     speaking={reference,entityId};
-    tts.request({type:'tts',text,speed:rate||1,speakerId:project.voice.defaultSpeakerId||0}).then(async result=>{
+    tts.request({type:'tts',text,speed:rate||1,speakerId:speakerId??project.voice.defaultSpeakerId??0}).then(async result=>{
         if(generation!==speechGeneration)return;
         const ctx=await context();if(generation!==speechGeneration)return;
         const buffer=ctx.createBuffer(1,result.samples.length,result.sampleRate);buffer.copyToChannel(result.samples,0);
@@ -105,9 +105,12 @@ function emitAsr(session,eventName,callbackName,text='',error='',wakeWord=''){
 }
 function resample(samples,inputRate,outputRate){const ratio=inputRate/outputRate,result=new Float32Array(Math.floor(samples.length/ratio));for(let i=0;i<result.length;i++){const p=i*ratio,a=Math.floor(p),f=p-a;result[i]=samples[a]*(1-f)+(samples[Math.min(a+1,samples.length-1)]||0)*f;}return result;}
 export function executeAsr(command,reference){
+    if(command.operation==='preload')return asr.initialize();
     if(command.operation==='stop'){if(asrSession?.command.requestId===command.requestId)stopAsr();return;}
     if(command.operation==='stop_wake'){if(asrSession?.command.operation==='wake')stopAsr(true);return;}
-    stopAsr(true);const session=asrSession={command,reference,cancelled:false,tail:Promise.resolve(),text:''};
+    stopAsr(true);const session=asrSession={command,reference,cancelled:false,tail:Promise.resolve(),text:'',segmentSeconds:0};
+    const wakeDuration=command.chunkDurationSeconds??(command.extensionDurationSeconds!=null?2:null);
+    session.wakeDeadline=wakeDuration==null?null:Math.max(.1,wakeDuration);
     session.tail=asr.initialize().then(()=>{if(!session.cancelled)asr.reset();});
     (async()=>{
         await session.tail;if(session.cancelled || session.stopping)return;
@@ -122,13 +125,18 @@ export function executeAsr(command,reference){
         processor.onaudioprocess=event=>{
             if(session.cancelled || session.stopping || asrSession!==session || queued>=8)return;
             const samples=resample(event.inputBuffer.getChannelData(0),ctx.sampleRate,16000);queued++;
+            const seconds=samples.length/16000,speech=samples.some(v=>Math.abs(v)>Math.max(.0001,project.asr?.speechRmsThreshold??.008));
             session.tail=session.tail.then(async()=>{
-                if(session.cancelled)return;const result=await asr.request({type:'asr',samples,sampleRate:16000},[samples.buffer]);
+                if(session.cancelled)return;let result=await asr.request({type:'asr',samples,sampleRate:16000},[samples.buffer]);
                 if(session.cancelled || session.stopping || asrSession!==session)return;
                 session.text=result.text;
                 if(command.operation==='wake'){
+                    session.segmentSeconds+=seconds;
+                    if(speech&&session.wakeDeadline!=null)session.wakeDeadline=Math.min(30,Math.max(session.wakeDeadline,session.segmentSeconds+Math.max(0,command.extensionDurationSeconds??1.2)));
+                    const timed=session.wakeDeadline!=null&&session.segmentSeconds+1e-6>=session.wakeDeadline;
+                    if(timed&&!session.detected){result=await asr.request({type:'asr',samples:new Float32Array(Math.round(16000*Math.max(0,Math.min(2,command.trailingSilencePaddingSeconds??.4)))),sampleRate:16000,finished:true});if(session.cancelled||session.stopping||asrSession!==session)return;}
                     const word=(command.wakeWords||[]).find(w=>result.text.includes(w));if(word && !session.detected){session.detected=true;emitAsr(session,'wake_detected',command.completedCallback,result.text,'',word);}
-                    if(result.endpoint){asr.reset();session.detected=false;}
+                    if(result.endpoint||timed){asr.reset();session.detected=false;session.segmentSeconds=0;session.wakeDeadline=wakeDuration==null?null:Math.max(.1,wakeDuration);}
                 }else{emitAsr(session,'partial',command.partialCallback,result.text);if(command.finishOnEndpoint && result.endpoint)stopAsr(false);}
             }).catch(error=>{if(asrSession===session){emitAsr(session,'error',command.errorCallback,'',error.message);stopAsr(true);}}).finally(()=>queued--);
         };

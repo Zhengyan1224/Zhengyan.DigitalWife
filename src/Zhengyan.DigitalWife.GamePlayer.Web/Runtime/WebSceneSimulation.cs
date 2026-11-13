@@ -120,7 +120,7 @@ public sealed class WebSceneSimulation
         ? list.Select(r => new WebRipple([r.Center.X, r.Center.Y, r.Center.Z], Time - r.Born, r.Radius, r.Strength)).ToArray() : [];
 
     public IReadOnlyList<WebParticleBatch> GetParticles(RuntimeScene scene, Func<string?, string> texture)
-        => scene.ParticleSystems.Select(entity =>
+        => scene.ParticleSystems.Where(entity=>entity.Visible).Select(entity =>
         {
             var s = entity.Definition.Particle;
             var vertices = (_particles.GetValueOrDefault(entity.Id) ?? []).Where(p => p.Age < p.Lifetime).Select(p =>

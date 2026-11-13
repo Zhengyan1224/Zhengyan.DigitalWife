@@ -89,7 +89,7 @@ internal static class AndroidLocalSpeechTests
         f.Asr.StartWakeWordMonitoring(f.Entity, ["小雨"], "wake");
         f.Mic.Send(.1f, 3); f.Mic.Send(0, 2);
         Wait(() => f.Recognizer.Completions == 1);
-        Check(f.Events.Count == 0 && f.Asr.IsWakeWordMonitoring, "Unrelated speech ended wake monitoring.");
+        Check(f.Events.Count == 0 && f.Asr.IsWakeWordMonitoring&&f.Mic.Starts==1, "Unrelated speech ended wake monitoring or restarted microphone capture.");
         f.Recognizer.Text = "小，雨，请听我说";
         f.Mic.Send(.1f, 3); f.Mic.Send(0, 2);
         Wait(() => f.Events.Count == 1);
@@ -199,6 +199,16 @@ internal static class AndroidLocalSpeechTests
             "Stop discarded captured speech while the CPU decoder was catching up.");
     }
 
+    internal static void TestWakeTimingOverrides()
+    {
+        using Fixture f=new();
+        f.Asr.StartWakeWordMonitoring(f.Entity,["wake"],"timing",chunkDurationSeconds:.2f,extensionDurationSeconds:.1f,trailingSilencePaddingSeconds:.1f);
+        f.Mic.Send(0,3);
+        Wait(()=>f.Recognizer.Completions==1);
+        Check(f.Recognizer.WrittenSamples>=1600&&f.Mic.Starts==1&&f.Asr.IsWakeWordMonitoring,"Wake timing/padding overrides were ignored or capture restarted between chunks.");
+        f.Asr.StopWakeWordMonitoring();Wait(()=>f.Mic.Active==0);
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeScene _scene = new("test.scene", new()
@@ -222,6 +232,7 @@ internal static class AndroidLocalSpeechTests
         private readonly Channel<AudioChunk> _chunks = Channel.CreateUnbounded<AudioChunk>();
         internal int Reads;
         internal int Active;
+        internal int Starts;
         internal int MaxActive;
         internal void Send(float sample, int chunks)
         { for (int i = 0; i < chunks; i++) _chunks.Writer.TryWrite(new(Enumerable.Repeat(sample, 1600).ToArray(), new(16000, 1), TimeSpan.Zero)); }
@@ -232,7 +243,7 @@ internal static class AndroidLocalSpeechTests
         }
         public async IAsyncEnumerable<AudioChunk> CaptureAsync(AudioCaptureOptions options, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token = default)
         {
-            int active = Interlocked.Increment(ref Active); MaxActive = Math.Max(MaxActive, active);
+            Interlocked.Increment(ref Starts);int active = Interlocked.Increment(ref Active); MaxActive = Math.Max(MaxActive, active);
             try { await foreach (AudioChunk chunk in _chunks.Reader.ReadAllAsync(token)) { Interlocked.Increment(ref Reads); yield return chunk; } }
             finally { Interlocked.Decrement(ref Active); }
         }
@@ -247,6 +258,7 @@ internal static class AndroidLocalSpeechTests
         internal bool FailWrites;
         internal int DecodeDelayMilliseconds;
         internal int SpeechChunks;
+        internal int WrittenSamples;
         public string Name => "local-test";
         public IStreamingSpeechRecognitionSession CreateStreamingSession(StreamingSpeechRecognitionOptions? options = null) => new Session(this);
         public Task<SpeechRecognitionResult> RecognizeAsync(AudioData audio, SpeechRecognitionOptions? options = null, CancellationToken token = default) => throw new NotImplementedException();
@@ -258,6 +270,7 @@ internal static class AndroidLocalSpeechTests
             public async ValueTask WriteAsync(AudioChunk chunk, CancellationToken token = default)
             {
                 if (owner.FailWrites) throw new InvalidOperationException("test local decode failure");
+                Interlocked.Add(ref owner.WrittenSamples,chunk.Samples.Length);
                 if (owner.DecodeDelayMilliseconds > 0) await Task.Delay(owner.DecodeDelayMilliseconds, token);
                 _speech |= chunk.Samples.Span[0] > .01f;
                 if (chunk.Samples.Span[0] > .01f) Interlocked.Increment(ref owner.SpeechChunks);

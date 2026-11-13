@@ -3,7 +3,7 @@ using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Runtime;
 
-public sealed class RuntimeDialogueBubbleManager
+public class RuntimeDialogueBubbleManager
 {
     private readonly Dictionary<string, RuntimeDialogueBubble> _bubbles = new(StringComparer.OrdinalIgnoreCase);
     private long _nextCreationOrder = 1;

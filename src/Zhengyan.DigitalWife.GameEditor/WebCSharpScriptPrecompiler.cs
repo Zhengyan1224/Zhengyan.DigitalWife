@@ -98,21 +98,31 @@ internal static class WebCSharpScriptPrecompiler
     private static byte[] Compile(string path)
     {
         string body = File.ReadAllText(path);
+        body = new PortableTypeRewriter().Visit(CSharpSyntaxTree.ParseText(body).GetRoot())!.ToFullString();
         if (string.Equals(body.Trim(), "return null;", StringComparison.Ordinal)) body = string.Empty;
         (string usings, string members, string statements) = SplitScriptBody(body, path);
         statements = NormalizeLocalOverloads(statements);
+        statements = NormalizeScriptReturns(statements);
         string source = $$"""
             using System;
             using System.Collections.Generic;
+            using System.Globalization;
+            using System.IO;
             using System.Linq;
+            using System.Net;
+            using System.Net.Http;
+            using System.Net.Sockets;
             using System.Numerics;
             using System.Text;
+            using System.Text.Json;
             using System.Text.RegularExpressions;
             using System.Threading;
             using System.Threading.Tasks;
             using Zhengyan.DigitalWife.GameProjects;
             using Zhengyan.DigitalWife.GamePlayer.Runtime;
             using RuntimeDialogueBubble = Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeDialogueBubble;
+            using RuntimeInput = Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeCameraInput;
+            using RuntimeAudio = Zhengyan.DigitalWife.GamePlayer.Runtime.WebScriptAudio;
             using Zhengyan.DigitalWife.Mmd;
             using Zhengyan.DigitalWife.Mmd.Game.Input;
             {{usings}}
@@ -124,19 +134,32 @@ internal static class WebCSharpScriptPrecompiler
                 {{members}}
                 public void Start(WebScriptContext context) => _ = ExecuteAsync(context, 0.0f, true, false, null);
                 public void Update(WebScriptContext context, float deltaSeconds) => _ = ExecuteAsync(context, deltaSeconds, false, true, null);
-                public void OnEvent(WebScriptContext context, WebScriptEvent GameEvent) => _ = ExecuteAsync(context, 0.0f, false, false, GameEvent);
+                public void OnEvent(WebScriptContext context, WebScriptEvent GameEvent) => _ = OnEventAsync(context, GameEvent);
                 public ValueTask StartAsync(WebScriptContext context) => new(ExecuteAsync(context, 0.0f, true, false, null));
                 public ValueTask UpdateAsync(WebScriptContext context, float deltaSeconds) => new(ExecuteAsync(context, deltaSeconds, false, true, null));
-                public ValueTask OnEventAsync(WebScriptContext context, WebScriptEvent GameEvent) => new(ExecuteAsync(context, 0.0f, false, false, GameEvent));
-                private async Task ExecuteAsync(WebScriptContext context, float DeltaSeconds, bool IsStart, bool IsUpdate, WebScriptEvent? GameEvent)
+                public async ValueTask OnEventAsync(WebScriptContext context, WebScriptEvent GameEvent) { context.ReturnValue = await ExecuteAsync(context, 0.0f, false, false, GameEvent); }
+                private async Task<object?> ExecuteAsync(WebScriptContext context, float DeltaSeconds, bool IsStart, bool IsUpdate, WebScriptEvent? GameEvent)
                 {
                     RuntimeScene Scene = context.Scene;
+                    var Time = context.Time;
+                    bool IsAndroid = false, IsWindows = false, IsLinux = false, IsMacOS = false, IsWeb = true;
+                    string PlatformName = "Web";
                     var Graphics = context.Graphics;
                     RuntimeEntity? Entity = context.Entity;
                     RuntimeCameraInput Input = context.Input;
                     WebScriptAudio Audio = context.Audio;
                     bool IsGuiEvent = GameEvent?.IsGuiEvent == true;
+                    // Web has no operating-system tray. Keep desktop script
+                    // branches compilable without dispatching native tray events.
+                    bool IsTrayMenuEvent = false;
+                    string TrayMenuItemId = string.Empty;
+                    string TrayMenuItemText = string.Empty;
+                    string TrayMenuEventName = string.Empty;
                     bool IsSpeechEvent = GameEvent?.IsSpeechEvent == true;
+                    bool IsLoadingEvent = GameEvent?.IsLoadingEvent == true;
+                    string LoadingEventName = GameEvent?.EventName ?? string.Empty;
+                    float LoadingProgress = GameEvent?.LoadingProgress ?? 0;
+                    string LoadingMessage = GameEvent?.LoadingMessage ?? string.Empty;
                     string GuiControlId = GameEvent?.ControlId ?? string.Empty;
                     string GuiControlName = GameEvent?.ControlName ?? string.Empty;
                     string GuiEventName = GameEvent?.EventName ?? string.Empty;
@@ -154,6 +177,8 @@ internal static class WebCSharpScriptPrecompiler
                     string AsrError = AsrEvent?.Error ?? "";
                     string AsrWakeWord = AsrEvent?.WakeWord ?? "";
                     bool AsrIsFinal = AsrEvent?.IsFinal ?? false;
+                    double AsrOffsetSeconds = AsrEvent?.OffsetSeconds ?? 0;
+                    string AsrRecognizedText = AsrEvent?.RecognizedText ?? string.Empty;
                     bool IsLlmEvent = GameEvent?.IsLlmEvent == true;
                     var LlmEvent = GameEvent?.Llm;
                     string LlmCallbackName = LlmEvent?.CallbackName ?? "";
@@ -163,6 +188,8 @@ internal static class WebCSharpScriptPrecompiler
                     string LlmDelta = LlmEvent?.Delta ?? "";
                     string LlmError = LlmEvent?.Error ?? "";
                     string LlmToolName = LlmEvent?.ToolCall?.Name ?? "";
+                    var LlmToolCall = LlmEvent?.ToolCall;
+                    string LlmToolCallId = LlmToolCall?.Id ?? string.Empty;
                     string LlmToolArgumentsJson = LlmEvent?.ToolCall?.ArgumentsJson ?? "";
                     string LlmToolResult = LlmEvent?.ToolResult ?? "";
                     bool LlmIsFinal = LlmEvent?.IsFinal ?? false;
@@ -176,8 +203,10 @@ internal static class WebCSharpScriptPrecompiler
                     string RealtimeVoiceAccumulatedText = RealtimeVoiceEvent?.AccumulatedText ?? "";
                     string RealtimeVoiceError = RealtimeVoiceEvent?.Error ?? "";
                     string RealtimeVoiceWakeWord = RealtimeVoiceEvent?.WakeWord ?? "";
+                    string RealtimeVoiceRecognizedText = RealtimeVoiceEvent?.RecognizedText ?? string.Empty;
                     bool RealtimeVoiceIsFinal = RealtimeVoiceEvent?.IsFinal ?? false;
                     {{statements}}
+                    return null;
                 }
             }
             """;
@@ -195,6 +224,36 @@ internal static class WebCSharpScriptPrecompiler
             throw new InvalidOperationException(diagnostics);
         }
         return image.ToArray();
+    }
+
+    private static string NormalizeScriptReturns(string statements)
+    {
+        var tree=CSharpSyntaxTree.ParseText(statements,new CSharpParseOptions(LanguageVersion.Latest,kind:SourceCodeKind.Script));
+        return new ScriptReturnRewriter().Visit(tree.GetRoot())!.ToFullString();
+    }
+    private sealed class PortableTypeRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitQualifiedName(QualifiedNameSyntax node)
+        {
+            string name=node.ToString();
+            const string desktop="Zhengyan.DigitalWife.GamePlayer";
+            const string pmx="Zhengyan.DigitalWife.Mmd.Game.Pmx";
+            if(name==desktop+".Runtime"||name.StartsWith(desktop+".Runtime.",StringComparison.Ordinal))return node;
+            if(name==desktop||name==pmx)return SyntaxFactory.ParseName(desktop+".Runtime").WithTriviaFrom(node);
+            if(name.StartsWith(desktop+".Runtime",StringComparison.Ordinal)&&!name.StartsWith(desktop+".Runtime.",StringComparison.Ordinal))
+            {string type=name[(desktop.Length+1)..];type=type switch{"RuntimeInput"=>"RuntimeCameraInput","RuntimeAudio"=>"WebScriptAudio",_=>type};return SyntaxFactory.ParseName(desktop+".Runtime."+type).WithTriviaFrom(node);}
+            if(name.StartsWith(pmx+".",StringComparison.Ordinal))return SyntaxFactory.ParseName(desktop+".Runtime."+name[(pmx.Length+1)..]).WithTriviaFrom(node);
+            return base.VisitQualifiedName(node);
+        }
+    }
+    private sealed class ScriptReturnRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitReturnStatement(ReturnStatementSyntax node)=>node.Expression is null?node.WithExpression(SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression).WithLeadingTrivia(SyntaxFactory.Space)):node;
+        public override SyntaxNode? VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)=>node;
+        public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node)=>node;
+        public override SyntaxNode? VisitSimpleLambdaExpression(SimpleLambdaExpressionSyntax node)=>node;
+        public override SyntaxNode? VisitParenthesizedLambdaExpression(ParenthesizedLambdaExpressionSyntax node)=>node;
+        public override SyntaxNode? VisitAnonymousMethodExpression(AnonymousMethodExpressionSyntax node)=>node;
     }
 
     private static (string Usings, string Members, string Statements) SplitScriptBody(string body, string path)
