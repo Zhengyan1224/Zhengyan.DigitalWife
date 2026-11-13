@@ -1,7 +1,10 @@
 param(
     [ValidateRange(1, 65535)]
     [int] $Port = 5052,
-    [switch] $SkipPublish
+    [switch] $SkipPublish,
+    [Alias('Host')]
+    [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) })]
+    [string] $BindAddress = '127.0.0.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,7 +25,9 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw 'Install Python 3 to use this local preview server, or serve artifacts\web-player\wwwroot with your static web server.'
 }
 
-Write-Host "Web Player: http://127.0.0.1:$Port/"
+$previewAddress = if ($BindAddress -eq '0.0.0.0') { '127.0.0.1' } else { $BindAddress }
+Write-Host "Listening on ${BindAddress}:$Port"
+Write-Host "Web Player: http://${previewAddress}:$Port/"
 Write-Host 'Press Ctrl+C to stop the local server.'
-& python (Join-Path $PSScriptRoot 'web-preview-server.py') --port $Port --bind 127.0.0.1 --directory $webDirectory
+& python (Join-Path $PSScriptRoot 'web-preview-server.py') --port $Port --bind $BindAddress --directory $webDirectory
 if ($LASTEXITCODE -ne 0) { throw 'The Web preview server stopped with an error.' }

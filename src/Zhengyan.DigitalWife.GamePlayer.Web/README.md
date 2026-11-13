@@ -253,6 +253,20 @@ dotnet workload install wasm-tools
 .\scripts\run-web-player.ps1 -SkipPublish
 ```
 
+两个启动脚本默认绑定 `127.0.0.1`。需要监听全部网卡、供局域网设备访问时，可指定绑定地址：
+
+```powershell
+.\scripts\run-web-player.ps1 -Host 0.0.0.0 -Port 5052 -SkipPublish
+```
+
+PowerShell 的 `-Host` 是 `-BindAddress` 的别名。Linux/macOS 使用：
+
+```bash
+bash scripts/run-web-player.sh --host 0.0.0.0 --port 5052 --skip-publish
+```
+
+Bash 也支持 `--host=0.0.0.0`。指定某个网卡的 IP 时，只监听该地址；绑定 `0.0.0.0` 时，其他设备使用 `http://服务器实际IP:5052/` 访问。本机仍可使用脚本显示的 `http://127.0.0.1:5052/`。
+
 发布到自己的静态网站时，也可以直接执行：
 
 ```powershell

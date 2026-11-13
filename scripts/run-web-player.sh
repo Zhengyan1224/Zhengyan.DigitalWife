@@ -3,23 +3,38 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/run-web-player.sh [--port PORT] [--skip-publish]
+Usage: bash scripts/run-web-player.sh [--host ADDRESS] [--port PORT] [--skip-publish]
 
 Publish the Web Player with Release AOT and start a local static server.
   -p, --port PORT    Listen on PORT (default: 5052).
+  --host ADDRESS    Bind to ADDRESS (default: 127.0.0.1).
   --skip-publish     Serve the existing artifacts/web-player publication.
   -h, --help         Show this help.
 
 Examples:
   bash scripts/run-web-player.sh --port 5053
   bash scripts/run-web-player.sh --port 5053 --skip-publish
+  bash scripts/run-web-player.sh --host 0.0.0.0 --skip-publish
 EOF
 }
 
 port=5052
+bind_address=127.0.0.1
 skip_publish=false
 while (($#)); do
     case "$1" in
+        --host)
+            if (($# < 2)) || [[ -z "$2" || "$2" == -* ]]; then
+                echo 'Missing value for --host.' >&2
+                exit 2
+            fi
+            bind_address="$2"
+            shift 2
+            ;;
+        --host=*)
+            bind_address="${1#*=}"
+            shift
+            ;;
         -p|--port)
             if (($# < 2)); then
                 echo 'Missing value for --port.' >&2
@@ -43,6 +58,11 @@ while (($#)); do
             ;;
     esac
 done
+
+if [[ ! "$bind_address" =~ [^[:space:]] ]]; then
+    echo 'Host must not be empty.' >&2
+    exit 2
+fi
 
 if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
     echo 'Port must be an integer between 1 and 65535.' >&2
@@ -76,6 +96,11 @@ if [[ ! -f "$web_directory/index.html" ]]; then
     exit 1
 fi
 
-echo "Web Player: http://127.0.0.1:$port/"
+preview_address="$bind_address"
+if [[ "$bind_address" == 0.0.0.0 ]]; then
+    preview_address=127.0.0.1
+fi
+echo "Listening on $bind_address:$port"
+echo "Web Player: http://$preview_address:$port/"
 echo 'Press Ctrl+C to stop the local server.'
-exec python3 "$repository_directory/scripts/web-preview-server.py" --port "$port" --bind 127.0.0.1 --directory "$web_directory"
+exec python3 "$repository_directory/scripts/web-preview-server.py" --port "$port" --bind "$bind_address" --directory "$web_directory"
