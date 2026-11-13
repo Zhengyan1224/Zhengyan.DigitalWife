@@ -818,11 +818,12 @@ internal sealed class GameEditorGame : Zhengyan.DigitalWife.Mmd.Game.Game
     {
         SaveProject();
         WebScriptPrecompileResult webPrecompile = WebCSharpScriptPrecompiler.Precompile(ProjectDirectory, Project);
+        if (webPrecompile.Errors.Count > 0)
+            throw new InvalidOperationException(
+                $"Web export failed: {webPrecompile.Errors.Count} script(s) could not be compiled. "
+                + $"See {webPrecompile.ManifestPath}\n{string.Join(Environment.NewLine, webPrecompile.Errors)}");
         WebGamePackageResult result = WebGamePackageExporter.Publish(ProjectDirectory, outputDirectory, overwrite);
-        string warning = webPrecompile.Errors.Count == 0
-            ? string.Empty
-            : $"\n[Warning] Web precompile omitted {webPrecompile.Errors.Count} script(s); see {webPrecompile.ManifestPath}";
-        UpdateStatus($"Exported Web static directory: {result.OutputDirectory}\nManifest: {result.ManifestPath}\nAssets: {result.AssetCount:N0}\nPrecompiled Web C# scripts: {result.ScriptCount}\nTotal bytes: {result.TotalBytes:N0}{warning}");
+        UpdateStatus($"Exported Web static directory: {result.OutputDirectory}\nManifest: {result.ManifestPath}\nAssets: {result.AssetCount:N0}\nPrecompiled Web C# scripts: {result.ScriptCount}\nTotal bytes: {result.TotalBytes:N0}");
         return result;
     }
 

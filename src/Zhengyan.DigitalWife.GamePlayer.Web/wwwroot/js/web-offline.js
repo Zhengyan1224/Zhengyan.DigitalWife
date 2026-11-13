@@ -1,6 +1,6 @@
-let project=null,assetUris={},enabled=false,languageModel=null,modelPromise=null,modelFiles=null;
-let originalFetch=null,speechGeneration=0,audioContext=null,audioSource=null,asrSession=null;
-let speaking=null,realtimeSession=null,identity=null,modelQueue=Promise.resolve();const conversation=[];
+let project=null,assetUris={},enabled=false;
+let speechGeneration=0,audioContext=null,audioSource=null,asrSession=null,finishingAsr=null;
+let speaking=null,realtimeSession=null,identity=null;const conversation=[];
 const versionUrl=name=>{const u=new URL(name,import.meta.url);u.search=new URL(import.meta.url).search;return u.href;};
 const blobUrls=new Set();
 export function clearAssetUrls(){for(const url of blobUrls)URL.revokeObjectURL(url);blobUrls.clear();}
@@ -8,74 +8,46 @@ export function createAssetUrl(bytes){const url=URL.createObjectURL(new Blob([by
 export function isEnabled(){return enabled;}
 export async function configure(value,uris={},assetIdentity=''){
     const nextIdentity=JSON.stringify([value?.name,value?.web,value?.voice,value?.asr,assetIdentity]);
-    if(identity!==null && identity!==nextIdentity){await dispose();modelFiles=null;}
+    if(identity!==null && identity!==nextIdentity){await dispose();}
     identity=nextIdentity;
     project=value;assetUris=uris;enabled=(value?.web?.runtimeMode||'offline')==='offline';
-    if(enabled && !originalFetch){originalFetch=globalThis.fetch.bind(globalThis);globalThis.fetch=offlineFetch;}
-    if(!enabled && originalFetch){globalThis.fetch=originalFetch;originalFetch=null;}
 }
 async function localAsset(path){
     const uri=assetUris[path];if(!uri)throw new Error('Offline model asset is not registered: '+path);
-    const response=await (originalFetch||fetch)(uri);if(!response.ok)throw new Error('Offline asset HTTP '+response.status+': '+path);
+    const response=await fetch(uri);if(!response.ok)throw new Error('Offline asset HTTP '+response.status+': '+path);
     return new Uint8Array(await response.arrayBuffer());
 }
-export async function setLanguageModelFiles(files){
-    cancelRealtime();await modelQueue;await languageModel?.exit();languageModel=null;modelFiles=Array.from(files);modelPromise=null;
-    if(globalThis.indexedDB){const storage=await import(versionUrl('./web-storage.js'));await storage.putBlobFiles(modelSaveKey(),modelFiles);}
-}
-const modelSaveKey=()=>JSON.stringify([project?.name,project?.web?.languageModelPath]);
-export async function getLanguageModel(){
-    if(modelPromise)return modelPromise;
-    modelPromise=(async()=>{
-        const {Wllama}=await import(new URL('../vendor/wllama/esm/index.js',import.meta.url).href);
-        languageModel??=new Wllama({default:new URL('../vendor/wllama/esm/wasm/wllama.wasm',import.meta.url).href},{suppressNativeLog:true});
-        let files=modelFiles;
-        if(!files?.length && globalThis.indexedDB){const storage=await import(versionUrl('./web-storage.js'));files=await storage.getBlobFiles(modelSaveKey());}
-        if(!files?.length){const uri=assetUris[project.web.languageModelPath];if(!uri)throw new Error('Offline language model is not registered: '+project.web.languageModelPath);
-            const response=await (originalFetch||fetch)(uri);if(!response.ok)throw new Error('Offline model HTTP '+response.status);files=[await response.blob()];}
-        await languageModel.loadModel(files,{n_ctx:Math.max(512,project.web.languageModelContextSize||2048),
-            n_threads:Math.max(1,project.web.languageModelThreads||2),n_gpu_layers:project.web.languageModelGpuLayers||0});
-        return languageModel;
-    })().catch(error=>{modelPromise=null;throw error;});return modelPromise;
-}
+// Language requests use the same configured API as PC and Android.
 async function* generateChat(request,signal){
-    let release;const previous=modelQueue;modelQueue=new Promise(resolve=>release=resolve);
-    let iterator;
+    const settings=project.llm||{};
+    const url=new URL((settings.chatCompletionsPath||'/v1/chat/completions').replace(/^\/+/,''),(settings.baseUrl||location.origin).replace(/\/?$/,'/'));
+    const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(settings.apiKey?{'Authorization':'Bearer '+settings.apiKey}:{})},
+        body:JSON.stringify({...request,model:settings.model,stream:true}),signal});
+    if(!response.ok)throw new Error('LLM HTTP '+response.status+': '+(await response.text()).slice(0,500));
+    const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';
     try{
-        await previous;signal?.throwIfAborted();
-        const llm=await getLanguageModel();signal?.throwIfAborted();
-        iterator=await llm.createChatCompletion({...request,model:undefined,stream:true,max_tokens:request.max_tokens||512});
-        for await(const chunk of iterator){signal?.throwIfAborted();yield chunk;}
-    }finally{try{await iterator?.return?.();}finally{release();}}
-}
-async function offlineFetch(input,options={}){
-    const url=new URL(typeof input==='string'?input:input.url||String(input),globalThis.location?.href||import.meta.url);
-    const endpoint=new URL((project.llm?.chatCompletionsPath||'/v1/chat/completions').replace(/^\/+/,''),(project.llm?.baseUrl||location.origin).replace(/\/?$/,'/'));
-    if(url.href===endpoint.href){
-        let body=options.body;if(body==null && typeof input?.clone==='function')body=await input.clone().text();
-        if(ArrayBuffer.isView(body))body=new TextDecoder().decode(body);if(body instanceof ArrayBuffer)body=new TextDecoder().decode(body);
-        const request=JSON.parse(body),encoder=new TextEncoder(),abort=new AbortController(),signal=options.signal||input?.signal;
-        signal?.throwIfAborted();const onAbort=()=>abort.abort();signal?.addEventListener('abort',onAbort,{once:true});
-        let cancelled=false;
-        return new Response(new ReadableStream({async start(controller){
-            try{
-                for await(const chunk of generateChat(request,abort.signal)){if(cancelled)return;controller.enqueue(encoder.encode('data: '+JSON.stringify(chunk)+'\n\n'));}
-                controller.enqueue(encoder.encode('data: [DONE]\n\n'));controller.close();
-            }catch(error){if(!cancelled)controller.error(error);}
-            finally{signal?.removeEventListener('abort',onAbort);}
-        },cancel(){cancelled=true;abort.abort();}}),{status:200,headers:{'Content-Type':'text/event-stream'}});
-    }
-    if(!['data:','blob:'].includes(url.protocol) && url.origin!==location.origin)throw new Error('Network services are unavailable in offline mode: '+url.origin);
-    return originalFetch(input,options);
+        while(true){
+            const {done,value}=await reader.read();pending+=decoder.decode(value,{stream:!done});
+            if(done && pending && !pending.endsWith('\n'))pending+='\n';
+            let end;
+            while((end=pending.indexOf('\n'))>=0){
+                const line=pending.slice(0,end).trim();pending=pending.slice(end+1);
+                if(!line.startsWith('data:'))continue;
+                const data=line.slice(5).trim();if(data==='[DONE]')return;if(data)yield JSON.parse(data);
+            }
+            if(done)return;
+        }
+    }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 class SpeechWorker{
-    constructor(kind){this.kind=kind;this.worker=null;this.pending=new Map();this.nextId=0;this.ready=null;this.initialized=false;}
+    constructor(kind){this.kind=kind;this.worker=null;this.pending=new Map();this.nextId=0;this.ready=null;this.initialized=false;this.warmed=false;this.progressReference=null;}
     initialize(){
         if(this.ready)return this.ready;
         this.ready=new Promise((resolve,reject)=>{
             this.worker=new Worker(versionUrl('./web-offline-speech-worker.js'));
             this.worker.onerror=event=>{reject(new Error(event.message));for(const p of this.pending.values())p.reject(new Error(event.message));this.pending.clear();};
             this.worker.onmessage=async event=>{const m=event.data;
+                if(m.type==='progress'){notify(this.progressReference,'OnModelLoadingProgress',this.kind,m.message);return;}
                 if(m.type==='asset'){try{const bytes=await localAsset(m.path);this.worker.postMessage({type:'asset',id:m.id,bytes},[bytes.buffer]);}catch(error){this.worker.postMessage({type:'asset',id:m.id,error:error.message});}return;}
                 if(m.type==='ready'){this.initialized=true;resolve(m);return;}
                 if(m.type==='error'){if(m.id){const p=this.pending.get(m.id);this.pending.delete(m.id);p?.reject(new Error(m.message));}else reject(new Error(m.message));return;}
@@ -86,10 +58,26 @@ class SpeechWorker{
     }
     async request(message,transfer=[]){await this.initialize();const id=++this.nextId;return new Promise((resolve,reject)=>{this.pending.set(id,{resolve,reject});this.worker.postMessage({...message,id},transfer);});}
     reset(){if(this.initialized)this.worker?.postMessage({type:'reset'});}
-    dispose(){this.worker?.terminate();this.worker=null;this.ready=null;this.initialized=false;for(const p of this.pending.values())p.reject(new Error('Offline speech worker disposed.'));this.pending.clear();}
+    dispose(){this.worker?.terminate();this.worker=null;this.ready=null;this.initialized=false;this.warmed=false;this.progressReference=null;for(const p of this.pending.values())p.reject(new Error('Offline speech worker disposed.'));this.pending.clear();}
 }
 const tts=new SpeechWorker('tts'),asr=new SpeechWorker('asr');
-async function context(){audioContext??=new (globalThis.AudioContext||globalThis.webkitAudioContext)();await audioContext.resume();return audioContext;}
+export async function preload(reference){
+    if(!enabled)return;
+    for(const worker of [tts,asr]){
+        if(!project[worker.kind==='tts'?'voice':'asr']?.enabled || worker.warmed)continue;
+        worker.progressReference=reference;
+        notify(reference,'OnModelLoadingProgress',worker.kind,'正在初始化'+(worker.kind==='tts'?'语音合成':'语音识别')+'模型');
+        try{
+            await worker.initialize();
+            if(worker.kind==='tts')await worker.request({type:'tts',text:project.voice.warmUpText||'你好',speed:1,speakerId:project.voice.defaultSpeakerId||0});
+            else{await worker.request({type:'asr',samples:new Float32Array(16000),sampleRate:16000});worker.reset();}
+            worker.warmed=true;
+        }finally{worker.progressReference=null;}
+    }
+
+}
+async function context(){const ctx=audioContext??=new (globalThis.AudioContext||globalThis.webkitAudioContext)();await ctx.resume();return ctx;}
+export async function unlockAudio(){if(enabled)await context();}
 const notify=(reference,name,...args)=>reference?.invokeMethodAsync(name,...args).catch(()=>{});
 export function stopSpeaking(){speechGeneration++;audioSource?.stop();audioSource=null;if(speaking){notify(speaking.reference,'OnSpeechFinished',speaking.entityId);speaking=null;}}
 export function speak(text,rate,volume,reference,entityId,callbackName){
@@ -97,15 +85,18 @@ export function speak(text,rate,volume,reference,entityId,callbackName){
     speaking={reference,entityId};
     tts.request({type:'tts',text,speed:rate||1,speakerId:project.voice.defaultSpeakerId||0}).then(async result=>{
         if(generation!==speechGeneration)return;
-        const ctx=await context(),buffer=ctx.createBuffer(1,result.samples.length,result.sampleRate);buffer.copyToChannel(result.samples,0);
+        const ctx=await context();if(generation!==speechGeneration)return;
+        const buffer=ctx.createBuffer(1,result.samples.length,result.sampleRate);buffer.copyToChannel(result.samples,0);
         const source=audioSource=ctx.createBufferSource();source.buffer=buffer;const gain=ctx.createGain();gain.gain.value=volume??1;source.connect(gain);gain.connect(ctx.destination);
         notify(reference,'OnSpeechStarted',entityId,text,rate||1);source.onended=()=>{gain.disconnect();if(generation!==speechGeneration)return;audioSource=null;speaking=null;notify(reference,'OnSpeechFinished',entityId);notify(reference,'OnSpeechCompleted',entityId,callbackName);};source.start();
     }).catch(error=>{if(generation===speechGeneration){speaking=null;notify(reference,'OnSpeechFinished',entityId);notify(reference,'OnSpeechFailed',entityId,callbackName,error.message);}});
 }
 export function stopAsr(cancel=false){
+    if(cancel && finishingAsr){finishingAsr.cancelled=true;finishingAsr=null;}
     const session=asrSession;if(!session)return;asrSession=null;session.cancelled=cancel;session.stopping=true;session.stopCapture?.();
-    if(!cancel)session.tail=session.tail.then(async()=>{const result=await asr.request({type:'asr',samples:new Float32Array(8000),sampleRate:16000,finished:true});emitAsr(session,'completed',session.command.completedCallback,result.text);})
-        .catch(error=>emitAsr(session,'error',session.command.errorCallback,'',error.message));
+    if(!cancel){finishingAsr=session;session.tail=session.tail.then(async()=>{if(session.cancelled)return;const result=await asr.request({type:'asr',samples:new Float32Array(8000),sampleRate:16000,finished:true});emitAsr(session,'completed',session.command.completedCallback,result.text);})
+        .catch(error=>emitAsr(session,'error',session.command.errorCallback,'',error.message))
+        .finally(()=>{if(finishingAsr===session)finishingAsr=null;});}
     else asr.reset();
 }
 function emitAsr(session,eventName,callbackName,text='',error='',wakeWord=''){
@@ -121,22 +112,27 @@ export function executeAsr(command,reference){
     (async()=>{
         await session.tail;if(session.cancelled || session.stopping)return;
         const stream=await navigator.mediaDevices.getUserMedia({audio:true});if(session.cancelled || session.stopping){stream.getTracks().forEach(t=>t.stop());return;}
-        const ctx=await context(),source=ctx.createMediaStreamSource(stream),processor=ctx.createScriptProcessor(4096,1,1),mute=ctx.createGain();mute.gain.value=0;
+        // Own the tracks before resume(), which can wait for a user gesture.
+        session.stopCapture=()=>stream.getTracks().forEach(t=>t.stop());
+        const ctx=await context();if(session.cancelled || session.stopping || asrSession!==session)return;
+        const source=ctx.createMediaStreamSource(stream),processor=ctx.createScriptProcessor(4096,1,1),mute=ctx.createGain();mute.gain.value=0;
         source.connect(processor);processor.connect(mute);mute.connect(ctx.destination);
         session.stopCapture=()=>{processor.disconnect();source.disconnect();mute.disconnect();stream.getTracks().forEach(t=>t.stop());};
         let queued=0;
         processor.onaudioprocess=event=>{
-            if(session.cancelled || asrSession!==session || queued>=8)return;
+            if(session.cancelled || session.stopping || asrSession!==session || queued>=8)return;
             const samples=resample(event.inputBuffer.getChannelData(0),ctx.sampleRate,16000);queued++;
             session.tail=session.tail.then(async()=>{
-                if(session.cancelled)return;const result=await asr.request({type:'asr',samples,sampleRate:16000},[samples.buffer]);session.text=result.text;
+                if(session.cancelled)return;const result=await asr.request({type:'asr',samples,sampleRate:16000},[samples.buffer]);
+                if(session.cancelled || session.stopping || asrSession!==session)return;
+                session.text=result.text;
                 if(command.operation==='wake'){
                     const word=(command.wakeWords||[]).find(w=>result.text.includes(w));if(word && !session.detected){session.detected=true;emitAsr(session,'wake_detected',command.completedCallback,result.text,'',word);}
                     if(result.endpoint){asr.reset();session.detected=false;}
                 }else{emitAsr(session,'partial',command.partialCallback,result.text);if(command.finishOnEndpoint && result.endpoint)stopAsr(false);}
-            }).catch(error=>{emitAsr(session,'error',command.errorCallback,'',error.message);stopAsr(true);}).finally(()=>queued--);
+            }).catch(error=>{if(asrSession===session){emitAsr(session,'error',command.errorCallback,'',error.message);stopAsr(true);}}).finally(()=>queued--);
         };
-    })().catch(error=>{emitAsr(session,'error',command.errorCallback,'',error.message);stopAsr(true);});
+    })().catch(error=>{if(asrSession===session){emitAsr(session,'error',command.errorCallback,'',error.message);stopAsr(true);}});
 }
 function emitRealtime(state,eventName,callbackName,text='',delta='',error='',wakeWord=''){
     if(state.cancelled || !callbackName)return;
@@ -179,4 +175,4 @@ export function executeRealtime(command,reference){
     if(command.operation!=='wake')state.timer=setTimeout(()=>{if(!state.cancelled)stopAsr(false);},Math.max(1,command.timeoutSeconds||30)*1000);
 }
 function cancelRealtime(){if(realtimeSession){realtimeSession.cancelled=true;realtimeSession.abort?.abort();clearTimeout(realtimeSession.timer);}realtimeSession=null;stopAsr(true);stopSpeaking();}
-export async function dispose(){cancelRealtime();tts.dispose();asr.dispose();await modelQueue;await languageModel?.exit();languageModel=null;modelPromise=null;conversation.length=0;if(audioContext){await audioContext.close();audioContext=null;}}
+export async function dispose(){cancelRealtime();tts.dispose();asr.dispose();conversation.length=0;if(audioContext){await audioContext.close();audioContext=null;}}

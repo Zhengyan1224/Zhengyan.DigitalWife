@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using System.Numerics;
 using System.Collections.Concurrent;
@@ -60,10 +60,6 @@ public sealed class WebRuntimeHost(
 
     public WebRuntimeSnapshot Snapshot { get; private set; } = WebRuntimeSnapshot.Initial;
     public event Action? Changed;
-    public async Task SetLanguageModelFilesAsync(ElementReference input)
-    {
-        if(_module is not null)await _module.InvokeVoidAsync("setLanguageModelFile",input);
-    }
     public async Task<int> CacheOfflineGameAsync()=>_module is null?0:await _module.InvokeAsync<int>("cacheOfflineGame");
 
     public async Task LoadDwGameAsync(byte[] packageBytes, ElementReference canvas, ElementReference overlayCanvas, string? password = null)
@@ -87,7 +83,8 @@ public sealed class WebRuntimeHost(
             _projectLoader.SpeechRequestHandler = QueueSpeechRequest;
             _projectLoader.PhysicsFactory = _physicsService.CreateAsync;
             _projectLoader.InitializeServices = InitializeSceneServicesAsync;
-            SetSnapshot(Snapshot with { LastError = null, Status = "Initializing WebGL2" });
+            _projectLoader.ConfigureLoadingScreen = ConfigureLoadingScreenAsync;
+            SetSnapshot(Snapshot with { IsLoading = true, LastError = null, Status = "正在加载游戏", LoadingMessage = "正在初始化渲染器" });
             _module = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", WebRuntimeModuleUrl.Resolve("web-runtime.js"));
             _dotNetReference = DotNetObjectReference.Create(this);
             _projectLoader.PythonFactory=(entry,source)=>new WebPythonScript(_jsRuntime,entry,source,_dotNetReference,(id,bridge)=>
@@ -95,6 +92,8 @@ public sealed class WebRuntimeHost(
                 if(bridge is null)_pythonBridges.Remove(id);else{bridge.ProjectFiles=_pythonProjectFiles;_pythonBridges[id]=bridge;}
             });
             await _module.InvokeVoidAsync("start", canvas, overlayCanvas, _dotNetReference);
+            await _module.InvokeVoidAsync("setInputCapture", true);
+            await _module.InvokeVoidAsync("nextPaint");
             await _module.InvokeVoidAsync("registerServiceWorker", "./sw.js");
             _started = true;
             WebGl2Info rendererInfo = await _module.InvokeAsync<WebGl2Info>("enableWebGl2");
@@ -104,13 +103,7 @@ public sealed class WebRuntimeHost(
                 ? $"WebGPU capability detected: {gpu.Name}"
                 : $"WebGPU unavailable: {gpu.Reason}");
 
-            IProgress<WebLoadProgress> progress = new LoadProgressReporter(value => SetSnapshot(Snapshot with
-            {
-                LoadingProgress = value.Value,
-                LoadingStage = value.Stage,
-                LoadingMessage = value.Message,
-                Status = value.Message
-            }));
+            IProgress<WebLoadProgress> progress = CreateLoadingProgress();
             WebLoadedProject loadedProject = await _projectLoader.LoadAsync(progress);
             _loadedProject = loadedProject;
             await _module.InvokeVoidAsync("configureGame", loadedProject.Project.Window.Width, loadedProject.Project.Window.Height);
@@ -132,10 +125,13 @@ public sealed class WebRuntimeHost(
                 await UpdateRendererStateAsync(loadedProject);
             }
             await UpdateOverlayStateAsync(loadedProject);
+            await _module.InvokeVoidAsync("presentScene");
+            await _module.InvokeVoidAsync("setInputCapture", false);
 
             SetSnapshot(Snapshot with
             {
                 IsRunning = true,
+                IsLoading = false,
                 RendererReady = true,
                 RendererName = rendererInfo.Renderer,
                 SceneReady = true,
@@ -199,6 +195,7 @@ public sealed class WebRuntimeHost(
             SetSnapshot(Snapshot with
             {
                 IsRunning = false,
+                IsLoading = false,
                 RendererReady = false,
                 RendererName = "Not initialized",
                 SceneReady = false,
@@ -246,6 +243,8 @@ public sealed class WebRuntimeHost(
         while (_serviceEvents.TryDequeue(out var item))
             if (ReferenceEquals(item.Scene, _loadedProject.RuntimeScene)) _loadedProject.Scripts.DispatchEvent(item.Event, item.Event.EntityId);
         await ProcessScriptCommandsAsync();
+
+        if (!Snapshot.IsRunning) return;
 
         await SynchronizeSurfacesAsync(_loadedProject);
 
@@ -320,7 +319,7 @@ public sealed class WebRuntimeHost(
     [JSInvokable]
     public async Task OnGuiPointer(float x, float y, string phase, int button)
     {
-        if (_loadedProject is null || button != 0)
+        if (_loadedProject is null || Snapshot.IsLoading || button != 0)
         {
             return;
         }
@@ -697,17 +696,21 @@ public sealed class WebRuntimeHost(
     {
         if (_module is null || _loadedProject is null) return;
         _switchingScene = true;
+        SetSnapshot(Snapshot with { IsLoading = true, IsRunning = false, LoadingProgress = 0,
+            LoadingStage = "scene", LoadingMessage = "正在切换场景", LastError = null });
         try
         {
+            await _module.InvokeVoidAsync("setInputCapture", true);
+            await _module.InvokeVoidAsync("nextPaint");
             await PersistSaveAsync(_loadedProject.RuntimeScene);
             _speechCompletions.Clear(); _speechRequests.Clear();
             _lipSync.Stop();_speakingEntity=null;
             if (_asrModule is not null) await _asrModule.InvokeVoidAsync("stopAll");
             if (_realtimeModule is not null) await _realtimeModule.InvokeVoidAsync("stopAll");
-            await _loadedProject.Scripts.DisposeAsync();
-            var next = await _projectLoader.LoadAsync(scenePathOverride: path);
             await _audioService.StopAllAsync();
             await _speechService.StopAsync();
+            await _loadedProject.Scripts.DisposeAsync();
+            var next = await _projectLoader.LoadAsync(CreateLoadingProgress(), scenePathOverride: path);
             var meshes = next.PmxAssets.Values.Select(a => new WebPmxMeshInstance(a.Entity.Id, a.Mesh))
                 .Concat(next.SceneMeshes.Select(m => new WebPmxMeshInstance(m.Key, m.Value))).ToArray();
             await _module.InvokeVoidAsync("loadPmxMeshes", (object)meshes);
@@ -716,12 +719,15 @@ public sealed class WebRuntimeHost(
             _loadedProject = next; _reportedScriptDiagnosticCount = 0;
             _lastTimestampMilliseconds = double.NaN;
             foreach (var audio in next.AudioAssets.Values.DistinctBy(a => a.Alias)) await _audioService.PrepareAsync(audio.Alias, audio.Uri);
+            await _module.InvokeVoidAsync("loadSceneTextures", (object)next.SpriteUris.Values.ToArray());
             await UpdateRendererStateAsync(next); await UpdateOverlayStateAsync(next);
-            SetSnapshot(Snapshot with { SceneName = next.RuntimeScene.Name, SceneEntityCount = next.RuntimeScene.Entities.Count(),
-                PmxEntityCount = next.PmxAssets.Count, LastError = null });
+            await _module.InvokeVoidAsync("presentScene");
+            SetSnapshot(Snapshot with { IsLoading = false, IsRunning = true, LoadingProgress = 1,
+                LoadingStage = "ready", LoadingMessage = "场景加载完成", SceneName = next.RuntimeScene.Name, SceneEntityCount = next.RuntimeScene.Entities.Count(),
+                PmxEntityCount = next.PmxAssets.Count });
         }
-        catch (Exception exception) { SetSnapshot(Snapshot with { LastError = $"Scene '{path}' failed to load: {exception.GetBaseException().Message}" }); }
-        finally { _switchingScene = false; }
+        catch (Exception exception) { SetSnapshot(Snapshot with { IsLoading = false, IsRunning = false, LastError = $"Scene '{path}' failed to load: {exception.GetBaseException().Message}" }); }
+        finally { _switchingScene = false; await _module.InvokeVoidAsync("setInputCapture", false); }
     }
 
     private GuiControlSettings? ResolveGuiControl(float x, float y)
@@ -960,9 +966,15 @@ public sealed class WebRuntimeHost(
     {
         if(_module is not null)
         {
+            if (project.Llm.Enabled && await _module.InvokeAsync<string?>("resolveLlmEndpoint", project.Llm.BaseUrl, project.Llm.ChatCompletionsPath) is string endpoint)
+            {
+                var uri = new Uri(endpoint);
+                project.Llm.BaseUrl = uri.GetLeftPart(UriPartial.Authority);
+                project.Llm.ChatCompletionsPath = uri.PathAndQuery;
+            }
             var modelUris=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
             var paths=new[]{project.Voice.ModelPath,project.Voice.VocoderPath,project.Voice.TokensPath,project.Voice.LexiconPath,
-                project.Asr.Sherpa.EncoderPath,project.Asr.Sherpa.DecoderPath,project.Asr.Sherpa.JoinerPath,project.Asr.Sherpa.TokensPath,project.Asr.Sherpa.ModelPath,project.Web.LanguageModelPath};
+                project.Asr.Sherpa.EncoderPath,project.Asr.Sherpa.DecoderPath,project.Asr.Sherpa.JoinerPath,project.Asr.Sherpa.TokensPath,project.Asr.Sherpa.ModelPath};
             var entries=_projectLoader.Assets.Manifest.Assets.Where(a=>paths.Contains(a.Path,StringComparer.OrdinalIgnoreCase)).OrderBy(a=>a.Path).ToArray();
             string identity=System.Text.Json.JsonSerializer.Serialize(new{project.Name,project.Web,project.Voice,project.Asr,Assets=entries.Select(a=>new{a.Path,a.Sha256})});
             if(identity!=_offlineAssetIdentity)
@@ -982,6 +994,7 @@ public sealed class WebRuntimeHost(
                     modelUris[path]=uri;
                 }
             await _module.InvokeVoidAsync("configureOffline",project,modelUris,identity);
+            await _module.InvokeVoidAsync("preloadModels", _dotNetReference);
         }
         _pythonProjectFiles.Clear();
         if(_projectLoader.Assets.Manifest.Scripts.Any(s=>s.Language.Equals("python",StringComparison.OrdinalIgnoreCase)))
@@ -1024,6 +1037,34 @@ public sealed class WebRuntimeHost(
         }
     }
 
+    private IProgress<WebLoadProgress> CreateLoadingProgress() => new LoadProgressReporter(value => SetSnapshot(Snapshot with
+    {
+        LoadingProgress = value.Value, LoadingStage = value.Stage, LoadingMessage = value.Message, Status = value.Message
+    }));
+
+    private async Task ConfigureLoadingScreenAsync(GameProject project, GameProjectScene scene)
+    {
+        string? uri = null;
+        string path = scene.LoadingScreen.BackgroundImagePath ?? string.Empty;
+        if (path.StartsWith("project:", StringComparison.OrdinalIgnoreCase)) path = path[8..];
+        path = path.Replace('\\', '/');
+        if (!string.IsNullOrWhiteSpace(path)
+            && _projectLoader.Assets.Manifest.Assets.Any(a => a.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            uri = await _projectLoader.Assets.GetUriAsync(path);
+        SetSnapshot(Snapshot with { LoadingScreen = scene.LoadingScreen, LoadingBackgroundUri = uri,
+            ReferenceWidth = project.Window.Width, ReferenceHeight = project.Window.Height });
+        if (_module is not null) await _module.InvokeVoidAsync("nextPaint");
+    }
+
+    [JSInvokable]
+    public Task OnModelLoadingProgress(string kind, string message)
+    {
+        if (!Snapshot.IsLoading) return Task.CompletedTask;
+        SetSnapshot(Snapshot with { LoadingStage = "models", LoadingProgress = kind == "tts" ? 0.80f : kind == "asr" ? 0.85f : 0.88f,
+            LoadingMessage = message, Status = message });
+        return Task.CompletedTask;
+    }
+
     private async Task PersistSaveAsync(RuntimeScene scene)
     {
         if (!scene.Save.HasChanges) return;
@@ -1035,6 +1076,7 @@ public sealed class WebRuntimeHost(
     [JSInvokable]
     public Task OnAsrEvent(string entityId, RuntimeAsrScriptEvent value)
     {
+        if (value.EventName == "error") SetSnapshot(Snapshot with { LastError = "语音识别失败：" + value.Error });
         if (_loadedProject is not null)
         {
             _loadedProject.RuntimeScene.Asr.Report(value);
@@ -1127,6 +1169,7 @@ public sealed class WebRuntimeHost(
         SetSnapshot(Snapshot with
         {
             IsRunning = false,
+            IsLoading = false,
             RendererReady = false,
             RendererName = "Unavailable",
             Status = status,

@@ -128,6 +128,7 @@ function installInputHandlers() {
     runtime.onPointerDown = event => {
         updateTouch(event,0);
         unlockAudio().catch(() => {});
+        offline.unlockAudio().catch(() => {});
         canvas.setPointerCapture?.(event.pointerId);
         runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         runtime.lastPointerButtons = event.buttons || 1;
@@ -185,6 +186,7 @@ function installInputHandlers() {
     runtime.onContextMenu = event => {event.preventDefault();if(!runtime.rightDragged){const [x,y]=canvasPoint(event);invoke("OnContextMenuRequest",x,y);}runtime.rightDragged=false;};
     runtime.onKeyDown = event => {
         unlockAudio().catch(() => {});
+        offline.unlockAudio().catch(() => {});
         const key = event.code || event.key || "";
         if (!runtime.inputCaptured && !runtime.pressedKeys.has(key)) {
             runtime.pressedKeys.add(key);
@@ -329,10 +331,19 @@ export function setFrameState(frameState) {
 export function getRenderDiagnostics() { return runtime?.renderer?.getDiagnostics(); }
 export function getOverlayDiagnostics(){return {controls:(runtime?.overlayState.controls||[]).map(c=>({id:c.id,name:c.name,type:c.type,x:c.x,y:c.y,width:c.width,height:c.height})),
     bubbles:(runtime?.overlayState.bubbles||[]).map(b=>({text:b.text,header:b.header,visible:b.visible}))};}
-export function configureOffline(project,assetUris){offline.configure(project,assetUris);}
+export function configureOffline(project,assetUris,identity){return offline.configure(project,assetUris,identity);}
+export async function resolveLlmEndpoint(baseUrl,chatCompletionsPath){
+    try{
+        const response=await fetch('./__web_api/capabilities',{cache:'no-store'});if(!response.ok)return null;
+        const value=await response.json();
+        return value.baseUrl===baseUrl&&value.chatCompletionsPath===chatCompletionsPath?new URL(value.endpoint,location.href).href:null;
+    }catch{return null;}
+}
+export const preloadModels=offline.preload;
+export function nextPaint(){return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}
+export function presentScene(){runtime?.renderer?.render(performance.now());renderOverlay();}
 export function clearOfflineAssetUrls(){offline.clearAssetUrls();}
 export function createOfflineAssetUrl(bytes){return offline.createAssetUrl(bytes);}
-export function setLanguageModelFile(input){return offline.setLanguageModelFiles(input.files||[]);}
 export const disposeOffline=offline.dispose;
 export async function cacheOfflineGame(){
     if(!navigator.serviceWorker)throw new Error('当前浏览器不支持离线缓存。');

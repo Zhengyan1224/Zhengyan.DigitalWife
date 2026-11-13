@@ -1,0 +1,50 @@
+@using System.Globalization
+@using Zhengyan.DigitalWife.GameProjects
+
+@if (Snapshot.IsLoading)
+{
+    <div class="web-loading-screen" style="background:@Color(Snapshot.LoadingScreen.BackgroundColor)" role="status" aria-live="polite" aria-label="场景加载">
+        @if (!string.IsNullOrWhiteSpace(Snapshot.LoadingBackgroundUri))
+        {
+            <img class="loading-background" src="@Snapshot.LoadingBackgroundUri" style="opacity:@Number(Snapshot.LoadingScreen.BackgroundImageOpacity)" alt="" />
+        }
+        <div class="loading-caption">
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <strong>@Message</strong>
+            <span>@(Math.Clamp(Snapshot.LoadingProgress, 0, 1).ToString("P0"))</span>
+        </div>
+        @if (Snapshot.LoadingScreen.ProgressBar.Visible)
+        {
+            <div class="scene-loading-bar" style="@BarStyle">
+                <div class="scene-loading-track" style="background:@Color(Snapshot.LoadingScreen.ProgressBar.TrackColor)">
+                    <span style="width:@Number(Math.Clamp(Snapshot.LoadingProgress, 0, 1) * 100)%;background:@Color(Snapshot.LoadingScreen.ProgressBar.FillColor)"></span>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public WebRuntimeSnapshot Snapshot { get; set; } = WebRuntimeSnapshot.Initial;
+    private string Message => Snapshot.LoadingStage switch
+    {
+        "manifest" => "正在读取项目资源", "project" => "正在读取游戏配置", "scene" => "正在加载场景",
+        "animation" => "正在加载动作", "model" => "正在加载角色", "scripts" => "正在加载场景脚本",
+        _ => Snapshot.LoadingMessage
+    };
+    private string BarStyle
+    {
+        get
+        {
+            var bar = Snapshot.LoadingScreen.ProgressBar;
+            float width = Math.Max(1, Snapshot.CanvasWidth), height = Math.Max(1, Snapshot.CanvasHeight);
+            var rect = LayoutResolver.Resolve(bar.LayoutMode, bar.X, bar.Y, bar.Width, bar.Height,
+                width, height, Snapshot.ReferenceWidth, Snapshot.ReferenceHeight);
+            double dpr = Math.Max(1, Snapshot.DevicePixelRatio);
+            double scale = LayoutResolver.IsRelative(bar.LayoutMode) ? Math.Min(width / Snapshot.ReferenceWidth, height / Snapshot.ReferenceHeight) : 1;
+            return $"left:{Number(rect.X / width * 100)}%;top:{Number(rect.Y / height * 100)}%;width:{Number(rect.Width / width * 100)}%;height:{Number(rect.Height / height * 100)}%;background:{Color(bar.BackgroundColor)};border:{Number(bar.BorderThickness * scale / dpr)}px solid {Color(bar.BorderColor)};border-radius:{Number(bar.Rounding * scale / dpr)}px;padding:{Number(bar.Padding * scale / dpr)}px";
+        }
+    }
+    private static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string Color(Vector4Dto color) => $"rgba({Math.Clamp(color.X, 0, 1) * 255:0},{Math.Clamp(color.Y, 0, 1) * 255:0},{Math.Clamp(color.Z, 0, 1) * 255:0},{Number(Math.Clamp(color.W, 0, 1))})";
+}

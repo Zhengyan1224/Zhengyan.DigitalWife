@@ -86,10 +86,6 @@ public sealed class GameProjectScriptRuntime
 public sealed class GameProjectWebSettings
 {
     public string RuntimeMode { get; set; } = "offline";
-    public string LanguageModelPath { get; set; } = "assets/models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
-    public int LanguageModelContextSize { get; set; } = 2048;
-    public int LanguageModelThreads { get; set; } = 2;
-    public int LanguageModelGpuLayers { get; set; }
 }
 
 public sealed class GameProjectVoiceSettings

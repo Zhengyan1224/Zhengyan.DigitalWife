@@ -20,6 +20,7 @@
         <div class="canvas-frame @(RuntimeHost.Snapshot.RendererReady ? "renderer-ready" : "")">
             <canvas @ref="_canvas" id="game-canvas" aria-label="游戏画布"></canvas>
             <canvas @ref="_overlayCanvas" id="game-overlay" aria-hidden="true"></canvas>
+            <WebLoadingScreen Snapshot="RuntimeHost.Snapshot" />
             <div class="canvas-placeholder">
                 <strong>正在初始化 WebGL2</strong>
                 <span>如果浏览器不支持 WebGL2，错误会显示在右侧面板。</span>
@@ -37,7 +38,6 @@
                 <InputFile accept=".dwgame,application/octet-stream" OnChange="OnPackageSelected" />
             </label>
             <label class="package-picker">加密游戏包密码<input type="password" @bind="_packagePassword" autocomplete="off" /></label>
-            <label class="package-picker">本地语言模型（GGUF，可分片）<input type="file" accept=".gguf" multiple @ref="_modelInput" @onchange="OnLanguageModelSelected" /></label>
             <button disabled="@_cachingOffline" @onclick="CacheOffline">@(_cachingOffline?"正在保存离线资源…":"保存离线游戏")</button>
             @if(!string.IsNullOrEmpty(_offlineMessage)){<small>@_offlineMessage</small>}
             @if (!string.IsNullOrWhiteSpace(_packageError))
@@ -101,7 +101,6 @@
 @code {
     private ElementReference _canvas;
     private ElementReference _overlayCanvas;
-    private ElementReference _modelInput;
     private bool _cachingOffline;
     private string _offlineMessage="";
     private string _packageError = string.Empty;
@@ -139,12 +138,6 @@
         {
             _packageError = exception.GetBaseException().Message;
         }
-    }
-    private async Task OnLanguageModelSelected()
-    {
-        _packageError=string.Empty;
-        try{await RuntimeHost.SetLanguageModelFilesAsync(_modelInput);}
-        catch(Exception exception){_packageError=exception.GetBaseException().Message;}
     }
     private async Task CacheOffline()
     {

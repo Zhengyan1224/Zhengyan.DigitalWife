@@ -66,6 +66,8 @@ await VerifyRenderSurfacesAsync();
 VerifyDanceScript();
 VerifyGpuPlayback();
 await VerifyBulletBridgeAsync();
+await VerifyMissingScriptsAsync();
+await VerifyLoadingLifecycleAsync();
 await VerifyFrameInputAndStartupAsync();
 await VerifyFrameInputAndStartupAsync(includeModels: true);
 Console.WriteLine("Web runtime C# regression tests passed.");
@@ -357,6 +359,90 @@ static async Task VerifyBulletBridgeAsync()
     Console.WriteLine("PASS Bullet bridge first-frame, pause, stop, substeps, world lifetime and real PMX fixture");
 }
 
+static async Task VerifyMissingScriptsAsync()
+{
+    Dictionary<string, byte[]> assets = new()
+    {
+        ["game.project.json"] = Encoding.UTF8.GetBytes("{\"defaultScene\":\"scenes/main.scene.json\"}"),
+        ["scenes/main.scene.json"] = Encoding.UTF8.GetBytes("""
+            {"name":"Missing scripts","loadingScripts":[{"path":"scripts/loading.csx"}],
+             "entities":[{"id":"actor","name":"Body","scripts":[
+                {"path":"project:scripts\\Body.csx"},
+                {"path":"scripts/disabled.csx","enabled":false}]}]}
+            """),
+        ["compiled/web/scripts/Body.dll"] = []
+    };
+    WebAssetManifest manifest = new()
+    {
+        Assets = assets.Select(item => new WebAssetEntry { Path = item.Key, Size = item.Value.Length }).ToList(),
+        // A binding from another scene must not hide a missing current binding.
+        Scripts = [new() { Id = "future", Scene = "scenes/next.scene.json", Entity = "actor", Assembly = "compiled/web/scripts/Body.dll" }]
+    };
+    WebMemoryAssetStore store = new(manifest);
+    foreach (var item in assets) store.Add(item.Key, item.Value);
+    FakeBrowser browser = new();
+    await using WebRuntimeHost host = new(browser, new WebProjectLoader(store), new WebAudioService(browser), new WebSpeechService(browser));
+    await host.StartAsync(default, default);
+    Check(host.Snapshot.IsRunning, "Missing scripts prevented the scene and diagnostics from being displayed.");
+    Check(host.Snapshot.ScriptDiagnosticCount == 2, "Missing loading/entity scripts were ignored or a disabled script was reported.");
+    Check(host.Snapshot.LastError?.Contains("scripts/Body.csx") == true
+        && host.Snapshot.LastError.Contains("web.manifest.json"), "The missing script did not reach the runtime error panel.");
+    Console.WriteLine("PASS missing exported scripts are reported in the runtime error panel");
+}
+
+static async Task VerifyLoadingLifecycleAsync()
+{
+    Dictionary<string, byte[]> assets = new()
+    {
+        ["game.project.json"] = Encoding.UTF8.GetBytes("""
+            {"name":"Loading fixture","defaultScene":"scenes/main.scene.json","scenes":["scenes/main.scene.json","scenes/next.scene.json"]}
+            """),
+        ["scenes/main.scene.json"] = Encoding.UTF8.GetBytes("""
+            {"name":"Main","loadingScreen":{"backgroundColor":{"x":0.1,"y":0.2,"z":0.3,"w":1}}}
+            """),
+        ["scenes/next.scene.json"] = Encoding.UTF8.GetBytes("""
+            {"name":"Next","loadingScreen":{"backgroundColor":{"x":0.4,"y":0.5,"z":0.6,"w":1}}}
+            """)
+    };
+    WebAssetManifest manifest = new() { Assets = assets.Select(a => new WebAssetEntry { Path = a.Key, Size = a.Value.Length }).ToList() };
+    WebMemoryAssetStore store = new(manifest);
+    foreach (var asset in assets) store.Add(asset.Key, asset.Value);
+    FakeBrowser browser = new() { ModelLoadingGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+    await using WebRuntimeHost host = new(browser, new WebProjectLoader(store), new WebAudioService(browser), new WebSpeechService(browser));
+    Task start = host.StartAsync(default, default).AsTask();
+    for (int i = 0; i < 100 && browser.ModelLoadingCalls == 0; i++) await Task.Delay(10);
+    Check(host.Snapshot.IsLoading && !host.Snapshot.IsRunning && !start.IsCompleted, "The game started before model initialization completed.");
+    await host.OnModelLoadingProgress("tts", "正在初始化语音合成模型");
+    Check(host.Snapshot.LoadingMessage.Contains("语音合成") && host.Snapshot.LoadingScreen.BackgroundColor.X == 0.1f,
+        "Loading progress or the scene's loading screen settings were lost.");
+    browser.ModelLoadingGate.SetResult();
+    await start;
+    Check(!host.Snapshot.IsLoading && host.Snapshot.IsRunning && host.Snapshot.LoadingProgress == 1, "The completed loading screen did not reveal the game.");
+
+    var loaded = (WebLoadedProject)typeof(WebRuntimeHost).GetField("_loadedProject", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(host)!;
+    browser.ModelLoadingGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    loaded.RuntimeScene.LoadScene("scenes/next.scene.json");
+    Task transition = host.OnAnimationFrame(1000);
+    for (int i = 0; i < 100 && browser.ModelLoadingCalls < 2; i++) await Task.Delay(10);
+    Check(host.Snapshot.IsLoading && !transition.IsCompleted && host.Snapshot.LoadingScreen.BackgroundColor.X == 0.4f,
+        "Scene transitions did not show the target loading screen while initializing models.");
+    browser.ModelLoadingGate.SetResult();
+    await transition;
+    Check(!host.Snapshot.IsLoading && host.Snapshot.IsRunning && host.Snapshot.SceneName == "Next", "The transition did not finish on the next scene.");
+    loaded = (WebLoadedProject)typeof(WebRuntimeHost).GetField("_loadedProject", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(host)!;
+    browser.ModelLoadingGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    loaded.RuntimeScene.LoadScene("scenes/main.scene.json");
+    long frameCount = host.Snapshot.FrameCount;
+    transition = host.OnAnimationFrame(2000);
+    for (int i = 0; i < 100 && browser.ModelLoadingCalls < 3; i++) await Task.Delay(10);
+    browser.ModelLoadingGate.SetException(new InvalidOperationException("Model initialization failed"));
+    await transition;
+    Check(!host.Snapshot.IsRunning && !host.Snapshot.IsLoading && host.Snapshot.LastError?.Contains("Model initialization failed") == true,
+        "A failed model initialization revealed a running game or hid the failure.");
+    Check(host.Snapshot.FrameCount == frameCount, "A frame continued after scene loading failed.");
+    Console.WriteLine("PASS loading screens hold startup and transitions until model initialization completes");
+}
+
 static async Task VerifyFrameInputAndStartupAsync(bool includeModels = false)
 {
     Dictionary<string, byte[]> assets = new()
@@ -444,6 +530,8 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     public WebPmxMeshInstance[]? UploadedMeshes { get; private set; }
     public int MeshUpdateArgumentCount { get; private set; }
     public WebPmxMeshUpdateInstance[]? UpdatedMeshes { get; private set; }
+    public TaskCompletionSource? ModelLoadingGate { get; set; }
+    public int ModelLoadingCalls { get; private set; }
 
     public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
         => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
@@ -451,6 +539,7 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (identifier == "preloadModels") { ModelLoadingCalls++; if (ModelLoadingGate is not null) await ModelLoadingGate.Task; }
         if (identifier == "start")
         {
             _host = ((DotNetObjectReference<WebRuntimeHost>)args![2]!).Value;

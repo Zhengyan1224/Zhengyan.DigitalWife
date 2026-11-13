@@ -4,7 +4,7 @@
 
 ## 浏览器离线续作
 
-已接入本地 Wllama/GGUF、Sherpa ONNX TTS/ASR、Pyodide Python 与版本化离线缓存，默认模式为 offline。原有浏览器语音与远程 Realtime 适配保留在 connected 模式。当前支持的模型、缓存方式及浏览器沙箱边界见 [离线运行说明](web-offline-runtime.md)；下方语音适配说明记录此前的 connected 模式，不再代表当前默认链路。
+已接入本地 Sherpa ONNX TTS/ASR、在线 LLM API、Pyodide Python 与版本化离线缓存。语音模型在加载界面中初始化，LLM 只使用项目配置的在线 API。原有浏览器语音与远程 Realtime 适配保留在 connected 模式。当前支持的模型、缓存方式及浏览器沙箱边界见 [运行说明](web-offline-runtime.md)。
 
 ## 2026-11-11 场景与渲染补齐
 

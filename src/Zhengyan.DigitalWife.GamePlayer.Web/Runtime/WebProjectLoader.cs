@@ -39,6 +39,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
     public Action<string, RuntimeSpeechRequest>? SpeechRequestHandler { get; set; }
     public Func<PmxParsing, Vector3, Task<IPmxPhysicsBridge?>>? PhysicsFactory { get; set; }
     public Func<RuntimeScene, GameProject, Task>? InitializeServices { get; set; }
+    public Func<GameProject, GameProjectScene, Task>? ConfigureLoadingScreen { get; set; }
     public Func<WebScriptEntry,string,IWebGameScript>? PythonFactory { get; set; }
     private Zhengyan.DigitalWife.Scripting.RuntimeGraphicsQuality? _graphics;
 
@@ -60,6 +61,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
         scenePath = WebHttpAssetStore.NormalizeRelativePath(scenePath);
         progress?.Report(new("scene", 0.2f, scenePath, "Reading scene"));
         GameProjectScene sceneDefinition = await _assets.ReadJsonAsync<GameProjectScene>(scenePath, cancellationToken);
+        if (ConfigureLoadingScreen is not null) await ConfigureLoadingScreen(project, sceneDefinition);
         project.Scene = sceneDefinition;
 
         Dictionary<string, VmdParsing> animations = [];
@@ -243,7 +245,7 @@ public sealed class WebProjectLoader(IWebAssetStore assets)
         if (InitializeServices is not null) await InitializeServices(runtimeScene, project);
         await scripts.LoadAsync(_assets, manifest, runtimeScene, cancellationToken);
         await scripts.StartAsync();
-        progress?.Report(new("ready", 1.0f, scenePath, "Web scene ready"));
+        progress?.Report(new("renderer", 0.90f, scenePath, "正在准备场景画面"));
         return new WebLoadedProject(project, sceneDefinition, runtimeScene, manifest, pmxAssets, sceneMeshes, audioAssets, spriteUris, scripts) { TextureUris = textures, Animations = animations };
     }
 

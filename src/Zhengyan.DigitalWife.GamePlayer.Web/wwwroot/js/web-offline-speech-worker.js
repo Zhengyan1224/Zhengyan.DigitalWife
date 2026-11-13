@@ -3,11 +3,13 @@ const pendingAssets=new Map();let nextAsset=0;
 function asset(path){return new Promise((resolve,reject)=>{const id=++nextAsset;pendingAssets.set(id,{resolve,reject});postMessage({type:'asset',id,path});});}
 async function putFile(path,name){
     if(!path)return;
+    postMessage({type:'progress',message:'正在加载'+(kind==='tts'?'语音合成':'语音识别')+'模型：'+name});
     const bytes=await asset(path);try{Module.FS_unlink('/'+name);}catch{}
     Module.FS_createDataFile('/',name,bytes,true,false,true);
 }
 async function initialize(message){
     kind=message.kind;
+    postMessage({type:'progress',message:'正在初始化'+(kind==='tts'?'语音合成':'语音识别')+'运行时'});
     const base=new URL('../vendor/sherpa/'+kind+'/',self.location.href);
     await new Promise((resolve,reject)=>{
         self.Module={noInitialRun:true,locateFile:path=>new URL(path,base).href,getPreloadedPackage:()=>new ArrayBuffer(0),

@@ -1,9 +1,14 @@
+extern alias AndroidRuntime;
+extern alias AndroidProjects;
+
 using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using Zhengyan.DigitalWife.GameEditor;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
+using CoreRuntime = AndroidRuntime::Zhengyan.DigitalWife.GamePlayer.Runtime;
+using CoreStore = AndroidProjects::Zhengyan.DigitalWife.GameProjects.GameProjectStore;
 
 if (args is ["--compile-web-script", string scriptPath, string assemblyPath])
 {
@@ -64,7 +69,7 @@ if (args is ["--refresh-web-export", string directory])
     ("Save and export all scenes after opening a project", TestMultiSceneExport),
     ("Web static directory export writes a browser manifest", TestWebStaticExport),
     ("Failed Web precompile removes a stale assembly", TestWebPrecompileRemovesStaleAssembly),
-    ("Web ABI precompiles GUI audio motion and speech globals", TestWebAbiPrecompile)
+    ("Web ABI executes GUI speech dance and scene completion callbacks", TestWebAbiPrecompile)
 ];
 int failures = 0;
 foreach (var test in tests)
@@ -254,6 +259,27 @@ static void TestWebPrecompileRemovesStaleAssembly()
         File.WriteAllText(sourcePath, "UnknownWebSymbol = 1;");
         WebScriptPrecompileResult second = WebCSharpScriptPrecompiler.Precompile(root, project);
         Check(second.Errors.Count > 0 && !File.Exists(assemblyPath), "A failed Web compile left a stale assembly behind.");
+
+        using GameEditorGame editor = new(GraphicsBackend.OpenGL, root);
+        typeof(GameEditorGame).GetProperty(nameof(GameEditorGame.Project))!.SetValue(editor, GameProjectStore.Load(root));
+        string output = Path.Combine(root, "web-output");
+        try
+        {
+            editor.ExportWebStaticDirectory(output);
+            throw new Exception("Web export silently omitted a failed script.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Check(exception.Message.Contains("UnknownWebSymbol"), "Web export did not report the compilation error.");
+            Check(!Directory.Exists(output), "A failed Web export wrote a partially functional game.");
+        }
+
+        File.WriteAllText(sourcePath, "return null;");
+        Check(WebCSharpScriptPrecompiler.Precompile(root, project).Errors.Count == 0, "The repaired source did not compile.");
+        File.Delete(sourcePath);
+        WebScriptPrecompileResult missing = WebCSharpScriptPrecompiler.Precompile(root, project);
+        Check(missing.Errors.Count == 1 && missing.Errors[0].Contains(sourcePath), "A missing enabled source was silently omitted.");
+        Check(!File.Exists(assemblyPath), "A missing source left a stale Web assembly behind.");
     }
     finally
     {
@@ -278,6 +304,7 @@ static void TestWebAbiPrecompile()
         GameProjectStore.SaveScene(root, "scenes/main.scene.json", new GameProjectScene
         {
             Name = "Main",
+            GuiControls = [new() { Name = "fps" }, new() { Name = "speakcontent", Text = "你好" }],
             Entities =
             [
                 new GameEntity
@@ -291,10 +318,19 @@ static void TestWebAbiPrecompile()
         string sourcePath = Path.Combine(root, "scripts", "body.csx");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         File.WriteAllText(sourcePath, """
+            Scene.GetGuiControl("fps")?.SetValue($"FPS: {Scene.Fps:F1}");
+            var ray = Scene.Camera.ScreenPointToRay(Input.MouseX, Input.MouseY);
+            Input.CursorVisible = !Scene.Camera.RaycastEntity(ray, out RuntimeRaycastHit hit);
             if (IsGuiEvent && GuiEventName == "clicked")
             {
-                Audio.Play("click");
-                Entity.ApplyMotion("assets/motions/click.vmd");
+                Entity.SetMorphWeight("smile", Entity.GetMorphWeight("smile"));
+                if (GuiControlName == "speak") Entity.Speak(Scene.GetGuiControl("speakcontent").Value);
+                if (GuiControlName == "dance") Entity.Speak("准备播放舞蹈", () =>
+                {
+                    Audio.Play("Lamb");
+                    Entity.ApplyMotion("assets/motions/Lamb.vmd");
+                });
+                if (GuiControlName == "switch") Entity.Speak("准备进入下一个场景", () => Scene.LoadScene("scenes/next.scene.json"));
             }
             if (IsSpeechEvent && SpeechCallbackName == "after_speak")
             {
@@ -306,6 +342,38 @@ static void TestWebAbiPrecompile()
         Check(result.Errors.Count == 0, $"Web ABI globals failed to compile: {string.Join(Environment.NewLine, result.Errors)}");
         Check(result.Entries.Count == 1, "Web ABI regression did not emit the script assembly.");
         Check(File.Exists(Path.Combine(root, "compiled", "web", "scripts", "body.dll")), "Web ABI regression assembly is missing.");
+
+        List<CoreRuntime.RuntimeSpeechRequest> speech = [];
+        List<CoreRuntime.RuntimeMotionCommand> motions = [];
+        using CoreRuntime.RuntimeScene scene = new("scenes/main.scene.json", CoreStore.LoadScene(root, "scenes/main.scene.json"),
+            path => path, speechRequest: (_, request) => speech.Add(request), motionCommand: (_, command) => motions.Add(command));
+        CoreRuntime.WebScriptContext context = new(scene, scene.GetEntity("avatar"));
+        var assembly = Assembly.Load(File.ReadAllBytes(Path.Combine(root, "compiled", "web", "scripts", "body.dll")));
+        var script = (CoreRuntime.IWebGameScript)assembly.CreateInstance("Zhengyan.GeneratedWebScripts.Script")!;
+        scene.ReportFrameInterval(0.02);
+        script.UpdateAsync(context, 0.02f).GetAwaiter().GetResult();
+        Check(scene.GetGuiControl("fps")!.Value == "FPS: 50.0", "The exported script did not execute its frame globals.");
+
+        foreach (string control in new[] { "speak", "dance", "switch" })
+        {
+            script.OnEventAsync(context, new("gui", ControlName: control, EventName: "clicked")).GetAwaiter().GetResult();
+            Check(speech.Count == 1, $"The compiled {control} button did not request speech.");
+            Check(context.DrainAudioCommands().Count == 0 && motions.Count == 0 && scene.PendingScenePath is null,
+                "Dance or scene switching ran before speech completed.");
+            CoreRuntime.RuntimeSpeechRequest request = speech[0];
+            speech.Clear();
+            Check(request.Text == (control switch { "speak" => "你好", "dance" => "准备播放舞蹈", _ => "准备进入下一个场景" }),
+                $"The compiled {control} button requested the wrong speech.");
+            request.Completion?.Invoke();
+            if (control == "dance")
+            {
+                var command = context.DrainAudioCommands().Single();
+                Check(command.Operation == "play" && command.NameOrPath == "Lamb", "The speech callback did not start the dance audio.");
+                Check(motions.Single().Path == "assets/motions/Lamb.vmd", "The speech callback did not apply the dance motion.");
+                motions.Clear();
+            }
+            if (control == "switch") Check(scene.ConsumeSceneRequest() == "scenes/next.scene.json", "The speech callback did not request the next scene.");
+        }
     }
     finally
     {

@@ -3,6 +3,7 @@ obj/
 models/
 artifacts/
 temp/
+__pycache__/
 .obj-trash/
 .codex-dotnet-home/
 appsettings.Local.json

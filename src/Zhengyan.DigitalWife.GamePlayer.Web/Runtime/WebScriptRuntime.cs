@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using Zhengyan.DigitalWife.GamePlayer.Runtime;
+using Zhengyan.DigitalWife.GameProjects;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Web.Runtime;
 
@@ -41,6 +42,8 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
             _diagnostics.Add(new WebScriptLoadDiagnostic("manifest", "Web manifest signature is invalid.", true));
             return;
         }
+
+        ReportMissingBindings(manifest, scene);
 
         IReadOnlyList<WebScriptEntry> orderedEntries;
         try
@@ -224,6 +227,34 @@ public sealed class WebScriptRuntime : IDisposable, IAsyncDisposable
             visiting.Remove(entry.Id);
             visited.Add(entry.Id);
             ordered.Add(entry);
+        }
+    }
+
+    private void ReportMissingBindings(WebAssetManifest manifest, RuntimeScene scene)
+    {
+        IEnumerable<(ScriptBinding Binding, string Entity)> bindings =
+            scene.Definition.LoadingScripts.Select(binding => (binding, string.Empty))
+                .Concat(scene.Entities.SelectMany(entity => entity.Definition.Scripts.Select(binding => (binding, entity.Id))));
+        foreach (var (binding, entity) in bindings.Where(item => item.Binding.Enabled))
+        {
+            string source = binding.Path.Replace('\\', '/');
+            if (source.StartsWith("project:", StringComparison.OrdinalIgnoreCase)) source = source[8..];
+            bool python = binding.Language.Equals("python", StringComparison.OrdinalIgnoreCase);
+            bool csharp = new[] { "csharp", "cs", "csx" }.Contains(binding.Language, StringComparer.OrdinalIgnoreCase)
+                || source.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                || source.EndsWith(".csx", StringComparison.OrdinalIgnoreCase);
+            if (!python && !csharp) continue;
+            string assembly = python ? source : $"compiled/web/{Path.ChangeExtension(source, ".dll")}";
+            if (manifest.Scripts.Any(entry =>
+                (string.IsNullOrWhiteSpace(entry.Scene) || string.Equals(entry.Scene, scene.ScenePath, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(entry.Entity, entity, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(entry.Assembly.Replace('\\', '/'), assembly, StringComparison.OrdinalIgnoreCase))) continue;
+
+            _diagnostics.Add(new(
+                $"{scene.ScenePath}:{entity}:{source}",
+                $"Enabled script '{source}' is missing from web.manifest.json (expected '{assembly}'). "
+                    + "Recompile the game scripts and export the Web game again; see compiled/web/manifest.json for compilation errors.",
+                IsError: true));
         }
     }
 

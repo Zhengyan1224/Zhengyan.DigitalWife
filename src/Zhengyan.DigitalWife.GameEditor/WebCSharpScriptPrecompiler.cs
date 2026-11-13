@@ -90,7 +90,8 @@ internal static class WebCSharpScriptPrecompiler
         foreach (ScriptBinding binding in bindings.Where(binding => binding.Enabled && IsCSharp(binding.Language, binding.Path)))
         {
             string path = GameProjectPath.ToAbsolute(root, binding.Path);
-            if (File.Exists(path)) paths.Add(Path.GetFullPath(path));
+            // Missing sources must also fail compilation and remove stale DLLs.
+            paths.Add(Path.GetFullPath(path));
         }
     }
 

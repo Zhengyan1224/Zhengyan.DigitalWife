@@ -52,5 +52,3 @@ export function getJson(key) {
 export function removeJson(key) {
     return transaction(`json:${key}`, "readwrite", (store, name) => store.delete(name));
 }
-export function putBlobFiles(key,files){return transaction(`blobs:${key}`,"readwrite",(store,name)=>store.put(Array.from(files),name));}
-export function getBlobFiles(key){return transaction(`blobs:${key}`,"readonly",(store,name)=>store.get(name));}

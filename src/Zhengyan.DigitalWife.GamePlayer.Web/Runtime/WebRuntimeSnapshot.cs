@@ -28,6 +28,11 @@ public sealed record WebRuntimeSnapshot(
     int ScriptDiagnosticCount = 0,
     string PhysicsBackend = "disabled")
 {
+    public bool IsLoading { get; init; }
+    public Zhengyan.DigitalWife.GameProjects.LoadingScreenSettings LoadingScreen { get; init; } = new();
+    public string? LoadingBackgroundUri { get; init; }
+    public int ReferenceWidth { get; init; } = 1280;
+    public int ReferenceHeight { get; init; } = 720;
     public static WebRuntimeSnapshot Initial { get; } = new(
         IsRunning: false,
         FrameCount: 0,
