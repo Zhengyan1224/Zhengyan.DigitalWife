@@ -300,6 +300,8 @@ public sealed class WebPmxAsset : IDisposable
         {
             pose.SetMotionLayerPlaying(layer, entity.IsPlaying);
             pose.SetMotionLayerLoop(layer, entity.LoopMotion);
+            pose.SetMotionLayerResetPhysicsOnLoop(layer, layer < entity.MotionLayers.Count
+                ? entity.MotionLayers[layer].ResetPhysicsOnLoop : entity.ResetPhysicsOnMotionLoop);
             // Update already supplies the entity speed; a layer multiplier
             // of the same value would apply it twice.
             pose.SetMotionLayerPlaybackSpeed(layer, 1.0f);

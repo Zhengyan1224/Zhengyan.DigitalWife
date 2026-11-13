@@ -2,6 +2,9 @@
   <!-- Precompiled scripts are loaded after publication. Preserve the portable
        BCL contracts that their calls cannot expose to the static linker. -->
   <assembly fullname="System.Private.CoreLib">
+    <!-- C# params spans/collection expressions in dynamically loaded scripts
+         use these compiler helpers, including scene3's 12-item string.Join. -->
+    <type fullname="System.Runtime.CompilerServices.InlineArray*" preserve="all" />
     <type fullname="System.DateTime" preserve="all" />
     <type fullname="System.DateTimeOffset" preserve="all" />
     <type fullname="System.TimeSpan" preserve="all" />

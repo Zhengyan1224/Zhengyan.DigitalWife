@@ -68,6 +68,7 @@ VerifyGpuPlayback();
 await VerifyBulletBridgeAsync();
 await VerifyMissingScriptsAsync();
 await VerifyLoadingLifecycleAsync();
+await VerifyWindowAndSkyAsync();
 await VerifyFrameInputAndStartupAsync();
 await VerifyFrameInputAndStartupAsync(includeModels: true);
 Console.WriteLine("Web runtime C# regression tests passed.");
@@ -356,7 +357,60 @@ static async Task VerifyBulletBridgeAsync()
         File.WriteAllBytes(Path.Combine(root,"temp/web-debug/pmx-bullet-targets.bin"),MemoryMarshal.AsBytes(module.Frames.Take(359).SelectMany(frame=>frame).ToArray().AsSpan()).ToArray());
     }
     Check(module.Destroyed==1,"Shared cached motion poses disposed the Bullet world more than once.");
+
+    // Short loops with the same real model exercise resets at the Bullet boundary.
+    foreach (bool resetSecondary in new[] { false, true })
+    {
+        RecordingBulletModule loops = new();
+        var bridge = await WebPmxBulletPhysics.CreateAsync(loops, pmx, new(0,-98,0));
+        GameEntity definition = new() { IsPlaying = true, EnablePhysics = true, ResetPhysicsOnMotionLoop = true,
+            MotionLayers = [new() { Path = "first", Weight = 1, ResetPhysicsOnLoop = false },
+                new() { Path = "second", Weight = 0, ResetPhysicsOnLoop = resetSecondary }] };
+        using var asset = WebPmxAsset.Create(definition, pmx, [(motion,1),(motion,0)],
+            animationLoader: _ => motion, preferGpuSkinning:true, physicsBridge:bridge);
+        asset.SetMotionLayers();
+        float[] durations = (float[])typeof(PmxPoseEvaluator).GetField("_layerDurations", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(asset.Pose)!;
+        durations[0] = resetSecondary ? 120 : 4; durations[1] = 3;
+        for(int frame=0;frame<30;frame++) asset.Update(frame/60.0,1f/60);
+        Check(resetSecondary ? loops.Resets>1 : loops.Resets==1, "Per-layer loop flags were lost, or secondary loops did not reset physics.");
+        definition.MotionLayers[1].ResetPhysicsOnLoop = false;
+        int before = loops.Resets;
+        for(int frame=30;frame<60;frame++){definition.MotionLayers[0].Weight=0;definition.MotionLayers[1].Weight=1;asset.Update(frame/60.0,1f/60);}
+        Check(loops.Resets==before,"Changing motion weights or disabling loop resets still reset Bullet.");
+    }
     Console.WriteLine("PASS Bullet bridge first-frame, pause, stop, substeps, world lifetime and real PMX fixture");
+}
+
+static async Task VerifyWindowAndSkyAsync()
+{
+    Dictionary<string, byte[]> assets = new()
+    {
+        ["game.project.json"] = Encoding.UTF8.GetBytes("""
+            {"defaultScene":"scenes/main.scene.json","window":{"width":900,"height":600}}
+            """),
+        ["scenes/main.scene.json"] = Encoding.UTF8.GetBytes("""
+            {"skybox":{"enabled":true,"texturePath":"app:Resources/Skybox/dark_starry_moon.jpg"}}
+            """)
+    };
+    WebMemoryAssetStore store = new(new() { Assets = assets.Select(a=>new WebAssetEntry {Path=a.Key,Size=a.Value.Length}).ToList() });
+    foreach(var a in assets)store.Add(a.Key,a.Value);
+    FakeBrowser browser = new();
+    await using WebRuntimeHost host = new(browser, new WebProjectLoader(store),new WebAudioService(browser),new WebSpeechService(browser));
+    await host.StartAsync(default,default);
+    Check(browser.LastFrame?.Sky?.TextureUri == "./engine/Skybox/dark_starry_moon.jpg", "Night sky was replaced with the daytime fallback.");
+    var loaded = (WebLoadedProject)typeof(WebRuntimeHost).GetField("_loadedProject",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(host)!;
+    loaded.RuntimeScene.Window.SetSize(640,480);
+    loaded.RuntimeScene.Window.SetFullscreen(true);
+    await host.OnAnimationFrame(1000);
+    Check(browser.WindowCalls.Any(c=>c.Name=="setGameSize"&&(int)c.Args[0]! == 640&&(int)c.Args[1]! == 480),"Script size did not reach the browser.");
+    Check(browser.WindowCalls.Any(c=>c.Name=="setGameFullscreen"&&(bool)c.Args[0]!),"Script fullscreen did not reach the browser.");
+    await host.OnWindowStateChanged(1920,1080,true);
+    Check(loaded.RuntimeScene.Window.Fullscreen&&loaded.RuntimeScene.Window.ActualWidth==1920,"Browser fullscreen state was not reported back.");
+    loaded.Project.Window.DesktopSpriteMode=true;
+    await host.OnAnimationFrame(1100);
+    Check(browser.LastFrame!.ClearColor.SequenceEqual(new float[]{0,0,0,0})&&browser.LastFrame.Sky is null&&!browser.LastFrame.Features.Skybox,
+        "Desktop sprite mode did not preserve a transparent scene background.");
+    Console.WriteLine("PASS night sky, script size/fullscreen requests and transparent pet rendering");
 }
 
 static async Task VerifyMissingScriptsAsync()
@@ -523,6 +577,7 @@ static void Check(bool condition, string message)
 
 sealed class FakeBrowser : IJSRuntime, IJSObjectReference
 {
+    public List<(string Name, object?[] Args)> WindowCalls { get; } = [];
     private WebRuntimeHost? _host;
     public bool StartupFrameAttempted { get; private set; }
     public WebRenderFrame? LastFrame { get; private set; }
@@ -539,6 +594,7 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if(identifier is "setGameSize" or "setGameFullscreen") WindowCalls.Add((identifier,args!));
         if (identifier == "preloadModels") { ModelLoadingCalls++; if (ModelLoadingGate is not null) await ModelLoadingGate.Task; }
         if (identifier == "start")
         {

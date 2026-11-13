@@ -126,7 +126,7 @@ precision highp float;in vec4 color;out vec4 result;void main(){result=color;}`,
             gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,28,0);
             gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.FLOAT,false,28,12);
             gl.uniformMatrix4fv(location(line,"viewProjection"),false,viewProjection);
-            gl.enable(gl.DEPTH_TEST);gl.depthMask(false);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.DEPTH_TEST);gl.depthMask(false);gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
             gl.drawArrays(gl.LINES,0,lines.length*2);gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);
         },
         sky(state,inverse) {
@@ -139,7 +139,7 @@ precision highp float;in vec4 color;out vec4 result;void main(){result=color;}`,
             gl.drawArrays(gl.TRIANGLES,0,3);gl.depthMask(true);gl.enable(gl.DEPTH_TEST);
         },
         sprites(sprites,width,height,offsetX=0,offsetY=0,foreground=false) {
-            gl.disable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.depthMask(false);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+            gl.disable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.depthMask(false);gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
             gl.useProgram(sprite);gl.bindVertexArray(vao);gl.uniform2f(location(sprite,"viewport"),width,height);
             for(const s of sprites.filter(s=>s.visible!==false && (foreground?(s.drawOrder??0)>=0:s.drawOrder<0)).sort((a,b)=>(a.drawOrder??0)-(b.drawOrder??0))) {
                 const texture=textureCache.get(s.uri);if(!texture)continue;
@@ -168,7 +168,7 @@ precision highp float;in vec4 color;out vec4 result;void main(){result=color;}`,
                 const texture=textureCache.get(batch.textureUri);bind(particle,"image",0,texture||textureCache.get("default"));
                 gl.uniform1i(location(particle,"hasTexture"),texture?1:0);gl.uniform1i(location(particle,"textureColor"),batch.useTextureColor?1:0);
                 gl.uniform1i(location(particle,"preset"),batch.texturePreset?.toLowerCase()==="streak"?1:0);
-                gl.blendFunc(gl.SRC_ALPHA,batch.blendMode?.toLowerCase()==="additive"?gl.ONE:gl.ONE_MINUS_SRC_ALPHA);
+                gl.blendFuncSeparate(gl.SRC_ALPHA,batch.blendMode?.toLowerCase()==="additive"?gl.ONE:gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
                 gl.drawArraysInstanced(gl.TRIANGLES,0,6,batch.vertices.length);
             }
             gl.depthMask(true);gl.disable(gl.BLEND);gl.bindVertexArray(null);

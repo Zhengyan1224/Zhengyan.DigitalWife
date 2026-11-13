@@ -41,6 +41,17 @@ if (args is ["--refresh-web-export", string directory])
     return 0;
 }
 
+if (args is ["--publish-web-project", string sourceDirectory, string targetDirectory])
+{
+    WebGamePackageExporter.Publish(sourceDirectory, targetDirectory);
+    var result = WebCSharpScriptPrecompiler.Precompile(targetDirectory, GameProjectStore.Load(targetDirectory));
+    foreach (string error in result.Errors) Console.Error.WriteLine(error);
+    if (result.Errors.Count > 0) return 1;
+    WebGamePackageExporter.RefreshManifest(targetDirectory);
+    Console.WriteLine("Published current scene data and recompiled Web scripts without modifying the source project.");
+    return 0;
+}
+
 (string Name, Action Run)[] tests =
 [
     ("Desktop sprite OpenGL preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.OpenGl),
@@ -204,7 +215,8 @@ static void TestWebStaticExport()
             EditorScene = "scenes/main.scene.json"
         };
         GameProjectStore.Save(projectDirectory, project);
-        GameProjectStore.SaveScene(projectDirectory, "scenes/main.scene.json", new GameProjectScene { Name = "Main" });
+        GameProjectStore.SaveScene(projectDirectory, "scenes/main.scene.json", new GameProjectScene
+        { Name = "Main", Skybox = new() { Enabled = true, TexturePath = "app:Resources/Skybox/dark_starry_moon.jpg" } });
         string outputDirectory = Path.Combine(root, "WebProject-output");
 
         using GameEditorGame editor = new(GraphicsBackend.OpenGL, projectDirectory);
@@ -215,6 +227,8 @@ static void TestWebStaticExport()
 
         Check(result.OutputDirectory == Path.GetFullPath(outputDirectory), "Web export returned an unexpected output directory.");
         Check(File.Exists(result.ManifestPath), "Web export did not write web.manifest.json.");
+        Check(GameProjectStore.LoadScene(outputDirectory, "scenes/main.scene.json").Skybox.TexturePath == "app:Resources/Skybox/dark_starry_moon.jpg",
+            "Web export lost the selected night skybox.");
         Check(File.Exists(Path.Combine(outputDirectory, "game.project.json")), "Web export did not write game.project.json.");
         Check(GameProjectStore.Load(outputDirectory).Shadows is { DirectionalResolution: 4096, LocalLightResolution: 512, FilterSamples: 25, FilterRadius: 3 },
             "Web export lost project global shadow settings.");

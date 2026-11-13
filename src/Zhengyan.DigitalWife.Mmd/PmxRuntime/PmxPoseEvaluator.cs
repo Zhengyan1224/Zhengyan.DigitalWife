@@ -48,6 +48,7 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
     private readonly bool _physicsEnabled;
     private readonly Vector3 _gravity;
     private readonly bool _resetPhysicsOnLoop;
+    private bool[]? _layerResetPhysicsOnLoop;
     private float _previousFrame = -1.0f;
     private double _previousTimeSeconds = -1.0;
 
@@ -226,6 +227,14 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
 
     public void SetMotionLayerWeight(int layerIndex, float weight) => _layerWeights[ValidateLayerIndex(layerIndex)] = Math.Clamp(weight, 0.0f, 1.0f);
 
+    // Opt-in layer policy for hosts that expose per-motion loop settings.
+    // Hosts that do not set it retain the existing primary-layer policy.
+    public void SetMotionLayerResetPhysicsOnLoop(int layerIndex, bool reset)
+    {
+        _layerResetPhysicsOnLoop ??= Enumerable.Repeat(_resetPhysicsOnLoop, MotionLayerCount).ToArray();
+        _layerResetPhysicsOnLoop[ValidateLayerIndex(layerIndex)] = reset;
+    }
+
     public void ResetPhysics()
     {
         _previousFrame = -1.0f;
@@ -259,10 +268,10 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             return;
         }
 
-        bool looped = AdvanceMotionLayers(timeSeconds, playbackSpeed, loop);
+        bool looped = AdvanceMotionLayers(timeSeconds, playbackSpeed, loop, out bool layerReset);
         float frame = _layerFrames.Length == 0 ? 0.0f : _layerFrames[0];
 
-        bool resetPhysics = _previousFrame < 0.0f || (_resetPhysicsOnLoop && looped);
+        bool resetPhysics = _previousFrame < 0.0f || (_layerResetPhysicsOnLoop is null ? _resetPhysicsOnLoop && looped : layerReset);
         float deltaSeconds = _previousFrame < 0.0f || looped
             ? 1.0f / 30.0f
             : Math.Clamp(physicsElapsedSeconds, 0.0f, 1.0f / 15.0f);
@@ -1015,8 +1024,9 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
         }
     }
 
-    private bool AdvanceMotionLayers(double timeSeconds, float entityPlaybackSpeed, bool entityLoop)
+    private bool AdvanceMotionLayers(double timeSeconds, float entityPlaybackSpeed, bool entityLoop, out bool layerReset)
     {
+        layerReset = false;
         double current = Math.Max(timeSeconds, 0.0);
         float elapsed = _previousTimeSeconds < 0.0
             ? 0.0f
@@ -1033,6 +1043,8 @@ public sealed class PmxPoseEvaluator : IDisposable, IPmxPoseEvaluator
             float previous = _layerFrames[i];
             float next = previous + elapsed * 30.0f * Math.Max(entityPlaybackSpeed, 0.0f) * _layerPlaybackSpeeds[i];
             bool shouldLoop = entityLoop && _layerLoops[i];
+            if (duration > 0 && shouldLoop && next >= duration && _layerResetPhysicsOnLoop?[i] == true)
+                layerReset = true;
             if (duration > 0.0f)
             {
                 next = shouldLoop ? next % duration : Math.Min(next, duration);

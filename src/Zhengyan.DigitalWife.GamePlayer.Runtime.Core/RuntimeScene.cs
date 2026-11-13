@@ -79,6 +79,7 @@ public sealed class RuntimeScene : IDisposable
     public RuntimeDialogueBubbleManager Bubble { get; } = new();
     public RuntimeSaveStore Save { get; } = new();
     public RuntimeNetwork Network { get; } = new();
+    public RuntimeWindowControl Window { get; } = new();
     public RuntimeAsr Asr { get; } = new();
     public RuntimeLlm Llm { get; }
     public RuntimeRealtimeVoice RealtimeVoice { get; } = new();

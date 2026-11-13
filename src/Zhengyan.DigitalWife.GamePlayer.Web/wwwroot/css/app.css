@@ -249,3 +249,21 @@ dd {
 #blazor-error-ui {
     display: none;
 }
+
+.canvas-frame { max-width:100%; }
+.canvas-frame:fullscreen { width:100vw !important; height:100vh !important; max-width:none; border:0; border-radius:0; }
+.game-fullscreen-prompt { position:absolute; right:1rem; top:1rem; z-index:40; padding:.65rem 1rem; cursor:pointer; }
+.game-embedded, .game-transparent { background:transparent; color-scheme:normal; }
+.game-embedded body, .game-transparent body { min-width:0; background:transparent; }
+.game-embedded .web-runtime-page, .game-transparent .web-runtime-page { width:100%; margin:0; padding:0; }
+.game-embedded .web-runtime-header, .game-embedded .runtime-panel,
+.game-transparent .web-runtime-header, .game-transparent .runtime-panel { display:none; }
+.game-embedded .runtime-note, .game-transparent .runtime-note { display:none; }
+.game-embedded .web-runtime-shell, .game-transparent .web-runtime-shell { display:block; }
+.game-embedded .canvas-frame, .game-transparent .canvas-frame { width:100%; height:100vh; min-height:0; border:0; border-radius:0; box-shadow:none; }
+.game-embedded #game-canvas, .game-transparent #game-canvas { min-height:0; }
+.game-transparent .canvas-frame, .game-transparent .canvas-frame.renderer-ready #game-canvas,
+.game-transparent #game-canvas, .game-transparent .web-loading-screen { background:transparent !important; }
+.game-transparent .loading-background { display:none; }
+.game-embedded .embedded-error, .game-transparent .embedded-error { display:block; }
+.embedded-error { display:none; position:absolute; bottom:0; left:0; right:0; z-index:35; padding:.7rem; background:#300e; color:#fff; overflow-wrap:anywhere; }

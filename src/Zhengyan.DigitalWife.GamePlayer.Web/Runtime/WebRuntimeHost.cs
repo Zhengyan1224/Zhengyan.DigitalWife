@@ -41,6 +41,7 @@ public sealed class WebRuntimeHost(
     private int _reportedScriptDiagnosticCount;
     private bool _cursorVisible = true;
     private bool _switchingScene;
+    private readonly ConcurrentQueue<(RuntimeScene Scene, RuntimeWindowCommand Command)> _windowCommands = new();
     private readonly WebSpeechLipSync _lipSync = new();
     private string? _speakingEntity;
     private string? _pressedGuiId;
@@ -106,7 +107,7 @@ public sealed class WebRuntimeHost(
             IProgress<WebLoadProgress> progress = CreateLoadingProgress();
             WebLoadedProject loadedProject = await _projectLoader.LoadAsync(progress);
             _loadedProject = loadedProject;
-            await _module.InvokeVoidAsync("configureGame", loadedProject.Project.Window.Width, loadedProject.Project.Window.Height);
+            await _module.InvokeVoidAsync("configureGame", loadedProject.Project.Window.Width, loadedProject.Project.Window.Height, loadedProject.Project.Window.DesktopSpriteMode);
             await _module.InvokeVoidAsync("loadSceneTextures", (object)loadedProject.SpriteUris.Values.ToArray());
             foreach (WebAudioAsset audio in loadedProject.AudioAssets.Values.DistinctBy(asset => asset.Alias))
                 await _audioService.PrepareAsync(audio.Alias, audio.Uri);
@@ -122,8 +123,8 @@ public sealed class WebRuntimeHost(
                 // params expands it into separate JS arguments, so the JS
                 // loader receives only the first model as its meshes argument.
                 await _module.InvokeVoidAsync("loadPmxMeshes", (object)meshes);
-                await UpdateRendererStateAsync(loadedProject);
             }
+            await UpdateRendererStateAsync(loadedProject);
             await UpdateOverlayStateAsync(loadedProject);
             await _module.InvokeVoidAsync("presentScene");
             await _module.InvokeVoidAsync("setInputCapture", false);
@@ -580,6 +581,12 @@ public sealed class WebRuntimeHost(
 
     private async Task ProcessScriptCommandsAsync()
     {
+        while (_windowCommands.TryDequeue(out var window))
+            if (ReferenceEquals(window.Scene, _loadedProject?.RuntimeScene) && _module is not null)
+                if (window.Command.Operation == "size")
+                    await _module.InvokeVoidAsync("setGameSize", window.Command.Width, window.Command.Height);
+                else if (window.Command.Operation == "fullscreen")
+                    await _module.InvokeVoidAsync("setGameFullscreen", window.Command.Fullscreen);
         if (_loadedProject is not null)
         {
             while (_asrCommands.TryDequeue(out var item))
@@ -959,11 +966,19 @@ public sealed class WebRuntimeHost(
         WebRenderFrame frame = WebRenderFrame.FromScene(project.RuntimeScene, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight,
             Snapshot.ElapsedSeconds, project.Project.Window.AntiAliasingSamples, project.Project.Shadows, project.RuntimeScene.Graphics.Capture());
         frame = frame.WithSceneEffects(project, models, Snapshot.CanvasWidth, Snapshot.CanvasHeight);
+        if (project.Project.Window.DesktopSpriteMode)
+            frame = frame with { ClearColor = [0, 0, 0, 0], Sky = null, Features = frame.Features with { Skybox = false } };
         await _module.InvokeVoidAsync("setFrameState", frame);
     }
 
     private async Task InitializeSceneServicesAsync(RuntimeScene scene, GameProject project)
     {
+        scene.Window.Configure(_loadedProject?.RuntimeScene.Window.Width ?? project.Window.Width,
+            _loadedProject?.RuntimeScene.Window.Height ?? project.Window.Height);
+        scene.Window.Command += command => _windowCommands.Enqueue((scene, command));
+        scene.Window.ReportState((int)(Snapshot.CanvasWidth / Math.Max(1, Snapshot.DevicePixelRatio)),
+            (int)(Snapshot.CanvasHeight / Math.Max(1, Snapshot.DevicePixelRatio)), _loadedProject?.RuntimeScene.Window.Fullscreen ?? false);
+        if (_loadedProject is null && project.Window.Fullscreen) scene.Window.SetFullscreen(true);
         if(_module is not null)
         {
             if (project.Llm.Enabled && await _module.InvokeAsync<string?>("resolveLlmEndpoint", project.Llm.BaseUrl, project.Llm.ChatCompletionsPath) is string endpoint)
@@ -1044,6 +1059,8 @@ public sealed class WebRuntimeHost(
 
     private async Task ConfigureLoadingScreenAsync(GameProject project, GameProjectScene scene)
     {
+        if (_module is not null && _loadedProject is null)
+            await _module.InvokeVoidAsync("configureGame", project.Window.Width, project.Window.Height, project.Window.DesktopSpriteMode);
         string? uri = null;
         string path = scene.LoadingScreen.BackgroundImagePath ?? string.Empty;
         if (path.StartsWith("project:", StringComparison.OrdinalIgnoreCase)) path = path[8..];
@@ -1054,6 +1071,13 @@ public sealed class WebRuntimeHost(
         SetSnapshot(Snapshot with { LoadingScreen = scene.LoadingScreen, LoadingBackgroundUri = uri,
             ReferenceWidth = project.Window.Width, ReferenceHeight = project.Window.Height });
         if (_module is not null) await _module.InvokeVoidAsync("nextPaint");
+    }
+
+    [JSInvokable]
+    public Task OnWindowStateChanged(int width, int height, bool fullscreen)
+    {
+        _loadedProject?.RuntimeScene.Window.ReportState(width, height, fullscreen);
+        return Task.CompletedTask;
     }
 
     [JSInvokable]

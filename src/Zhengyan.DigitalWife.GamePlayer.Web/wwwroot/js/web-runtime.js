@@ -48,6 +48,7 @@ function updateCanvasMetrics() {
         runtime.overlayCanvas.height = height;
     }
     invoke("OnCanvasResized", width, height, devicePixelRatio);
+    invoke("OnWindowStateChanged", Math.round(rect.width), Math.round(rect.height), globalThis.document?.fullscreenElement === runtime.canvas.parentElement);
 }
 
 function scheduleCanvasMetrics() {
@@ -280,6 +281,7 @@ export function start(canvas, overlayCanvas, dotNetReference) {
     }
     runtime.onWindowResize = scheduleCanvasMetrics;
     window.addEventListener("resize", runtime.onWindowResize, { passive: true });
+    globalThis.document?.addEventListener('fullscreenchange', reportWindowState);
     runtime.onError = event => {
         const message = event?.error?.message || event?.message || "Unhandled browser exception";
         if (isBenignBrowserError(message)) return;
@@ -357,10 +359,41 @@ export async function cacheOfflineGame(){
 }
 export async function decryptGamePackage(bytes,password){return await(await import(moduleUrl('./web-package-crypto.js'))).decryptGamePackage(bytes,password);}
 
-export function configureGame(width, height) {
+export function configureGame(width, height, desktopSpriteMode = false) {
     const frame=runtime?.canvas?.parentElement;
     if(frame)frame.style.aspectRatio=`${Math.max(1,width)} / ${Math.max(1,height)}`;
+    document.documentElement.classList.toggle('game-embedded', new URLSearchParams(location.search).get('embed') === '1');
+    document.documentElement.classList.toggle('game-transparent', !!desktopSpriteMode);
+    reportWindowState();
+}
+
+export function setGameSize(width, height) {
+    const frame=runtime?.canvas?.parentElement;
+    if(!frame)return;
+    frame.style.width=`${Math.max(320,width)}px`;
+    frame.style.height=`${Math.max(240,height)}px`;
+    frame.style.aspectRatio='auto';
     scheduleCanvasMetrics();
+}
+
+function reportWindowState() {
+    scheduleCanvasMetrics();
+    const frame=runtime?.canvas?.parentElement;
+    if(frame){const rect=frame.getBoundingClientRect();invoke('OnWindowStateChanged',Math.round(rect.width),Math.round(rect.height),document.fullscreenElement===frame);}
+}
+
+export function setGameFullscreen(fullscreen) {
+    const current=runtime,frame=current?.canvas?.parentElement;
+    if(!frame)return;
+    current.fullscreenButton?.remove();current.fullscreenButton=null;
+    if(!fullscreen){if(document.fullscreenElement===frame)document.exitFullscreen().catch(e=>reportError('退出全屏失败：'+e.message,false));return;}
+    if(document.fullscreenElement===frame)return;
+    const request=()=>frame.requestFullscreen().then(()=>{current.fullscreenButton?.remove();current.fullscreenButton=null;reportWindowState();})
+        .catch(e=>reportError('无法进入全屏：'+e.message,false));
+    if(!frame.requestFullscreen || document.fullscreenEnabled===false){reportError('当前浏览器或嵌入页面未允许全屏。',false);return;}
+    if(navigator.userActivation?.isActive){void request();return;}
+    const button=document.createElement('button');button.className='game-fullscreen-prompt';button.textContent='点击进入全屏';
+    button.addEventListener('click',request);frame.append(button);current.fullscreenButton=button;
 }
 
 export function setCursorVisible(visible) {
@@ -528,6 +561,8 @@ export function stop() {
     if (runtime.resizeFrameHandle) window.cancelAnimationFrame(runtime.resizeFrameHandle);
 
     if (runtime.onWindowResize) window.removeEventListener("resize", runtime.onWindowResize);
+    globalThis.document?.removeEventListener('fullscreenchange', reportWindowState);
+    runtime.fullscreenButton?.remove();
     if (runtime.onError) window.removeEventListener("error", runtime.onError);
     if (runtime.onUnhandledRejection) window.removeEventListener("unhandledrejection", runtime.onUnhandledRejection);
     removeInputHandlers();

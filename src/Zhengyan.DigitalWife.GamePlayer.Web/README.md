@@ -19,8 +19,8 @@
 - 在浏览器内存中打开未加密的 `.dwgame` 文件；页面上的“打开 .dwgame 内存包”文件选择器就是这个入口；
 - 使用 IndexedDB 缓存已加载资源和保存 JSON 存档；
 - 使用浏览器 Web Audio 播放、停止和统一释放音频；浏览器通常要求用户先点击页面才能解锁音频；
-- 使用浏览器 SpeechSynthesis 执行脚本语音，并在语音结束后向指定实体脚本分发回调事件；
-- 提供浏览器 TTS、麦克风录音、JSON HTTP 和 WebSocket 适配器；麦克风需要用户授权；
+- 默认使用游戏项目的本地 TTS、ASR 模型，加载期间初始化并预热；语音结束后向指定实体脚本分发回调事件；
+- LLM 使用项目配置的在线 API；提供麦克风录音、JSON HTTP 和 WebSocket 适配器，麦克风需要用户授权；
 - 注册 Service Worker，缓存静态运行时文件并支持后续离线能力；
 - 只加载导出时生成的 Web 预编译程序集，不在浏览器中运行 Roslyn，也不直接执行 `.csx` 源文件；
 - 启动时探测 WebGPU 能力，但当前生产渲染后端仍然是 WebGL2；WebGPU 探测不会阻塞启动。
@@ -28,6 +28,78 @@
 阶段 0 到阶段 9 的设计和实现记录位于仓库根目录的 `docs/web-runtime-design.md` 和 `docs/web-runtime-phase*.md`。其中阶段 9 是 WebGPU 能力评估与回退协议，**不是完整的 WebGPU 渲染器**。
 
 ## 2. 先理解几个名词
+
+### 嵌入到其他网页、画布尺寸与全屏
+
+播放器提供 `?embed=1` 模式，只显示游戏画布及必要的加载、错误提示，隐藏标题和调试侧栏。将 Web 发布目录部署在一个 HTTPS 站点的根目录后，把下面代码放进其他网页即可。嵌入的是完整播放器 iframe，内部的 `.canvas-frame`、WebGL 画布、GUI、脚本、音频和资源加载一起运行；不需要把引擎代码复制进宿主网页。
+
+```html
+<div style="width:min(100%,960px);aspect-ratio:16/9;">
+  <iframe
+    src="https://games.example.com/?embed=1"
+    title="我的游戏"
+    allow="autoplay; microphone; fullscreen"
+    allowfullscreen
+    style="display:block;width:100%;height:100%;border:0;background:transparent;">
+  </iframe>
+</div>
+```
+
+把 `games.example.com` 替换为实际播放器地址。iframe 的大小由宿主网页的 HTML/CSS 决定；默认情况下，嵌入模式填满 iframe。发布文件之外，LLM API 仍需支持浏览器跨域请求，或者提供同源转发服务。本地验证可使用仓库的 `scripts/run-web-player.ps1`，它自带项目 LLM API 转发入口。
+
+脚本现在可以调用与 PC 同名的接口：
+
+```csharp
+if (IsStart)
+{
+    Scene.Window.SetSize(960, 540);
+}
+
+if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButton")
+{
+    Scene.Window.SetFullscreen(!Scene.Window.Fullscreen);
+}
+```
+
+`SetSize` 调整 **iframe 内部的画布容器**，单位是 CSS 像素，最小尺寸与 PC 一致为 320×240；画布宽度不会超出可用容器。它不会调整浏览器窗口，也不会修改跨域宿主网页的 iframe 大小。渲染分辨率会根据设备像素比更新，`Width/Height` 是请求的尺寸，`ActualWidth/ActualHeight` 是实际显示尺寸。退出全屏后恢复此前的画布尺寸。
+
+`SetFullscreen(true)` 使用浏览器原生全屏，让整个游戏画布（含 GUI）占满屏幕，`false` 退出，用户也可以按 Esc。`Scene.Window.Fullscreen` 反映浏览器实际状态。浏览器要求全屏由用户操作触发：点击事件中的脚本通常可直接进入；初始化或定时脚本请求全屏时，画布会显示“点击进入全屏”按钮，等待用户确认点击。iframe 必须允许 `fullscreen`，上层页面的 Permissions-Policy 也不能禁止它；浏览器拒绝时会显示具体错误。参见 [Fullscreen API 的要求](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen#security)。
+
+语音功能需要 HTTPS（本地可用 localhost）、iframe 的 `microphone` 权限，以及用户授予麦克风权限。`allow="autoplay"` 不是绕过浏览器音频限制的开关；首次使用仍建议点击游戏区域。若宿主站点设置了 `Permissions-Policy`，也需要允许该游戏来源使用相应功能。
+
+### 透明的网页宠物
+
+游戏工程设置 `window.desktopSpriteMode=true` 后，PC 的桌面精灵逻辑保持原样；Web 会隐藏播放器外框、标题与侧栏，将页面背景和渲染清屏设为透明，并停止绘制天空盒。角色、其他场景实体、GUI、粒子和对话泡仍正常渲染。若只想显示角色，应在该游戏场景中移除或隐藏房间、地面等背景实体。
+
+例如工程配置：
+
+```json
+{
+  "window": {
+    "desktopSpriteMode": true,
+    "width": 360,
+    "height": 480
+  }
+}
+```
+
+重新导出工程并部署后，可用同样的 iframe 方式嵌入网页右下角：
+
+```html
+<iframe
+  src="https://pet.example.com/?embed=1"
+  title="网页宠物"
+  allow="autoplay; microphone; fullscreen"
+  allowfullscreen
+  style="position:fixed;right:24px;bottom:0;width:360px;height:480px;
+         max-width:100vw;max-height:100vh;border:0;background:transparent;
+         z-index:1000;">
+</iframe>
+```
+
+宠物只显示在嵌入它的网页内，不会成为操作系统桌面窗口。透明是视觉效果，iframe 的矩形区域仍接收鼠标输入，不会自动按角色轮廓穿透到宿主网页；应控制 iframe 的尺寸和位置，避免遮挡网页按钮。纯展示且不需要交互时，可由宿主网页给 iframe 加 `pointer-events:none`，但这也会禁用宠物点击、拖动和全屏按钮。
+
+同一播放器来源使用同源浏览器存档；需要独立存档的多个游戏，应使用不同工程名称或独立部署来源。浏览器还可能按嵌入站点分区或限制第三方存储。
 
 如果你是第一次接触这个项目，可以先按下面的方式理解：
 
@@ -591,10 +663,10 @@ API 密钥不要写入 `wwwroot`、`web.manifest.json`、脚本 DLL 或公开的
 当前 Web Player 的生产基线是 WebGL2。以下能力已经有接口或回退协议，但还不是完整实现：
 
 - WebGPU 目前只有 `navigator.gpu`、adapter 和 limits 探测，尚无独立 WebGPU renderer；
-- Skybox、Water 和 PostProcess 目前主要通过帧状态特性开关和安全回退表达，后续可以增加纹理和 RenderTexture pass；
-- 远程 ASR、TTS、LLM 和实时语音需要外部服务端点，项目没有内置长期密钥；
+- 已实现天空盒、Water、RenderTexture 和水下效果；不同浏览器的 GPU 能力仍可能导致渲染质量回退；
+- 默认 TTS、ASR 使用本地模型，LLM 需要在线服务；发布环境需要相应的 CORS 或同源转发配置；
 - 真实浏览器的 GPU、触摸、音频权限和麦克风权限需要在带浏览器的机器上验证；
-- 加密 `.dwgame` 继续由 PC/Android 播放器处理，Web 端优先使用静态目录或未加密内存包。
+- Web 可打开带密码的加密 `.dwgame`；网页嵌入建议使用预先部署的静态游戏目录。
 
 相关设计文档：
 

@@ -21,6 +21,10 @@
             <canvas @ref="_canvas" id="game-canvas" aria-label="游戏画布"></canvas>
             <canvas @ref="_overlayCanvas" id="game-overlay" aria-hidden="true"></canvas>
             <WebLoadingScreen Snapshot="RuntimeHost.Snapshot" />
+            @if (!string.IsNullOrWhiteSpace(RuntimeHost.Snapshot.LastError))
+            {
+                <div class="embedded-error" role="alert">@RuntimeHost.Snapshot.LastError</div>
+            }
             <div class="canvas-placeholder">
                 <strong>正在初始化 WebGL2</strong>
                 <span>如果浏览器不支持 WebGL2，错误会显示在右侧面板。</span>
@@ -30,7 +34,7 @@
         <aside class="runtime-panel">
             <h2>运行时状态</h2>
             <div class="loading-progress" aria-label="资源加载进度">
-                <div class="loading-progress-track"><span style="width:@(RuntimeHost.Snapshot.LoadingProgress * 100):0.##%"></span></div>
+                <div class="loading-progress-track"><span style="width:@((RuntimeHost.Snapshot.LoadingProgress * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))%"></span></div>
                 <small>@RuntimeHost.Snapshot.LoadingStage：@RuntimeHost.Snapshot.LoadingMessage</small>
             </div>
             <label class="package-picker">

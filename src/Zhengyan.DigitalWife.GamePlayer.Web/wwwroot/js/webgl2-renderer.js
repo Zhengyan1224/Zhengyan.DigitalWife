@@ -1094,7 +1094,7 @@ function deleteRenderTarget(gl, target) {
 }
 
 export function createWebGl2Renderer(canvas, reportError) {
-    const gl = canvas.getContext("webgl2", { alpha: false, antialias: true, depth: true });
+    const gl = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: true, depth: true });
     if (!gl) throw new Error("This browser does not provide WebGL2.");
     const sceneSamples = Math.max(1, Number(gl.getParameter(gl.SAMPLES)) || 1);
     let actualSceneSamples = sceneSamples;
@@ -1530,7 +1530,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                         // and translucent texture pixels. Match the desktop pass
                         // by blending textured materials as well.
                         if (group.texture || diffuse[3] < 0.999) gl.enable(gl.BLEND); else gl.disable(gl.BLEND);
-                        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
                         gl.drawElements(gl.TRIANGLES, group.indexCount, gl.UNSIGNED_INT, group.startIndex * 4);
                     }
                 }
@@ -1558,7 +1558,7 @@ export function createWebGl2Renderer(canvas, reportError) {
                     gl.enableVertexAttribArray(particleLocations.size);
                     gl.vertexAttribPointer(particleLocations.size, 1, gl.FLOAT, false, 32, 28);
                     gl.enable(gl.BLEND);
-                    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
                     gl.depthMask(false);
                     gl.drawArrays(gl.POINTS, 0, particles.length);
                     gl.depthMask(true);
