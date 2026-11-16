@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 const root=process.cwd(), temp=resolve(root,'temp/web-debug');
 // Requires a published player with the DemoGame01 Web export in web-game.
-// Uses an empty local fixture to check iframe transparency without API calls.
+// Checks the published game in the host preview, then an empty API fixture.
 const realSpeech=true;
 mkdirSync(temp,{recursive:true});
 const port=5067, debugPort=9237, base=`http://127.0.0.1:${port}`;
@@ -42,7 +42,11 @@ try{
             try{
                 const response=await send('Fetch.getResponseBody',{requestId:p.requestId});
                 let body=response.base64Encoded?Buffer.from(response.body,'base64').toString():response.body;
-                if(p.request.url.includes('web-runtime.js'))body+='\nglobalThis.__webRuntimeState=()=>runtime;globalThis.__windowTest={setGameFullscreen};\n';
+                if(p.request.url.includes('web-runtime.js')){
+                    body=body.replace('export function setFrameState(frameState) {',
+                        'export function setFrameState(frameState) { globalThis.__cameraForInputTest={viewProjection:frameState.viewProjection,cameraPosition:frameState.cameraPosition};');
+                    body+='\nglobalThis.__webRuntimeState=()=>runtime;globalThis.__windowTest={setGameFullscreen};\n';
+                }
                 else if(p.request.url.includes('web.manifest.json'))body=JSON.stringify({formatVersion:1,entryScene:'scenes/main.scene.json',assets:[{path:'game.project.json',size:-1},{path:'scenes/main.scene.json',size:-1},{path:'compiled/web/api-fixture.dll',size:-1}],scripts:[{id:'api',source:'api-fixture.csx',assembly:'compiled/web/api-fixture.dll',entity:'actor',apiVersion:'1.0',type:'Zhengyan.GeneratedWebScripts.Script'}]});
                 else if(p.request.url.includes('game.project.json'))body=JSON.stringify({name:'embed-fixture',defaultScene:'scenes/main.scene.json',window:{desktopSpriteMode:true},voice:{enabled:false},asr:{enabled:false},llm:{enabled:false}});
                 else if(p.request.url.includes('/scenes/'))body=JSON.stringify({name:'Transparent fixture',entities:[{id:'actor',type:'empty',scripts:[{path:'api-fixture.csx',language:'csharp',enabled:true}]}],guiControls:[{id:'api-run',name:'api-run',type:'button',text:'Run API',x:20,y:20,width:140,height:40,targetEntity:'actor'}],skybox:{enabled:true,texturePath:'app:Resources/Skybox/dark_starry_moon.jpg'}});
@@ -60,6 +64,64 @@ try{
             if(loading && __loadingHistory.at(-1)!==loading.innerText)__loadingHistory.push(loading.innerText);
         }).observe(document,{childList:true,subtree:true,characterData:true});
     `});
+    await send('Fetch.enable',{patterns:[{urlPattern:'*js/web-runtime.js*',requestStage:'Response'}]});
+    await send('Page.navigate',{url:base+'/desktop-sprite.html'});
+    await until(()=>evaluate("document.querySelector('iframe')?.contentDocument?.querySelector('.renderer-ready')&&!document.querySelector('iframe').contentDocument.querySelector('.web-loading-screen')"),180000);
+    const pet=await evaluate(`(()=>{
+        const f=document.querySelector('iframe'),w=f.contentWindow,r=w.__webRuntimeState(),gl=r.canvas.getContext('webgl2');
+        r.renderer.render(performance.now());
+        const pixels=new Uint8Array(r.canvas.width*r.canvas.height*4);
+        gl.readPixels(0,0,r.canvas.width,r.canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+        let visible=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i]>0)visible++;
+        const rect=f.getBoundingClientRect();
+        return {position:getComputedStyle(f).position,pointerEvents:getComputedStyle(f).pointerEvents,
+            width:rect.width,height:rect.height,viewWidth:innerWidth,alpha:pixels[3],visible,
+            sample:{x:Math.round(rect.x+10),y:Math.round(rect.y+10)}};
+    })()`);
+    assert.equal(pet.position,'fixed');assert.equal(pet.pointerEvents,'auto');
+    assert.equal(await evaluate("document.querySelector('#pet-interaction').checked"),true);
+    assert(pet.width<pet.viewWidth,'The pet replaced the full host page');
+    assert.equal(pet.alpha,0);assert(pet.visible>200,'The published character did not render');
+    await evaluate("document.body.style.transition='none';document.body.style.backgroundColor='rgb(234,90,130)'");
+    const petScreenshot=(await send('Page.captureScreenshot',{format:'png'})).data;
+    writeFileSync(resolve(temp,'web-desktop-sprite.png'),Buffer.from(petScreenshot,'base64'));
+    const hostPixel=await evaluate(`(async()=>{
+        const img=new Image();img.src='data:image/png;base64,${petScreenshot}';await img.decode();
+        const c=document.createElement('canvas');c.width=img.width;c.height=img.height;
+        const ctx=c.getContext('2d');ctx.drawImage(img,0,0);
+        return [...ctx.getImageData(${pet.sample.x},${pet.sample.y},1,1).data];
+    })()`);
+    assert.deepEqual(hostPixel,[234,90,130,255],'The published pet obscured the original page background');
+    const pointer=await evaluate("(()=>{const a=document.querySelector('iframe').getBoundingClientRect();return{x:a.x+a.width*.5,y:a.y+a.height*.5};})()");
+    const cameraExpression="JSON.stringify(document.querySelector('iframe').contentWindow.__cameraForInputTest)";
+    for(const [button,buttons] of [['left',1],['right',2]]){
+        const before=await evaluate(cameraExpression);
+        assert(before,'Camera frame instrumentation was unavailable');
+        await send('Input.dispatchMouseEvent',{type:'mouseMoved',...pointer});
+        await send('Input.dispatchMouseEvent',{type:'mousePressed',...pointer,button,buttons,clickCount:1});
+        await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:pointer.x+50,y:pointer.y+20,button,buttons});
+        await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:pointer.x+50,y:pointer.y+20,button,buttons:0,clickCount:1});
+        await until(async()=>await evaluate(cameraExpression)!==before,10000);
+    }
+    const beforeZoom=await evaluate(cameraExpression);
+    await send('Input.dispatchMouseEvent',{type:'mouseWheel',...pointer,deltaX:0,deltaY:120});
+    await until(async()=>await evaluate(cameraExpression)!==beforeZoom,10000);
+    console.log('PASS default pet interaction changes the real camera for left rotation, right pan and wheel zoom');
+    await evaluate("document.querySelector('#pet-interaction').click()");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('iframe')).pointerEvents"),'none');
+    await evaluate(`(()=>{
+        const f=document.querySelector('iframe'),a=f.getBoundingClientRect(),button=document.createElement('button');
+        button.id='under-pet';button.textContent='Behind the pet';
+        Object.assign(button.style,{position:'fixed',left:(a.x+10)+'px',top:(a.y+10)+'px',width:'120px',height:'40px'});
+        button.onclick=()=>button.dataset.clicked='yes';document.body.append(button);
+    })()`);
+    const click={x:pet.sample.x+20,y:pet.sample.y+15};
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...click,button:'left',buttons:1,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',...click,button:'left',buttons:0,clickCount:1});
+    assert.equal(await evaluate("document.querySelector('#under-pet').dataset.clicked"),'yes');
+    await evaluate("document.querySelector('#pet-interaction').click()");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('iframe')).pointerEvents"),'auto');
+    console.log('PASS published pet floats above host content, preserves transparency and permits page clicks',JSON.stringify(pet));
     await send('Fetch.enable',{patterns:[{urlPattern:'*js/web-runtime.js*',requestStage:'Response'},{urlPattern:'*web.manifest.json*',requestStage:'Response'},{urlPattern:'*game.project.json*',requestStage:'Response'},{urlPattern:'*web-game/scenes/*.json*',requestStage:'Response'}]});
     mkdirSync(resolve(root,'artifacts/web-player/wwwroot/web-game/compiled/web'),{recursive:true});
     writeFileSync(resolve(root,'artifacts/web-player/wwwroot/web-game/compiled/web/api-fixture.dll'),readFileSync(resolve(temp,'api-fixture.dll')));

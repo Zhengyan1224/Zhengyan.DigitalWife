@@ -1,6 +1,6 @@
 if(typeof importScripts==='function')importScripts('./service-worker-assets.js');
-const CACHE_NAME = "zhengyan-web-runtime-v6-"+(self.assetsManifest?.version||'development');
-const CORE_ASSETS = ["./", "./index.html", "./css/app.css", "./js/web-runtime.js", "./js/webgl2-renderer.js", "./js/web-storage.js", "./js/web-audio.js", "./js/web-platform.js"];
+const CACHE_NAME = "zhengyan-web-runtime-v7-"+(self.assetsManifest?.version||'development');
+const CORE_ASSETS = ["./", "./index.html", "./desktop-sprite.html", "./desktop-sprite.js", "./css/app.css", "./js/web-runtime.js", "./js/webgl2-renderer.js", "./js/web-storage.js", "./js/web-audio.js", "./js/web-platform.js"];
 
 self.addEventListener("install", event => {
     event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS)).then(() => self.skipWaiting()));
@@ -36,6 +36,10 @@ self.addEventListener("fetch", event => {
     // These modules keep their URL across builds. Revalidate them so a cached
     // decoder or input bridge cannot survive a runtime update indefinitely.
     const runtimeAsset = CORE_ASSETS.some(asset => new URL(asset, self.location.href).href === url.href);
+    // Host preview pages must never replace the cached player entry point.
+    const navigationKey = url.pathname === new URL('./', self.location.href).pathname
+        || url.pathname === new URL('./index.html', self.location.href).pathname
+        ? './index.html' : new URL(url.pathname, self.location.href).href;
 
     // Always check the network for the HTML entry point so a new deployment
     // can publish a new fingerprinted WebAssembly/JavaScript file immediately.
@@ -45,11 +49,11 @@ self.addEventListener("fetch", event => {
         event.respondWith(fetch(event.request).then(response => {
             if (response.ok) {
                 const clone = response.clone();
-                const cacheKey = event.request.mode === "navigate" ? "./index.html" : event.request;
+                const cacheKey = event.request.mode === "navigate" ? navigationKey : event.request;
                 caches.open(CACHE_NAME).then(cache => cache.put(cacheKey, clone));
             }
             return response;
-        }).catch(() => caches.match(event.request.mode === "navigate" ? "./index.html" : event.request)));
+        }).catch(() => caches.match(event.request.mode === "navigate" ? navigationKey : event.request)));
         return;
     }
 

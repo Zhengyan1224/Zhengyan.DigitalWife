@@ -73,6 +73,19 @@ if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButt
 
 游戏工程设置 `window.desktopSpriteMode=true` 后，PC 的桌面精灵逻辑保持原样；Web 会隐藏播放器外框、标题与侧栏，将页面背景和渲染清屏设为透明，并停止绘制天空盒。角色、其他场景实体、GUI、粒子和对话泡仍正常渲染。若只想显示角色，应在该游戏场景中移除或隐藏房间、地面等背景实体。
 
+直接打开播放器地址时，透明画布下面没有其他网页内容，浏览器通常会呈现白色底色。要让人物浮在现有网页上，需由该网页嵌入播放器。发布目录自带 `desktop-sprite.html` 预览页：运行 `scripts/run-web-player.ps1` 后打开 `http://127.0.0.1:5052/desktop-sprite.html`，即可看到当前游戏人物浮在网页内容上，支持切换底色、滚动以及开启人物交互。
+
+在自己的网页中加入下面的脚本即可创建透明浮层，将地址替换为播放器的部署地址：
+
+```html
+<script defer src="https://pet.example.com/desktop-sprite.js"
+        data-width="360" data-height="480"
+        data-right="24" data-bottom="0"
+        data-interactive="true"></script>
+```
+
+浮层使用脚本所在站点的游戏工程，不会替换宿主页面或更改其样式。默认支持鼠标左键拖动旋转、右键拖动平移和滚轮缩放，也可操作游戏 GUI；iframe 的整个矩形区域会接收输入。`data-interactive="false"` 则允许鼠标点击背后的网页，预览页中可通过取消勾选“与人物交互”切换到这个模式。宽、高和边距均为 CSS 像素；`data-src` 可指定其他播放器地址，`data-z-index` 默认为 `1000`。脚本会加上 `embed=1&desktopSprite=1`，使加载阶段的页面也保持透明，实际游戏是否透明仍由工程设置决定。
+
 例如工程配置：
 
 ```json
@@ -85,11 +98,11 @@ if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButt
 }
 ```
 
-重新导出工程并部署后，可用同样的 iframe 方式嵌入网页右下角：
+也可以手动用 iframe 嵌入网页右下角：
 
 ```html
 <iframe
-  src="https://pet.example.com/?embed=1"
+  src="https://pet.example.com/?embed=1&desktopSprite=1"
   title="网页宠物"
   allow="autoplay; microphone; fullscreen"
   allowfullscreen

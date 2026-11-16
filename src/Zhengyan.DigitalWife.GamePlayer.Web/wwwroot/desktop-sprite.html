@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>网页宠物 · 透明浮层预览</title>
+    <style>
+        :root { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #233c43; background: #e6f1ee; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #e6f1ee; transition: background .2s; }
+        body.night { background: #1c303b; color: #e2eeeb; }
+        header, main { max-width: 1040px; margin: auto; padding: 28px; }
+        header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+        header a { color: inherit; text-decoration: none; font-weight: 700; }
+        button { border: 1px solid #62887d; border-radius: 8px; padding: 10px 16px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+        button:focus-visible, a:focus-visible { outline: 3px solid #e19c44; outline-offset: 4px; }
+        .intro { padding: 55px 0 38px; max-width: 650px; }
+        .eyebrow { color: #648b7c; font-size: 13px; letter-spacing: .15em; }
+        h1 { font-size: clamp(32px, 5vw, 56px); line-height: 1.2; margin: 14px 0 22px; }
+        p { line-height: 1.85; }
+        .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        article { padding: 26px; border: 1px solid #74968a60; border-radius: 14px; background: #ffffff30; }
+        article h2 { margin-top: 0; font-size: 20px; }
+        .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 30px 0; }
+        label { display: flex; align-items: center; gap: 8px; }
+        .reading { max-width: 650px; margin-top: 50px; padding-bottom: 160px; }
+        @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } header, main { padding: 20px; } }
+    </style>
+    <script defer src="desktop-sprite.js" data-width="500" data-height="720" data-right="0" data-interactive="true"></script>
+</head>
+<body>
+    <header>
+        <a href="desktop-sprite.html">Zhengyan · 网页宠物</a>
+        <button id="theme" type="button" aria-pressed="false">切换页面底色</button>
+    </header>
+    <main>
+        <section class="intro">
+            <span class="eyebrow">A LITTLE COMPANY</span>
+            <h1>让人物，陪在页面上。</h1>
+            <p>这是一个有自己内容的网页。人物浮在右侧，背后仍然是这张页面；你可以继续阅读、滚动和操作。</p>
+        </section>
+        <div class="cards">
+            <article><h2>页面继续正常使用</h2><p>试着切换底色，人物周围会透出新的页面颜色。这里没有播放器的白色矩形背景。</p></article>
+            <article><h2>随页面一起出现</h2><p>向下滚动时，人物留在浏览器右下方，页面内容照常经过它的身后。</p></article>
+        </div>
+        <div class="controls">
+            <button id="page-action" type="button">试试页面按钮</button>
+            <output id="click-count" aria-live="polite">已点击 0 次</output>
+            <label><input id="pet-interaction" type="checkbox" checked>与人物交互</label>
+        </div>
+        <p>左键按住旋转，右键按住平移，滚轮缩放。取消勾选“与人物交互”可点击人物后面的网页。</p>
+        <section class="reading">
+            <h2>你的页面，你的内容</h2>
+            <p>同样的浮层可以放在你自己的首页、文章或工具页面里。文字、按钮和排版属于原页面，人物拥有自己的透明画布。</p>
+            <p>这张页面使用当前发布的游戏工程，模型、动作和脚本会随着游戏项目一起更新。</p>
+            <p>继续向下滚动，看看页面与人物如何一起呈现。</p>
+        </section>
+    </main>
+    <script>
+        let clicks = 0;
+        document.querySelector('#theme').addEventListener('click', event => {
+            const night = document.body.classList.toggle('night');
+            event.currentTarget.setAttribute('aria-pressed', String(night));
+        });
+        document.querySelector('#page-action').addEventListener('click', () => {
+            document.querySelector('#click-count').textContent = `已点击 ${++clicks} 次`;
+        });
+        document.querySelector('#pet-interaction').addEventListener('change', event => {
+            const iframe = document.querySelector('[data-web-desktop-sprite]');
+            iframe.style.pointerEvents = event.target.checked ? 'auto' : 'none';
+            iframe.tabIndex = event.target.checked ? 0 : -1;
+            iframe.setAttribute('aria-hidden', String(!event.target.checked));
+        });
+    </script>
+</body>
+</html>

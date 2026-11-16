@@ -28,6 +28,7 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 $previewAddress = if ($BindAddress -eq '0.0.0.0') { '127.0.0.1' } else { $BindAddress }
 Write-Host "Listening on ${BindAddress}:$Port"
 Write-Host "Web Player: http://${previewAddress}:$Port/"
+Write-Host "Web desktop sprite preview: http://${previewAddress}:$Port/desktop-sprite.html"
 Write-Host 'Press Ctrl+C to stop the local server.'
 & python (Join-Path $PSScriptRoot 'web-preview-server.py') --port $Port --bind $BindAddress --directory $webDirectory
 if ($LASTEXITCODE -ne 0) { throw 'The Web preview server stopped with an error.' }
