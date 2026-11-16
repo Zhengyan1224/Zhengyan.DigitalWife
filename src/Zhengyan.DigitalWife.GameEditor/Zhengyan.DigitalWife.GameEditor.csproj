@@ -13,6 +13,10 @@
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
         <PackageReference Include="Silk.NET.OpenGLES.Extensions.ImGui" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects\Zhengyan.DigitalWife.GameProjects.csproj" />
+        <!-- Restore and build the desktop script contract with the editor; it is loaded dynamically. -->
+        <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer\Zhengyan.DigitalWife.GamePlayer.csproj"
+                          ReferenceOutputAssembly="false"
+                          PrivateAssets="all" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Android.Scripting\Zhengyan.DigitalWife.GamePlayer.Android.Scripting.csproj" Aliases="AndroidScripting" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GameProjects.Core\Zhengyan.DigitalWife.GameProjects.Core.csproj" Aliases="AndroidProjects" />
         <ProjectReference Include="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj" Aliases="AndroidRuntime" />
@@ -54,15 +58,6 @@
             <Visible>False</Visible>
         </None>
     </ItemGroup>
-
-    <Target Name="BuildScriptCompilerContracts" BeforeTargets="Build">
-        <MSBuild Projects="..\Zhengyan.DigitalWife.GamePlayer.Runtime.Core\Zhengyan.DigitalWife.GamePlayer.Runtime.Core.csproj"
-                 Targets="Build"
-                 Properties="Configuration=$(Configuration)" />
-        <MSBuild Projects="..\Zhengyan.DigitalWife.GamePlayer\Zhengyan.DigitalWife.GamePlayer.csproj"
-                 Targets="Build"
-                 Properties="Configuration=$(Configuration)" />
-    </Target>
 
     <Target Name="CopyScriptCompilerContracts" AfterTargets="Build">
         <ItemGroup>
