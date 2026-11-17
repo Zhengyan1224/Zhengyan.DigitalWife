@@ -6,6 +6,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidRenderPolicy.cs" Link="AndroidRenderPolicy.cs" />
+    <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidDesktopSpritePolicy.cs" Link="AndroidDesktopSpritePolicy.cs" />
+    <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidAlphaTouchRegion.cs" Link="AndroidAlphaTouchRegion.cs" />
+    <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidContextMenuRouting.cs" Link="AndroidContextMenuRouting.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidPmxPlaybackSync.cs" Link="AndroidPmxPlaybackSync.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidTouchState.cs" Link="AndroidTouchState.cs" />
     <Compile Include="..\..\src\Zhengyan.DigitalWife.GamePlayer.Android\AndroidCameraTouchInput.cs" Link="AndroidCameraTouchInput.cs" />

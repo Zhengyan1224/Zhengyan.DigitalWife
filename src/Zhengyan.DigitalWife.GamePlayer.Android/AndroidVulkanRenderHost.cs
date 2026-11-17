@@ -45,6 +45,8 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
     private long _profileHardwareShadowDraws;
 
     public GameProject? Project => _project;
+    public Action<IRenderer>? BeforePresent { get; set; }
+    public bool SuppressCameraInput { get; set; }
 
     public bool IsReady => _game?.IsReady == true;
     public bool HasSceneFrame => _game?.HasDrawnFrame == true;
@@ -164,7 +166,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             _scriptHost?.PumpCallbacks();
             if (inputScene is not null && _scriptsStarted && IsReady) DispatchTouchEvents(inputScene, input);
             _sceneManager?.Update(_scriptsStarted && IsReady ? (float)deltaSeconds : 0.0f,
-                _scriptsStarted && IsReady ? _cameraTouchInput.GetInput(inputScene, input, _width, _height,
+                _scriptsStarted && IsReady && !SuppressCameraInput ? _cameraTouchInput.GetInput(inputScene, input, _width, _height,
                     _project!.Window.Width, _project.Window.Height) : RuntimeCameraInput.None);
             RuntimeScene? scene = _sceneManager?.Current;
             if (scene is not null)
@@ -183,6 +185,7 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 }
                 long updateEnd = Stopwatch.GetTimestamp();
                 _game.RenderHostedWithoutPresent(deltaSeconds);
+                BeforePresent?.Invoke(_game.GraphicsDevice.Renderer);
                 long drawEnd = Stopwatch.GetTimestamp();
                 _game.PresentHosted();
                 if (IsReady) RecordFrameProfile(frameStart, waitEnd, updateEnd, drawEnd, Stopwatch.GetTimestamp());
@@ -255,7 +258,17 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         if (scene is null) return;
         _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
             "context_menu", item.Id, item.EventName,
-            new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), item.Text));
+            new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), item.Text,
+            TargetEntity: AndroidContextMenuRouting.TargetEntity(scene, menu)));
+    }
+
+    public ContextMenuSettings? ResolveContextMenu(float x, float y) => _sceneManager?.Current is { } scene && _project is not null
+        ? AndroidContextMenuRouting.Resolve(scene, _project.Window, x, y, _width, _height, ray => _game?.RaycastVisibleModels(ray)) : null;
+    public void DispatchContextMenuOpened(ContextMenuSettings menu, float x, float y)
+    {
+        if (_sceneManager?.Current is { } scene) _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
+            "context_menu", menu.Id, "opened", new(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
+            TargetEntity: AndroidContextMenuRouting.TargetEntity(scene, menu)));
     }
 
     public void Dispose()
@@ -293,6 +306,11 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
             SwapchainSource source = SwapchainSource.CreateAndroidSurface(_surface.Handle, JNIEnv.Handle);
 #pragma warning restore CS0618
             int requestedMsaa = AndroidSceneGame.ResolveAntiAliasingSamples(_project);
+            var transparentSurface = typeof(Veldrid.GraphicsDevice).Assembly
+                .GetType("Veldrid.Vk.ZhengyanAndroidStartupPatch")?.GetField("TransparentSurface");
+            if (_project.Window.DesktopSpriteMode && transparentSurface is null)
+                throw new NotSupportedException("Android Vulkan transparency patch is unavailable; use OpenGL ES.");
+            transparentSurface?.SetValue(null, _project.Window.DesktopSpriteMode);
             // Android Vulkan surfaces are required to use the driver's supported FIFO
             // present mode. Some Mali drivers terminate the process while creating an
             // immediate-mode swapchain, so keep FIFO presentation here; frame pacing
@@ -470,14 +488,6 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
                 }
             }
 
-            if (!handled && touch.Phase == AndroidTouchPhase.Ended)
-            {
-                foreach (ContextMenuSettings menu in scene.Definition.ContextMenus.Where(menu => menu.Enabled))
-                {
-                    _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
-                        "context_menu", menu.Id, "opened", touch.Position));
-                }
-            }
         }
     }
 

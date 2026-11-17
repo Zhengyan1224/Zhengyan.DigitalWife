@@ -258,14 +258,24 @@ public static class AndroidProjectCompatibility
                 "Python is selected as the preferred script language. Android publishing creates and runs C# scripts only."));
         }
 
-        if (project.Window.DesktopSpriteMode
-            || project.Window.DesktopSpriteClickThrough
-            || project.Window.DesktopSpriteTrayEnabled)
+        if (project.Window.DesktopSpriteMode)
         {
             issues.Add(new AndroidCompatibilityIssue(
-                "ANDROID_DESKTOP_SPRITE_IGNORED",
+                "ANDROID_DESKTOP_SPRITE_PERMISSION",
                 AndroidCompatibilitySeverity.Warning,
-                "Desktop sprite, click-through, drag and system-tray settings are ignored by the Android GamePlayer."));
+                "Android desktop sprite mode uses a transparent draggable overlay and foreground service. The user must allow display over other apps; hidden or locked-screen sprites pause rendering. Verify transparency and performance on the target phone."));
+        }
+        if (project.Window.DesktopSpriteClickThrough)
+        {
+            issues.Add(new("ANDROID_DESKTOP_SPRITE_TOUCH_REGION", AndroidCompatibilitySeverity.Warning,
+                "Android 13+ supports alpha-based overlay touch regions. Click-through uses the system's maximum allowed overlay opacity (usually 0.8); earlier systems retain rectangular input. Verify composition and touches on the target phone."));
+        }
+        if (project.Window.DesktopSpriteTrayEnabled)
+        {
+            issues.Add(new AndroidCompatibilityIssue(
+                "ANDROID_DESKTOP_SPRITE_DESKTOP_FEATURES",
+                AndroidCompatibilitySeverity.Warning,
+                "Android moves the desktop sprite using its drag handle. Desktop tray menus are not implemented; the foreground notification supplies show/hide and close controls."));
         }
 
         if (project.Runtime.UseOpenCL)

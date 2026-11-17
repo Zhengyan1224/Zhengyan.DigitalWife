@@ -8,7 +8,8 @@ internal static class AndroidVeldridPatchVerification
     {
         using (ModuleDefinition module = ModuleDefinition.ReadModule(path))
         {
-            if (module.GetType(AndroidVeldridPatch.MarkerName) is null)
+            if (module.GetType(AndroidVeldridPatch.MarkerName)?.Fields.Any(f => f.Name == "TransparentSurface") != true
+                || module.GetType("Veldrid.Vk.VkSwapchain")?.Fields.Any(f => f.Name == "_androidTransparentSurface") != true)
                 throw new Exception($"Android Vulkan startup patch is missing from {path}");
             AndroidVulkanRenderPassPatch.Check(module);
             VeldridEmptyPassPatch.Check(module);
@@ -37,8 +38,16 @@ internal static class AndroidVeldridPatchVerification
             MethodInfo select = marker.GetMethod("SelectCompositeAlpha", BindingFlags.Static | BindingFlags.NonPublic)!;
             Type flags = select.GetParameters()[0].ParameterType;
             foreach ((int supported, int expected) in new[] { (1, 1), (8, 8), (2, 2), (4, 4), (15, 1), (12, 8) })
-                if (Convert.ToInt32(select.Invoke(null, [Enum.ToObject(flags, supported)])) != expected)
+                if (Convert.ToInt32(select.Invoke(null, [Enum.ToObject(flags, supported), false])) != expected)
                     throw new Exception("Swapchain selected an unsupported alpha mode.");
+            foreach ((int supported, int expected) in new[] { (2, 2), (8, 8), (15, 2), (12, 8), (10, 2) })
+                if (Convert.ToInt32(select.Invoke(null, [Enum.ToObject(flags, supported), true])) != expected)
+                    throw new Exception("Desktop sprite swapchain lost transparent alpha.");
+            foreach (int unsupported in new[] { 0, 1, 4, 5 })
+            {
+                try { select.Invoke(null, [Enum.ToObject(flags, unsupported), true]); throw new Exception("An opaque-only sprite surface must fall back to GLES."); }
+                catch (TargetInvocationException ex) when (ex.InnerException is NotSupportedException) { }
+            }
 
             Type deviceType = assembly.GetType("Veldrid.GraphicsDevice", true)!;
             MethodInfo create = deviceType.GetMethods().Single(m => m.Name == "CreateVulkan" && m.GetParameters().Length == 1);

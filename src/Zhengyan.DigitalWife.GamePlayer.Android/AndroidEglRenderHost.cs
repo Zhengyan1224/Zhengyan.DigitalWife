@@ -46,6 +46,8 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
     private Vector4 _clearColor = new(0.025f, 0.035f, 0.055f, 1.0f);
 
     public GameProject? Project => _project;
+    public Action<IRenderer>? BeforePresent { get; set; }
+    public bool SuppressCameraInput { get; set; }
 
     public bool IsReady => _game?.IsReady == true;
     public bool HasSceneFrame => _game?.HasDrawnFrame == true;
@@ -116,6 +118,11 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
 
     public void SetClearColor(Vector4Dto? color)
     {
+        if (_project?.Window.DesktopSpriteMode == true)
+        {
+            _clearColor = Vector4.Zero;
+            return;
+        }
         if (color is null)
         {
             return;
@@ -238,7 +245,7 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
             DispatchTouchEvents(inputScene, input);
         }
         _sceneManager?.Update(_scriptsStarted && IsReady ? (float)deltaSeconds : 0.0f,
-            _scriptsStarted && IsReady ? _cameraTouchInput.GetInput(inputScene, input, _width, _height,
+            _scriptsStarted && IsReady && !SuppressCameraInput ? _cameraTouchInput.GetInput(inputScene, input, _width, _height,
                 _project!.Window.Width, _project.Window.Height) : RuntimeCameraInput.None);
 
         RuntimeScene? runtimeScene = _sceneManager?.Current;
@@ -259,6 +266,7 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 _scriptsStarted = true;
             }
             _game.RenderHostedWithoutPresent(deltaSeconds);
+            BeforePresent?.Invoke(_game.GraphicsDevice.Renderer);
             // EGL swaps only the window buffers. Resolve and composite an active
             // runtime MSAA scene target before handing that window image to EGL.
             _game.PresentHosted();
@@ -510,7 +518,17 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         RuntimeScene? scene = _sceneManager?.Current;
         if (scene is null) return;
         _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
-            "context_menu", item.Id, item.EventName, new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), item.Text));
+            "context_menu", item.Id, item.EventName, new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), item.Text,
+            TargetEntity: AndroidContextMenuRouting.TargetEntity(scene, menu)));
+    }
+
+    public ContextMenuSettings? ResolveContextMenu(float x, float y) => _sceneManager?.Current is { } scene && _project is not null
+        ? AndroidContextMenuRouting.Resolve(scene, _project.Window, x, y, _width, _height, ray => _game?.RaycastVisibleModels(ray)) : null;
+    public void DispatchContextMenuOpened(ContextMenuSettings menu, float x, float y)
+    {
+        if (_sceneManager?.Current is { } scene) _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
+            "context_menu", menu.Id, "opened", new(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
+            TargetEntity: AndroidContextMenuRouting.TargetEntity(scene, menu)));
     }
 
     public void DispatchGuiControlChanged(GuiControlSettings control)
@@ -561,14 +579,6 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
                 }
             }
 
-            if (!handled && touch.Phase == AndroidTouchPhase.Ended)
-            {
-                foreach (ContextMenuSettings menu in scene.Definition.ContextMenus.Where(menu => menu.Enabled))
-                {
-                    _scriptHost.DispatchEvent(scene, new AndroidRuntimeEvent(
-                        "context_menu", menu.Id, "opened", touch.Position));
-                }
-            }
         }
     }
 

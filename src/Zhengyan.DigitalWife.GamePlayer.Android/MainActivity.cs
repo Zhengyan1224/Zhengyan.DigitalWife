@@ -43,7 +43,7 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
     [Intent.ActionSend, Intent.ActionSendMultiple],
     Categories = [Intent.CategoryDefault],
     DataMimeTypes = ["application/octet-stream", "application/zip", "application/x-dwgame", "*/*"])]
-public sealed class MainActivity : Activity
+public sealed partial class MainActivity : Activity
 {
     private AndroidGameSurfaceView? _gameView;
     private AndroidGuiOverlayView? _guiOverlay;
@@ -56,6 +56,7 @@ public sealed class MainActivity : Activity
     private AlertDialog? _packagePasswordDialog;
     private int _projectLoadVersion;
     private bool _openingProject;
+    private AndroidContextMenuPopup? _contextMenuPopup;
     private bool _packagePickerActive;
     private bool? _scriptFullscreen;
     internal bool ScriptFullscreen => _scriptFullscreen ?? true;
@@ -82,6 +83,7 @@ public sealed class MainActivity : Activity
         _loadingOverlay = new AndroidLoadingOverlayView(this);
         _root.AddView(_loadingOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
         SetContentView(_root);
+        if (HandleOverlayDebugCommand(Intent)) return;
         if (AndroidGameProjectLoader.HasProjectInput(this, Intent))
         {
             RequestRecordAudioPermissionIfNeeded();
@@ -97,6 +99,7 @@ public sealed class MainActivity : Activity
     protected override void OnResume()
     {
         base.OnResume();
+        ResumeDesktopSpriteRequest();
         if (ScriptFullscreen) EnterImmersiveMode(); else LeaveImmersiveMode();
         _gameView?.ResumeRendering();
     }
@@ -110,6 +113,8 @@ public sealed class MainActivity : Activity
 
     protected override void OnDestroy()
     {
+        _contextMenuPopup?.Dispose(); _contextMenuPopup = null;
+        ClearDesktopSpriteRequest();
         AndroidWindowPlatform.Unregister(this);
         _projectLoadVersion++;
         _packagePasswordDialog?.Dismiss();
@@ -135,6 +140,7 @@ public sealed class MainActivity : Activity
 
     private void OnOverlayInvalidated()
     {
+        _contextMenuPopup?.Validate();
         RefreshTextEditor();
         _guiOverlay?.Refresh();
     }
@@ -349,18 +355,9 @@ public sealed class MainActivity : Activity
     {
         RunOnUiThread(() =>
         {
-            if (_gameView is null) return;
-            PopupMenu popup = new(this, _gameView);
-            foreach (ContextMenuItemSettings item in menu.Items.Where(item => item.Enabled))
-            {
-                popup.Menu?.Add(item.Text)?.SetIntent(new Intent().PutExtra("item_id", item.Id));
-            }
-            popup.MenuItemClick += (_, args) =>
-            {
-                ContextMenuItemSettings? selected = menu.Items.FirstOrDefault(item => item.Id == args.Item?.Intent?.GetStringExtra("item_id"));
-                if (selected is not null) _gameView.DispatchContextMenuItem(menu, selected, x, y);
-            };
-            popup.Show();
+            if (_gameView is null || _root is null) return;
+            _contextMenuPopup ??= new AndroidContextMenuPopup(_root, _gameView);
+            _contextMenuPopup.Show(menu, x, y);
         });
     }
 
@@ -368,6 +365,7 @@ public sealed class MainActivity : Activity
     {
         base.OnNewIntent(intent);
         Intent = intent;
+        if (HandleOverlayDebugCommand(intent)) return;
         if (AndroidGameProjectLoader.HasProjectInput(this, intent))
         {
             RequestRecordAudioPermissionIfNeeded();
@@ -382,6 +380,12 @@ public sealed class MainActivity : Activity
     protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
     {
         base.OnActivityResult(requestCode, resultCode, data);
+        if (requestCode == OverlayPermissionRequestCode)
+        {
+            _overlayPermissionLaunched = false;
+            ResumeDesktopSpriteRequest();
+            return;
+        }
         if (requestCode != PackagePickerRequestCode) return;
         _packagePickerActive = false;
         if (resultCode == Result.Ok && data is not null)
@@ -471,6 +475,7 @@ public sealed class MainActivity : Activity
 
     private async Task LoadProjectAsync(Intent? intent)
     {
+        ClearDesktopSpriteRequest();
         CloseTextEditor();
         int loadVersion = ++_projectLoadVersion;
         _packagePasswordDialog?.Dismiss();
@@ -529,6 +534,13 @@ public sealed class MainActivity : Activity
                 return;
             }
 
+            if (result.Project?.Window.DesktopSpriteMode == true)
+            {
+                OpenDesktopSprite(result);
+                return;
+            }
+            AndroidWindowPlatform.StopDesktopSprite();
+            StopService(new Intent(this, typeof(AndroidDesktopSpriteService)));
             _projectLoadResult?.Dispose();
             _projectLoadResult = result;
             Title = result.Project?.Name ?? GetString(Resource.String.app_name);
@@ -667,8 +679,10 @@ public sealed class MainActivity : Activity
     private void RequestRecordAudioPermissionIfNeeded()
     {
         if (Build.VERSION.SdkInt >= BuildVersionCodes.M
+            && !_microphonePermissionPending
             && CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio) != Permission.Granted)
         {
+            _microphonePermissionPending = true;
             RequestPermissions([global::Android.Manifest.Permission.RecordAudio], 7001);
         }
     }

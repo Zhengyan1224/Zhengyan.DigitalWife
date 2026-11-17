@@ -25,6 +25,10 @@ internal static class AndroidRuntimeRegressionTests
     {
         (string Name, Action Test)[] tests =
         [
+            ("Android context menu target, collider and GUI routing", AndroidContextMenuTests.Targets),
+            ("Android desktop sprite alpha touch regions", AndroidContextMenuTests.AlphaRegions),
+            ("Android desktop sprite window bounds, transparency and frame pacing", AndroidDesktopSpriteTests.GeometryAndPacing),
+            ("Android desktop sprite export compatibility", AndroidDesktopSpriteTests.Compatibility),
             ("MMD IK rotation limits preserve single and multiple axes", MmdIkLimitTests.TestAxes),
             ("MMD IK PMX limits preserve reflected X/Y and positive Z", MmdIkLimitTests.TestPmxLimitConversion),
             ("MMD IK rotation limits match Web Nene gaze across Lamb", MmdIkLimitTests.TestNeneGaze),

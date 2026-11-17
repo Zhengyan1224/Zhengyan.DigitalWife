@@ -110,7 +110,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     protected override void Initialize()
     {
         SyncCamera();
-        _loadingScreen = AddComponent(new LoadingScreenComponent(
+        if (!_windowSettings.DesktopSpriteMode) _loadingScreen = AddComponent(new LoadingScreenComponent(
             () => LoadingProgress, () => LoadingMessage,
             () => _scene.Definition.LoadingScreen, ResolvePath) { DrawOrder = int.MaxValue });
         foreach (RuntimeEntity entity in _scene.Entities)
@@ -353,7 +353,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
                 gameTime,
                 camera,
                 viewport,
-                lighting.ClearColor.ToVector4()))
+                ScreenClearColor(lighting)))
             {
                 continue;
             }
@@ -366,7 +366,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
                 viewport.Y,
                 viewport.Width,
                 viewport.Height,
-                lighting.ClearColor.ToVector4());
+                ScreenClearColor(lighting));
             ApplyCameraToComponents(camera);
             DrawSkyboxOnly(gameTime);
             _spriteComponent?.DrawBackground(
@@ -483,7 +483,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     private void SyncSkybox()
     {
         SkyboxSettings skybox = _scene.Definition.Skybox;
-        if (skybox.Enabled)
+        if (skybox.Enabled && !_windowSettings.DesktopSpriteMode)
         {
             string path = ResolvePath(skybox.TexturePath);
             if (_skybox is null && File.Exists(path))
@@ -588,7 +588,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
         RefreshLights();
         LightingSettings lighting = _scene.Definition.Lighting;
-        GraphicsDevice.ClearColor = lighting.ClearColor.ToVector4();
+        GraphicsDevice.ClearColor = ScreenClearColor(lighting);
         foreach (PmxModelComponent model in _models.Values)
         {
             model.LightColor = lighting.LightColor.ToVector3();
@@ -947,7 +947,7 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
     private bool TryDrawUnderwaterCamera(GameTime gameTime, OrbitCamera camera, RuntimeViewport viewport, Vector4 clearColor)
     {
-        if (_underwaterPostProcessRenderer is null || !TryResolveUnderwaterSettings(camera, out UnderwaterPostProcessSettings settings))
+        if (_windowSettings.DesktopSpriteMode || _underwaterPostProcessRenderer is null || !TryResolveUnderwaterSettings(camera, out UnderwaterPostProcessSettings settings))
         {
             return false;
         }
@@ -1398,7 +1398,8 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
             WindowSize = size,
             Samples = ResolveAntiAliasingSamples(project),
             VSync = true,
-            ClearColor = lighting.ClearColor.ToVector4(),
+            ClearColor = AndroidDesktopSpritePolicy.ClearColor(project.Window.DesktopSpriteMode, lighting.ClearColor.ToVector4()),
+            TransparentFramebuffer = project.Window.DesktopSpriteMode,
             UseOpenCL = false,
             UseVulkanCompute = project.Runtime.UseVulkanCompute,
             EnableAudio = false,
@@ -1410,4 +1411,21 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
 
     internal static int ResolveAntiAliasingSamples(GameProject project)
         => AndroidRenderPolicy.Resolve(project.AndroidQuality, project.Window.AntiAliasingSamples).Samples;
+
+    private Vector4 ScreenClearColor(LightingSettings lighting)
+        => AndroidDesktopSpritePolicy.ClearColor(_windowSettings.DesktopSpriteMode, lighting.ClearColor.ToVector4());
+
+    internal RuntimeRaycastHit? RaycastVisibleModels(RuntimeRay ray)
+    {
+        RuntimeRaycastHit? closest = null;
+        foreach (var (id, model) in _models)
+        {
+            RuntimeEntity? entity = _scene.GetEntity(id);
+            if (entity?.Visible != true || !model.Visible || RuntimePhysics.CreateColliders(entity).Any()) continue;
+            if (AndroidContextMenuRouting.RaycastBounds(ray, model.World, model.BoundsMin, model.BoundsMax, out float near)
+                && (closest is null || near < closest.Value.Distance))
+                closest = new RuntimeRaycastHit(entity, "", "", "model_bounds", near, ray.GetPoint(near));
+        }
+        return closest;
+    }
 }

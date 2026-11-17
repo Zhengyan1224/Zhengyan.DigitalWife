@@ -22,7 +22,10 @@ it does not establish identical output on every Android GPU.
 | Scene audio | Android `MediaPlayer` | Same | Preloaded during scene loading; play/pause/stop/loop/volume supported |
 | Spatial audio mixing | Deferred | Deferred | Desktop's OpenAL source/listener features need an Android native backend and shared scene/script configuration |
 | OpenCL | Not enabled | Not enabled | GLES uses CPU; Vulkan can use configured Vulkan Compute with CPU fallback |
-| Python, desktop window control, desktop sprite windows | Outside Android scope | Same | No implementation added |
+| Desktop sprite windows | Transparent Surface and foreground overlay service | Premultiplied/inherited swapchain alpha; GLES fallback when unsupported | Requires overlay permission; drag handle, close and notification controls; 30 FPS; hidden/locked sprites pause; native composition still needs device verification |
+| Alpha-based overlay click-through | TextureView with GPU/GUI alpha region | Same; asynchronous Vulkan readback | Android 13+, 4-pixel cells, 8 Hz; respects the system's maximum obscuring opacity; older systems retain rectangular input |
+| Entity context menus | Long press and target/collider hit test | Same helper | Bound script event routing; GUI capture, drag/pinch suppression and scene lifetime guards |
+| Python, desktop tray menus | Outside Android scope | Same | No implementation added |
 
 ## Loading and callbacks
 

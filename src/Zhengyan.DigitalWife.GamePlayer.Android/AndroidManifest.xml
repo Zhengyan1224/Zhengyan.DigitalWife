@@ -4,6 +4,11 @@
   <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="false" />
   <uses-feature android:name="android.hardware.vulkan.version" android:version="0x00400003" android:required="false" />
   <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <application
       android:allowBackup="false"
       android:usesCleartextTraffic="true"
@@ -12,5 +17,11 @@
       android:hardwareAccelerated="true"
       android:icon="@drawable/app_icon"
       android:roundIcon="@drawable/app_icon"
-      android:theme="@style/AppTheme" />
+      android:theme="@style/AppTheme">
+    <service android:name="com.zhengyan.digitalwife.gameplayer.DesktopSpriteService"
+             android:exported="false" android:foregroundServiceType="specialUse|microphone">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started interactive animated desktop pet displayed in an application overlay window." />
+    </service>
+  </application>
 </manifest>

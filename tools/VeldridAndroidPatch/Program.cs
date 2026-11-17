@@ -193,14 +193,48 @@ public static class AndroidVeldridPatch
 
     private static void PatchCompositeAlpha(ModuleDefinition module, TypeDefinition marker)
     {
-        MethodDefinition createSwapchain = module.GetType("Veldrid.Vk.VkSwapchain").Methods.Single(m => m.Name == "CreateSwapchain");
+        TypeDefinition swapchain = module.GetType("Veldrid.Vk.VkSwapchain");
+        FieldDefinition requested = new("TransparentSurface", FieldAttributes.Public | FieldAttributes.Static, module.TypeSystem.Boolean);
+        FieldDefinition transparent = new("_androidTransparentSurface", FieldAttributes.Private, module.TypeSystem.Boolean);
+        marker.Fields.Add(requested);
+        swapchain.Fields.Add(transparent);
+        // Capture the request per swapchain, so later resize/recreation cannot
+        // inherit the mode of another renderer created in the same process.
+        foreach (var constructor in swapchain.Methods.Where(m => m.IsConstructor && !m.IsStatic))
+        {
+            var processor = constructor.Body.GetILProcessor();
+            var anchor = constructor.Body.Instructions.First(i => i.OpCode == OpCodes.Call && i.Operand is MethodReference m && m.Name == ".ctor").Next;
+            processor.InsertBefore(anchor, processor.Create(OpCodes.Ldarg_0));
+            processor.InsertBefore(anchor, processor.Create(OpCodes.Ldsfld, requested));
+            processor.InsertBefore(anchor, processor.Create(OpCodes.Stfld, transparent));
+        }
+        MethodDefinition createSwapchain = swapchain.Methods.Single(m => m.Name == "CreateSwapchain");
         Instruction store = createSwapchain.Body.Instructions.Single(i => i.OpCode == OpCodes.Stfld && i.Operand is FieldReference f && f.Name == "compositeAlpha");
         FieldReference alpha = (FieldReference)store.Operand;
         VariableDefinition caps = createSwapchain.Body.Variables.Single(v => v.VariableType.FullName == "Vulkan.VkSurfaceCapabilitiesKHR");
         MethodDefinition select = new("SelectCompositeAlpha", MethodAttributes.Assembly | MethodAttributes.Static, alpha.FieldType);
         select.Parameters.Add(new("supported", ParameterAttributes.None, alpha.FieldType));
+        select.Parameters.Add(new("transparent", ParameterAttributes.None, module.TypeSystem.Boolean));
         marker.Methods.Add(select);
         ILProcessor selector = select.Body.GetILProcessor();
+        Instruction opaque = selector.Create(OpCodes.Nop);
+        selector.Append(selector.Create(OpCodes.Ldarg_1));
+        selector.Append(selector.Create(OpCodes.Brfalse, opaque));
+        foreach (int flag in new[] { 2, 8 })
+        {
+            Instruction next = selector.Create(OpCodes.Nop);
+            selector.Append(selector.Create(OpCodes.Ldarg_0));
+            selector.Append(selector.Create(OpCodes.Ldc_I4, flag));
+            selector.Append(selector.Create(OpCodes.And));
+            selector.Append(selector.Create(OpCodes.Brfalse, next));
+            selector.Append(selector.Create(OpCodes.Ldc_I4, flag));
+            selector.Append(selector.Create(OpCodes.Ret));
+            selector.Append(next);
+        }
+        selector.Append(selector.Create(OpCodes.Ldstr, "Vulkan surface cannot compose a transparent desktop sprite; use OpenGL ES."));
+        selector.Append(selector.Create(OpCodes.Newobj, module.ImportReference(typeof(NotSupportedException).GetConstructor([typeof(string)])!)));
+        selector.Append(selector.Create(OpCodes.Throw));
+        selector.Append(opaque);
         foreach (int flag in new[] { 1, 8, 2, 4 })
         {
             Instruction next = selector.Create(OpCodes.Nop);
@@ -220,6 +254,8 @@ public static class AndroidVeldridPatch
             throw new InvalidOperationException("Unexpected Veldrid composite alpha assignment.");
         il.Replace(store.Previous, il.Create(OpCodes.Ldloca, caps));
         il.InsertBefore(store, il.Create(OpCodes.Ldfld, new FieldReference("supportedCompositeAlpha", alpha.FieldType, caps.VariableType)));
+        il.InsertBefore(store, il.Create(OpCodes.Ldarg_0));
+        il.InsertBefore(store, il.Create(OpCodes.Ldfld, transparent));
         il.InsertBefore(store, il.Create(OpCodes.Call, select));
     }
 }

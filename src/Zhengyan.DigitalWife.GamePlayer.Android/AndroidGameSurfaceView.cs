@@ -2,12 +2,13 @@ using Android.Content;
 using Android.Graphics;
 using Android.Util;
 using Android.Views;
+using Android.Widget;
 using Zhengyan.DigitalWife.GameProjects;
 using Zhengyan.DigitalWife.Mmd.Game.Graphics;
 
 namespace Zhengyan.DigitalWife.GamePlayer.Android;
 
-internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallback, Choreographer.IFrameCallback
+internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallback, TextureView.ISurfaceTextureListener, Choreographer.IFrameCallback
 {
     private const string LogTag = "ZhengyanGamePlayer";
     private readonly AndroidTouchState _touchState = new();
@@ -21,22 +22,46 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
     private bool _isResumed;
     private bool _frameScheduled;
     private bool _firstFramePresented;
+    private long _lastRenderedFrameTimeNanos;
+    public int MaximumFramesPerSecond { get; set; }
     private readonly GestureDetector _gestureDetector;
+    private readonly SurfaceView? _surfaceView;
+    private readonly TextureView? _textureView;
+    private Surface? _textureSurface;
+    private bool _longPressEligible, _contextGestureActive;
+    private byte[] _readbackRgba = [];
+    private long _lastAlphaReadback;
+    public bool AlphaReadbackEnabled { get; set; }
+    public long RenderedFrameCount { get; private set; }
+    public event Action<ReadOnlyMemory<byte>, int, int>? AlphaFrameAvailable;
+    public event Action? AlphaReadbackUnavailable;
 
     public AndroidGameSurfaceView(Context context, GameProject? project, string? projectDirectory)
         : base(context)
     {
-        // Keep the game surface in the media-overlay layer so the Android Canvas
-        // GUI remains composited above it.
-        SetZOrderMediaOverlay(true);
+        if (project?.Window.DesktopSpriteMode == true)
+        {
+            // A SurfaceView creates a separate BLOCK_UNTRUSTED input-occlusion
+            // layer. TextureView composites into the overlay's own window.
+            _textureView = new TextureView(context) { SurfaceTextureListener = this };
+            _textureView.SetOpaque(false);
+            AddView(_textureView, new FrameLayout.LayoutParams(-1, -1));
+        }
+        else
+        {
+            _surfaceView = new SurfaceView(context);
+            _surfaceView.SetZOrderMediaOverlay(true);
+            _surfaceView.Holder?.AddCallback(this);
+            AddView(_surfaceView, new FrameLayout.LayoutParams(-1, -1));
+        }
         _gestureDetector = new GestureDetector(context, new LongPressListener(this));
         _requestedBackend = GraphicsBackendNames.Parse(project?.Runtime.GraphicsBackend);
         _renderHost = CreateRenderHost(_requestedBackend);
+        _renderHost.BeforePresent = ReadAlphaFrame;
         LogBackendRequest(project, _requestedBackend);
         _renderHost.SetProject(project, projectDirectory);
         _project = project;
         _projectDirectory = projectDirectory ?? string.Empty;
-        Holder?.AddCallback(this);
         Focusable = true;
         FocusableInTouchMode = true;
         RequestFocus();
@@ -79,8 +104,33 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         _renderHost.DestroySurface();
     }
 
+    public void OnSurfaceTextureAvailable(SurfaceTexture surface, int width, int height)
+    {
+        surface.SetDefaultBufferSize(Math.Max(width, 1), Math.Max(height, 1));
+        _textureSurface = new Surface(surface);
+        _surface = _textureSurface;
+        _hasSurface = true;
+        _renderHost.Resize(Math.Max(width, 1), Math.Max(height, 1));
+        CreateSelectedSurface(_textureSurface);
+        ScheduleFrame();
+    }
+    public void OnSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height)
+    {
+        surface.SetDefaultBufferSize(Math.Max(width, 1), Math.Max(height, 1));
+        _renderHost.Resize(Math.Max(width, 1), Math.Max(height, 1));
+    }
+    public bool OnSurfaceTextureDestroyed(SurfaceTexture surface)
+    {
+        _hasSurface = false; _surface = null; CancelFrame();
+        _renderHost.DestroySurface();
+        _textureSurface?.Dispose(); _textureSurface = null;
+        return true;
+    }
+    public void OnSurfaceTextureUpdated(SurfaceTexture surface) { }
+
     public void ResumeRendering()
     {
+        _lastRenderedFrameTimeNanos = 0;
         _isResumed = true;
         ScheduleFrame();
     }
@@ -98,6 +148,7 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         {
             _renderHost.Dispose();
             _renderHost = CreateRenderHost(requested);
+            _renderHost.BeforePresent = ReadAlphaFrame;
             _renderHost.SetProject(project, _projectDirectory);
             if (_hasSurface && _surface is not null) CreateSelectedSurface(_surface);
             return;
@@ -118,12 +169,22 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
     public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)
         => _renderHost.DispatchContextMenuItem(menu, item, x, y);
+    public void NotifyContextMenuOpened(ContextMenuSettings menu, float x, float y)
+        => _renderHost.DispatchContextMenuOpened(menu, x, y);
+    public void EndContextMenuInteraction() => _renderHost.SuppressCameraInput = false;
 
     public void PauseRendering()
     {
         _isResumed = false;
         CancelFrame();
         _renderHost.Pause();
+    }
+
+    public void CancelInput()
+    {
+        long now = global::Android.OS.SystemClock.UptimeMillis();
+        using MotionEvent? cancel = MotionEvent.Obtain(now, now, MotionEventActions.Cancel, 0, 0, MetaKeyStates.None);
+        if (cancel is not null) OnTouchEvent(cancel);
     }
 
     public void DoFrame(long frameTimeNanos)
@@ -134,8 +195,16 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
             return;
         }
 
+        if (!AndroidDesktopSpritePolicy.ShouldRender(_lastRenderedFrameTimeNanos, frameTimeNanos, MaximumFramesPerSecond))
+        {
+            ScheduleFrame();
+            return;
+        }
+        _lastRenderedFrameTimeNanos = frameTimeNanos;
+
         Input = _touchState.BeginFrame(Width, Height).WithDeviceInput(_deviceInputState.BeginFrame());
         _renderHost.Render(frameTimeNanos, Input);
+        RenderedFrameCount++;
         LoadingStateChanged?.Invoke();
         // GUI controls can be changed by scripts every frame (for example progress bars).
         // Keep the overlay synchronized while the hardware Canvas layer avoids software
@@ -163,6 +232,15 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         if (e is null)
         {
             return false;
+        }
+
+        if (e.ActionMasked == MotionEventActions.Down) _longPressEligible = true;
+        if (e.PointerCount > 1 || e.ActionMasked == MotionEventActions.Cancel) _longPressEligible = false;
+        if (_contextGestureActive)
+        {
+            if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel) _contextGestureActive = false;
+            _gestureDetector.OnTouchEvent(e);
+            return true;
         }
 
         _touchState.Apply(e);
@@ -240,9 +318,15 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
         public override void OnLongPress(MotionEvent e)
         {
-            if (owner.IsTextInputAt(e.GetX(), e.GetY())) return;
-            ContextMenuSettings? menu = owner.Project?.Scene.ContextMenus.FirstOrDefault(menu => menu.Enabled);
-            if (menu is not null) owner.ContextMenuRequested?.Invoke(menu, e.GetX(), e.GetY());
+            if (!owner._longPressEligible || !owner.IsReady || owner.ContextMenuRequested is null
+                || owner.IsTextInputAt(e.GetX(), e.GetY())) return;
+            ContextMenuSettings? menu = owner._renderHost.ResolveContextMenu(e.GetX(), e.GetY());
+            if (menu is null) return;
+            using var cancel = MotionEvent.Obtain(e.DownTime, global::Android.OS.SystemClock.UptimeMillis(), MotionEventActions.Cancel, e.GetX(), e.GetY(), MetaKeyStates.None);
+            if (cancel is not null) owner._touchState.Apply(cancel);
+            owner._contextGestureActive = true;
+            owner._renderHost.SuppressCameraInput = true;
+            owner.ContextMenuRequested.Invoke(menu, e.GetX(), e.GetY());
         }
     }
 
@@ -265,8 +349,11 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
         if (disposing)
         {
             CancelFrame();
-            Holder?.RemoveCallback(this);
+            _surfaceView?.Holder?.RemoveCallback(this);
+            if (_textureView is not null) _textureView.SurfaceTextureListener = null;
             _renderHost.Dispose();
+            _textureSurface?.Dispose(); _textureSurface = null;
+            _surfaceView?.Dispose(); _textureView?.Dispose();
         }
 
         base.Dispose(disposing);
@@ -304,12 +391,13 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
                 $"Android graphics backend selected: requested={_requestedBackend.ToSettingValue()}; " +
                 $"resolved={DescribeBackend(_renderHost)}.");
         }
-        catch (Exception ex) when (_requestedBackend == GraphicsBackend.Auto
+        catch (Exception ex) when ((_requestedBackend == GraphicsBackend.Auto || _project?.Window.DesktopSpriteMode == true)
             && _renderHost is AndroidVulkanRenderHost)
         {
-            Log.Warn(LogTag, $"Vulkan initialization failed in Auto mode; falling back to OpenGL ES. {ex}");
+            Log.Warn(LogTag, $"Vulkan initialization failed in Auto/desktop sprite mode; falling back to OpenGL ES. {ex}");
             _renderHost.Dispose();
             _renderHost = new AndroidEglRenderHost();
+            _renderHost.BeforePresent = ReadAlphaFrame;
             _renderHost.SetProject(_project, _projectDirectory);
             try
             {
@@ -366,4 +454,25 @@ internal sealed class AndroidGameSurfaceView : SurfaceView, ISurfaceHolderCallba
 
     private static string DescribeBackend(IAndroidRenderHost renderHost)
         => renderHost is AndroidVulkanRenderHost ? "Vulkan" : "OpenGL ES";
+
+    private void ReadAlphaFrame(IRenderer renderer)
+    {
+        if (!AlphaReadbackEnabled || AlphaFrameAvailable is null) return;
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_lastAlphaReadback != 0 && System.Diagnostics.Stopwatch.GetElapsedTime(_lastAlphaReadback, now).TotalMilliseconds < 125) return;
+        _lastAlphaReadback = now;
+        try
+        {
+            int width = renderer.BackBufferSize.X, height = renderer.BackBufferSize.Y;
+            int count = checked(width * height * 4);
+            if (_readbackRgba.Length != count) _readbackRgba = new byte[count];
+            if (renderer.TryReadBackBufferRgba(_readbackRgba)) AlphaFrameAvailable.Invoke(_readbackRgba, width, height);
+        }
+        catch (Exception ex)
+        {
+            AlphaReadbackEnabled = false;
+            AlphaReadbackUnavailable?.Invoke();
+            global::Android.Util.Log.Warn(LogTag, "Sprite touch readback disabled: " + ex.Message);
+        }
+    }
 }
