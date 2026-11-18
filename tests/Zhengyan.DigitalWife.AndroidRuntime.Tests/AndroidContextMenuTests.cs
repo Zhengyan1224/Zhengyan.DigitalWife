@@ -20,26 +20,21 @@ internal static class AndroidContextMenuTests
         definition.ContextMenus = [front, back];
         using RuntimeScene scene = new("menu-tests", definition, p => p);
         GameWindowSettings window = new() { Width = 1000, Height = 1000 };
-        ContextMenuSettings? Hit(float x, float y) => AndroidContextMenuRouting.Resolve(scene, window, x, y, 1000, 1000);
+        ContextMenuSettings? Hit(float x, float y) => RuntimeContextMenuRouting.Resolve(scene, window, x, y, 1000, 1000);
         Check(ReferenceEquals(Hit(500, 500), front), "An occluded entity's menu won over the visible target.");
         Check(Hit(10, 10) is null, "An empty-space hold opened an entity menu.");
         front.TargetCollider = "wrong";
         Check(Hit(500, 500) is null, "The requested collider constraint was ignored.");
         front.TargetCollider = "front-collider";
         Check(ReferenceEquals(Hit(500, 500), front), "The bound collider did not match.");
-        Check(AndroidContextMenuRouting.TargetEntity(scene, front) == "front", "Menu events were not routed to the bound entity.");
+        Check(RuntimeContextMenuRouting.TargetEntity(scene, front) == "front", "Menu events were not routed to the bound entity.");
         definition.GuiControls.Add(new() { Id = "button", TargetEntity = "back", X = 450, Y = 450, Width = 100, Height = 100 });
         Check(Hit(500, 500) is null, "Holding GUI opened the entity menu underneath.");
         ContextMenuSettings gui = new() { TargetType = "gui_control", TargetId = "button" };
         definition.ContextMenus.Add(gui);
-        Check(ReferenceEquals(Hit(500, 500), gui) && AndroidContextMenuRouting.TargetEntity(scene, gui) == "back", "GUI-specific menu routing failed.");
+        Check(ReferenceEquals(Hit(500, 500), gui) && RuntimeContextMenuRouting.TargetEntity(scene, gui) == "back", "GUI-specific menu routing failed.");
         gui.Items.ForEach(i => i.Enabled = false);
         Check(Hit(500, 500) is null, "A menu with no enabled items was opened.");
-        RuntimeRay ray = new(new(0, 0, 10), -Vector3.UnitZ);
-        Check(AndroidContextMenuRouting.RaycastBounds(ray, Matrix4x4.CreateScale(2), -Vector3.One, Vector3.One, out float distance)
-            && Math.Abs(distance - 8) < .001f, "Scaled PMX bounds changed the ray's world distance.");
-        Check(!AndroidContextMenuRouting.RaycastBounds(ray, Matrix4x4.CreateTranslation(10, 0, 0), -Vector3.One, Vector3.One, out _),
-            "Holding away from model bounds was classified as an entity hit.");
     }
 
     public static void AlphaRegions()
@@ -57,6 +52,44 @@ internal static class AndroidContextMenuTests
         rects = AndroidAlphaTouchRegion.Build(rgba, [], width, height);
         Check(rects.Count == 1 && rects[0] == new AndroidTouchRect(0, 0, 8, 8), "Adjacent opaque rows were not merged.");
         Check(AndroidAlphaTouchRegion.Build(new byte[8], [], width, height).Count == 0, "An incomplete frame produced invalid regions.");
+    }
+
+    public static void LayoutAndCameras()
+    {
+        ContextMenuSettings menu = new() { LayoutMode = "scaled", Width = 180, ItemHeight = 28 };
+        ContextMenuLayout layout = ContextMenuLayout.Resolve(menu, 500, 500, new() { Width = 1000, Height = 500 });
+        Check(layout.ContentWidth == 90 && layout.ItemHeight == 14 && layout.PaddingX == 4 && layout.FontSize == 9,
+            "Menu dimensions used a uniform width scale instead of the PC layout rules.");
+        menu.Style.FontSize = 0; menu.ItemHeight = -1; menu.PaddingX = -1;
+        layout = ContextMenuLayout.Resolve(menu, 500, 500, new() { Width = 0, Height = 0 });
+        Check(float.IsFinite(layout.Width) && layout.ItemHeight >= 12 && layout.PaddingX == 0 && layout.FontSize > 0,
+            "Invalid menu settings produced nonfinite dimensions or invisible rows.");
+        GameProjectScene definition = new()
+        {
+            Camera = new() { Position = new(0, 0, 10), Target = Vector3Dto.Zero },
+            Cameras = [new() { IsMain = true, Camera = new() { Position = new(0, 0, 10), Target = Vector3Dto.Zero },
+                Viewport = new() { Enabled = true, X = 500, Y = 0, Width = 500, Height = 500 } }],
+            Entities = [new() { Id = "actor", Name = "Actor", Type = "empty", Colliders = [new() { Shape = "box", Size = new(2, 2, 2) }] }]
+        };
+        ContextMenuSettings actorMenu = new() { TargetType = "rigid-body", TargetId = "ACTOR" };
+        definition.ContextMenus.Add(actorMenu);
+        using RuntimeScene scene = new("menus", definition, p => p);
+        GameWindowSettings window = new() { Width = 1000, Height = 500 };
+        Check(ReferenceEquals(RuntimeContextMenuRouting.Resolve(scene, window, 750, 250, 1000, 500), actorMenu),
+            "Menu picking ignored the viewport or the PC target aliases.");
+        Check(RuntimeContextMenuRouting.Resolve(scene, window, 250, 250, 1000, 500) is null, "A menu picked outside its rendering camera.");
+        definition.Sprites.Add(new() { Id = "sprite", Name = "Sprite", Path = "sprite.png", TargetEntity = "actor", X = 50, Y = 50, Width = 40, Height = 20, RotationDegrees = 90 });
+        ContextMenuSettings spriteMenu = new() { TargetType = "2d-sprite", TargetId = "SPRITE" };
+        definition.ContextMenus.Add(spriteMenu);
+        Check(ReferenceEquals(RuntimeContextMenuRouting.Resolve(scene, window, 70, 75, 1000, 500), spriteMenu)
+            && RuntimeContextMenuRouting.TargetEntity(scene, spriteMenu) == "actor", "Rotated sprite menus lost their hit box or target.");
+        Check(RuntimeContextMenuRouting.Resolve(scene, window, -1, 0, 1000, 500) is null, "Out-of-window input opened a menu.");
+        // Rendering clips an oversized viewport to the canvas before computing its projection.
+        scene.MainCamera.Definition.Viewport.X = -100;
+        scene.MainCamera.Definition.Viewport.Width = 1200;
+        scene.MainCamera.Definition.Viewport.Height = 800;
+        Check(ReferenceEquals(RuntimeContextMenuRouting.Resolve(scene, window, 500, 250, 1000, 500), actorMenu),
+            "Menu picking used the untrimmed viewport instead of the visible render projection.");
     }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }

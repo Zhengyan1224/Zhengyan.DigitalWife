@@ -108,6 +108,8 @@ h1 {
 
 #game-canvas {
     touch-action: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }
 
 #game-canvas {

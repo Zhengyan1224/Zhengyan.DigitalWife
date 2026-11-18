@@ -34,16 +34,30 @@ public sealed partial class RuntimeCamera
     public void BindRenderTextureCamera(string renderTextureName,string cameraName,bool desktopParameterNames=true)=>BindRenderTextureCamera(renderTextureName,cameraName);
     public bool RaycastEntity(RuntimeRay ray,out RuntimeRaycastHit hit,float fallbackRadius=.5f,bool desktopParameterNames=true)
     {
-        hit=default;float closest=float.MaxValue;
-        foreach(var entity in SceneOwner?.Entities??[])
+        hit = default;
+        RuntimeRaycastHit? colliderHit = null;
+        RuntimeRaycastHit? fallbackHit = null;
+        float safeRadius = Math.Max(fallbackRadius, .001f);
+        foreach (var entity in SceneOwner?.Entities ?? [])
         {
-            if(!entity.Visible)continue;
-            if(RuntimePhysics.TryRaycastEntity(entity,ray,out var collider,out var distance,out var point))
-            {if(distance<closest){closest=distance;hit=new(entity,collider.Id,collider.Name,collider.Shape,distance,point);}}
-            else if(fallbackRadius>0&&ray.TryIntersectSphere(entity.Position,fallbackRadius,out distance)&&distance<closest)
-            {closest=distance;hit=new(entity,"","","sphere",distance,ray.GetPoint(distance));}
+            if (!entity.Visible) continue;
+            if (RuntimePhysics.TryRaycastEntity(entity, ray, out var collider, out var distance, out var point)
+                && (colliderHit is null || distance < colliderHit.Value.Distance))
+                colliderHit = new(entity, collider.Id, collider.Name, collider.Shape, distance, point);
+
+            string type = (entity.Type ?? "").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+            if (!entity.CollisionEnabled && type == "pmx_model")
+            {
+                float radius = safeRadius * MathF.Max(MathF.Max(entity.Scale.X, entity.Scale.Y), entity.Scale.Z);
+                if (ray.TryIntersectSphere(entity.Position, radius, out float fallbackDistance)
+                    && (fallbackHit is null || fallbackDistance < fallbackHit.Value.Distance))
+                    fallbackHit = new(entity, "", "", "fallback_sphere", fallbackDistance, ray.GetPoint(fallbackDistance));
+            }
         }
-        return hit.Entity is not null;
+        // Match PC picking: an explicit collider always wins over any model fallback.
+        if ((colliderHit ?? fallbackHit) is not { } selected) return false;
+        hit = selected;
+        return true;
     }
     public string MainCameraVmdPath => CameraVmdPath(MainCamera);
     public bool MainCameraVmdIsPlaying => CameraVmdIsPlaying(MainCamera);

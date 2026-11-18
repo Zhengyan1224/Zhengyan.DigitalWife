@@ -35,6 +35,7 @@ if (args.Contains("--encrypted-fixture"))
 }
 
 if (args.Contains("--services")) { await WebScriptServiceTests.RunAsync(); return 0; }
+if (args.Contains("--context-menu")) { await WebContextMenuTests.RunAsync(); return 0; }
 if (args.Contains("--portable-api")) { await PortableScriptApiTests.RunAsync(); return 0; }
 if (args.Contains("--python")) { await WebPythonBridgeTests.RunAsync(); return 0; }
 if(args is ["--refresh-manifest",string manifestDirectory]){var result=WebGamePackageExporter.RefreshManifest(manifestDirectory);Console.WriteLine($"Refreshed {result.AssetCount} assets and {result.ScriptCount} script bindings.");return 0;}
@@ -58,6 +59,7 @@ if (args.Contains("--surfaces"))
 VerifyVertexUpdates();
 await WebPythonBridgeTests.RunAsync();
 await WebScriptServiceTests.RunAsync();
+await WebContextMenuTests.RunAsync();
 await PortableScriptApiTests.RunAsync();
 await WebAssetCacheTests.RunAsync();
 VerifyModuleBuildVersion();
@@ -615,6 +617,8 @@ static void Check(bool condition, string message)
 
 sealed class FakeBrowser : IJSRuntime, IJSObjectReference
 {
+    public object? ContextMenu { get; private set; }
+    public int ContextMenuClosed { get; private set; }
     public int SpeechStopCalls { get; private set; }
     public List<(string Name, object?[] Args)> WindowCalls { get; } = [];
     private WebRuntimeHost? _host;
@@ -633,6 +637,8 @@ sealed class FakeBrowser : IJSRuntime, IJSObjectReference
     public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (identifier == "showContextMenu") ContextMenu = args![0];
+        if (identifier == "closeContextMenu") { ContextMenu = null; ContextMenuClosed++; }
         if (identifier == "stopSpeaking") SpeechStopCalls++;
         if(identifier is "setGameSize" or "setGameFullscreen") WindowCalls.Add((identifier,args!));
         if (identifier == "preloadModels") { ModelLoadingCalls++; if (ModelLoadingGate is not null) await ModelLoadingGate.Task; }

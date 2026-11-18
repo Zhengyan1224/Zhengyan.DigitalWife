@@ -199,3 +199,78 @@ test('the browser context menu does not interrupt right mouse camera controls', 
     app.canvas.emit('contextmenu', { preventDefault: () => { prevented = true; } });
     assert.equal(prevented, true);
 });
+
+test('right click requests the target in render pixels and right drag never opens a menu', t => {
+    const app=setup(t,2);
+    app.pointer('pointerdown',{button:2,buttons:2,clientX:40,clientY:60});
+    app.canvas.emit('contextmenu',{clientX:40,clientY:60}); // Browsers that emit on press.
+    assert.equal(app.calls.filter(c=>c.method==='OnContextMenuRequest').length,0);
+    app.pointer('pointerup',{button:2,buttons:0,clientX:40,clientY:60});
+    assert.deepEqual(app.calls.find(c=>c.method==='OnContextMenuRequest').args,[60,80]);
+    app.calls.length=0;
+    app.pointer('pointerdown',{button:2,buttons:2});
+    app.canvas.emit('contextmenu',{clientX:10,clientY:20});
+    app.pointer('pointermove',{buttons:2,clientX:40});
+    app.pointer('pointermove',{buttons:2,clientX:10}); // Returning to the start is still a drag.
+    app.pointer('pointerup',{button:2,buttons:0});
+    assert.equal(app.calls.filter(c=>c.method==='OnContextMenuRequest').length,0);
+});
+
+test('touch hold opens once, cancels a GUI press and consumes the following release', async t => {
+    t.mock.timers.enable({apis:['setTimeout']});
+    const app=setup(t,2);
+    runtime.setOverlayState({controls:[{id:'target',x:0,y:0,width:100,height:100}]});
+    app.pointer('pointerdown',{pointerType:'touch',clientX:30,clientY:40});
+    t.mock.timers.tick(499);
+    assert.equal(app.calls.filter(c=>c.method==='OnContextMenuRequest').length,0);
+    t.mock.timers.tick(1);
+    assert.deepEqual(app.calls.find(c=>c.method==='OnContextMenuRequest').args,[40,40]);
+    assert.deepEqual(app.calls.filter(c=>c.method==='OnGuiPointer').map(c=>c.args[2]),['down','cancel']);
+    app.canvas.emit('contextmenu',{pointerType:'touch',clientX:30,clientY:40});
+    app.pointer('pointerup',{pointerType:'touch',buttons:0,clientX:30,clientY:40});
+    assert.equal(app.calls.filter(c=>c.method==='OnContextMenuRequest').length,1);
+    assert.equal(app.calls.filter(c=>c.method==='OnGuiPointer'&&c.args[2]==='up').length,0);
+    await app.frame();
+    assert.equal(app.input().touches.length,0);
+    assert.equal(app.input().touchTransitions.at(-1).phase,4);
+});
+
+for (const action of ['blur', 'capture', 'cancel']) {
+    test(`${action} clears a pending right menu request`, t => {
+        const app = setup(t);
+        app.pointer('pointerdown', { button: 2, buttons: 2 });
+        app.canvas.emit('contextmenu', { clientX: 10, clientY: 20 });
+        if (action === 'blur') app.browser.emit('blur', {});
+        if (action === 'capture') { runtime.setInputCapture(true); runtime.setInputCapture(false); }
+        if (action === 'cancel') app.pointer('pointercancel', { button: 0, buttons: 0 });
+        app.pointer('pointerdown', { button: 2, buttons: 2 });
+        app.pointer('pointerup', { button: 2, buttons: 0 });
+        assert.equal(app.calls.filter(c => c.method === 'OnContextMenuRequest').length, 0);
+    });
+}
+
+test('blur cancels a GUI hold and consumes its later release', t => {
+    const app = setup(t);
+    runtime.setOverlayState({ controls: [{ id: 'target', x: 0, y: 0, width: 100, height: 100 }] });
+    app.pointer('pointerdown', { pointerType: 'touch', clientX: 30, clientY: 40 });
+    app.browser.emit('blur', {});
+    app.pointer('pointerup', { pointerType: 'touch', buttons: 0, clientX: 30, clientY: 40 });
+    assert.deepEqual(app.calls.filter(c => c.method === 'OnGuiPointer').map(c => c.args[2]), ['down', 'cancel']);
+});
+
+for(const action of ['drag','multitouch','cancel','release','blur','capture','stop']) {
+    test(`${action} cancels touch long press`,t=>{
+        t.mock.timers.enable({apis:['setTimeout']});
+        const app=setup(t);
+        app.pointer('pointerdown',{pointerType:'touch'});
+        if(action==='drag')app.pointer('pointermove',{pointerType:'touch',clientX:19});
+        if(action==='multitouch')app.pointer('pointerdown',{pointerType:'touch',pointerId:2});
+        if(action==='cancel')app.pointer('pointercancel',{pointerType:'touch',buttons:0});
+        if(action==='release')app.pointer('pointerup',{pointerType:'touch',buttons:0});
+        if(action==='blur')app.browser.emit('blur',{});
+        if(action==='capture')runtime.setInputCapture(true);
+        if(action==='stop')runtime.stop();
+        t.mock.timers.tick(1000);
+        assert.equal(app.calls.filter(c=>c.method==='OnContextMenuRequest').length,0);
+    });
+}

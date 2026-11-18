@@ -1415,17 +1415,4 @@ internal sealed class AndroidSceneGame : Game, IRuntimeTextureProvider
     private Vector4 ScreenClearColor(LightingSettings lighting)
         => AndroidDesktopSpritePolicy.ClearColor(_windowSettings.DesktopSpriteMode, lighting.ClearColor.ToVector4());
 
-    internal RuntimeRaycastHit? RaycastVisibleModels(RuntimeRay ray)
-    {
-        RuntimeRaycastHit? closest = null;
-        foreach (var (id, model) in _models)
-        {
-            RuntimeEntity? entity = _scene.GetEntity(id);
-            if (entity?.Visible != true || !model.Visible || RuntimePhysics.CreateColliders(entity).Any()) continue;
-            if (AndroidContextMenuRouting.RaycastBounds(ray, model.World, model.BoundsMin, model.BoundsMax, out float near)
-                && (closest is null || near < closest.Value.Distance))
-                closest = new RuntimeRaycastHit(entity, "", "", "model_bounds", near, ray.GetPoint(near));
-        }
-        return closest;
-    }
 }

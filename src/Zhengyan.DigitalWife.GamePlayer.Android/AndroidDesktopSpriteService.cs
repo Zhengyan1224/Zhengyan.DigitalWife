@@ -341,7 +341,7 @@ public sealed class AndroidDesktopSpriteService : Service
         {
             service._screenOn = intent?.Action != Intent.ActionScreenOff
                 && (service.GetSystemService(KeyguardService) as KeyguardManager)?.IsKeyguardLocked != true;
-            if (!service._screenOn) service.CloseTextEditor();
+            if (!service._screenOn) { service._contextMenuPopup?.Dismiss(); service.CloseTextEditor(); }
             service.ResumeIfVisible();
         }
     }

@@ -26,6 +26,8 @@ internal static class AndroidRuntimeRegressionTests
         (string Name, Action Test)[] tests =
         [
             ("Android context menu target, collider and GUI routing", AndroidContextMenuTests.Targets),
+            ("Android context menu picking matches PC colliders and PMX fallback", RuntimeContextMenuPickingTests.Run),
+            ("Android context menu PC layout, cameras, aliases and sprites", AndroidContextMenuTests.LayoutAndCameras),
             ("Android desktop sprite alpha touch regions", AndroidContextMenuTests.AlphaRegions),
             ("Android desktop sprite window bounds, transparency and frame pacing", AndroidDesktopSpriteTests.GeometryAndPacing),
             ("Android desktop sprite export compatibility", AndroidDesktopSpriteTests.Compatibility),

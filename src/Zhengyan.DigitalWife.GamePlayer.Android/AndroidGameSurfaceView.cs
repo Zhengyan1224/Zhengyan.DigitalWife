@@ -29,6 +29,8 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
     private readonly TextureView? _textureView;
     private Surface? _textureSurface;
     private bool _longPressEligible, _contextGestureActive;
+    private bool _secondaryDown, _secondaryDragged;
+    private float _secondaryX, _secondaryY;
     private byte[] _readbackRgba = [];
     private long _lastAlphaReadback;
     public bool AlphaReadbackEnabled { get; set; }
@@ -172,9 +174,11 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
     public void NotifyContextMenuOpened(ContextMenuSettings menu, float x, float y)
         => _renderHost.DispatchContextMenuOpened(menu, x, y);
     public void EndContextMenuInteraction() => _renderHost.SuppressCameraInput = false;
+    public void BeginContextMenuInteraction() => _renderHost.SuppressCameraInput = true;
 
     public void PauseRendering()
     {
+        CancelInput();
         _isResumed = false;
         CancelFrame();
         _renderHost.Pause();
@@ -234,7 +238,7 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
             return false;
         }
 
-        if (e.ActionMasked == MotionEventActions.Down) _longPressEligible = true;
+        if (e.ActionMasked == MotionEventActions.Down) _longPressEligible = e.GetToolType(0) is MotionEventToolType.Finger or MotionEventToolType.Stylus;
         if (e.PointerCount > 1 || e.ActionMasked == MotionEventActions.Cancel) _longPressEligible = false;
         if (_contextGestureActive)
         {
@@ -243,12 +247,15 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
             return true;
         }
 
-        _touchState.Apply(e);
+        bool secondaryMouse = e.GetToolType(0) == MotionEventToolType.Mouse
+            && (_secondaryDown || ((int)e.ButtonState & 2) != 0 || (int)e.ActionButton == 2);
+        if (!secondaryMouse) _touchState.Apply(e);
         _deviceInputState.ApplyMotion(e);
         if (e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
             _deviceInputState.SetMouseButton(MapMouseButton((int)e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
+        if (HandleSecondaryButton(e)) return true;
         _gestureDetector.OnTouchEvent(e);
-        if (e.ActionMasked == MotionEventActions.Up)
+        if (e.ActionMasked == MotionEventActions.Up && e.GetToolType(0) != MotionEventToolType.Mouse)
         {
             RequestTextInput(e.GetX(), e.GetY());
         }
@@ -281,7 +288,41 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
         _deviceInputState.ApplyMotion(e);
         if (e is not null && e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease)
             _deviceInputState.SetMouseButton(MapMouseButton((int)e.ActionButton), e.ActionMasked == MotionEventActions.ButtonPress);
+        if (e is not null && HandleSecondaryButton(e)) return true;
         return base.OnGenericMotionEvent(e);
+    }
+
+    private bool HandleSecondaryButton(MotionEvent e)
+    {
+        if (e.ActionMasked == MotionEventActions.Cancel) { _secondaryDown = false; return false; }
+        bool down = ((int)e.ButtonState & 2) != 0;
+        if (e.ActionMasked is MotionEventActions.ButtonPress or MotionEventActions.ButtonRelease && (int)e.ActionButton == 2)
+            down = e.ActionMasked == MotionEventActions.ButtonPress;
+        if (down && !_secondaryDown) { _secondaryDown = true; _secondaryDragged = false; _secondaryX = e.GetX(); _secondaryY = e.GetY(); }
+        float slop = 8 * (Resources?.DisplayMetrics?.Density ?? 1);
+        if (_secondaryDown && MathF.Pow(e.GetX() - _secondaryX, 2) + MathF.Pow(e.GetY() - _secondaryY, 2) > slop * slop)
+            _secondaryDragged = true;
+        if (!down && _secondaryDown)
+        {
+            _secondaryDown = false;
+            if (!_secondaryDragged) return TryOpenContextMenu(e.GetX(), e.GetY(), e);
+        }
+        return false;
+    }
+
+    private bool TryOpenContextMenu(float x, float y, MotionEvent e)
+    {
+        if (!IsReady || ContextMenuRequested is null) return false;
+        ContextMenuSettings? menu = _renderHost.ResolveContextMenu(x, y);
+        if (menu is null) return false;
+        if (e.GetToolType(0) is MotionEventToolType.Finger or MotionEventToolType.Stylus && IsTextInputAt(x, y)
+            && Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeContextMenuRouting.Normalize(menu.TargetType) != "gui_control") return false;
+        using var cancel = MotionEvent.Obtain(e.DownTime, global::Android.OS.SystemClock.UptimeMillis(), MotionEventActions.Cancel, x, y, MetaKeyStates.None);
+        if (cancel is not null) _touchState.Apply(cancel);
+        _contextGestureActive = e.ActionMasked != MotionEventActions.Up && e.ActionMasked != MotionEventActions.ButtonRelease;
+        BeginContextMenuInteraction();
+        ContextMenuRequested.Invoke(menu, x, y);
+        return true;
     }
 
     private static int MapMouseButton(int button) => button switch
@@ -318,15 +359,8 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
 
         public override void OnLongPress(MotionEvent e)
         {
-            if (!owner._longPressEligible || !owner.IsReady || owner.ContextMenuRequested is null
-                || owner.IsTextInputAt(e.GetX(), e.GetY())) return;
-            ContextMenuSettings? menu = owner._renderHost.ResolveContextMenu(e.GetX(), e.GetY());
-            if (menu is null) return;
-            using var cancel = MotionEvent.Obtain(e.DownTime, global::Android.OS.SystemClock.UptimeMillis(), MotionEventActions.Cancel, e.GetX(), e.GetY(), MetaKeyStates.None);
-            if (cancel is not null) owner._touchState.Apply(cancel);
-            owner._contextGestureActive = true;
-            owner._renderHost.SuppressCameraInput = true;
-            owner.ContextMenuRequested.Invoke(menu, e.GetX(), e.GetY());
+            if (!owner._longPressEligible || !owner.IsReady || owner.ContextMenuRequested is null) return;
+            owner.TryOpenContextMenu(e.GetX(), e.GetY(), e);
         }
     }
 

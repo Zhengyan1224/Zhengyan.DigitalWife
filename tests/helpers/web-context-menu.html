@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/css/app.css">
+<style>
+body { min-width:0; background:transparent; }
+#fixture-frame { position:relative; width:260px; height:180px; margin:24px; overflow:hidden; background:#172335; }
+#game-canvas { background:radial-gradient(circle at center,#4383aa 0 28%,transparent 29%); }
+.caption { position:absolute; left:12px; top:12px; pointer-events:none; font-size:12px; }
+</style>
+<div id="fixture-frame"><canvas id="game-canvas"></canvas><div class="caption">桌面精灵菜单交互测试</div></div>
+<script type="module">
+import * as runtime from '../../src/Zhengyan.DigitalWife.GamePlayer.Web/wwwroot/js/web-runtime.js';
+const canvas=document.getElementById('game-canvas');
+window.calls=[];window.runtime=runtime;
+window.menu=(x=canvas.width-4,y=canvas.height-4,count=3)=>{
+    const ratio=devicePixelRatio;
+    runtime.showContextMenu({id:'actor-menu',name:'角色菜单',token:'fixture-token',x,y,width:198*ratio,itemHeight:28*ratio,
+        paddingX:8*ratio,paddingY:6*ratio,fontSize:18*ratio,rounding:8*ratio,borderThickness:ratio,
+        background:'rgba(15,20,28,.96)',color:'#fff',border:'rgba(87,133,179,.9)',hover:'rgba(46,92,148,.96)',active:'#1f4573',
+        items:Array.from({length:count},(_,i)=>({id:`item-${i}`,text:['切换动作','暂不可用','关闭精灵'][i]||`菜单项 ${i+1}`,enabled:i!==1}))});
+};
+runtime.start(canvas,{invokeMethodAsync(method,...args){window.calls.push({method,args});if(method==='OnContextMenuRequest')window.menu(...args);return Promise.resolve();}});
+window.ready=true;
+</script>

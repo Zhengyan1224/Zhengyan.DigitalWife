@@ -51,6 +51,9 @@ public sealed class WebRuntimeHost(
     private string? _speakingEntity;
     private string? _pressedGuiId;
     private string? _contextMenuTarget;
+    private ContextMenuSettings? _openContextMenu;
+    private RuntimeScene? _contextMenuScene;
+    private string? _contextMenuToken;
     private string? _hoveredSpriteId,_pressedSpriteId;
     private readonly Dictionary<string,WebPythonBridge> _pythonBridges=new();
     private string _offlineAssetIdentity = "";
@@ -362,7 +365,7 @@ public sealed class WebRuntimeHost(
             _pressedGuiId = null;
             if (control?.Id != pressedId || phase == "cancel") { await ProcessScriptCommandsAsync(); return; }
         }
-        if (control is null)
+        if (control is null || phase == "cancel")
         {
             return;
         }
@@ -405,49 +408,41 @@ public sealed class WebRuntimeHost(
     [JSInvokable]
     public async Task OnContextMenuRequest(float x,float y)
     {
-        if (_loadedProject is null || _module is null) return;
-        var scene = _loadedProject.RuntimeScene; ContextMenuSettings? selected = null; string? entityId = null;
-        foreach (var menu in scene.Definition.ContextMenus.Where(m => m.Enabled).Reverse())
-        {
-            string type = menu.TargetType.Replace('-', '_').ToLowerInvariant();
-            if (type == "entity")
-            {
-                var ray = scene.MainCamera.ScreenPointToRay(x,y,Snapshot.CanvasWidth,Snapshot.CanvasHeight);
-                if (!scene.Physics.Raycast(ray,out var hit) || (menu.TargetId.Length>0 && hit.Entity.Id!=menu.TargetId && hit.Entity.Name!=menu.TargetId)
-                    || (menu.TargetCollider.Length>0 && hit.ColliderId!=menu.TargetCollider && hit.ColliderName!=menu.TargetCollider)) continue;
-                entityId=hit.Entity.Id;
-            }
-            else if (type is "gui_control" or "gui")
-            {
-                var control=ResolveGuiControl(x,y);if(control is null || (menu.TargetId.Length>0 && control.Id!=menu.TargetId && control.Name!=menu.TargetId))continue;
-                entityId=ResolveGuiTargetEntityId(control);
-            }
-            else if (type=="sprite")
-            {
-                var sprite=scene.Definition.Sprites.LastOrDefault(s=>(menu.TargetId.Length==0 || s.Id==menu.TargetId || s.Name==menu.TargetId)
-                    && SpriteLayoutResolver.ContainsPoint(s,x,y,Snapshot.CanvasWidth,Snapshot.CanvasHeight,_loadedProject.Project.Window.Width,_loadedProject.Project.Window.Height));
-                if(sprite is null)continue;entityId=scene.GetEntity(sprite.TargetEntity)?.Id;
-            }
-            selected=menu;break;
-        }
+        if (_loadedProject is null || _module is null || Snapshot.IsLoading || _switchingScene || _disposed) return;
+        var loaded = _loadedProject;
+        var scene = loaded.RuntimeScene;
+        var selected = RuntimeContextMenuRouting.Resolve(scene, loaded.Project.Window, x, y,
+            Snapshot.CanvasWidth, Snapshot.CanvasHeight);
         if(selected is null)return;
-        _contextMenuTarget=entityId??scene.SelectScriptTarget()?.Id;
-        float scale=LayoutResolver.IsRelative(selected.LayoutMode)?Math.Min(Snapshot.CanvasWidth/(float)_loadedProject.Project.Window.Width,Snapshot.CanvasHeight/(float)_loadedProject.Project.Window.Height):1;
-        float width=selected.Width*scale,itemHeight=selected.ItemHeight*scale,paddingY=selected.PaddingY*scale;
-        await _module.InvokeVoidAsync("showContextMenu",new{id=selected.Id,x=Math.Clamp(x,0,Math.Max(0,Snapshot.CanvasWidth-width)),
-            y=Math.Clamp(y,0,Math.Max(0,Snapshot.CanvasHeight-itemHeight*selected.Items.Count-paddingY*2)),width,itemHeight,paddingY,paddingX=selected.PaddingX*scale,
-            rounding=selected.Style.Rounding*scale,fontSize=selected.Style.FontSize*scale,background=ToCssColor(selected.Style.BackgroundColor),
-            border=ToCssColor(selected.Style.BorderColor),color=ToCssColor(selected.Style.TextColor),hover=ToCssColor(selected.Style.HoverColor),
-            items=selected.Items.Select(i=>new{id=i.Id,text=i.Text,enabled=i.Enabled}).ToArray()});
+        _contextMenuTarget = scene.GetEntity(RuntimeContextMenuRouting.TargetEntity(scene, selected))?.Id ?? scene.SelectScriptTarget()?.Id;
+        _openContextMenu = selected; _contextMenuScene = scene; _contextMenuToken = Guid.NewGuid().ToString("N");
+        ContextMenuLayout layout = ContextMenuLayout.Resolve(selected, Snapshot.CanvasWidth, Snapshot.CanvasHeight, loaded.Project.Window);
+        await _module.InvokeVoidAsync("showContextMenu", new { id = selected.Id, name = selected.Name, token = _contextMenuToken, x, y,
+            width = layout.Width, itemHeight = layout.ItemHeight, paddingY = layout.PaddingY, paddingX = layout.PaddingX,
+            rounding = layout.Rounding, fontSize = layout.FontSize, borderThickness = layout.BorderThickness,
+            background = ToCssColor(selected.Style.BackgroundColor), border = ToCssColor(selected.Style.BorderColor),
+            color = ToCssColor(selected.Style.TextColor), hover = ToCssColor(selected.Style.HoverColor), active = ToCssColor(selected.Style.ActiveColor),
+            items = selected.Items.Select(i => new { id = i.Id, text = string.IsNullOrWhiteSpace(i.Text) ? "Menu Item" : i.Text, enabled = i.Enabled }).ToArray() });
     }
 
     [JSInvokable]
-    public async Task OnContextMenuItem(string menuId,string itemId)
+    public void OnContextMenuDismissed(string token)
     {
-        var menu=_loadedProject?.SceneDefinition.ContextMenus.FirstOrDefault(m=>m.Id==menuId && m.Enabled);
-        var item=menu?.Items.FirstOrDefault(i=>i.Id==itemId && i.Enabled);if(item is null)return;
-        _loadedProject!.Scripts.DispatchEvent(new("gui",EntityId:_contextMenuTarget??"",ControlId:menu!.Id,ControlName:menu.Name,
-            EventName:string.IsNullOrWhiteSpace(item.EventName)?"context_menu_clicked":item.EventName),_contextMenuTarget);
+        if (token != _contextMenuToken) return;
+        _openContextMenu = null; _contextMenuScene = null; _contextMenuTarget = null; _contextMenuToken = null;
+    }
+
+    [JSInvokable]
+    public async Task OnContextMenuItem(string menuId,string itemId,string token)
+    {
+        if (_loadedProject is null || !ReferenceEquals(_contextMenuScene, _loadedProject.RuntimeScene) || token != _contextMenuToken
+            || Snapshot.IsLoading || _openContextMenu is not { } menu || menu.Id != menuId
+            || !menu.Enabled || !_loadedProject.SceneDefinition.ContextMenus.Contains(menu)) return;
+        var item=menu.Items.FirstOrDefault(i=>i.Id==itemId && i.Enabled);if(item is null)return;
+        string? target = _contextMenuTarget;
+        OnContextMenuDismissed(token);
+        _loadedProject.Scripts.DispatchEvent(new("gui",EntityId:target??"",ControlId:menu.Id,ControlName:menu.Name,
+            EventName:string.IsNullOrWhiteSpace(item.EventName)?"context_menu_clicked":item.EventName),target);
         await ProcessScriptCommandsAsync();
     }
 
@@ -745,6 +740,8 @@ public sealed class WebRuntimeHost(
             LoadingStage = "scene", LoadingMessage = "正在切换场景", LastError = null });
         try
         {
+            if (_contextMenuToken is { } menuToken) OnContextMenuDismissed(menuToken);
+            await _module.InvokeVoidAsync("closeContextMenu");
             await _module.InvokeVoidAsync("setInputCapture", true);
             await _module.InvokeVoidAsync("nextPaint");
             await PersistSaveAsync(_loadedProject.RuntimeScene);
@@ -823,6 +820,12 @@ public sealed class WebRuntimeHost(
 
     private async Task UpdateOverlayStateAsync(WebLoadedProject project)
     {
+        if (_openContextMenu is { } menu && (!ReferenceEquals(_contextMenuScene, project.RuntimeScene)
+            || !menu.Enabled || !project.SceneDefinition.ContextMenus.Contains(menu) || !menu.Items.Any(i => i.Enabled)))
+        {
+            if (_contextMenuToken is { } token) OnContextMenuDismissed(token);
+            if (_module is not null) await _module.InvokeVoidAsync("closeContextMenu");
+        }
         if (_module is null) return;
         float actualWidth = Math.Max(Snapshot.CanvasWidth, 1);
         float actualHeight = Math.Max(Snapshot.CanvasHeight, 1);

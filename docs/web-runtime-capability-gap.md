@@ -101,7 +101,7 @@ Release AOT 浏览器回归已通过：主场景的 874×491 主视口和第二�
 | `Scene.Navigation` | 部分支持 | Core 有导航结构；Web 需要从场景碰撞/地面建立可用 NavMesh，并实现调试信息。 |
 | GUI 控件读写 | 已补齐 | 文字、可见性、Checked、Progress、SelectedIndex 等基础属性。文本框浏览器编辑仍待补。 |
 | Sprite 事件 | 已补齐 | clicked 事件已接入；entered/pressed/released/hover 状态仍待补。 |
-| Context Menu | 待实现 | Web overlay 没有右键菜单状态机和菜单项脚本事件。 |
+| Context Menu | 已支持 | 鼠标右键、触屏/笔长按；窗口/实体/碰撞体/GUI/Sprite 目标匹配，沿用 PC 样式、布局和 GUI 脚本事件；透明桌面精灵内自动限制边界并支持滚动。 |
 | `RuntimeAudio` 全量 API | 部分支持 | 常用播放控制已支持；音频资源流式加载、播放位置、one-shot 管理和完成事件待补。 |
 | `Entity.Speak/SpeakWithCallback` | 已补齐 | 使用浏览器 SpeechSynthesis；speakerId、口型同步、语音队列和中断语义仍不等同于原生端。 |
 | ASR/麦克风事件 | 待实现 | Web 有录音服务，但尚未接入 `IsAsrEvent`、实时转写和脚本事件生命周期。 |

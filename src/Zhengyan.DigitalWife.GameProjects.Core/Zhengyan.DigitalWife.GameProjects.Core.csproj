@@ -16,6 +16,7 @@
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\WebGamePackageExporter.cs" Link="WebGamePackageExporter.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\AndroidProjectCompatibility.cs" Link="AndroidProjectCompatibility.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\LayoutResolver.cs" Link="LayoutResolver.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\ContextMenuLayout.cs" Link="ContextMenuLayout.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GuiPointerHitTest.cs" Link="GuiPointerHitTest.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\SpriteLayoutResolver.cs" Link="SpriteLayoutResolver.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\CollisionGeometry.cs" Link="CollisionGeometry.cs" />

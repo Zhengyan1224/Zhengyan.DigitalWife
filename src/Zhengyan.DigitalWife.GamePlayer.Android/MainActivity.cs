@@ -106,6 +106,7 @@ public sealed partial class MainActivity : Activity
 
     protected override void OnPause()
     {
+        _contextMenuPopup?.Dismiss();
         CloseTextEditor();
         _gameView?.PauseRendering();
         base.OnPause();

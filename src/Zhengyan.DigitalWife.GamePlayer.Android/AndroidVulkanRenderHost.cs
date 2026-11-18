@@ -257,18 +257,18 @@ internal sealed class AndroidVulkanRenderHost : IAndroidRenderHost
         RuntimeScene? scene = _sceneManager?.Current;
         if (scene is null) return;
         _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
-            "context_menu", item.Id, item.EventName,
-            new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), item.Text,
-            TargetEntity: AndroidContextMenuRouting.TargetEntity(scene, menu)));
+            "gui", menu.Id, string.IsNullOrWhiteSpace(item.EventName) ? "context_menu_clicked" : item.EventName,
+            new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
+            TargetEntity: RuntimeContextMenuRouting.TargetEntity(scene, menu)));
     }
 
     public ContextMenuSettings? ResolveContextMenu(float x, float y) => _sceneManager?.Current is { } scene && _project is not null
-        ? AndroidContextMenuRouting.Resolve(scene, _project.Window, x, y, _width, _height, ray => _game?.RaycastVisibleModels(ray)) : null;
+        ? RuntimeContextMenuRouting.Resolve(scene, _project.Window, x, y, _width, _height) : null;
     public void DispatchContextMenuOpened(ContextMenuSettings menu, float x, float y)
     {
         if (_sceneManager?.Current is { } scene) _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
-            "context_menu", menu.Id, "opened", new(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
-            TargetEntity: AndroidContextMenuRouting.TargetEntity(scene, menu)));
+            "gui", menu.Id, "opened", new(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
+            TargetEntity: RuntimeContextMenuRouting.TargetEntity(scene, menu)));
     }
 
     public void Dispose()

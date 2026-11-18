@@ -107,7 +107,7 @@ GamePlayer 的 Android 主机。它直接由 `AndroidPmxSceneRenderer` 遍历 PM
 | OpenGL ES 后端 | PC Pass 功能 | 部分 | 目前是 Android 专用单 shader，不是现有 `IRenderer`/Pass 架构的移动实现 |
 | Vulkan 后端 | PC Vulkan | 部分（阶段 9） | Android 已支持 Surface、Swapchain、PMX/天空盒/水面/粒子/Plane/阴影、RenderTexture 离屏 Pass 和 Auto 回退；GUI 使用 Android 原生 Canvas/IME 路径，不加载桌面 `cimgui` 原生库，完整后处理链和真机 Compute 验证仍缺失 |
 | GUI 控件 | Button/Label/Checkbox/Dropdown/Textbox/Progress | 部分（阶段 4/5） | Android 已支持 GLES 背景/进度、Canvas 字体和 GUI 触摸事件；完整 Android IME 编辑会话和持久化上下文菜单仍有限制 |
-| 上下文菜单 | 窗口/实体/碰撞体/GUI/Sprite | 缺失 | 触摸端还需定义长按语义，外接鼠标保留右键语义 |
+| 上下文菜单 | 窗口/实体/碰撞体/GUI/Sprite | 已支持 | 触屏长按或外接鼠标右键；沿用 PC 菜单样式、绝对/相对布局和 GUI 脚本事件；桌面精灵使用独立弹窗，长列表可滚动 |
 | 对话气泡 | 文本、目标实体和生命周期 | 缺失 | 没有投影到屏幕、布局和脚本管理器 |
 | 游戏内 2D Sprite | 背景/前景、布局、旋转、透明度 | 部分（阶段 4/5） | Android 已支持纹理、绝对/相对布局、旋转、透明度、DrawOrder 和 Sprite 触摸事件派发 |
 | C# 脚本 | Start/Update/各类事件和完整运行时 API | 已支持发布预编译 | Android 开发目录保留 `.csx` 回退；Android 发布会生成程序集和 `compiled/android/manifest.json`，设备端优先加载程序集 |
@@ -372,7 +372,7 @@ Silk Window/Input/OpenAL             Activity/Input/Audio/Storage/IME
 - 支持外接键盘、鼠标、滚轮和 Android Gamepad，保持脚本按钮/轴名称与 PC 一致。
 - 构建 Android ImGui 或等价 GUI Renderer，支持 Button、Label、Checkbox、Dropdown、
   Textbox、Progress、样式、布局和事件。
-- 实现上下文菜单：触摸长按作为移动端入口，外接鼠标保留右键。
+- 已实现上下文菜单：触摸长按作为移动端入口，外接鼠标保留右键；拖动和多指操作不会弹出菜单。
 - 实现对话气泡、实体屏幕投影以及背景/前景 2D Sprite。
 - 实现加载背景、图片、进度条和安全区/刘海/圆角屏布局。
 

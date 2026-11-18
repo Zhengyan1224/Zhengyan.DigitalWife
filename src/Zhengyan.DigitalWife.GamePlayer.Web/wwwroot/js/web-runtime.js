@@ -39,6 +39,7 @@ function updateCanvasMetrics() {
         || runtime.canvas.height !== height
         || runtime.devicePixelRatio !== devicePixelRatio;
     if (!changed && runtime.hasMeasuredCanvas) return;
+    if (changed) closeContextMenu();
     runtime.hasMeasuredCanvas = true;
     runtime.devicePixelRatio = devicePixelRatio;
     if (runtime.canvas.width !== width) runtime.canvas.width = width;
@@ -82,6 +83,15 @@ function queuePointerInput(lookX, lookY, panX, panY, zoom, pointerX, pointerY, b
 
 function resetInput() {
     if (!runtime) return;
+    cancelLongPress();
+    const press = runtime.overlayPress;
+    if (press && runtime.guiPointerActive) invoke('OnGuiPointer', press.x, press.y, 'cancel', press.button);
+    if (press && runtime.spritePointerActive) invoke('OnSpritePointer', press.x, press.y, 'cancel', press.button);
+    runtime.overlayPress = null;
+    runtime.guiPointerActive = runtime.spritePointerActive = false;
+    runtime.pendingRightMenu = false;
+    runtime.rightDown = null;
+    runtime.rightDragged = false;
     const input = runtime.pendingPointerInput;
     runtime.pendingPointerInput = { lookX: 0, lookY: 0, panX: 0, panY: 0, zoom: 0, pointerX: input?.pointerX || 0, pointerY: input?.pointerY || 0, buttons: 0 };
     runtime.lastPointerButtons = 0;
@@ -90,6 +100,13 @@ function resetInput() {
     runtime.touches.clear();
     for (const key of runtime.pressedKeys) invoke("OnKeyInput", key, false);
     runtime.pressedKeys.clear();
+}
+
+function cancelLongPress() {
+    if (!runtime) return;
+    clearTimeout(runtime.longPressTimer);
+    runtime.longPressTimer = null;
+    runtime.longPressPointer = null;
 }
 
 function installInputHandlers() {
@@ -128,6 +145,9 @@ function installInputHandlers() {
         });
     };
     runtime.onPointerDown = event => {
+        if (runtime.inputCaptured) return;
+        runtime.contextGestureActive = false;
+        runtime.suppressTouchContextMenu = false;
         updateTouch(event,0);
         unlockAudio().catch(() => {});
         offline.unlockAudio().catch(() => {});
@@ -137,12 +157,28 @@ function installInputHandlers() {
         runtime.guiPointerActive = overlayHit(event);
         runtime.spritePointerActive = !runtime.guiPointerActive && spriteHit(event);
         const [downX, downY] = canvasPoint(event);
+        runtime.overlayPress = { x: downX, y: downY, button: event.button ?? 0 };
+        runtime.pendingRightMenu = false;
+        cancelLongPress();
+        if ((event.pointerType === 'touch' || event.pointerType === 'pen') && runtime.pointers.size === 1) {
+            runtime.longPressPointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+            runtime.longPressTimer = setTimeout(() => {
+                if (!runtime || runtime.inputCaptured || runtime.pointers.size !== 1 || !runtime.longPressPointer) return;
+                runtime.contextGestureActive = true;
+                runtime.suppressTouchContextMenu = true;
+                resetInput();
+                invoke('OnContextMenuRequest', downX, downY);
+            }, 500);
+        }
         if(event.button===2){runtime.rightDown=[downX,downY];runtime.rightDragged=false;}
         if(runtime.guiPointerActive)invoke("OnGuiPointer",downX,downY,"down",event.button??0);
         if(runtime.spritePointerActive)invoke("OnSpritePointer",downX,downY,"down",event.button??0);
         if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, downX, downY, event.buttons || 1);
     };
     runtime.onPointerMove = event => {
+        if (runtime.inputCaptured || runtime.contextGestureActive) return;
+        const hold = runtime.longPressPointer;
+        if (hold?.id === event.pointerId && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > 8) cancelLongPress();
         const oldTouches=[...runtime.touches.values()];
         if(runtime.touches.has(event.pointerId))updateTouch(event,1);
         const active = runtime.pointers.has(event.pointerId);
@@ -158,7 +194,7 @@ function installInputHandlers() {
         const look = locked || buttons & 1 ? 1 : 0;
         const pan = !locked&&(buttons & 2 || event.pointerType === "touch") ? 1 : 0;
         const [moveX, moveY] = canvasPoint(event);
-        if((buttons&2) && runtime.rightDown && Math.hypot(moveX-runtime.rightDown[0],moveY-runtime.rightDown[1])>12*(runtime.devicePixelRatio||1))runtime.rightDragged=true;
+        if((buttons&2) && runtime.rightDown && Math.hypot(moveX-runtime.rightDown[0],moveY-runtime.rightDown[1])>8*(runtime.devicePixelRatio||1))runtime.rightDragged=true;
         if (!runtime.guiPointerActive && !runtime.spritePointerActive) {
             if(event.pointerType==='touch' && runtime.touches.size>=2 && oldTouches.length>=2){
                 const next=[...runtime.touches.values()],ratio=runtime.devicePixelRatio||1;
@@ -169,8 +205,19 @@ function installInputHandlers() {
         }
     };
     runtime.onPointerUp = event => {
+        cancelLongPress();
+        if (event.type === 'pointercancel') runtime.pendingRightMenu = false;
+        if (runtime.contextGestureActive || runtime.inputCaptured) {
+            runtime.contextGestureActive = false;
+            canvas.releasePointerCapture?.(event.pointerId);
+            return;
+        }
         updateTouch(event,event.type==='pointercancel'?4:3);
         const [x, y] = canvasPoint(event);
+        if (event.button === 2 && runtime.pendingRightMenu) {
+            runtime.pendingRightMenu = false;
+            if (event.type !== 'pointercancel' && !runtime.rightDragged) invoke('OnContextMenuRequest', x, y);
+        }
         if (runtime.guiPointerActive) invoke("OnGuiPointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
         if (runtime.spritePointerActive) invoke("OnSpritePointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
         const buttons = event.type === "pointercancel" || event.pointerType === "touch" ? 0 : (event.buttons || 0);
@@ -180,6 +227,7 @@ function installInputHandlers() {
         if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, x, y, buttons);
         runtime.guiPointerActive = false;
         runtime.spritePointerActive = false;
+        runtime.overlayPress = null;
     };
     runtime.onWheel = event => {
         event.preventDefault();
@@ -187,7 +235,16 @@ function installInputHandlers() {
         queuePointerInput(0, 0, 0, 0, event.deltaY * 0.01, wheelX, wheelY, runtime.lastPointerButtons);
         if(runtime.pendingPointerInput)runtime.pendingPointerInput.scrollX=(runtime.pendingPointerInput.scrollX||0)+(event.deltaX||0)*.01;
     };
-    runtime.onContextMenu = event => {event.preventDefault();if(!runtime.rightDragged){const [x,y]=canvasPoint(event);invoke("OnContextMenuRequest",x,y);}runtime.rightDragged=false;};
+    runtime.onContextMenu = event => {
+        event.preventDefault();
+        // Mobile browsers may also synthesize contextmenu for a touch hold.
+        if (event.pointerType === 'touch' || event.pointerType === 'pen' || runtime.longPressPointer || runtime.suppressTouchContextMenu) return;
+        if (!runtime.inputCaptured && !runtime.rightDragged) {
+            if (runtime.lastPointerButtons & 2) { runtime.pendingRightMenu = true; return; }
+            const [x,y]=canvasPoint(event); invoke('OnContextMenuRequest',x,y);
+        }
+        runtime.rightDragged = false;
+    };
     runtime.onKeyDown = event => {
         unlockAudio().catch(() => {});
         offline.unlockAudio().catch(() => {});
@@ -201,7 +258,7 @@ function installInputHandlers() {
         const key = event.code || event.key || "";
         if (runtime.pressedKeys.delete(key)) invoke("OnKeyInput", key, false);
     };
-    runtime.onBlur = resetInput;
+    runtime.onBlur = () => { closeContextMenu(); resetInput(); runtime.contextGestureActive = false; };
     canvas.addEventListener("pointerdown", runtime.onPointerDown, { passive: true });
     canvas.addEventListener("pointermove", runtime.onPointerMove, { passive: true });
     canvas.addEventListener("pointerup", runtime.onPointerUp, { passive: true });
@@ -215,6 +272,7 @@ function installInputHandlers() {
 
 function removeInputHandlers() {
     if (!runtime) return;
+    cancelLongPress();
     const canvas = runtime.canvas;
     canvas.removeEventListener("pointerdown", runtime.onPointerDown);
     canvas.removeEventListener("pointermove", runtime.onPointerMove);
@@ -448,8 +506,9 @@ export async function loadSceneTextures(uris) {
 
 export function setInputCapture(captured) {
     if (!runtime) return;
-    runtime.inputCaptured = !!captured;
-    if (captured) resetInput();
+    runtime.externalInputCaptured = !!captured;
+    runtime.inputCaptured = !!captured || !!runtime.contextMenu;
+    if (runtime.inputCaptured) resetInput();
 }
 
 export function setOverlayState(state) {
@@ -470,24 +529,60 @@ export function showContextMenu(menu) {
     if(!runtime || typeof document==='undefined')return;
     closeContextMenu();if(!menu)return;
     const parent=runtime.canvas.parentElement;if(!parent)return;
+    const rect=runtime.canvas.getBoundingClientRect(),scaleX=rect.width/runtime.canvas.width,scaleY=rect.height/runtime.canvas.height;
+    const availableWidth=Math.max(1,Math.min(rect.width,parent.clientWidth-(runtime.canvas.offsetLeft||0)));
+    const availableHeight=Math.max(1,Math.min(rect.height,parent.clientHeight-(runtime.canvas.offsetTop||0)));
     const ratio=runtime.devicePixelRatio||1,element=document.createElement('div');runtime.contextMenu=element;
-    Object.assign(element.style,{position:'absolute',left:`${menu.x/ratio}px`,top:`${menu.y/ratio}px`,width:`${menu.width/ratio}px`,
-        background:menu.background,color:menu.color,border:`1px solid ${menu.border}`,borderRadius:`${menu.rounding/ratio}px`,padding:`${menu.paddingY/ratio}px ${menu.paddingX/ratio}px`,zIndex:'10'});
+    runtime.contextMenuToken=menu.token;
+    runtime.menuWaitingForPress=!!runtime.contextGestureActive;
+    Object.assign(element.style,{position:'absolute',boxSizing:'border-box',margin:'0',left:'0',top:'0',width:`${menu.width/ratio}px`,
+        maxWidth:`${availableWidth}px`,maxHeight:`${availableHeight}px`,overflowY:'auto',overscrollBehavior:'contain',touchAction:'pan-y',userSelect:'none',
+        background:menu.background,color:menu.color,border:`${menu.borderThickness/ratio}px solid ${menu.border}`,borderRadius:`${menu.rounding/ratio}px`,padding:`${menu.paddingY/ratio}px ${menu.paddingX/ratio}px`,zIndex:'40'});
     element.setAttribute('role','menu');
+    element.setAttribute('aria-label',menu.name||'Context Menu');
+    element.addEventListener('contextmenu',event=>event.preventDefault());
+    const buttons=[];
     for(const item of menu.items){const button=document.createElement('button');button.textContent=item.text;button.disabled=!item.enabled;button.setAttribute('role','menuitem');
-        Object.assign(button.style,{display:'block',width:'100%',height:`${menu.itemHeight/ratio}px`,textAlign:'left',color:menu.color,background:'transparent',border:'0',font:`${menu.fontSize/ratio}px sans-serif`,cursor:item.enabled?'pointer':'default'});
+        Object.assign(button.style,{display:'block',boxSizing:'border-box',margin:'0',padding:'0',width:'100%',height:`${menu.itemHeight/ratio}px`,minHeight:'0',textAlign:'left',color:menu.color,background:'transparent',border:'0',borderRadius:'0',font:`${menu.fontSize/ratio}px "Segoe UI","Microsoft YaHei",sans-serif`,cursor:item.enabled?'pointer':'default',opacity:item.enabled?'1':'.6',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'});
         button.addEventListener('pointerenter',()=>{if(item.enabled)button.style.background=menu.hover;});button.addEventListener('pointerleave',()=>button.style.background='transparent');
-        button.addEventListener('click',()=>{if(item.enabled){closeContextMenu();invoke('OnContextMenuItem',menu.id,item.id);}});element.append(button);}
-    parent.append(element);setInputCapture(true);
-    runtime.menuDismiss=event=>{if(!element.contains(event.target))closeContextMenu();};
-    runtime.menuEscape=event=>{if(event.key==='Escape')closeContextMenu();};
+        button.addEventListener('pointerdown',()=>{runtime.menuWaitingForPress=false;if(item.enabled)button.style.background=menu.active;});
+        button.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')runtime.menuWaitingForPress=false;});
+        button.addEventListener('pointerup',()=>{if(item.enabled)button.style.background=menu.hover;});
+        button.addEventListener('focus',()=>button.style.background=menu.hover);button.addEventListener('blur',()=>button.style.background='transparent');
+        button.addEventListener('click',()=>{if(item.enabled&&!runtime.menuWaitingForPress){closeContextMenu(false);invoke('OnContextMenuItem',menu.id,item.id,menu.token);}});element.append(button);if(item.enabled)buttons.push(button);}
+    parent.append(element);
+    // Measure the complete styled popup so borders, padding and scrollbars remain inside small sprite frames.
+    const size=element.getBoundingClientRect();
+    element.style.left=`${(runtime.canvas.offsetLeft||0)+Math.max(0,Math.min(menu.x*scaleX,availableWidth-size.width))}px`;
+    element.style.top=`${(runtime.canvas.offsetTop||0)+Math.max(0,Math.min(menu.y*scaleY,availableHeight-size.height))}px`;
+    runtime.inputCaptured=true;resetInput();
+    const focusItem = button => {
+        if (!button) return;
+        button.focus({preventScroll:true});
+        const itemRect = button.getBoundingClientRect(), menuRect = element.getBoundingClientRect();
+        const top = menuRect.top + element.clientTop, bottom = top + element.clientHeight;
+        if (itemRect.top < top) element.scrollTop -= top - itemRect.top;
+        else if (itemRect.bottom > bottom) element.scrollTop += itemRect.bottom - bottom;
+    };
+    runtime.menuPreviousFocus=document.activeElement;focusItem(buttons[0]);
+    runtime.menuDismiss=event=>{if(!element.contains(event.target)){event.preventDefault();event.stopPropagation();closeContextMenu();}};
+    runtime.menuEscape=event=>{
+        if(event.key==='Escape'||event.key==='Tab'){event.preventDefault();event.stopPropagation();closeContextMenu();return;}
+        const index=buttons.indexOf(document.activeElement);
+        const next=event.key==='ArrowDown'?(index+1)%buttons.length:event.key==='ArrowUp'?(index-1+buttons.length)%buttons.length:event.key==='Home'?0:event.key==='End'?buttons.length-1:null;
+        if(next!==null){event.preventDefault();event.stopPropagation();focusItem(buttons[next]);}
+    };
     window.addEventListener('pointerdown',runtime.menuDismiss,true);window.addEventListener('keydown',runtime.menuEscape,true);
 }
-export function closeContextMenu(){
-    if(!runtime)return;runtime.contextMenu?.remove();runtime.contextMenu=null;
+export function closeContextMenu(notify=true){
+    if(!runtime)return;
+    const token=runtime.contextMenuToken,wasOpen=!!runtime.contextMenu;
+    runtime.contextMenu?.remove();runtime.contextMenu=null;runtime.contextMenuToken=null;
     if(runtime.menuDismiss)window.removeEventListener('pointerdown',runtime.menuDismiss,true);
     if(runtime.menuEscape)window.removeEventListener('keydown',runtime.menuEscape,true);
-    runtime.menuDismiss=runtime.menuEscape=null;setInputCapture(false);
+    runtime.menuDismiss=runtime.menuEscape=null;
+    runtime.inputCaptured=!!runtime.externalInputCaptured;
+    if(wasOpen){runtime.menuPreviousFocus?.focus?.({preventScroll:true});runtime.menuPreviousFocus=null;if(notify)invoke('OnContextMenuDismissed',token);}
 }
 
 function updateGuiEditors() {
