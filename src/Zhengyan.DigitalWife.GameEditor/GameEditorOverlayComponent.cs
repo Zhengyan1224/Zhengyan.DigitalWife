@@ -3152,7 +3152,7 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             return;
         }
 
-        ImGui.TextWrapped("Right-click context menus are dispatched as GUI events. Menu Id/Name becomes GuiControlId/GuiControlName, and the selected menu item's Script event becomes GuiEventName.");
+        ImGui.TextWrapped("Context menus support multiple targets and are dispatched as GUI events. GuiControlId/GuiControlName identify the menu; GuiEventName identifies the item event. ContextMenuTarget identifies the object and collider that opened it.");
 
         if (ImGui.Button("Add Context Menu"))
         {
@@ -3177,8 +3177,8 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                 bool enabled = menu.Enabled;
                 string name = menu.Name;
                 string targetType = NormalizeContextMenuTargetType(menu.TargetType);
-                string targetId = menu.TargetId;
-                string targetCollider = menu.TargetCollider;
+                var targets = menu.GetTargets().Select(t => new ContextMenuTargetSettings
+                { TargetId = t.TargetId, TargetColliders = [.. t.TargetColliders ?? []] }).ToList();
                 string layoutMode = menu.LayoutMode;
                 float width = menu.Width;
                 float itemHeight = menu.ItemHeight;
@@ -3188,8 +3188,12 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
 
                 changed |= ImGui.Checkbox("Enabled", ref enabled);
                 changed |= DrawTextInputWithPaste("Name", ref name, 128, "contextMenuName");
-                changed |= DrawStringCombo("Target type", ref targetType, ["window", "gui_control", "sprite", "entity"]);
-                changed |= DrawContextMenuTargetSelector(targetType, ref targetId, ref targetCollider);
+                if (DrawStringCombo("Target type", ref targetType, ["window", "gui_control", "sprite", "entity"]))
+                {
+                    targets.Clear();
+                    changed = true;
+                }
+                changed |= DrawContextMenuTargetSelector(targetType, targets);
                 changed |= DrawStringCombo("Layout mode", ref layoutMode, ["absolute", "relative"]);
                 changed |= ImGui.DragFloat("Width", ref width, 1.0f, 48.0f, 2048.0f, "%.0f");
                 changed |= ImGui.DragFloat("Item height", ref itemHeight, 1.0f, 12.0f, 256.0f, "%.0f");
@@ -3203,8 +3207,9 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
                     menu.Enabled = enabled;
                     menu.Name = string.IsNullOrWhiteSpace(name) ? "Context Menu" : name.Trim();
                     menu.TargetType = NormalizeContextMenuTargetType(targetType);
-                    menu.TargetId = menu.TargetType == "window" ? string.Empty : targetId;
-                    menu.TargetCollider = menu.TargetType == "entity" ? targetCollider : string.Empty;
+                    menu.Targets = menu.TargetType == "window" ? [] : targets;
+                    menu.TargetId = string.Empty;
+                    menu.TargetCollider = string.Empty;
                     menu.LayoutMode = LayoutResolver.NormalizeLayoutMode(layoutMode);
                     menu.Width = Math.Max(48.0f, width);
                     menu.ItemHeight = Math.Max(12.0f, itemHeight);
@@ -3318,41 +3323,84 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
         return changed;
     }
 
-    private bool DrawContextMenuTargetSelector(string targetType, ref string targetId, ref string targetCollider)
+    private bool DrawContextMenuTargetSelector(string targetType, List<ContextMenuTargetSettings> targets)
     {
         string normalized = NormalizeContextMenuTargetType(targetType);
         if (normalized == "window")
         {
-            bool targetCleared = !string.IsNullOrWhiteSpace(targetId) || !string.IsNullOrWhiteSpace(targetCollider);
-            targetId = string.Empty;
-            targetCollider = string.Empty;
-            ImGui.TextWrapped("Empty/window target: right-click anywhere in the window opens this menu. In desktop sprite click-through mode, transparent areas are already excluded by the native hit-test.");
-            return targetCleared;
+            ImGui.TextWrapped("Right-click anywhere in the window opens this menu. Desktop sprite transparent areas are excluded by the native hit-test.");
+            return false;
         }
-
-        bool changed = normalized switch
+        bool changed = false;
+        int remove = -1;
+        ImGui.SeparatorText("Targets");
+        for (int i = 0; i < targets.Count; i++)
         {
-            "gui_control" => DrawGuiControlTargetCombo("Target GUI control", ref targetId),
-            "sprite" => DrawSpriteTargetCombo("Target 2D sprite", ref targetId),
-            "entity" => DrawEntityTargetCombo("Target entity", ref targetId),
-            _ => false
-        };
-
-        if (normalized == "entity")
-        {
-            changed |= DrawEntityColliderCombo("Target collider", targetId, ref targetCollider);
+            ImGui.PushID($"menuTarget{i}");
+            var binding = targets[i];
+            string id = binding.TargetId;
+            bool targetChanged = normalized switch
+            {
+                "gui_control" => DrawGuiControlTargetCombo("Target GUI control", ref id),
+                "sprite" => DrawSpriteTargetCombo("Target 2D sprite", ref id),
+                "entity" => DrawEntityTargetCombo("Target entity", ref id),
+                _ => false
+            };
+            if (targetChanged)
+            {
+                if (!string.Equals(binding.TargetId, id, StringComparison.OrdinalIgnoreCase))
+                    binding.TargetColliders.Clear();
+                binding.TargetId = id;
+                changed = true;
+            }
+            if (normalized == "entity") changed |= DrawContextMenuColliders(binding);
+            if (ImGui.SmallButton("Remove Target")) remove = i;
+            ImGui.PopID();
         }
-        else
-        {
-            changed |= !string.IsNullOrWhiteSpace(targetCollider);
-            targetCollider = string.Empty;
-        }
+        if (remove >= 0) { targets.RemoveAt(remove); changed = true; }
+        if (ImGui.Button("Add Target")) { targets.Add(new()); changed = true; }
+        if (targets.Count == 0) ImGui.TextWrapped("No targets: this menu applies to the whole window. Add a target to restrict it.");
+        if (normalized == "entity") ImGui.TextWrapped("Each entity has its own collider selection. All colliders applies to the entire entity; otherwise only the selected colliders open this menu.");
+        return changed;
+    }
 
-        if (string.IsNullOrWhiteSpace(targetId))
+    private bool DrawContextMenuColliders(ContextMenuTargetSettings binding)
+    {
+        GameEntity? entity = _editorGame.Project.Scene.Entities.FirstOrDefault(e =>
+            string.Equals(e.Id, binding.TargetId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(e.Name, binding.TargetId, StringComparison.OrdinalIgnoreCase));
+        if (entity is null) { ImGui.TextDisabled("Select an entity to choose its colliders."); return false; }
+        binding.TargetColliders ??= [];
+        var colliders = GameEntityCollision.GetEffectiveColliders(entity).ToList();
+        string preview = binding.TargetColliders.Count == 0 ? "(all colliders)" : $"{binding.TargetColliders.Count} selected";
+        bool changed = false;
+        if (ImGui.BeginCombo("Target colliders", preview))
         {
-            ImGui.TextWrapped("No target selected. Runtime will treat this as a whole-window context menu.");
+            if (ImGui.Button("All colliders"))
+            {
+                binding.TargetColliders.Clear();
+                changed = true;
+            }
+            foreach (var collider in colliders)
+            {
+                bool selected = binding.TargetColliders.Any(c => string.Equals(c, collider.Id, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(c, collider.Name, StringComparison.OrdinalIgnoreCase));
+                if (ImGui.Checkbox($"{collider.Name}##{collider.Id}", ref selected))
+                {
+                    if (!selected) binding.TargetColliders.RemoveAll(c => string.Equals(c, collider.Id, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(c, collider.Name, StringComparison.OrdinalIgnoreCase));
+                    else binding.TargetColliders.Add(collider.Id);
+                    changed = true;
+                }
+            }
+            foreach (string missing in binding.TargetColliders.Where(c => !colliders.Any(t =>
+                string.Equals(c, t.Id, StringComparison.OrdinalIgnoreCase) || string.Equals(c, t.Name, StringComparison.OrdinalIgnoreCase))).ToArray())
+            {
+                if (ImGui.Button($"Missing: {missing} (remove)"))
+                { binding.TargetColliders.Remove(missing); changed = true; }
+            }
+            ImGui.EndCombo();
         }
-
         return changed;
     }
 
@@ -3738,68 +3786,6 @@ internal sealed class GameEditorOverlayComponent(GameEditorGame editorGame) : Dr
             {
                 ImGui.Separator();
                 ImGui.TextDisabled($"Current value is not found: {normalizedTarget}");
-            }
-
-            ImGui.EndCombo();
-        }
-
-        return changed;
-    }
-
-    private bool DrawEntityColliderCombo(string label, string targetEntity, ref string targetCollider)
-    {
-        GameProjectScene scene = _editorGame.Project.Scene;
-        string normalizedTarget = targetEntity.Trim();
-        GameEntity? entity = scene.Entities.FirstOrDefault(item =>
-            string.Equals(item.Id, normalizedTarget, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(item.Name, normalizedTarget, StringComparison.OrdinalIgnoreCase));
-        if (entity is null)
-        {
-            targetCollider = string.Empty;
-            ImGui.TextDisabled("Target collider: select an entity first.");
-            return false;
-        }
-
-        List<ColliderSettings> colliders = GameEntityCollision.GetEffectiveColliders(entity).ToList();
-        string normalizedCollider = targetCollider.Trim();
-        ColliderSettings? selectedCollider = colliders.FirstOrDefault(collider =>
-            string.Equals(collider.Id, normalizedCollider, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(collider.Name, normalizedCollider, StringComparison.OrdinalIgnoreCase));
-        string preview = selectedCollider is not null
-            ? selectedCollider.Name
-            : string.IsNullOrWhiteSpace(normalizedCollider)
-                ? "(any collider)"
-                : $"Missing: {normalizedCollider}";
-
-        bool changed = false;
-        if (ImGui.BeginCombo(label, preview))
-        {
-            bool anySelected = string.IsNullOrWhiteSpace(normalizedCollider);
-            if (ImGui.Selectable("(any collider)", anySelected))
-            {
-                targetCollider = string.Empty;
-                changed = true;
-            }
-
-            foreach (ColliderSettings collider in colliders)
-            {
-                bool selected = selectedCollider is not null && string.Equals(selectedCollider.Id, collider.Id, StringComparison.OrdinalIgnoreCase);
-                if (ImGui.Selectable($"{collider.Name}##targetCollider{collider.Id}", selected))
-                {
-                    targetCollider = collider.Id;
-                    changed = true;
-                }
-
-                if (selected)
-                {
-                    ImGui.SetItemDefaultFocus();
-                }
-            }
-
-            if (selectedCollider is null && !string.IsNullOrWhiteSpace(normalizedCollider))
-            {
-                ImGui.Separator();
-                ImGui.TextDisabled($"Current value is not found: {normalizedCollider}");
             }
 
             ImGui.EndCombo();

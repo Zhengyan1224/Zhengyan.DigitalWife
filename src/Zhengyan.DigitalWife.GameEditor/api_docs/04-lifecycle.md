@@ -92,6 +92,8 @@ C# 全局变量：
 | `IsStart` | `bool` | 实体脚本启动事件。 |
 | `IsUpdate` | `bool` | 每帧更新事件。 |
 | `IsGuiEvent` | `bool` | GUI 控件事件。 |
+| `IsContextMenuEvent` | `bool` | 右键/长按菜单事件，同时 `IsGuiEvent=true`；其他事件为 `false`。 |
+| `ContextMenuTarget` | `ContextMenuTargetInfo?` | 打开菜单时实际命中的 GUI/Sprite/实体和 Collider 快照，其他事件为 `null`。说明与三端示例见 [右键菜单](15-gui.md#右键菜单)。 |
 | `GuiControlId` | `string` | 触发事件的 GUI 控件 Id。 |
 | `GuiControlName` | `string` | 触发事件的 GUI 控件 Name，适合脚本按可读名称判断控件。 |
 | `GuiEventName` | `string` | GUI 事件名，例如 `clicked`、`changed`。 |

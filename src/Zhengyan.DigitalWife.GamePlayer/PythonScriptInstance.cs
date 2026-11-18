@@ -39,9 +39,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
         SendEvent("update", entity, scene, input, audio, deltaSeconds);
     }
 
-    public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName)
+    public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName, Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? contextMenuTarget = null)
     {
-        SendEvent("gui_event", entity, scene, input, audio, 0.0, controlId, controlName, eventName);
+        SendEvent("gui_event", entity, scene, input, audio, 0.0, controlId, controlName, eventName, contextMenuTarget: contextMenuTarget);
     }
 
     public void SpriteEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string spriteId, string spriteName, string eventName)
@@ -186,7 +186,8 @@ internal sealed class PythonScriptInstance : IScriptInstance
         string speechCallback = "",
         RuntimeLlmScriptEvent? llmEvent = null,
         RuntimeAsrScriptEvent? asrEvent = null,
-        RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent = null)
+        RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent = null,
+        Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? contextMenuTarget = null)
     {
         if (_process.HasExited)
         {
@@ -194,6 +195,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         }
 
         PythonEvent payload = PythonEvent.Create(eventName, entity, scene, input, deltaSeconds, controlId, controlName, guiEventName, spriteId, spriteName, spriteEventName, trayMenuItemId, trayMenuItemText, trayMenuEventName, loadingProgress, loadingMessage, speechCallback, llmEvent, asrEvent, realtimeVoiceEvent);
+        payload.ContextMenuTarget = contextMenuTarget;
         _process.StandardInput.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
         _process.StandardInput.Flush();
 
@@ -3434,6 +3436,10 @@ internal sealed class PythonScriptInstance : IScriptInstance
                        input = Input(ctx.get("input", {}), commands)
                        audio = Audio(commands)
                        event = ctx.get("event", "")
+                       target_data = ctx.get("contextMenuTarget")
+                       context_menu_target = type("ContextMenuTarget", (), {k[0].upper() + k[1:]: v for k, v in target_data.items()})() if target_data else None
+                       module.ContextMenuTarget = context_menu_target
+                       module.IsContextMenuEvent = context_menu_target is not None
                        if event == "start" and hasattr(module, "start"):
                            module.start(entity, scene, input, audio)
                        elif event == "update" and hasattr(module, "update"):
@@ -3442,7 +3448,9 @@ internal sealed class PythonScriptInstance : IScriptInstance
                            control_id = ctx.get("controlId", "")
                            control_name = ctx.get("controlName", "")
                            gui_event_name = ctx.get("guiEventName", "")
-                           if len(inspect.signature(module.gui_event).parameters) >= 7:
+                           if len(inspect.signature(module.gui_event).parameters) >= 8:
+                               module.gui_event(entity, scene, input, audio, control_id, control_name, gui_event_name, context_menu_target)
+                           elif len(inspect.signature(module.gui_event).parameters) >= 7:
                                module.gui_event(entity, scene, input, audio, control_id, control_name, gui_event_name)
                            else:
                                module.gui_event(entity, scene, input, audio, control_id, gui_event_name)
@@ -5015,6 +5023,7 @@ internal sealed class PythonScriptInstance : IScriptInstance
         public string ControlName { get; set; } = string.Empty;
 
         public string GuiEventName { get; set; } = string.Empty;
+        public Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? ContextMenuTarget { get; set; }
 
         public string SpriteId { get; set; } = string.Empty;
 

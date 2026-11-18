@@ -75,6 +75,8 @@ if (args is ["--publish-web-project", string sourceDirectory, string targetDirec
 
 (string Name, Action Run)[] tests =
 [
+    ("Context menu PC multiple targets and per-entity colliders", ContextMenuRegression.Picking),
+    ("Context menu PC CSharp Python and three-platform script export", ContextMenuRegression.ScriptContract),
     ("Desktop script API parity compiles Android and Web", ScriptApiAudit.Verify),
     ("Desktop sprite OpenGL preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.OpenGl),
     ("Desktop sprite Vulkan preserves X11 window and scene alpha", DesktopSpriteTransparencyRegression.Vulkan),

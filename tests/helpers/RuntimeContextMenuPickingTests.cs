@@ -6,6 +6,7 @@ internal static class RuntimeContextMenuPickingTests
 {
     public static void Run()
     {
+        MultipleTargets();
         GameProjectScene definition = new()
         {
             Camera = new() { Position = new(0, 0, 10), Target = Vector3Dto.Zero },
@@ -59,6 +60,57 @@ internal static class RuntimeContextMenuPickingTests
         scene.MainCamera.Position = new(0, 2, 8);
         scene.MainCamera.Target = new(0, 1.2f, 0);
         Check(Menu() is not null, "The DemoGame08 scaled character capsule did not open its bound menu.");
+    }
+
+    private static void MultipleTargets()
+    {
+        ContextMenuSettings legacy = System.Text.Json.JsonSerializer.Deserialize<ContextMenuSettings>(
+            """{"TargetType":"entity","TargetId":"actor","TargetCollider":"c1"}""")!;
+        Check(legacy.GetTargets().Single().TargetColliders.SequenceEqual(["c1"]), "Old single-target scene bindings were lost.");
+        legacy.Targets = [new() { TargetId = "other" }];
+        var restored = System.Text.Json.JsonSerializer.Deserialize<ContextMenuSettings>(System.Text.Json.JsonSerializer.Serialize(legacy))!;
+        Check(restored.GetTargets().Single().TargetId == "other", "New bindings did not override stale legacy fields on serialization.");
+        GameProjectScene definition = new()
+        {
+            Entities = [new() { Id = "actor", Name = "Actor", Transform = new() { Position = new(-2, 0, 0) },
+                Colliders = [new() { Id = "c1", Name = "First", Shape = "box", Size = new(2, 2, 2) },
+                    new() { Id = "c2", Name = "Second", Shape = "box", Size = new(2, 2, 2), Enabled = false },
+                    new() { Id = "c3", Name = "Third", Shape = "box", Size = new(2, 2, 2), Enabled = false }] },
+                new() { Id = "other", Name = "Other", Transform = new() { Position = new(2, 0, 0) },
+                    Colliders = [new() { Id = "other-collider", Name = "Other Collider", Shape = "box", Size = new(2, 2, 2) }] }],
+            ContextMenus = [new() { TargetType = "entity", Targets =
+                [new() { TargetId = "ACTOR", TargetColliders = ["c1", "SECOND"] }, new() { TargetId = "other" }] }]
+        };
+        using RuntimeScene scene = new("multi-menu", definition, p => p);
+        scene.MainCamera.Position = new(0, 0, 10); scene.MainCamera.Target = Vector3.Zero;
+        GameWindowSettings window = new() { Width = 100, Height = 100 };
+        ContextMenuSelection? Pick(float x, float y = 50) => RuntimeContextMenuRouting.ResolveSelection(scene, window, x, y, 100, 100);
+        var first = Pick(25);
+        Check(first?.Target is { TargetType: "entity", TargetId: "actor", TargetName: "Actor", EntityId: "actor", ColliderId: "c1", PointerX: 25 },
+            "The first entity/collider identity was not captured.");
+        Check(Pick(75)?.Target.ColliderId == "other-collider", "The unrestricted second entity inherited the first entity's collider filter.");
+        definition.Entities[0].Colliders[0].Enabled = false;
+        definition.Entities[0].Colliders[1].Enabled = true;
+        Check(Pick(25)?.Target.ColliderId == "c2", "The second selected collider did not match by name.");
+        definition.Entities[0].Colliders[1].Enabled = false;
+        definition.Entities[0].Colliders[2].Enabled = true;
+        Check(Pick(25) is null, "An unselected collider opened a restricted entity menu.");
+        Check(first!.Target.ColliderId == "c1", "An opening's collider snapshot changed after the scene changed.");
+        definition.ContextMenus[0].Targets[0].TargetColliders.Clear();
+        Check(Pick(25)?.Target.ColliderId == "c3", "All colliders did not apply to the whole entity.");
+
+        definition.GuiControls = [new() { Id = "gui-a", Name = "GUI A", TargetEntity = "actor", X = 5, Y = 5, Width = 20, Height = 20 },
+            new() { Id = "gui-b", Name = "GUI B", TargetEntity = "other", X = 70, Y = 5, Width = 20, Height = 20 }];
+        definition.ContextMenus = [new() { TargetType = "gui_control", Targets = [new() { TargetId = "gui-a" }, new() { TargetId = "GUI B" }] }];
+        Check(Pick(10, 10)?.Target is { TargetId: "gui-a", TargetName: "GUI A", EntityId: "actor", ColliderId: "" }
+            && Pick(75, 10)?.Target is { TargetId: "gui-b", EntityId: "other" }, "Multiple GUI targets lost their hit identity or script recipient.");
+        definition.Sprites = [new() { Id = "sprite-a", Name = "Sprite A", Path = "sprite.png", X = 5, Y = 70, Width = 20, Height = 20, TargetEntity = "actor" },
+            new() { Id = "sprite-b", Name = "Sprite B", Path = "sprite.png", X = 70, Y = 70, Width = 20, Height = 20, TargetEntity = "other" }];
+        definition.ContextMenus = [new() { TargetType = "sprite", Targets = [new() { TargetId = "sprite-a" }, new() { TargetId = "sprite-b" }] }];
+        Check(Pick(10, 75)?.Target is { TargetType: "sprite", TargetId: "sprite-a", EntityId: "actor" }
+            && Pick(75, 75)?.Target is { TargetId: "sprite-b", EntityId: "other" }, "Multiple sprite targets lost their identity.");
+        definition.ContextMenus[0].Targets = [new() { TargetId = "missing" }, new()];
+        Check(Pick(10, 75) is null, "An empty or missing target row became a whole-window binding.");
     }
 
     private static void Check(bool condition, string message)

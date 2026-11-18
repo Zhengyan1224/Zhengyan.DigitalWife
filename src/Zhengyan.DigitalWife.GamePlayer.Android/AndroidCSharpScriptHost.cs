@@ -697,6 +697,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
                 or nameof(AndroidScriptGlobals.IsUpdate)
                 or nameof(AndroidScriptGlobals.IsEvent)
                 or nameof(AndroidScriptGlobals.IsGuiEvent)
+                or nameof(AndroidScriptGlobals.IsContextMenuEvent)
                 or nameof(AndroidScriptGlobals.IsSpriteEvent)
                 or nameof(AndroidScriptGlobals.IsSpeechEvent)
                 or nameof(AndroidScriptGlobals.IsLoadingEvent)
@@ -718,6 +719,7 @@ internal sealed class AndroidCSharpScriptHost : IDisposable
         [
             nameof(AndroidScriptGlobals.IsEvent),
             nameof(AndroidScriptGlobals.IsGuiEvent),
+            nameof(AndroidScriptGlobals.IsContextMenuEvent),
             nameof(AndroidScriptGlobals.IsSpriteEvent),
             nameof(AndroidScriptGlobals.IsSpeechEvent),
             nameof(AndroidScriptGlobals.IsLoadingEvent),

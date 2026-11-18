@@ -386,11 +386,11 @@ public sealed class AndroidDesktopSpriteService : Service
         StopSelf();
     }
 
-    private void ShowGameMenu(ContextMenuSettings menu, float x, float y)
+    private void ShowGameMenu(ContextMenuSelection selection, float x, float y)
     {
         if (_game is null || _root is null) return;
         _contextMenuPopup ??= new AndroidContextMenuPopup(_root, _game);
-        _contextMenuPopup.Show(menu, x, y);
+        _contextMenuPopup.Show(selection, x, y);
     }
 
     private void ShowTextEditor(GuiControlSettings control, LayoutRect rect)

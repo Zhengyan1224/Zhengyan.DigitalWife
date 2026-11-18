@@ -58,9 +58,9 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         Execute(entity, scene, input, audio, deltaSeconds, isStart: false, isUpdate: true, isGuiEvent: false, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
     }
 
-    public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName)
+    public void GuiEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string controlId, string controlName, string eventName, Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? contextMenuTarget = null)
     {
-        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null);
+        Execute(entity, scene, input, audio, 0.0, isStart: false, isUpdate: false, isGuiEvent: true, isSpriteEvent: false, isTrayMenuEvent: false, isLoadingEvent: false, isSpeechEvent: false, isLlmEvent: false, isAsrEvent: false, isRealtimeVoiceEvent: false, controlId, controlName, eventName, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0.0f, string.Empty, string.Empty, null, null, null, contextMenuTarget);
     }
 
     public void SpriteEvent(RuntimeEntity entity, RuntimeScene scene, RuntimeInput input, RuntimeAudio audio, string spriteId, string spriteName, string eventName)
@@ -146,7 +146,8 @@ internal sealed class CSharpScriptInstance : IScriptInstance
         string speechCallbackName,
         RuntimeLlmScriptEvent? llmEvent,
         RuntimeAsrScriptEvent? asrEvent,
-        RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent)
+        RuntimeRealtimeVoiceScriptEvent? realtimeVoiceEvent,
+        Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? contextMenuTarget = null)
     {
         CSharpScriptGlobals globals = new()
         {
@@ -168,6 +169,7 @@ internal sealed class CSharpScriptInstance : IScriptInstance
             LlmEvent = llmEvent,
             AsrEvent = asrEvent,
             RealtimeVoiceEvent = realtimeVoiceEvent,
+            ContextMenuTarget = contextMenuTarget,
             GuiControlId = guiControlId,
             GuiControlName = guiControlName,
             GuiEventName = guiEventName,

@@ -29,6 +29,7 @@ public sealed class WebPythonBridge
             IsLoadingEvent=gameEvent?.IsLoadingEvent??false,LoadingEventName=gameEvent?.IsLoadingEvent==true?gameEvent.EventName:"",
             LoadingProgress=gameEvent?.LoadingProgress??0,LoadingMessage=gameEvent?.LoadingMessage??"",
             DeltaSeconds=delta,IsStart=start,IsUpdate=gameEvent is null && !start,IsGuiEvent=gameEvent?.IsGuiEvent??false,
+            IsContextMenuEvent=gameEvent?.IsContextMenuEvent??false,ContextMenuTarget=Encode(gameEvent?.ContextMenuTarget),
             GuiControlId=gameEvent?.ControlId??"",GuiControlName=gameEvent?.ControlName??"",GuiEventName=gameEvent?.EventName??"",
             IsSpeechEvent=gameEvent?.IsSpeechEvent??false,SpeechCallbackName=gameEvent?.CallbackName??"",
             IsAsrEvent=gameEvent?.IsAsrEvent??false,AsrText=gameEvent?.Asr?.Text??"",AsrCallbackName=gameEvent?.Asr?.CallbackName??"",

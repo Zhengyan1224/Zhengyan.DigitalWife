@@ -52,6 +52,7 @@ public sealed class WebRuntimeHost(
     private string? _pressedGuiId;
     private string? _contextMenuTarget;
     private ContextMenuSettings? _openContextMenu;
+    private ContextMenuTargetInfo? _contextMenuHit;
     private RuntimeScene? _contextMenuScene;
     private string? _contextMenuToken;
     private string? _hoveredSpriteId,_pressedSpriteId;
@@ -411,10 +412,12 @@ public sealed class WebRuntimeHost(
         if (_loadedProject is null || _module is null || Snapshot.IsLoading || _switchingScene || _disposed) return;
         var loaded = _loadedProject;
         var scene = loaded.RuntimeScene;
-        var selected = RuntimeContextMenuRouting.Resolve(scene, loaded.Project.Window, x, y,
+        var selection = RuntimeContextMenuRouting.ResolveSelection(scene, loaded.Project.Window, x, y,
             Snapshot.CanvasWidth, Snapshot.CanvasHeight);
-        if(selected is null)return;
-        _contextMenuTarget = scene.GetEntity(RuntimeContextMenuRouting.TargetEntity(scene, selected))?.Id ?? scene.SelectScriptTarget()?.Id;
+        if(selection is null)return;
+        var selected = selection.Menu;
+        _contextMenuHit = selection.Target;
+        _contextMenuTarget = scene.GetEntity(selection.Target.EntityId)?.Id ?? scene.SelectScriptTarget()?.Id;
         _openContextMenu = selected; _contextMenuScene = scene; _contextMenuToken = Guid.NewGuid().ToString("N");
         ContextMenuLayout layout = ContextMenuLayout.Resolve(selected, Snapshot.CanvasWidth, Snapshot.CanvasHeight, loaded.Project.Window);
         await _module.InvokeVoidAsync("showContextMenu", new { id = selected.Id, name = selected.Name, token = _contextMenuToken, x, y,
@@ -429,7 +432,7 @@ public sealed class WebRuntimeHost(
     public void OnContextMenuDismissed(string token)
     {
         if (token != _contextMenuToken) return;
-        _openContextMenu = null; _contextMenuScene = null; _contextMenuTarget = null; _contextMenuToken = null;
+        _contextMenuHit = null; _openContextMenu = null; _contextMenuScene = null; _contextMenuTarget = null; _contextMenuToken = null;
     }
 
     [JSInvokable]
@@ -440,9 +443,10 @@ public sealed class WebRuntimeHost(
             || !menu.Enabled || !_loadedProject.SceneDefinition.ContextMenus.Contains(menu)) return;
         var item=menu.Items.FirstOrDefault(i=>i.Id==itemId && i.Enabled);if(item is null)return;
         string? target = _contextMenuTarget;
+        var contextTarget = _contextMenuHit;
         OnContextMenuDismissed(token);
         _loadedProject.Scripts.DispatchEvent(new("gui",EntityId:target??"",ControlId:menu.Id,ControlName:menu.Name,
-            EventName:string.IsNullOrWhiteSpace(item.EventName)?"context_menu_clicked":item.EventName),target);
+            EventName:string.IsNullOrWhiteSpace(item.EventName)?"context_menu_clicked":item.EventName) { ContextMenuTarget = contextTarget },target);
         await ProcessScriptCommandsAsync();
     }
 

@@ -990,6 +990,13 @@ public sealed class ContextMenuSettings
 
     public string TargetCollider { get; set; } = string.Empty;
 
+    // When present, these bindings replace the legacy single target above.
+    public List<ContextMenuTargetSettings> Targets { get; set; } = [];
+
+    public IReadOnlyList<ContextMenuTargetSettings> GetTargets()
+        => Targets is { Count: > 0 } ? Targets : string.IsNullOrWhiteSpace(TargetId) ? []
+            : [new() { TargetId = TargetId, TargetColliders = string.IsNullOrWhiteSpace(TargetCollider) ? [] : [TargetCollider] }];
+
     public string LayoutMode { get; set; } = "absolute";
 
     public float Width { get; set; } = 180.0f;
@@ -1018,6 +1025,20 @@ public sealed class ContextMenuSettings
         }
     ];
 }
+
+public sealed class ContextMenuTargetSettings
+{
+    public string TargetId { get; set; } = string.Empty;
+    // Empty means every collider on this entity. IDs and names are both accepted.
+    public List<string> TargetColliders { get; set; } = [];
+
+    public bool MatchesCollider(string id, string name)
+        => TargetColliders is not { Count: > 0 } || TargetColliders.Any(target =>
+            string.Equals(target, id, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(target, name, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed record ContextMenuSelection(ContextMenuSettings Menu, ContextMenuTargetInfo Target);
 
 public sealed class ContextMenuItemSettings
 {

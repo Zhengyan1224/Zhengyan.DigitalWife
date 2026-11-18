@@ -60,6 +60,7 @@
   <assembly fullname="Zhengyan.DigitalWife.GameProjects.Core" preserve="all" />
   <assembly fullname="Zhengyan.DigitalWife.Abstractions">
     <type fullname="Zhengyan.DigitalWife.GameProjects.AndroidScriptGlobalsContract" preserve="all" />
+    <type fullname="Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo" preserve="all" />
     <type fullname="Zhengyan.DigitalWife.Scripting.ScriptTime" preserve="all" />
   </assembly>
 </linker>

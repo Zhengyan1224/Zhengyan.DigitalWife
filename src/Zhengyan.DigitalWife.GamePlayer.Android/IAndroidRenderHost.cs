@@ -25,8 +25,8 @@ internal interface IAndroidRenderHost : IDisposable
     void Render(long frameTimeNanos, AndroidInputSnapshot input);
     Action<Zhengyan.DigitalWife.Mmd.Game.Graphics.IRenderer>? BeforePresent { get; set; }
     bool SuppressCameraInput { get; set; }
-    ContextMenuSettings? ResolveContextMenu(float x, float y);
-    void DispatchContextMenuOpened(ContextMenuSettings menu, float x, float y);
+    ContextMenuSelection? ResolveContextMenu(float x, float y);
+    void DispatchContextMenuOpened(ContextMenuSelection selection, float x, float y);
 
     bool TryGetBubblePosition(RuntimeDialogueBubble bubble, int canvasWidth, int canvasHeight, out Vector2 position);
 
@@ -38,6 +38,6 @@ internal interface IAndroidRenderHost : IDisposable
 
     bool RequestRenderTextureRefresh(string idOrName);
 
-    void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y);
+    void DispatchContextMenuItem(ContextMenuSelection selection, ContextMenuItemSettings item, float x, float y);
     void DispatchGuiControlChanged(GuiControlSettings control);
 }

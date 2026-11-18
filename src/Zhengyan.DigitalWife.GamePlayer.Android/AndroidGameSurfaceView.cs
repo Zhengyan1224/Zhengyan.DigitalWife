@@ -169,10 +169,10 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
         return _renderHost.RequestRenderTextureRefresh(idOrName);
     }
 
-    public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)
-        => _renderHost.DispatchContextMenuItem(menu, item, x, y);
-    public void NotifyContextMenuOpened(ContextMenuSettings menu, float x, float y)
-        => _renderHost.DispatchContextMenuOpened(menu, x, y);
+    public void DispatchContextMenuItem(ContextMenuSelection selection, ContextMenuItemSettings item, float x, float y)
+        => _renderHost.DispatchContextMenuItem(selection, item, x, y);
+    public void NotifyContextMenuOpened(ContextMenuSelection selection, float x, float y)
+        => _renderHost.DispatchContextMenuOpened(selection, x, y);
     public void EndContextMenuInteraction() => _renderHost.SuppressCameraInput = false;
     public void BeginContextMenuInteraction() => _renderHost.SuppressCameraInput = true;
 
@@ -227,7 +227,7 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
     public event Action? FirstFramePresented;
     public event Action<string>? RenderInitializationFailed;
     public event Action<GuiControlSettings, LayoutRect>? TextInputRequested;
-    public event Action<ContextMenuSettings, float, float>? ContextMenuRequested;
+    public event Action<ContextMenuSelection, float, float>? ContextMenuRequested;
     public void InvalidateOverlay() => OverlayInvalidated?.Invoke();
     public void DispatchGuiControlChanged(GuiControlSettings control)=>_renderHost.DispatchGuiControlChanged(control);
 
@@ -313,15 +313,15 @@ internal sealed class AndroidGameSurfaceView : FrameLayout, ISurfaceHolderCallba
     private bool TryOpenContextMenu(float x, float y, MotionEvent e)
     {
         if (!IsReady || ContextMenuRequested is null) return false;
-        ContextMenuSettings? menu = _renderHost.ResolveContextMenu(x, y);
-        if (menu is null) return false;
+        ContextMenuSelection? selection = _renderHost.ResolveContextMenu(x, y);
+        if (selection is null) return false;
         if (e.GetToolType(0) is MotionEventToolType.Finger or MotionEventToolType.Stylus && IsTextInputAt(x, y)
-            && Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeContextMenuRouting.Normalize(menu.TargetType) != "gui_control") return false;
+            && Zhengyan.DigitalWife.GamePlayer.Runtime.RuntimeContextMenuRouting.Normalize(selection.Menu.TargetType) != "gui_control") return false;
         using var cancel = MotionEvent.Obtain(e.DownTime, global::Android.OS.SystemClock.UptimeMillis(), MotionEventActions.Cancel, x, y, MetaKeyStates.None);
         if (cancel is not null) _touchState.Apply(cancel);
         _contextGestureActive = e.ActionMasked != MotionEventActions.Up && e.ActionMasked != MotionEventActions.ButtonRelease;
         BeginContextMenuInteraction();
-        ContextMenuRequested.Invoke(menu, x, y);
+        ContextMenuRequested.Invoke(selection, x, y);
         return true;
     }
 

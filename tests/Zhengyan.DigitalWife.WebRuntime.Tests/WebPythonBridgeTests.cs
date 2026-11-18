@@ -15,6 +15,16 @@ static class WebPythonBridgeTests
         object? Call(int handle,string name,object[] arguments,object? named=null)=>bridge.Invoke(new(handle,"call",name,J(arguments),J(named)));
         object? Get(int handle,string name)=>bridge.Invoke(new(handle,"get",name,J(Array.Empty<object>()),J(null)));
         int Handle(object value)=>J(value).GetProperty("__handle").GetInt32();
+        var menuEvent = new WebScriptEvent("gui", ControlId: "menu", EventName: "action")
+            { ContextMenuTarget = new() { TargetType = "entity", TargetId = "other", ColliderId = "body", PointerX = 140 } };
+        JsonElement menuFrame = J(bridge.Frame(new(scene, entity), 0, false, menuEvent));
+        int hitHandle = Handle(menuFrame.GetProperty("ContextMenuTarget"));
+        Check(menuFrame.GetProperty("IsContextMenuEvent").GetBoolean() && (string?)Get(hitHandle, "TargetId") == "other"
+            && (string?)Get(hitHandle, "ColliderId") == "body" && (float?)Get(hitHandle, "PointerX") == 140,
+            "Python context-menu identity was not exposed through the bridge.");
+        JsonElement ordinaryFrame = J(bridge.Frame(new(scene, entity), .1f, false, null));
+        Check(!ordinaryFrame.GetProperty("IsContextMenuEvent").GetBoolean() && ordinaryFrame.GetProperty("ContextMenuTarget").ValueKind == JsonValueKind.Null,
+            "Python Update retained a previous menu target.");
         bridge.Invoke(new(2,"set","Position",J(Array.Empty<object>()),J(new{__vector=new[]{1f,2f,3f}})));
         Check(entity.Position==new Vector3(1,2,3),"Python vector assignment failed");
         Call(2,"SetMotionLayerWeight",["walk.vmd",.25f]);Check(entity.MotionLayers[0].Weight==.25f,"Python string overload failed");

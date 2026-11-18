@@ -120,6 +120,9 @@ public sealed class CSharpScriptGlobals
 
     public string LoadingMessage { get; init; } = string.Empty;
 
+    public Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? ContextMenuTarget { get; init; }
+    public bool IsContextMenuEvent => ContextMenuTarget is not null;
+
     public string GuiControlId { get; init; } = string.Empty;
 
     public string GuiControlName { get; init; } = string.Empty;

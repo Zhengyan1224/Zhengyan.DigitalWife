@@ -26,7 +26,7 @@
 | Performance / FPS API | 调试 | ``RuntimePerformance``, ``scene.performance`` | [api_docs/12-performance.md](./api_docs/12-performance.md) |
 | 场景加载入口脚本 | 事件 | ``Loading scripts`` | [api_docs/13-loading-scripts.md](./api_docs/13-loading-scripts.md) |
 | Dialogue Bubble API | GUI | ``RuntimeDialogueBubbleManager``, ``RuntimeDialogueBubble``, ``scene.bubble`` | [api_docs/14-dialogue-bubble.md](./api_docs/14-dialogue-bubble.md) |
-| GUI API | GUI | ``RuntimeGuiControl``, ``GuiControlSettings`` | [api_docs/15-gui.md](./api_docs/15-gui.md) |
+| GUI API | GUI | ``RuntimeGuiControl``, ``GuiControlSettings``, ``ContextMenuTargetInfo``（右键/长按对象、多个目标与 Collider 示例） | [api_docs/15-gui.md](./api_docs/15-gui.md) |
 | 2D Sprite API | GUI | ``RuntimeSpriteControl``, ``SpriteSettings`` | [api_docs/16-sprite.md](./api_docs/16-sprite.md) |
 | Window / Runtime 设置 | 运行时 | ``RuntimeWindowControl``, ``RuntimeProjectControl``, ``RuntimeCommandResult`` | [api_docs/17-window-runtime.md](./api_docs/17-window-runtime.md) |
 | Camera API | 相机 | ``RuntimeCamera``, ``RuntimeRay`` | [api_docs/18-camera.md](./api_docs/18-camera.md) |

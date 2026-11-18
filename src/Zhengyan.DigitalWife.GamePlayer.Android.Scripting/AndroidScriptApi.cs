@@ -28,6 +28,8 @@ public sealed record AndroidRuntimeEvent(
     string Delta = "",
     double OffsetSeconds=0)
 {
+    public ContextMenuTargetInfo? ContextMenuTarget { get; init; }
+
     internal static AndroidRuntimeEvent FromLlm(AndroidScriptEntity entity, RuntimeLlmScriptEvent value)
         => new("llm", value.RequestId, value.EventName, Vector2.Zero, value.Delta,
             entity.Id, value.ToolCall, value.ToolResult ?? string.Empty, value.Error,
@@ -648,6 +650,7 @@ public sealed partial class AndroidScriptGlobals : AndroidScriptGlobalsContract
         base.IsStart = isStart;
         base.IsUpdate = isUpdate;
         base.IsGuiEvent = IsGuiEvent;
+        base.ContextMenuTarget = ContextMenuTarget;
         base.IsSpriteEvent = IsSpriteEvent;
         base.IsTrayMenuEvent = IsTrayMenuEvent;
         base.IsLoadingEvent = IsLoadingEvent;
@@ -716,6 +719,8 @@ public sealed partial class AndroidScriptGlobals : AndroidScriptGlobalsContract
     public new AndroidRuntimeEvent? Event { get; private set; }
 
     public new bool IsEvent => Event is not null;
+    public new ContextMenuTargetInfo? ContextMenuTarget => Event?.ContextMenuTarget;
+    public new bool IsContextMenuEvent => ContextMenuTarget is not null;
     public new bool IsGuiEvent => string.Equals(Event?.Type, "gui", StringComparison.OrdinalIgnoreCase);
     public new bool IsSpriteEvent => string.Equals(Event?.Type, "sprite", StringComparison.OrdinalIgnoreCase);
     public new bool IsTrayMenuEvent => string.Equals(Event?.Type, "tray", StringComparison.OrdinalIgnoreCase);
@@ -791,6 +796,7 @@ public sealed partial class AndroidScriptGlobals : AndroidScriptGlobalsContract
         base.IsStart = IsStart;
         base.IsUpdate = IsUpdate;
         base.IsGuiEvent = IsGuiEvent;
+        base.ContextMenuTarget = ContextMenuTarget;
         base.IsSpriteEvent = IsSpriteEvent;
         base.IsSpeechEvent = IsSpeechEvent;
         base.GuiControlId = GuiControlId;

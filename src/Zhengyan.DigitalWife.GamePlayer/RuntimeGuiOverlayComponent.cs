@@ -16,7 +16,7 @@ internal sealed class RuntimeGuiOverlayComponent(
     Func<GameWindowSettings> getWindowSettings,
     Func<string, string> resolvePath,
     Action<GuiControlSettings, string> dispatchEvent,
-    Action<ContextMenuSettings, ContextMenuItemSettings> dispatchContextMenuEvent) : DrawableGameComponent
+    Action<ContextMenuSettings, ContextMenuItemSettings, ContextMenuTargetInfo> dispatchContextMenuEvent) : DrawableGameComponent
 {
     private const float BaseFontSize = 18.0f;
 
@@ -28,11 +28,13 @@ internal sealed class RuntimeGuiOverlayComponent(
     private readonly Func<GameWindowSettings> _getWindowSettings = getWindowSettings;
     private readonly Func<string, string> _resolvePath = resolvePath;
     private readonly Action<GuiControlSettings, string> _dispatchEvent = dispatchEvent;
-    private readonly Action<ContextMenuSettings, ContextMenuItemSettings> _dispatchContextMenuEvent = dispatchContextMenuEvent;
+    private readonly Action<ContextMenuSettings, ContextMenuItemSettings, ContextMenuTargetInfo> _dispatchContextMenuEvent = dispatchContextMenuEvent;
     private readonly Dictionary<string, ITexture2D> _spriteTextures = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ScreenSpriteDrawCommand> _backgroundSpriteCommands = [];
     private IScreenSpriteRenderer? _backgroundSpriteRenderer;
     private IImGuiBackendController? _controller;
+    private ContextMenuTargetInfo? _openContextMenuTarget;
+    private RuntimeScene? _contextMenuScene;
     private string _openContextMenuId = string.Empty;
     private Vector2 _contextMenuPopupPosition;
     private Vector2 _contextMenuRightPressPosition;
@@ -620,10 +622,12 @@ internal sealed class RuntimeGuiOverlayComponent(
             _contextMenuRightPressActive = false;
             if (Vector2.DistanceSquared(_contextMenuRightPressPosition, mousePosition) <= 64.0f)
             {
-                ContextMenuSettings? menu = ResolveContextMenuAt(mousePosition);
+                ContextMenuSettings? menu = ResolveContextMenuAt(mousePosition, out var contextTarget);
                 if (menu is not null)
                 {
                     _openContextMenuId = menu.Id;
+                    _openContextMenuTarget = contextTarget;
+                    _contextMenuScene = _getScene();
                     _contextMenuPopupPosition = mousePosition;
                     ImGui.OpenPopup(GetContextMenuPopupId(menu));
                 }
@@ -636,8 +640,9 @@ internal sealed class RuntimeGuiOverlayComponent(
         }
     }
 
-    private ContextMenuSettings? ResolveContextMenuAt(Vector2 mousePosition)
+    private ContextMenuSettings? ResolveContextMenuAt(Vector2 mousePosition, out ContextMenuTargetInfo? target)
     {
+        target = null;
         IReadOnlyList<ContextMenuSettings>? menus = _getContextMenus();
         if (menus is null)
         {
@@ -652,7 +657,7 @@ internal sealed class RuntimeGuiOverlayComponent(
                 continue;
             }
 
-            if (IsContextMenuTargetHit(menu, mousePosition))
+            if (IsContextMenuTargetHit(menu, mousePosition, out target))
             {
                 return menu;
             }
@@ -661,109 +666,60 @@ internal sealed class RuntimeGuiOverlayComponent(
         return null;
     }
 
-    private bool IsContextMenuTargetHit(ContextMenuSettings menu, Vector2 mousePosition)
+    private bool IsContextMenuTargetHit(ContextMenuSettings menu, Vector2 point, out ContextMenuTargetInfo? target)
     {
-        string targetType = NormalizeContextMenuTargetType(menu.TargetType);
-        if (targetType == "window" || string.IsNullOrWhiteSpace(menu.TargetId))
+        target = null;
+        if (Game is null || point.X < 0 || point.Y < 0 || point.X >= Game.Window.Size.X || point.Y >= Game.Window.Size.Y) return false;
+        string type = NormalizeContextMenuTargetType(menu.TargetType);
+        var targets = menu.GetTargets();
+        if (type == "window" || targets.Count == 0)
         {
-            return IsPointInsideWindow(mousePosition);
+            target = new() { PointerX = point.X, PointerY = point.Y };
+            return true;
         }
-
-        return targetType switch
-        {
-            "gui_control" => IsGuiControlHit(menu.TargetId, mousePosition),
-            "sprite" => IsSpriteHit(menu.TargetId, mousePosition),
-            "entity" => IsEntityHit(menu, mousePosition),
-            _ => IsPointInsideWindow(mousePosition)
-        };
-    }
-
-    private bool IsPointInsideWindow(Vector2 point)
-    {
-        if (Game is null)
-        {
-            return false;
-        }
-
-        return point.X >= 0.0f
-            && point.Y >= 0.0f
-            && point.X <= Game.Window.Size.X
-            && point.Y <= Game.Window.Size.Y;
-    }
-
-    private bool IsGuiControlHit(string targetId, Vector2 mousePosition)
-    {
-        GuiControlSettings? control = _getControls().FirstOrDefault(item =>
-            item.Visible
-            && (string.Equals(item.Id, targetId, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(item.Name, targetId, StringComparison.OrdinalIgnoreCase)));
-        if (control is null)
-        {
-            return false;
-        }
-
-        LayoutRect rect = ResolveGuiRect(control);
-        return mousePosition.X >= rect.X
-            && mousePosition.Y >= rect.Y
-            && mousePosition.X <= rect.X + rect.Width
-            && mousePosition.Y <= rect.Y + rect.Height;
-    }
-
-    private bool IsSpriteHit(string targetId, Vector2 mousePosition)
-    {
-        if (Game is null)
-        {
-            return false;
-        }
-
-        SpriteSettings? sprite = _getSprites().FirstOrDefault(item =>
-            string.Equals(item.Id, targetId, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(item.Name, targetId, StringComparison.OrdinalIgnoreCase));
-        if (sprite is null)
-        {
-            return false;
-        }
-
-        GameWindowSettings window = _getWindowSettings();
-        return SpriteLayoutResolver.ContainsPoint(
-            sprite,
-            mousePosition.X,
-            mousePosition.Y,
-            Game.Window.Size.X,
-            Game.Window.Size.Y,
-            window.Width,
-            window.Height);
-    }
-
-    private bool IsEntityHit(ContextMenuSettings menu, Vector2 mousePosition)
-    {
         RuntimeScene? scene = _getScene();
-        if (scene is null)
+        if (type == "gui_control")
         {
-            return false;
+            foreach (var control in _getControls().Reverse())
+            {
+                if (!control.Visible || !targets.Any(t => MatchesTarget(control.Id, control.Name, t.TargetId))) continue;
+                LayoutRect rect = ResolveGuiRect(control);
+                if (point.X < rect.X || point.Y < rect.Y || point.X >= rect.X + rect.Width || point.Y >= rect.Y + rect.Height) continue;
+                target = CreateContextMenuTarget(type, control.Id, control.Name, scene?.GetEntity(control.TargetEntity), point);
+                return true;
+            }
         }
-
-        RuntimeEntity? target = scene.GetEntity(menu.TargetId);
-        if (target is null)
+        else if (type == "sprite")
         {
-            return false;
+            var window = _getWindowSettings();
+            foreach (var sprite in _getSprites().Reverse().OrderByDescending(s => s.DrawOrder))
+            {
+                if (!sprite.Visible || !targets.Any(t => MatchesTarget(sprite.Id, sprite.Name, t.TargetId))
+                    || !SpriteLayoutResolver.ContainsPoint(sprite, point.X, point.Y, Game.Window.Size.X, Game.Window.Size.Y, window.Width, window.Height)) continue;
+                target = CreateContextMenuTarget(type, sprite.Id, sprite.Name, scene?.GetEntity(sprite.TargetEntity), point);
+                return true;
+            }
         }
-
-        RuntimeRay ray = scene.Camera.ScreenPointToRay(mousePosition.X, mousePosition.Y);
-        if (!scene.Camera.RaycastEntity(ray, out RuntimeRaycastHit hit))
+        else if (type == "entity" && scene is not null)
         {
-            return false;
+            RuntimeRay ray = scene.Camera.ScreenPointToRay(point.X, point.Y);
+            if (scene.Camera.RaycastEntity(ray, out RuntimeRaycastHit hit)
+                && targets.Any(t => ReferenceEquals(scene.GetEntity(t.TargetId), hit.Entity) && t.MatchesCollider(hit.ColliderId, hit.ColliderName)))
+            {
+                target = CreateContextMenuTarget(type, hit.Entity.Id, hit.Entity.Name, hit.Entity, point) with
+                { ColliderId = hit.ColliderId, ColliderName = hit.ColliderName, ColliderType = hit.ColliderShape };
+                return true;
+            }
         }
-
-        if (!ReferenceEquals(hit.Entity, target))
-        {
-            return false;
-        }
-
-        return string.IsNullOrWhiteSpace(menu.TargetCollider)
-            || string.Equals(hit.ColliderId, menu.TargetCollider, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(hit.ColliderName, menu.TargetCollider, StringComparison.OrdinalIgnoreCase);
+        return false;
     }
+
+    private static bool MatchesTarget(string id, string name, string configured)
+        => string.Equals(id, configured, StringComparison.OrdinalIgnoreCase) || string.Equals(name, configured, StringComparison.OrdinalIgnoreCase);
+
+    private static ContextMenuTargetInfo CreateContextMenuTarget(string type, string id, string name, RuntimeEntity? entity, Vector2 point)
+        => new() { TargetType = type, TargetId = id, TargetName = name, EntityId = entity?.Id ?? "", EntityName = entity?.Name ?? "",
+            PointerX = point.X, PointerY = point.Y };
 
     private void DrawContextMenuPopup(ContextMenuSettings menu)
     {
@@ -796,7 +752,10 @@ internal sealed class RuntimeGuiOverlayComponent(
 
                 if (clicked && item.Enabled)
                 {
-                    _dispatchContextMenuEvent(menu, item);
+                    if (_openContextMenuId == menu.Id && _openContextMenuTarget is { } target
+                        && ReferenceEquals(_contextMenuScene, _getScene()) && menu.Enabled)
+                        _dispatchContextMenuEvent(menu, item, target);
+                    _openContextMenuTarget = null;
                     ImGui.CloseCurrentPopup();
                 }
             }

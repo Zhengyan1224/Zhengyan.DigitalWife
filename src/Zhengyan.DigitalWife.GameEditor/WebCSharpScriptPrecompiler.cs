@@ -148,6 +148,8 @@ internal static class WebCSharpScriptPrecompiler
                     RuntimeEntity? Entity = context.Entity;
                     RuntimeCameraInput Input = context.Input;
                     WebScriptAudio Audio = context.Audio;
+                    var ContextMenuTarget = GameEvent?.ContextMenuTarget;
+                    bool IsContextMenuEvent = ContextMenuTarget is not null;
                     bool IsGuiEvent = GameEvent?.IsGuiEvent == true;
                     // Web has no operating-system tray. Keep desktop script
                     // branches compilable without dispatching native tray events.

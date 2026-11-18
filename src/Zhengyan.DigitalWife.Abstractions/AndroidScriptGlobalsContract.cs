@@ -33,6 +33,8 @@ public class AndroidScriptGlobalsContract
     public bool IsUpdate { get; protected set; }
     public bool IsEvent => Event is not null;
     public bool IsGuiEvent { get; protected set; }
+    public bool IsContextMenuEvent => ContextMenuTarget is not null;
+    public ContextMenuTargetInfo? ContextMenuTarget { get; protected set; }
     public bool IsSpriteEvent { get; protected set; }
     public bool IsTrayMenuEvent { get; protected set; }
     public bool IsLoadingEvent { get; protected set; }

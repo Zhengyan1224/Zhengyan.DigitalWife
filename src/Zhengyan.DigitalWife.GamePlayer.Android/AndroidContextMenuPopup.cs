@@ -15,8 +15,9 @@ internal sealed class AndroidContextMenuPopup(FrameLayout root, AndroidGameSurfa
     private readonly int[] _location = new int[2];
     private int _originX, _originY, _width, _height;
 
-    public void Show(ContextMenuSettings menu, float x, float y)
+    public void Show(ContextMenuSelection selection, float x, float y)
     {
+        var menu = selection.Menu;
         Dismiss();
         if (!root.IsAttachedToWindow || game.Project is not { } project) { game.EndContextMenuInteraction(); return; }
         _scene = project.Scene;
@@ -63,7 +64,7 @@ internal sealed class AndroidContextMenuPopup(FrameLayout root, AndroidGameSurfa
                 if (!ReferenceEquals(scene, game.Project?.Scene) || !scene.ContextMenus.Contains(menu)
                     || !menu.Items.Contains(item) || !menu.Enabled || !item.Enabled) { Dismiss(); return; }
                 Dismiss();
-                game.DispatchContextMenuItem(menu, item, x, y);
+                game.DispatchContextMenuItem(selection, item, x, y);
             };
             items.AddView(row, new LinearLayout.LayoutParams(-1, Math.Max(1, (int)Math.Ceiling(layout.ItemHeight))));
         }
@@ -76,8 +77,8 @@ internal sealed class AndroidContextMenuPopup(FrameLayout root, AndroidGameSurfa
             int top = Math.Clamp(_originY + (int)y, frame.Top, Math.Max(frame.Top, frame.Bottom - height));
             game.BeginContextMenuInteraction();
             popup.ShowAtLocation(root, GravityFlags.Top | GravityFlags.Left, left, top);
-            game.NotifyContextMenuOpened(menu, x, y);
-            global::Android.Util.Log.Info("ZhengyanContextMenu", $"Opened '{menu.Name}'; target={menu.TargetType}:{menu.TargetId}; point={x:F0},{y:F0}");
+            game.NotifyContextMenuOpened(selection, x, y);
+            global::Android.Util.Log.Info("ZhengyanContextMenu", $"Opened '{menu.Name}'; target={selection.Target.TargetType}:{selection.Target.TargetId}; point={x:F0},{y:F0}");
         }
         catch (Exception ex) { Cleanup(popup); global::Android.Util.Log.Warn("ZhengyanContextMenu", ex.ToString()); }
     }

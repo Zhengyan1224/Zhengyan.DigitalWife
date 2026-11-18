@@ -513,22 +513,24 @@ internal sealed class AndroidEglRenderHost : IAndroidRenderHost
         return _game?.RequestRenderTextureRefresh(idOrName) == true;
     }
 
-    public void DispatchContextMenuItem(ContextMenuSettings menu, ContextMenuItemSettings item, float x, float y)
+    public void DispatchContextMenuItem(ContextMenuSelection selection, ContextMenuItemSettings item, float x, float y)
     {
+        var menu = selection.Menu;
         RuntimeScene? scene = _sceneManager?.Current;
         if (scene is null) return;
         _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
             "gui", menu.Id, string.IsNullOrWhiteSpace(item.EventName) ? "context_menu_clicked" : item.EventName, new Vector2(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
-            TargetEntity: RuntimeContextMenuRouting.TargetEntity(scene, menu)));
+            TargetEntity: selection.Target.EntityId) { ContextMenuTarget = selection.Target });
     }
 
-    public ContextMenuSettings? ResolveContextMenu(float x, float y) => _sceneManager?.Current is { } scene && _project is not null
-        ? RuntimeContextMenuRouting.Resolve(scene, _project.Window, x, y, _width, _height) : null;
-    public void DispatchContextMenuOpened(ContextMenuSettings menu, float x, float y)
+    public ContextMenuSelection? ResolveContextMenu(float x, float y) => _sceneManager?.Current is { } scene && _project is not null
+        ? RuntimeContextMenuRouting.ResolveSelection(scene, _project.Window, x, y, _width, _height) : null;
+    public void DispatchContextMenuOpened(ContextMenuSelection selection, float x, float y)
     {
+        var menu = selection.Menu;
         if (_sceneManager?.Current is { } scene) _scriptHost?.DispatchEvent(scene, new AndroidRuntimeEvent(
             "gui", menu.Id, "opened", new(x / Math.Max(_width, 1), y / Math.Max(_height, 1)), menu.Name,
-            TargetEntity: RuntimeContextMenuRouting.TargetEntity(scene, menu)));
+            TargetEntity: selection.Target.EntityId) { ContextMenuTarget = selection.Target });
     }
 
     public void DispatchGuiControlChanged(GuiControlSettings control)

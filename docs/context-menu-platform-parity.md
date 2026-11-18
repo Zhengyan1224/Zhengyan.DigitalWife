@@ -8,6 +8,10 @@ Android、Web 沿用场景中现有的 `ContextMenus` 配置，不需要为移�
 
 点击菜单项发送 PC 使用的 GUI 事件：`IsGuiEvent` 为 `true`，`GuiControlId`、`GuiControlName` 对应菜单，`GuiEventName` 对应菜单项的 `EventName`（为空时使用 `context_menu_clicked`）。事件发送给绑定实体；未配置目标时使用脚本实体回退，不广播给其他对象。场景切换会关闭菜单，旧菜单不能操作新场景。
 
+PC、Android、Web 的菜单事件还提供 `IsContextMenuEvent` 和 `ContextMenuTarget`。上下文保存实际命中对象的类型、ID、名称、关联实体、Collider ID/名称/形状及打开位置，在菜单打开时固定；选择菜单项不会重新拾取，普通事件没有此上下文。C# 三端入口及 PC/Web Python 示例见 [GUI API](../src/Zhengyan.DigitalWife.GameEditor/api_docs/15-gui.md#右键菜单)。
+
+GameEditor 支持 `Targets` 列表：GUI、Sprite 和实体都可以逐行添加多个目标，实体逐行勾选多个 `Target colliders`；空 Collider 列表表示该实体所有 Collider，其他实体的限制独立生效。旧 `TargetId` / `TargetCollider` 单目标配置继续加载；新列表优先，编辑器修改后保存新格式。
+
 Android 桌面精灵使用独立的菜单弹窗，不受精灵透明点击区域或小窗口尺寸限制；菜单按屏幕可见区域定位，超长列表可滚动。Web 桌面精灵的菜单保持在 iframe/画布容器可见区域内，超长列表可滚动；支持方向键、Home/End、Enter、Esc 和点击菜单外关闭。
 
 验证命令：

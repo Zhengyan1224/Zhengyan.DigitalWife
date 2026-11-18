@@ -352,13 +352,13 @@ public sealed partial class MainActivity : Activity
         }
     }
 
-    private void ShowContextMenu(ContextMenuSettings menu, float x, float y)
+    private void ShowContextMenu(ContextMenuSelection selection, float x, float y)
     {
         RunOnUiThread(() =>
         {
             if (_gameView is null || _root is null) return;
             _contextMenuPopup ??= new AndroidContextMenuPopup(_root, _gameView);
-            _contextMenuPopup.Show(menu, x, y);
+            _contextMenuPopup.Show(selection, x, y);
         });
     }
 

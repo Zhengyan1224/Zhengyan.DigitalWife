@@ -7,6 +7,20 @@ internal static class AndroidContextMenuTests
 {
     public static void Targets()
     {
+        using (var fixture = new AndroidRuntimeRegressionTests.ScriptFixture("return IsGuiEvent && IsContextMenuEvent ? ContextMenuTarget.TargetId + \"|\" + ContextMenuTarget.ColliderId : \"none\";"))
+        using (var script = new AndroidScriptInstance(AndroidScriptCompiler.Compile(Path.Combine(fixture.Root, "script.csx"))))
+        {
+            fixture.Globals.Update(0, false, new("gui", "menu", "action", default)
+                { ContextMenuTarget = new() { TargetType = "entity", TargetId = "other", ColliderId = "body" } });
+            Check(script.ExecuteResult(fixture.Globals) as string == "other|body", "Android compiled scripts did not receive menu hit identity.");
+            AndroidScriptGlobalsContract legacyGlobals = fixture.Globals;
+            Check(legacyGlobals.IsContextMenuEvent && legacyGlobals.ContextMenuTarget?.TargetId == "other", "Android compatibility globals lost menu context.");
+            fixture.Globals.Update(.1f, false, null);
+            Check(script.ExecuteResult(fixture.Globals) as string == "none" && !legacyGlobals.IsContextMenuEvent && legacyGlobals.ContextMenuTarget is null,
+                "Android retained context-menu fields in the next Update.");
+            fixture.Globals.Update(0, false, new("gui", "button", "clicked", default));
+            Check(script.ExecuteResult(fixture.Globals) as string == "none", "Ordinary GUI events were marked as context menus.");
+        }
         GameProjectScene definition = new();
         definition.Camera.Position = new(0, 0, 10); definition.Camera.Target = Vector3Dto.Zero;
         GameEntity Box(string id, float z) => new()

@@ -51,6 +51,29 @@ internal static class WebContextMenuTests
         await host.OnContextMenuItem("menu", "action", token);
         Check(loaded.RuntimeScene.Save.ReadText("menu-actor") == "menu|Actor Menu|custom-action|actor", "The PC GUI event contract or target was lost.");
         Check(!loaded.RuntimeScene.Save.Exists("menu-other"), "The menu click was broadcast to unrelated scripts.");
+        Check(loaded.RuntimeScene.Save.ReadJson<ContextMenuTargetInfo>("hit-actor")?.TargetType == "window", "Window context-menu identity was missing.");
+        var menu = loaded.SceneDefinition.ContextMenus[0];
+        loaded.SceneDefinition.GuiControls = [new() { Id = "gui-a", Name = "GUI A", TargetEntity = "actor", X = 10, Y = 10, Width = 60, Height = 60 },
+            new() { Id = "gui-b", Name = "GUI B", TargetEntity = "other", X = 130, Y = 10, Width = 60, Height = 60 }];
+        menu.TargetType = "gui_control";
+        menu.Targets = [new() { TargetId = "gui-a" }, new() { TargetId = "gui-b" }];
+        await host.OnContextMenuRequest(140, 20);
+        string guiToken = JsonSerializer.SerializeToElement(browser.ContextMenu).GetProperty("token").GetString()!;
+        // Selection moves the pointer to the popup. Moving the original GUI must not change the saved hit.
+        loaded.SceneDefinition.GuiControls[1].X = 400;
+        loaded.SceneDefinition.GuiControls[1].TargetEntity = "actor";
+        await host.OnContextMenuItem("menu", "action", guiToken);
+        var guiHit = loaded.RuntimeScene.Save.ReadJson<ContextMenuTargetInfo>("hit-other");
+        Check(guiHit is { TargetType: "gui_control", TargetId: "gui-b", TargetName: "GUI B", EntityId: "other", PointerX: 140, PointerY: 20 },
+            "Web menu clicks re-picked the moved target or were sent to the first binding.");
+        loaded.SceneDefinition.GuiControls[1].X = 130;
+        loaded.SceneDefinition.GuiControls[1].TargetEntity = "other";
+        await host.OnContextMenuRequest(20, 20);
+        string firstGuiToken = JsonSerializer.SerializeToElement(browser.ContextMenu).GetProperty("token").GetString()!;
+        await host.OnContextMenuItem("menu", "action", firstGuiToken);
+        Check(loaded.RuntimeScene.Save.ReadJson<ContextMenuTargetInfo>("hit-actor")?.TargetId == "gui-a", "A newer opening retained the previous GUI target.");
+        menu.TargetType = "window";
+        menu.Targets.Clear();
         loaded.RuntimeScene.Save.Delete("menu-actor");
         await host.OnContextMenuRequest(10, 10);
         string secondToken = JsonSerializer.SerializeToElement(browser.ContextMenu).GetProperty("token").GetString()!;
@@ -73,6 +96,7 @@ public sealed class ContextMenuWebScript : IWebGameScript
     public void Update(WebScriptContext context, float deltaSeconds) { }
     public void OnEvent(WebScriptContext context, WebScriptEvent gameEvent)
     {
+        if (gameEvent.IsContextMenuEvent) context.Scene.Save.WriteJson("hit-" + context.Entity!.Id, gameEvent.ContextMenuTarget);
         if (gameEvent.IsGuiEvent) context.Scene.Save.WriteText("menu-" + context.Entity!.Id,
             $"{gameEvent.ControlId}|{gameEvent.ControlName}|{gameEvent.EventName}|{gameEvent.EntityId}");
     }

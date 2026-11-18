@@ -106,6 +106,8 @@ public sealed record WebScriptEvent(
     string SpriteName = "",
     string SpriteEventName = "")
 {
+    public Zhengyan.DigitalWife.GameProjects.ContextMenuTargetInfo? ContextMenuTarget { get; init; }
+    public bool IsContextMenuEvent => ContextMenuTarget is not null;
     public bool IsGuiEvent => string.Equals(Name, "gui", StringComparison.OrdinalIgnoreCase);
 
     public bool IsSpeechEvent => string.Equals(Name, "speech", StringComparison.OrdinalIgnoreCase);
