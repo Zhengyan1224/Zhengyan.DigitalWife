@@ -356,6 +356,13 @@ internal static unsafe class DesktopSpritePlatform
         return Math.Max(frame.Height, 1.0);
     }
 
+    public static void FlushWindowsComposition()
+    {
+        // The Windows Vulkan sprite path changes both the visible and input shape.
+        // Do not let the next mask overtake this image in the compositor's queue.
+        if (OperatingSystem.IsWindows()) _ = WindowsNative.DwmFlush();
+    }
+
     private static void SyncWindowsClickThroughRegion(IWindow window, byte[] framebufferRgba, int width, int height)
     {
         IntPtr hwnd = TryGetWindowsHwnd(window);
@@ -1502,6 +1509,9 @@ internal static unsafe class DesktopSpritePlatform
 
     private static class WindowsNative
     {
+        [DllImport("dwmapi.dll")]
+        internal static extern int DwmFlush();
+
         internal const int VkLButton = 0x01;
         internal const int VkRButton = 0x02;
         internal const int VkMButton = 0x04;

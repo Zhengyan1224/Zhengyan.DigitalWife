@@ -20,6 +20,7 @@ public sealed class VulkanRenderer : IRenderer
     private CommandList? _commandList;
     private readonly List<ReadbackSlot> _readbackSlots = [];
     private ReadbackSlot? _pendingReadbackSlot;
+    private SynchronizedReadback? _pendingSynchronizedReadback;
     private int _readbackWidth;
     private int _readbackHeight;
     private PixelFormat _readbackFormat;
@@ -321,6 +322,34 @@ public sealed class VulkanRenderer : IRenderer
         }
 
         return copiedResult;
+    }
+
+    /// <summary>
+    /// Reads this frame after its submission fence signals, then invokes the consumer
+    /// before swapping buffers. Windows sprite window regions clip the displayed image
+    /// and must not use the older frames returned by the asynchronous readback API.
+    /// </summary>
+    public bool QueueSynchronizedBackBufferReadback(byte[] destination, Action<byte[], int, int> consumer,
+        Action? afterPresent = null)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(consumer);
+        int width = Math.Max(BackBufferSize.X, 1), height = Math.Max(BackBufferSize.Y, 1);
+        if (!_frameOpen || destination.Length < checked(width * height * 4)) return false;
+        if (_pendingSynchronizedReadback is not null)
+            throw new InvalidOperationException("A synchronized readback is already queued for this frame.");
+
+        Texture source = Device.SwapchainFramebuffer.ColorTargets[0].Target;
+        ResolveMainColor();
+        EnsureReadbackSlots(width, height, source.Format);
+        ReadbackSlot slot = _readbackSlots.FirstOrDefault(s => !s.InFlight && !ReferenceEquals(s, _pendingReadbackSlot))
+            ?? _readbackSlots.First(s => !ReferenceEquals(s, _pendingReadbackSlot));
+        if (slot.InFlight && slot.CompletionFence is { } previous) Device.WaitForFence(previous);
+        slot.InFlight = false;
+        slot.CompletionFence = null;
+        _commandList!.CopyTexture(source, slot.Texture);
+        _pendingSynchronizedReadback = new(slot, destination, consumer, afterPresent, width, height, source.Format);
+        return true;
     }
 
     private void EnsureReadbackSlots(int width, int height, PixelFormat format)
@@ -652,11 +681,25 @@ public sealed class VulkanRenderer : IRenderer
             _pendingReadbackSlot.InFlight = true;
             _pendingReadbackSlot = null;
         }
+        Action? afterPresent = null;
+        if (_pendingSynchronizedReadback is { } synchronized)
+        {
+            _pendingSynchronizedReadback = null;
+            // Keep the normal frame-ring fence as the owner of all uploads and copies.
+            // Only the opt-in Windows sprite path waits here; other backends/callers
+            // continue using the asynchronous readback and normal presentation path.
+            device.WaitForFence(fence);
+            CopyMappedReadback(synchronized.Slot.Texture, synchronized.Destination,
+                synchronized.Width, synchronized.Height, synchronized.Format);
+            synchronized.Consumer(synchronized.Destination, synchronized.Width, synchronized.Height);
+            afterPresent = synchronized.AfterPresent;
+        }
         if (WaitForIdleAfterPresent)
         {
             device.WaitForIdle();
         }
         device.SwapBuffers();
+        afterPresent?.Invoke();
         _frameOpen = false;
         _uniformFrameId++;
         if (_frameFences is not null) _frameSlot = (_frameSlot + 1) % FrameSlotCount;
@@ -725,6 +768,7 @@ public sealed class VulkanRenderer : IRenderer
             _device.Dispose();
             _commandList = null;
             _pendingReadbackSlot = null;
+            _pendingSynchronizedReadback = null;
             _lastSubmittedFrameFence = null;
             _device = null;
         }
@@ -814,4 +858,7 @@ public sealed class VulkanRenderer : IRenderer
             Texture.Dispose();
         }
     }
+
+    private sealed record SynchronizedReadback(ReadbackSlot Slot, byte[] Destination,
+        Action<byte[], int, int> Consumer, Action? AfterPresent, int Width, int Height, PixelFormat Format);
 }

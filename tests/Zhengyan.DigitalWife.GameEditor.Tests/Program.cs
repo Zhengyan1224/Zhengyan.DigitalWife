@@ -75,6 +75,8 @@ if (args is ["--publish-web-project", string sourceDirectory, string targetDirec
 
 (string Name, Action Run)[] tests =
 [
+    ("Windows Vulkan sprite current frame region and MSAA", WindowsVulkanSpriteRegionRegression.CurrentFrame),
+    ("Windows sprite other readback branches unchanged", WindowsVulkanSpriteRegionRegression.OtherReadbacks),
     ("Camera input PC Android Web all modes", CameraControlRegression.Run),
     ("Menu exit preserves native ImGui until frame completion", MenuExitRegression.Run),
     ("Context menu PC multiple targets and per-entity colliders", ContextMenuRegression.Picking),

@@ -37,6 +37,15 @@ internal sealed class DesktopSpriteHitTestComponent(Func<bool> isEnabled) : Draw
             _framebufferBytes = new byte[required];
         }
 
+        if (OperatingSystem.IsWindows() && Game.GraphicsDevice.Renderer is VulkanRenderer vulkan)
+        {
+            vulkan.QueueSynchronizedBackBufferReadback(_framebufferBytes,
+                (pixels, frameWidth, frameHeight) => DesktopSpritePlatform.SyncClickThroughRegion(
+                    Game.Window, pixels, frameWidth, frameHeight, enabled),
+                DesktopSpritePlatform.FlushWindowsComposition);
+            return;
+        }
+
         if (!Game.GraphicsDevice.TryReadBackBufferRgba(_framebufferBytes))
         {
             // Asynchronous backends can legitimately need a few frames before the
