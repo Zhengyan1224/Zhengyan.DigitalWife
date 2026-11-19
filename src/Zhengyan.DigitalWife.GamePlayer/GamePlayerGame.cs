@@ -193,6 +193,8 @@ internal sealed class GamePlayerGame : Zhengyan.DigitalWife.Mmd.Game.Game
             ZoomSensitivity = 1.0f,
             KeyboardPanSpeed = 4.0f,
             CanProcessMouseDrag = () => _desktopSpriteWindowDrag?.IsDragging != true,
+            IsTouchOverGui = point => GuiPointerHitTest.Contains(Project.Scene, point.X, point.Y,
+                Window.Size.X, Window.Size.Y, Project.Window.Width, Project.Window.Height),
             UpdateOrder = int.MaxValue - 100
         });
 

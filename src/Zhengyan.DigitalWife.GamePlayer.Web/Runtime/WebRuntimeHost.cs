@@ -30,6 +30,7 @@ public sealed class WebRuntimeHost(
     private double _lastTimestampMilliseconds = double.NaN;
     private WebLoadedProject? _loadedProject;
     private RuntimeCameraInput _pendingInput;
+    private readonly CameraTouchGestureTracker _touchGestures = new();
     private Vector2 _pointerPosition;
     private Vector2 _pointerDelta;
     private int _pointerButtons;
@@ -121,7 +122,7 @@ public sealed class WebRuntimeHost(
             IProgress<WebLoadProgress> progress = CreateLoadingProgress();
             WebLoadedProject loadedProject = await _projectLoader.LoadAsync(progress);
             _loadedProject = loadedProject;
-            await _module.InvokeVoidAsync("configureGame", loadedProject.Project.Window.Width, loadedProject.Project.Window.Height, loadedProject.Project.Window.DesktopSpriteMode);
+            await _module.InvokeVoidAsync("configureGame", loadedProject.Project.Window.Width, loadedProject.Project.Window.Height, loadedProject.Project.Window.DesktopSpriteMode, loadedProject.Project.Window.DesktopSpriteClickThrough, loadedProject.Project.Window.DesktopSpriteDragButton);
             await _module.InvokeVoidAsync("loadSceneTextures", (object)loadedProject.SpriteUris.Values.ToArray());
             foreach (WebAudioAsset audio in loadedProject.AudioAssets.Values.DistinctBy(asset => asset.Alias))
                 await _audioService.PrepareAsync(audio.Alias, audio.Uri);
@@ -211,6 +212,7 @@ public sealed class WebRuntimeHost(
             _loadingRuntime=null;
             _loadedProject = null;
             _pendingInput = RuntimeCameraInput.None;
+            _touchGestures.Reset();
             _pointerPosition = Vector2.Zero;
             _pointerDelta = Vector2.Zero;
             _pointerButtons = 0;
@@ -262,8 +264,15 @@ public sealed class WebRuntimeHost(
         double animationSeconds = fixedAnimationStep ? _loadedProject.RuntimeScene.ElapsedSeconds + deltaSeconds : timestampMilliseconds / 1000.0;
         _lastTimestampMilliseconds = timestampMilliseconds;
         RuntimeCameraInput input = ConsumeInput();
-        if (pointerInput is not null) input = input with { Touches = pointerInput.Touches, TouchTransitions = pointerInput.TouchTransitions, IsTouchAvailable = pointerInput.TouchAvailable,HorizontalScroll=pointerInput.ScrollX };
-        ApplyKeyboardCameraMotion((float)deltaSeconds);
+        if (pointerInput is not null)
+        {
+            var touch = _touchGestures.Update(pointerInput.CameraTouches.Where(t=>t.IsActive)
+                .Select(t=>new CameraTouchContact(t.Id,new(t.X,t.Y),new(t.DeltaX,t.DeltaY),t.Phase==Zhengyan.DigitalWife.Mmd.Game.Input.TouchPhase.Started)).ToArray());
+            input=input with {Touches=pointerInput.Touches,TouchTransitions=pointerInput.TouchTransitions,
+                IsTouchAvailable=pointerInput.TouchAvailable,HorizontalScroll=pointerInput.ScrollX,
+                PointerDelta=new(pointerInput.PointerDeltaX,pointerInput.PointerDeltaY),WheelDelta=pointerInput.Wheel,
+                MouseMotions=pointerInput.MouseMotions,LookDelta=touch.Look,PanDelta=touch.Pan,ZoomDelta=touch.Zoom};
+        }
         _loadedProject.RuntimeScene.Update((float)deltaSeconds, input);
         _loadedProject.RuntimeScene.ReportFrameInterval(frameIntervalSeconds);
         _loadedProject.Scripts.Update((float)deltaSeconds, animationSeconds, input);
@@ -1003,30 +1012,11 @@ public sealed class WebRuntimeHost(
             _keys.Contains);
         _pendingInput = RuntimeCameraInput.None;
         _pointerDelta = Vector2.Zero;
-        return value with { CursorVisibility = visible => _cursorVisible = visible,CursorState=()=>_cursorVisible,DevicePixelRatio=(float)Snapshot.DevicePixelRatio,
+        return value with { MouseInputAvailable=true, CursorVisibility = visible => _cursorVisible = visible,CursorState=()=>_cursorVisible,DevicePixelRatio=(float)Snapshot.DevicePixelRatio,
             Gamepad=_gamepadInput,ClipboardReader=()=>_clipboardText,ClipboardWriter=text=>_module is IJSInProcessObjectReference sync&&sync.Invoke<bool>("trySetClipboardText",text),
             ClipboardAsyncReader=()=>_module?.InvokeAsync<string>("readClipboardText").AsTask()??Task.FromResult(_clipboardText),
             CursorLockReader=()=>_cursorLocked,RawMouseReader=()=>_rawMouseInput,
             CursorLockSetter=(locked,raw)=>_module is IJSInProcessObjectReference sync&&sync.Invoke<bool>("trySetCursorLocked",locked,raw)};
-    }
-
-    private void ApplyKeyboardCameraMotion(float deltaSeconds)
-    {
-        if (_loadedProject is null || deltaSeconds <= 0) return;
-        RuntimeCamera camera = _loadedProject.RuntimeScene.MainCamera;
-        Vector3 forward = Vector3.Normalize(camera.Target - camera.Position);
-        if (forward.LengthSquared() < 1e-8f) forward = -Vector3.UnitZ;
-        Vector3 right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
-        if (right.LengthSquared() < 1e-8f) right = Vector3.UnitX;
-        Vector3 move = Vector3.Zero;
-        if (_keys.Contains("KeyW") || _keys.Contains("ArrowUp")) move += forward;
-        if (_keys.Contains("KeyS") || _keys.Contains("ArrowDown")) move -= forward;
-        if (_keys.Contains("KeyA") || _keys.Contains("ArrowLeft")) move -= right;
-        if (_keys.Contains("KeyD") || _keys.Contains("ArrowRight")) move += right;
-        if (move.LengthSquared() <= 1e-8f) return;
-        move = Vector3.Normalize(move) * camera.Settings.MoveSpeed * deltaSeconds;
-        camera.Position += move;
-        camera.Target += move;
     }
 
     private async Task UpdateRendererStateAsync(WebLoadedProject project)
@@ -1154,7 +1144,7 @@ public sealed class WebRuntimeHost(
     private async Task ConfigureLoadingScreenAsync(GameProject project, GameProjectScene scene)
     {
         if (_module is not null && _loadedProject is null)
-            await _module.InvokeVoidAsync("configureGame", project.Window.Width, project.Window.Height, project.Window.DesktopSpriteMode);
+            await _module.InvokeVoidAsync("configureGame", project.Window.Width, project.Window.Height, project.Window.DesktopSpriteMode, project.Window.DesktopSpriteClickThrough, project.Window.DesktopSpriteDragButton);
         string? uri = null;
         string path = scene.LoadingScreen.BackgroundImagePath ?? string.Empty;
         if (path.StartsWith("project:", StringComparison.OrdinalIgnoreCase)) path = path[8..];

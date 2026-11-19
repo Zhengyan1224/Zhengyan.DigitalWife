@@ -10,6 +10,7 @@ public sealed partial class RuntimeCamera
     internal RuntimeCamera(SceneCameraSettings definition)
     {
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
+        if (CameraControlPolicy.NormalizeMode(Settings.ControlMode) == "top_down") Settings.Distance = Settings.Height;
     }
 
     public SceneCameraSettings Definition { get; }
@@ -164,122 +165,50 @@ public sealed partial class RuntimeCamera
         return new RuntimeViewport(x, actualHeight - yTop - height, width, height);
     }
 
+    private string? _lastControlMode;
     internal void UpdateControl(RuntimeScene scene, float deltaSeconds, RuntimeCameraInput input)
     {
-        string mode = (Settings.ControlMode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_');
-        if (mode is "vmd") return;
-        if(ApplyScriptCameraMode(scene,deltaSeconds,input,mode))return;
-
-        if (mode is "editor" or "custom")
+        string mode = CameraControlPolicy.NormalizeMode(Settings.ControlMode);
+        if (_lastControlMode != mode)
         {
-            ApplyOrbitInput(input);
-            return;
+            _yawDegrees = MathF.Atan2(Forward.Z, Forward.X) * 180 / MathF.PI;
+            _pitchDegrees = MathF.Asin(Math.Clamp(Forward.Y, -1, 1)) * 180 / MathF.PI;
+            _lastControlMode = mode;
         }
-
-        if (mode is "free" or "free_fly")
+        if (input.CursorLockSetter is not null)
         {
-            ApplyFreeInput(input, deltaSeconds);
-            return;
+            if (_lockOnNextInput || mode == "fps_control") { input.LockCursor(); _lockOnNextInput=false; }
+            if (_unlockOnNextInput) { input.UnlockCursor(); _unlockOnNextInput=false; }
         }
-
-        RuntimeEntity? targetEntity = scene.GetEntity(Settings.TargetEntity);
-        RuntimeEntity? subjectEntity = scene.GetEntity(Settings.SubjectEntity) ?? targetEntity;
-        Vector3 focus = targetEntity?.Position ?? Settings.Target.ToVector3();
-        focus.Y += Settings.Height;
-
-        if (mode is "first_person" or "firstperson")
+        bool editor = mode is "editor" or "rts";
+        CameraGesture mouse = default;
+        if (input.MouseInputAvailable)
         {
-            Vector3 position = (subjectEntity?.Position ?? focus) + Vector3.UnitY * Settings.Height;
-            Vector3 forward = subjectEntity is null ? -Vector3.UnitZ : DirectionFromEuler(subjectEntity.RotationDegrees);
-            Settings.Position = Vector3Dto.FromVector3(position);
-            Settings.Target = Vector3Dto.FromVector3(position + forward);
-            return;
+            if (input.MouseMotions.Count > 0)
+            {
+                foreach (var motion in input.MouseMotions)
+                {
+                    var value=CameraInputPolicy.Mouse(new(motion.X,motion.Y), (motion.Buttons&1)!=0, (motion.Buttons&2)!=0,
+                        (motion.Buttons&4)!=0,motion.Alt,editor,motion.Locked,Settings.EnableMouseLook,
+                        mode=="fps_control"?false:Settings.RequireRightMouseForMouseLook);
+                    mouse=new(mouse.Look+value.Look,mouse.Pan+value.Pan,mouse.Zoom+value.Zoom);
+                }
+            }
+            else mouse=CameraInputPolicy.Mouse(input.PointerDelta,input.PrimaryButtonDown,input.SecondaryButtonDown,
+                input.MiddleButtonDown,input.IsAltDown,editor,input.IsCursorLocked,Settings.EnableMouseLook,
+                mode=="fps_control"?false:Settings.RequireRightMouseForMouseLook);
         }
-
-        if (mode is "auto_orbit" or "orbit")
+        var result=CameraControlPolicy.Update(new()
         {
-            Vector3 offset = Settings.Position.ToVector3() - focus;
-            if (offset.LengthSquared() < 1e-6f) offset = new Vector3(0.0f, 0.0f, Math.Max(Settings.Distance, 0.01f));
-            float radians = Settings.AutoOrbitSpeed * MathF.PI / 180.0f * Math.Max(deltaSeconds, 0.0f);
-            offset = Vector3.Transform(offset, Quaternion.CreateFromAxisAngle(Vector3.UnitY, radians));
-            Settings.Position = Vector3Dto.FromVector3(focus + offset);
-            Settings.Target = Vector3Dto.FromVector3(focus);
-            return;
-        }
-
-        if (mode is "follow" or "third_person" or "thirdperson")
-        {
-            Vector3 forward = subjectEntity is null ? -Vector3.UnitZ : DirectionFromEuler(subjectEntity.RotationDegrees);
-            Vector3 right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
-            if (!IsFinite(right) || right.LengthSquared() < 1e-8f) right = Vector3.UnitX;
-            Vector3 desired = focus - forward * Math.Max(Settings.Distance, 0.01f) + right * Settings.ShoulderOffset;
-            float blend = Settings.Smoothing <= 0.0f
-                ? 1.0f
-                : 1.0f - MathF.Exp(-Settings.Smoothing * Math.Max(deltaSeconds, 0.0f));
-            Settings.Position = Vector3Dto.FromVector3(Vector3.Lerp(Settings.Position.ToVector3(), desired, blend));
-            Settings.Target = Vector3Dto.FromVector3(focus);
-        }
-    }
-
-    private void ApplyOrbitInput(RuntimeCameraInput input)
-    {
-        Vector3 target = Settings.Target.ToVector3();
-        Vector3 position = Settings.Position.ToVector3();
-        Vector3 offset = position - target;
-        float radius = Math.Max(offset.Length(), 0.01f);
-        float yaw = MathF.Atan2(offset.X, offset.Z);
-        float pitch = MathF.Asin(Math.Clamp(offset.Y / radius, -1.0f, 1.0f));
-        float sensitivity = Math.Max(Settings.MouseSensitivity, 0.001f) * MathF.PI / 180.0f;
-        yaw -= input.LookDelta.X * sensitivity;
-        pitch = Math.Clamp(pitch - input.LookDelta.Y * sensitivity, -1.52f, 1.52f);
-        radius = Math.Clamp(radius * MathF.Exp(input.ZoomDelta * 0.08f), 0.05f, Math.Max(Settings.FarClipPlane, 0.1f));
-        Vector3 nextOffset = new(
-            MathF.Sin(yaw) * MathF.Cos(pitch) * radius,
-            MathF.Sin(pitch) * radius,
-            MathF.Cos(yaw) * MathF.Cos(pitch) * radius);
-        // Match the desktop OrbitCamera.Pan contract: gesture deltas are measured
-        // in the camera's local right/up plane, never in world X/Y.
-        Vector3 front = -Vector3.Normalize(offset);
-        Vector3 right = Vector3.Normalize(Vector3.Cross(front, Vector3.UnitY));
-        if (!IsFinite(right) || right.LengthSquared() < 1e-8f)
-        {
-            right = Vector3.UnitX;
-        }
-        Vector3 up = Vector3.Normalize(Vector3.Cross(right, front));
-        if (!IsFinite(up) || up.LengthSquared() < 1e-8f)
-        {
-            up = Vector3.UnitY;
-        }
-        float panScale = radius * 0.0025f * _panSensitivity;
-        Vector3 pan = (-right * input.PanDelta.X + up * -input.PanDelta.Y) * panScale;
-        target += pan;
-        Settings.Target = Vector3Dto.FromVector3(target);
-        Settings.Position = Vector3Dto.FromVector3(target + nextOffset);
-    }
-
-    private void ApplyFreeInput(RuntimeCameraInput input, float deltaSeconds)
-    {
-        Vector3 position = Settings.Position.ToVector3();
-        Vector3 target = Settings.Target.ToVector3();
-        Vector3 forward = Vector3.Normalize(target - position);
-        if (!IsFinite(forward) || forward.LengthSquared() < 1e-8f) forward = -Vector3.UnitZ;
-        float sensitivity = Math.Max(Settings.MouseSensitivity, 0.001f) * MathF.PI / 180.0f;
-        forward = Vector3.Transform(forward, Quaternion.CreateFromAxisAngle(Vector3.UnitY, -input.LookDelta.X * sensitivity));
-        Vector3 right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
-        if (!IsFinite(right) || right.LengthSquared() < 1e-8f) right = Vector3.UnitX;
-        forward = Vector3.Normalize(Vector3.Transform(forward, Quaternion.CreateFromAxisAngle(right, -input.LookDelta.Y * sensitivity)));
-        Vector3 up = Vector3.Normalize(Vector3.Cross(right, forward));
-        Vector3 movement = right * input.PanDelta.X + up * -input.PanDelta.Y + forward * (-input.ZoomDelta);
-        position += movement * Math.Max(Settings.MoveSpeed, 0.01f) * Math.Max(deltaSeconds, 1.0f / 60.0f);
-        Settings.Position = Vector3Dto.FromVector3(position);
-        Settings.Target = Vector3Dto.FromVector3(position + forward);
-    }
-
-    private static Vector3 DirectionFromEuler(Vector3 degrees)
-    {
-        Vector3 radians = degrees * (MathF.PI / 180.0f);
-        return Vector3.Normalize(Vector3.Transform(-Vector3.UnitZ,
-            Quaternion.CreateFromYawPitchRoll(radians.Y, radians.X, radians.Z)));
+            Mode=mode,Distance=Distance,Height=HeightOffset,ShoulderOffset=ShoulderOffset,Smoothing=Smoothing,
+            MoveSpeed=MoveSpeed,MouseSensitivity=MouseSensitivity,OrbitSensitivity=_orbitSensitivity,
+            PanSensitivity=_panSensitivity,ZoomSensitivity=_zoomSensitivity,SafeRadius=Settings.SafeRadius,
+            AutoOrbitSpeed=Settings.AutoOrbitSpeed,FollowOffset=_cinematicOffset,Fov=Fov,
+            ViewportHeight=Height,FarClip=FarClipPlane
+        },Position,Target,_yawDegrees,_pitchDegrees,mouse,new(input.LookDelta,input.PanDelta,input.ZoomDelta),
+            input.WheelDelta,input.IsKeyDown,deltaSeconds,scene.GetEntity(TargetEntity)?.Position,
+            (scene.GetEntity(SubjectEntity)??scene.GetEntity(TargetEntity))?.Position);
+        Position=result.Position;Target=result.Target;_yawDegrees=result.Yaw;_pitchDegrees=result.Pitch;Distance=result.Distance;
     }
 
     private static bool IsRelative(string? value)

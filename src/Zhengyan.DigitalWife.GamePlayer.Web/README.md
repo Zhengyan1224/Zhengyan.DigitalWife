@@ -67,7 +67,7 @@ if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButt
 
 `Scene.Window.Exit()` 和 `Quit()` 停止 Web 游戏、音频和麦克风采集，保留宿主网页。Web 没有操作系统托盘：为兼容桌面精灵脚本，Web 预编译器提供 `IsTrayMenuEvent=false`，以及值为空字符串的 `TrayMenuItemId`、`TrayMenuItemText`、`TrayMenuEventName`。这些桌面托盘分支可以保留在共用脚本里，浏览器不会触发它们。
 
-语音功能需要 HTTPS（本地可用 localhost）、iframe 的 `microphone` 权限，以及用户授予麦克风权限。`allow="autoplay"` 不是绕过浏览器音频限制的开关；首次使用仍建议点击游戏区域。若宿主站点设置了 `Permissions-Policy`，也需要允许该游戏来源使用相应功能。
+语音功能需要 HTTPS（本地可用 localhost 或 127.0.0.1）、iframe 的 `microphone` 权限，以及用户授予麦克风权限。首次启动 ASR/唤醒监听时，未授权的页面显示“启用麦克风”，点击后才请求权限；已授权的站点可以直接启动监听。权限拒绝或设备采集失败后显示具体原因及设备选择，监听等待用户重试，成功后继续当前会话。默认设备启动失败时尝试实体输入设备；本地 ASR 直接接管重试按钮打开的采集流，避免立即关闭再打开。`NotReadableError / Could not start audio source` 表示设备采集启动失败，仍需检查系统麦克风权限、默认录音设备、驱动及独占占用。`allow="autoplay"` 不会绕过浏览器音频限制。若宿主站点设置了 `Permissions-Policy`，也需要允许该游戏来源使用相应功能。
 
 ### 透明的网页宠物
 
@@ -84,7 +84,7 @@ if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButt
         data-interactive="true"></script>
 ```
 
-浮层使用脚本所在站点的游戏工程，不会替换宿主页面或更改其样式。默认支持鼠标左键拖动旋转、右键拖动平移和滚轮缩放，也可操作游戏 GUI；iframe 的整个矩形区域会接收输入。`data-interactive="false"` 则允许鼠标点击背后的网页，预览页中可通过取消勾选“与人物交互”切换到这个模式。宽、高和边距均为 CSS 像素；`data-src` 可指定其他播放器地址，`data-z-index` 默认为 `1000`。脚本会加上 `embed=1&desktopSprite=1`，使加载阶段的页面也保持透明，实际游戏是否透明仍由工程设置决定。
+浮层使用脚本所在站点的游戏工程，不会替换宿主页面或更改其样式。相机与 PC 使用相同的控制：右键旋转、中键平移、Alt＋右键缩放、Alt＋左键/中键旋转，滚轮缩放；W/S 拉近拉远，A/D/Q/E 平移。`window.desktopSpriteDragButton` 指定的鼠标按钮会移动浮层位置（DemoGame08 为左键），GUI 和菜单优先处理。触屏使用单指旋转、双指平移和捏合缩放。全部模式见 [三端相机输入规则](../../docs/camera-input-platform-parity.md)。启用 `window.desktopSpriteClickThrough` 后，透明区域直接把原始点击交给宿主网页；可见人物、Sprite、GUI、菜单和权限按钮保留交互。`data-interactive="false"` 会让整个浮层穿透，包括人物区域；预览页中可取消勾选“与人物交互”切换。宽、高和边距均为 CSS 像素；`data-src` 可指定其他播放器地址，`data-z-index` 默认为 `1000`。脚本会加上 `embed=1&desktopSprite=1`，使加载阶段的页面也保持透明，实际游戏是否透明仍由工程设置决定。
 
 例如工程配置：
 
@@ -112,7 +112,7 @@ if (IsGuiEvent && GuiEventName == "clicked" && GuiControlName == "FullscreenButt
 </iframe>
 ```
 
-宠物只显示在嵌入它的网页内，不会成为操作系统桌面窗口。透明是视觉效果，iframe 的矩形区域仍接收鼠标输入，不会自动按角色轮廓穿透到宿主网页；应控制 iframe 的尺寸和位置，避免遮挡网页按钮。纯展示且不需要交互时，可由宿主网页给 iframe 加 `pointer-events:none`，但这也会禁用宠物点击、拖动和全屏按钮。
+宠物显示在嵌入它的网页内，不会成为操作系统桌面窗口。`desktop-sprite.js` 接收播放器的透明度区域并使用浏览器裁剪 iframe，透明区的点击、触摸和滚动由宿主网页处理；人物拖动期间保留指针捕获，菜单和 DOM 控件也纳入区域。轮廓以最长边 128 格、每 100ms 采样一次，边缘可能有几像素的余量。第三方自行创建 iframe 时，需要接入该宿主脚本才能获得区域穿透；关闭项目的点击穿透设置后，iframe 恢复整个矩形交互。
 
 同一播放器来源使用同源浏览器存档；需要独立存档的多个游戏，应使用不同工程名称或独立部署来源。浏览器还可能按嵌入站点分区或限制第三方存储。
 

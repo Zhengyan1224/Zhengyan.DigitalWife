@@ -256,6 +256,11 @@ dd {
 .canvas-frame:fullscreen { width:100vw !important; height:100vh !important; max-width:none; border:0; border-radius:0; }
 .game-fullscreen-prompt { position:absolute; right:1rem; top:1rem; z-index:40; padding:.65rem 1rem; cursor:pointer; }
 .game-pointer-lock-prompt { position:absolute; left:1rem; top:1rem; z-index:40; padding:.65rem 1rem; cursor:pointer; }
+.game-microphone-prompt { position:absolute; top:1rem; right:1rem; z-index:45; max-width:min(22rem,calc(100% - 2rem)); padding:.75rem; border:1px solid #8d9db4; border-radius:.6rem; background:#152032f2; color:#f8fafc; font:14px/1.5 sans-serif; }
+.game-microphone-prompt button { border:1px solid #8d9db4; border-radius:.4rem; background:#243c55; color:inherit; padding:.5rem .8rem; cursor:pointer; font:inherit; }
+.game-microphone-prompt p { margin:.5rem 0 0; }
+.game-microphone-prompt select { display:block; max-width:100%; margin-top:.5rem; padding:.4rem; border:1px solid #8d9db4; border-radius:.4rem; background:#243c55; color:inherit; font:inherit; }
+.game-microphone-prompt select[hidden] { display:none; }
 .game-embedded, .game-transparent { background:transparent; color-scheme:normal; }
 .game-embedded body, .game-transparent body { min-width:0; background:transparent; }
 .game-embedded .web-runtime-page, .game-transparent .web-runtime-page { width:100%; margin:0; padding:0; }

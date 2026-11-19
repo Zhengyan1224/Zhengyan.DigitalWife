@@ -5,7 +5,7 @@ import { deferred, settle } from './helpers/web-renderer-fixtures.mjs';
 
 test('runtime dependencies share the WASM build version and cannot reuse bare cached modules', () => {
     const base = 'http://localhost:5052/js/web-runtime.js?v=build-2';
-    for (const name of ['webgl2-renderer.js','web-audio.js','web-platform.js','web-gpu.js'])
+    for (const name of ['webgl2-renderer.js','web-audio.js','web-platform.js','web-gpu.js','web-desktop-sprite.js','web-microphone.js'])
         assert.equal(runtime.moduleUrl(name,base),`http://localhost:5052/js/${name}?v=build-2`);
     assert.equal(runtime.moduleUrl('web-audio.js','http://localhost:5052/js/web-runtime.js'),
         'http://localhost:5052/js/web-audio.js');
@@ -70,7 +70,7 @@ test('a thousand mouse moves are accumulated in one frame call without losing mo
     assert.equal(app.calls.filter(call => call.method === 'OnPointerInput').length, 0);
     assert.equal(app.calls.filter(call => call.method === 'OnAnimationFrameWithInput').length, 0);
     await app.frame();
-    assert.deepEqual(app.input(), { lookX: 1000, lookY: 500, panX: 0, panY: 0, zoom: 0, pointerX: 1000, pointerY: 500, buttons: 1 });
+    assert.deepEqual(app.input(), { lookX:0,lookY:0,panX:0,panY:0,zoom:0,pointerX:1000,pointerY:500,buttons:1,pointerDeltaX:1000,pointerDeltaY:500,mouseMotions:[{x:1000,y:500,buttons:1,alt:false,locked:false}] });
     await app.frame(32);
     assert.equal(app.input(), null);
 });
@@ -93,7 +93,7 @@ test('two fingers pan around their center and pinch without also orbiting',async
     app.pointer('pointerdown',{pointerType:'touch',pointerId:1,clientX:30,clientY:30});
     app.pointer('pointerdown',{pointerType:'touch',pointerId:2,clientX:70,clientY:30});await app.frame();
     app.pointer('pointermove',{pointerType:'touch',pointerId:2,clientX:90,clientY:30});await app.frame(32);
-    assert.equal(app.input().lookX,0);assert.equal(app.input().panX,10);assert.equal(app.input().zoom,-.2);
+    assert.equal(app.input().lookX,0);assert.equal(app.input().panX,20);assert.equal(app.input().zoom,-.4);
 });
 
 test('right dragging and wheel motion preserve the final button state', async t => {
@@ -102,9 +102,9 @@ test('right dragging and wheel motion preserve the final button state', async t 
     app.pointer('pointermove', { button: 2, buttons: 2, clientX: 50, clientY: 60 });
     app.canvas.emit('wheel', { clientX: 50, clientY: 60, deltaY: 120 });
     await app.frame();
-    assert.equal(app.input().panX, 40);
-    assert.equal(app.input().panY, 40);
-    assert.equal(app.input().zoom, 1.2);
+    assert.equal(app.input().mouseMotions[0].x, 40);
+    assert.equal(app.input().mouseMotions[0].y, 40);
+    assert.equal(app.input().wheel, -1.2);
     assert.equal(app.input().buttons, 2);
     app.pointer('pointerup', { button: 2, buttons: 0, clientX: 50, clientY: 60 });
     app.pointer('pointermove', { buttons: 0, clientX: 80, clientY: 80 });
@@ -114,15 +114,40 @@ test('right dragging and wheel motion preserve the final button state', async t 
     assert.equal(app.input().buttons, 0);
 });
 
-test('device pixel ratio scales pointer coordinates while preserving gesture sensitivity', async t => {
+test('a complete right drag between frames retains its motion and modifier despite release', async t => {
+    const app=setup(t);
+    app.pointer('pointerdown',{button:2,buttons:2});
+    app.pointer('pointermove',{buttons:2,altKey:true,clientX:34,clientY:32});
+    app.pointer('pointerup',{button:2,buttons:0,clientX:34,clientY:32});
+    await app.frame();
+    assert.equal(app.input().buttons,0);
+    assert.deepEqual(app.input().mouseMotions,[{x:24,y:12,buttons:2,alt:true,locked:false}]);
+});
+
+test('GUI captures only the finger that began on it, and frame touch deltas accumulate', async t => {
+    const app=setup(t);
+    runtime.setOverlayState({controls:[{x:0,y:0,width:20,height:20}]});
+    app.pointer('pointerdown',{pointerType:'touch',pointerId:1,clientX:15,clientY:25});
+    app.pointer('pointerdown',{pointerType:'touch',pointerId:2,clientX:60,clientY:70});
+    await app.frame();
+    app.pointer('pointermove',{pointerType:'touch',pointerId:1,clientX:90,clientY:90});
+    app.pointer('pointermove',{pointerType:'touch',pointerId:2,clientX:70,clientY:75});
+    app.pointer('pointermove',{pointerType:'touch',pointerId:2,clientX:80,clientY:80});
+    await app.frame(32);
+    assert.deepEqual(app.input().cameraTouches.map(t=>[t.id,t.deltaX,t.deltaY]),[[2,20,10]]);
+    assert.equal(app.input().touches.length,2);
+    assert.equal(app.input().buttons,0);
+});
+
+test('device pixel ratio scales mouse coordinates and deltas into native render pixels', async t => {
     const app = setup(t, 2);
     app.pointer('pointerdown');
     app.pointer('pointermove', { clientX: 35, clientY: 30 });
     await app.frame();
     assert.equal(app.input().pointerX, 50);
     assert.equal(app.input().pointerY, 20);
-    assert.equal(app.input().lookX, 25);
-    assert.equal(app.input().lookY, 10);
+    assert.equal(app.input().pointerDeltaX, 50);
+    assert.equal(app.input().pointerDeltaY, 20);
 });
 
 test('GUI capture clears queued motion and releases keys already held', async t => {

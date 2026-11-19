@@ -13,6 +13,7 @@ const [{ createWebGl2Renderer }, { unlock: unlockAudio, setErrorHandler: setAudi
     import(moduleUrl("./web-platform.js")), import(moduleUrl("./web-gpu.js"))
 ]);
 const offline=await import(moduleUrl('./web-offline.js'));
+const { createSpriteHitRegion, createSpriteDrag } = await import(moduleUrl('./web-desktop-sprite.js'));
 
 let runtime = null;
 const overlayImages = new Map();
@@ -78,15 +79,19 @@ function queuePointerInput(lookX, lookY, panX, panY, zoom, pointerX, pointerY, b
     input.zoom += zoom;
     input.pointerX = pointerX;
     input.pointerY = pointerY;
-    input.buttons = buttons;
+    input.buttons = runtime.lastPointerButtons;
+    runtime.lastPointerPosition={x:pointerX,y:pointerY};
 }
 
 function resetInput() {
     if (!runtime) return;
+    runtime.spriteDrag?.end();
     cancelLongPress();
     const press = runtime.overlayPress;
-    if (press && runtime.guiPointerActive) invoke('OnGuiPointer', press.x, press.y, 'cancel', press.button);
-    if (press && runtime.spritePointerActive) invoke('OnSpritePointer', press.x, press.y, 'cancel', press.button);
+    for(const owner of runtime.pointerOwners.values()){
+        if(owner.gui)invoke('OnGuiPointer',owner.press.x,owner.press.y,'cancel',owner.press.button);
+        if(owner.sprite)invoke('OnSpritePointer',owner.press.x,owner.press.y,'cancel',owner.press.button);
+    }
     runtime.overlayPress = null;
     runtime.guiPointerActive = runtime.spritePointerActive = false;
     runtime.pendingRightMenu = false;
@@ -95,7 +100,7 @@ function resetInput() {
     const input = runtime.pendingPointerInput;
     runtime.pendingPointerInput = { lookX: 0, lookY: 0, panX: 0, panY: 0, zoom: 0, pointerX: input?.pointerX || 0, pointerY: input?.pointerY || 0, buttons: 0 };
     runtime.lastPointerButtons = 0;
-    runtime.pointers.clear();
+    runtime.pointers.clear();runtime.blockedPointers.clear();runtime.pointerOwners.clear();
     for(const touch of runtime.touches.values())runtime.touchTransitions.push({...touch,phase:4,deltaX:0,deltaY:0});
     runtime.touches.clear();
     for (const key of runtime.pressedKeys) invoke("OnKeyInput", key, false);
@@ -122,7 +127,7 @@ function installInputHandlers() {
         if(event.pointerType!=='touch' && event.pointerType!=='pen')return;
         runtime.touchAvailable=true;
         const [x,y]=canvasPoint(event),old=runtime.touches.get(event.pointerId);
-        const touch={id:event.pointerId,x,y,deltaX:old?x-old.x:0,deltaY:old?y-old.y:0,phase,kind:event.pointerType==='pen'?2:1,pressure:event.pressure??0};
+        const touch={id:event.pointerId,x,y,deltaX:old?(old.deltaX||0)+x-old.x:0,deltaY:old?(old.deltaY||0)+y-old.y:0,phase:old?.phase===0&&phase===1?0:phase,kind:event.pointerType==='pen'?2:1,pressure:event.pressure??0};
         runtime.touchTransitions.push(touch);
         if(phase>=3)runtime.touches.delete(touch.id);else runtime.touches.set(touch.id,touch);
     };
@@ -148,16 +153,22 @@ function installInputHandlers() {
         if (runtime.inputCaptured) return;
         runtime.contextGestureActive = false;
         runtime.suppressTouchContextMenu = false;
+        canvas.focus?.({preventScroll:true});
         updateTouch(event,0);
         unlockAudio().catch(() => {});
         offline.unlockAudio().catch(() => {});
         canvas.setPointerCapture?.(event.pointerId);
         runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-        runtime.lastPointerButtons = event.buttons || 1;
+        if(event.pointerType==='mouse')runtime.lastPointerButtons=event.buttons||0;
         runtime.guiPointerActive = overlayHit(event);
         runtime.spritePointerActive = !runtime.guiPointerActive && spriteHit(event);
+        if(runtime.spriteDrag?.begin(event,runtime.guiPointerActive||runtime.spritePointerActive)){
+            cancelLongPress();runtime.lastPointerButtons=0;runtime.pendingPointerInput=null;return;
+        }
         const [downX, downY] = canvasPoint(event);
         runtime.overlayPress = { x: downX, y: downY, button: event.button ?? 0 };
+        if(runtime.guiPointerActive||runtime.spritePointerActive)runtime.blockedPointers.add(event.pointerId);
+        runtime.pointerOwners.set(event.pointerId,{gui:runtime.guiPointerActive,sprite:runtime.spritePointerActive,press:runtime.overlayPress});
         runtime.pendingRightMenu = false;
         cancelLongPress();
         if ((event.pointerType === 'touch' || event.pointerType === 'pen') && runtime.pointers.size === 1) {
@@ -173,45 +184,59 @@ function installInputHandlers() {
         if(event.button===2){runtime.rightDown=[downX,downY];runtime.rightDragged=false;}
         if(runtime.guiPointerActive)invoke("OnGuiPointer",downX,downY,"down",event.button??0);
         if(runtime.spritePointerActive)invoke("OnSpritePointer",downX,downY,"down",event.button??0);
-        if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, downX, downY, event.buttons || 1);
+        if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, downX, downY, runtime.lastPointerButtons);
     };
     runtime.onPointerMove = event => {
         if (runtime.inputCaptured || runtime.contextGestureActive) return;
+        if(runtime.spriteDrag?.move(event))return;
         const hold = runtime.longPressPointer;
         if (hold?.id === event.pointerId && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > 8) cancelLongPress();
-        const oldTouches=[...runtime.touches.values()];
+        const oldTouches=[...runtime.touches.values()].filter(t=>!runtime.blockedPointers.has(t.id));
         if(runtime.touches.has(event.pointerId))updateTouch(event,1);
         const active = runtime.pointers.has(event.pointerId);
         const previous = runtime.pointers.get(event.pointerId) || { x: event.clientX, y: event.clientY };
         const locked=globalThis.document?.pointerLockElement===canvas;
         const dx = locked?(event.movementX||0):event.clientX - previous.x;
         const dy = locked?(event.movementY||0):event.clientY - previous.y;
-        if (active || event.buttons) runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (active || event.buttons || event.pointerType==='mouse') runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         const buttons = event.pointerType === "touch" && active
             ? (event.buttons || 1)
             : (event.buttons || 0);
-        runtime.lastPointerButtons = buttons;
-        const look = locked || buttons & 1 ? 1 : 0;
-        const pan = !locked&&(buttons & 2 || event.pointerType === "touch") ? 1 : 0;
+        if(event.pointerType==='mouse')runtime.lastPointerButtons=buttons;
         const [moveX, moveY] = canvasPoint(event);
         if((buttons&2) && runtime.rightDown && Math.hypot(moveX-runtime.rightDown[0],moveY-runtime.rightDown[1])>8*(runtime.devicePixelRatio||1))runtime.rightDragged=true;
-        if (!runtime.guiPointerActive && !runtime.spritePointerActive) {
-            if(event.pointerType==='touch' && runtime.touches.size>=2 && oldTouches.length>=2){
-                const next=[...runtime.touches.values()],ratio=runtime.devicePixelRatio||1;
+        if (!runtime.blockedPointers.has(event.pointerId)) {
+            const contact=event.pointerType==='touch'||event.pointerType==='pen';
+            const next=[...runtime.touches.values()].filter(t=>!runtime.blockedPointers.has(t.id));
+            if(contact && next.length>=2 && oldTouches.length>=2){
                 const distance=p=>Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);
-                queuePointerInput(0,0,((next[0].x+next[1].x)-(oldTouches[0].x+oldTouches[1].x))/2/ratio,
-                    ((next[0].y+next[1].y)-(oldTouches[0].y+oldTouches[1].y))/2/ratio,-(distance(next)-distance(oldTouches))/100/ratio,moveX,moveY,buttons);
-            }else queuePointerInput(dx*look,dy*look,event.pointerType==='touch'?0:dx*pan,event.pointerType==='touch'?0:dy*pan,0,moveX,moveY,buttons);
+                queuePointerInput(0,0,((next[0].x+next[1].x)-(oldTouches[0].x+oldTouches[1].x))/2,
+                    ((next[0].y+next[1].y)-(oldTouches[0].y+oldTouches[1].y))/2,-(distance(next)-distance(oldTouches))*.01,moveX,moveY,0);
+            }else if(contact && active)queuePointerInput((moveX-(oldTouches.find(t=>t.id===event.pointerId)?.x??moveX)),
+                (moveY-(oldTouches.find(t=>t.id===event.pointerId)?.y??moveY)),0,0,0,moveX,moveY,0);
+            else if(!contact){
+                queuePointerInput(0,0,0,0,0,moveX,moveY,buttons);
+                const input=runtime.pendingPointerInput,ratio=runtime.devicePixelRatio||1;
+                input.pointerDeltaX=(input.pointerDeltaX||0)+dx*ratio;input.pointerDeltaY=(input.pointerDeltaY||0)+dy*ratio;
+                const motions=input.mouseMotions??=[];
+                const alt=!!event.altKey||runtime.pressedKeys.has('AltLeft')||runtime.pressedKeys.has('AltRight');
+                let motion=motions.find(m=>m.buttons===buttons&&m.alt===alt&&m.locked===locked);
+                if(!motion){motion={x:0,y:0,buttons,alt,locked};motions.push(motion);}
+                motion.x+=dx*ratio;motion.y+=dy*ratio;
+            }
         }
     };
     runtime.onPointerUp = event => {
         cancelLongPress();
+        if(runtime.spriteDrag?.end(event))return;
         if (event.type === 'pointercancel') runtime.pendingRightMenu = false;
         if (runtime.contextGestureActive || runtime.inputCaptured) {
             runtime.contextGestureActive = false;
             canvas.releasePointerCapture?.(event.pointerId);
             return;
         }
+        const owner=runtime.pointerOwners.get(event.pointerId);
+        runtime.guiPointerActive=!!owner?.gui;runtime.spritePointerActive=!!owner?.sprite;
         updateTouch(event,event.type==='pointercancel'?4:3);
         const [x, y] = canvasPoint(event);
         if (event.button === 2 && runtime.pendingRightMenu) {
@@ -220,23 +245,27 @@ function installInputHandlers() {
         }
         if (runtime.guiPointerActive) invoke("OnGuiPointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
         if (runtime.spritePointerActive) invoke("OnSpritePointer", x, y, event.type === "pointercancel" ? "cancel" : "up", event.button ?? 0);
-        const buttons = event.type === "pointercancel" || event.pointerType === "touch" ? 0 : (event.buttons || 0);
+        const buttons = event.type === "pointercancel" || (event.pointerType === "touch" || event.pointerType === "pen") ? 0 : (event.buttons || 0);
         if (buttons) runtime.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         else { runtime.pointers.delete(event.pointerId); canvas.releasePointerCapture?.(event.pointerId); }
-        runtime.lastPointerButtons = buttons;
+        if(event.pointerType==='mouse')runtime.lastPointerButtons=buttons;
         if (!runtime.guiPointerActive && !runtime.spritePointerActive) queuePointerInput(0, 0, 0, 0, 0, x, y, buttons);
         runtime.guiPointerActive = false;
         runtime.spritePointerActive = false;
         runtime.overlayPress = null;
+        runtime.blockedPointers.delete(event.pointerId);runtime.pointerOwners.delete(event.pointerId);
     };
     runtime.onWheel = event => {
         event.preventDefault();
         const [wheelX, wheelY] = canvasPoint(event);
-        queuePointerInput(0, 0, 0, 0, event.deltaY * 0.01, wheelX, wheelY, runtime.lastPointerButtons);
+        queuePointerInput(0,0,0,0,0,wheelX,wheelY,runtime.lastPointerButtons);
+        const unit=event.deltaMode===1?16:event.deltaMode===2?canvas.clientHeight||720:1;
+        if(runtime.pendingPointerInput)runtime.pendingPointerInput.wheel=(runtime.pendingPointerInput.wheel||0)-event.deltaY*unit*.01;
         if(runtime.pendingPointerInput)runtime.pendingPointerInput.scrollX=(runtime.pendingPointerInput.scrollX||0)+(event.deltaX||0)*.01;
     };
     runtime.onContextMenu = event => {
         event.preventDefault();
+        if(runtime.spriteDrag?.active)return;
         // Mobile browsers may also synthesize contextmenu for a touch hold.
         if (event.pointerType === 'touch' || event.pointerType === 'pen' || runtime.longPressPointer || runtime.suppressTouchContextMenu) return;
         if (!runtime.inputCaptured && !runtime.rightDragged) {
@@ -249,6 +278,8 @@ function installInputHandlers() {
         unlockAudio().catch(() => {});
         offline.unlockAudio().catch(() => {});
         const key = event.code || event.key || "";
+        if(event.target?.matches?.('input,textarea,select,[contenteditable="true"]'))return;
+        if(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key))event.preventDefault();
         if (!runtime.inputCaptured && !runtime.pressedKeys.has(key)) {
             runtime.pressedKeys.add(key);
             invoke("OnKeyInput", key, true);
@@ -259,13 +290,17 @@ function installInputHandlers() {
         if (runtime.pressedKeys.delete(key)) invoke("OnKeyInput", key, false);
     };
     runtime.onBlur = () => { closeContextMenu(); resetInput(); runtime.contextGestureActive = false; };
+    runtime.onLostPointerCapture = event => {
+        if(runtime.pointers.has(event.pointerId) || runtime.spriteDrag?.active)resetInput();
+    };
     canvas.addEventListener("pointerdown", runtime.onPointerDown, { passive: true });
     canvas.addEventListener("pointermove", runtime.onPointerMove, { passive: true });
     canvas.addEventListener("pointerup", runtime.onPointerUp, { passive: true });
     canvas.addEventListener("pointercancel", runtime.onPointerUp, { passive: true });
+    canvas.addEventListener('lostpointercapture',runtime.onLostPointerCapture);
     canvas.addEventListener("wheel", runtime.onWheel, { passive: false });
     canvas.addEventListener("contextmenu", runtime.onContextMenu);
-    window.addEventListener("keydown", runtime.onKeyDown, { passive: true });
+    window.addEventListener("keydown", runtime.onKeyDown, { passive: false });
     window.addEventListener("keyup", runtime.onKeyUp, { passive: true });
     window.addEventListener("blur", runtime.onBlur);
 }
@@ -278,6 +313,7 @@ function removeInputHandlers() {
     canvas.removeEventListener("pointermove", runtime.onPointerMove);
     canvas.removeEventListener("pointerup", runtime.onPointerUp);
     canvas.removeEventListener("pointercancel", runtime.onPointerUp);
+    canvas.removeEventListener('lostpointercapture',runtime.onLostPointerCapture);
     canvas.removeEventListener("wheel", runtime.onWheel);
     canvas.removeEventListener("contextmenu", runtime.onContextMenu);
     window.removeEventListener("keydown", runtime.onKeyDown);
@@ -290,13 +326,14 @@ function frame(timestamp) {
     const current = runtime;
     let input = current.pendingPointerInput;
     if(current.touches.size || current.touchTransitions.length || current.touchAvailable || navigator.maxTouchPoints>0) {
-        input??={lookX:0,lookY:0,panX:0,panY:0,zoom:0,pointerX:0,pointerY:0,buttons:0};
+        input??={lookX:0,lookY:0,panX:0,panY:0,zoom:0,pointerX:current.lastPointerPosition?.x||0,pointerY:current.lastPointerPosition?.y||0,buttons:current.lastPointerButtons};
         input.touches=[...current.touches.values()];input.touchTransitions=current.touchTransitions.splice(0);input.touchAvailable=true;
+        input.cameraTouches=input.touches.filter(t=>!current.blockedPointers.has(t.id));
         for(const [id,touch] of current.touches)current.touches.set(id,{...touch,phase:2,deltaX:0,deltaY:0});
     }
     current.pendingPointerInput = null;
     const gamepad=globalThis.navigator?.getGamepads?.()?.find(p=>p?.connected);
-    if(gamepad||current.hadGamepad){input??={lookX:0,lookY:0,panX:0,panY:0,zoom:0,pointerX:0,pointerY:0,buttons:0};input.gamepad=gamepad?{connected:true,name:gamepad.id,index:gamepad.index,axes:Array.from(gamepad.axes),buttons:gamepad.buttons.map(b=>b.value)}:{connected:false};}
+    if(gamepad||current.hadGamepad){input??={lookX:0,lookY:0,panX:0,panY:0,zoom:0,pointerX:current.lastPointerPosition?.x||0,pointerY:current.lastPointerPosition?.y||0,buttons:current.lastPointerButtons};input.gamepad=gamepad?{connected:true,name:gamepad.id,index:gamepad.index,axes:Array.from(gamepad.axes),buttons:gamepad.buttons.map(b=>b.value)}:{connected:false};}
     current.hadGamepad=!!gamepad;
     // Sample the accumulated gesture once per frame, in the same call that
     // advances the scene. High-rate mouse events never queue .NET callbacks.
@@ -314,6 +351,7 @@ function frame(timestamp) {
                 reportError(`WebGL2 render failed: ${message}`);
             }
             renderOverlay();
+            current.spriteHitRegion?.publish(timestamp);
             if (runtime?.running) runtime.frameHandle = window.requestAnimationFrame(frame);
         })
         .catch(error => {
@@ -330,8 +368,17 @@ export function start(canvas, overlayCanvas, dotNetReference) {
         canvas, overlayCanvas, dotNetReference, running: true, renderer: null, frameHandle: 0,
         resizeObserver: null, resizeTarget: null, resizeFrameHandle: 0,
         onWindowResize: null, onError: null, onUnhandledRejection: null,
-        pointers: new Map(), touches:new Map(), touchTransitions:[], pressedKeys: new Set(), lastPointerButtons: 0, pendingPointerInput: null, guiPointerActive: false, spritePointerActive: false, inputCaptured: false, overlayState: {}
+        blockedPointers:new Set(), pointerOwners:new Map(), pointers: new Map(), touches:new Map(), touchTransitions:[], pressedKeys: new Set(), lastPointerButtons: 0, pendingPointerInput: null, guiPointerActive: false, spritePointerActive: false, inputCaptured: false, overlayState: {}
     };
+    canvas.tabIndex=0;
+    runtime.spriteHitRegion = createSpriteHitRegion(runtime);
+    runtime.spriteDrag = createSpriteDrag(runtime);
+    runtime.onSpriteHostMessage = event => {
+        if (event.source === window.parent && event.data?.type === 'zhengyan-desktop-sprite-dismiss-menu') closeContextMenu();
+        if (event.source === window.parent && event.data?.type === 'zhengyan-desktop-sprite-host-ready') runtime.spriteHostOrigin=event.origin;
+    };
+    window.addEventListener('message', runtime.onSpriteHostMessage);
+    if(window.parent!==window)window.parent?.postMessage?.({type:'zhengyan-desktop-sprite-host-query'},'*');
     setAudioErrorHandler(message => dotNetReference.invokeMethodAsync("OnBrowserWarning", message));
     updateCanvasMetrics();
     installInputHandlers();
@@ -412,7 +459,7 @@ export async function resolveLlmEndpoint(baseUrl,chatCompletionsPath){
 }
 export const preloadModels=offline.preload;
 export function nextPaint(){return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}
-export function presentScene(){runtime?.renderer?.render(performance.now());renderOverlay();}
+export function presentScene(){runtime?.renderer?.render(performance.now());renderOverlay();runtime?.spriteHitRegion?.publish(performance.now(),true);}
 export function clearOfflineAssetUrls(){offline.clearAssetUrls();}
 export function createOfflineAssetUrl(bytes){return offline.createAssetUrl(bytes);}
 export const disposeOffline=offline.dispose;
@@ -428,11 +475,13 @@ export async function cacheOfflineGame(){
 }
 export async function decryptGamePackage(bytes,password){return await(await import(moduleUrl('./web-package-crypto.js'))).decryptGamePackage(bytes,password);}
 
-export function configureGame(width, height, desktopSpriteMode = false) {
+export function configureGame(width, height, desktopSpriteMode = false, desktopSpriteClickThrough = false, desktopSpriteDragButton = "none") {
     const frame=runtime?.canvas?.parentElement;
     if(frame)frame.style.aspectRatio=`${Math.max(1,width)} / ${Math.max(1,height)}`;
     document.documentElement.classList.toggle('game-embedded', new URLSearchParams(location.search).get('embed') === '1');
     document.documentElement.classList.toggle('game-transparent', !!desktopSpriteMode);
+    if(runtime){runtime.desktopSpriteMode=!!desktopSpriteMode;runtime.desktopSpriteDragButton=desktopSpriteDragButton;}
+    runtime?.spriteHitRegion?.configure(desktopSpriteMode && desktopSpriteClickThrough);
     reportWindowState();
 }
 
@@ -597,7 +646,7 @@ function updateGuiEditors() {
         const multiline=control.multiline===true||control.type==="textarea";
         let editor=runtime.editors.get(control.id);
         if(editor&&editor.tagName!==(multiline?"TEXTAREA":"INPUT")){editor.remove();runtime.editors.delete(control.id);editor=null;}
-        if(!editor){editor=document.createElement(multiline?"textarea":"input");editor.setAttribute("aria-label",control.name||control.id);
+        if(!editor){editor=document.createElement(multiline?"textarea":"input");editor.className='gui-text-editor';editor.setAttribute("aria-label",control.name||control.id);
             const selection=()=>invoke('OnGuiSelectionChanged',control.id,editor.selectionStart||0,editor.selectionEnd||0,editor.compositionStart??-1,editor.compositionStart>=0?editor.selectionEnd:-1);
             editor.addEventListener("input",()=>{invoke("OnGuiValueChanged",control.id,editor.value);selection();});
             editor.addEventListener('select',selection);
@@ -705,7 +754,10 @@ function renderOverlay() {
 
 export function stop() {
     if (!runtime) return;
+    runtime.spriteDrag?.end();
     closeContextMenu();
+    runtime.spriteHitRegion?.stop();
+    window.removeEventListener('message', runtime.onSpriteHostMessage);
     for(const editor of runtime.editors?.values()||[])editor.remove();
     setAudioErrorHandler(null);
     runtime.running = false;

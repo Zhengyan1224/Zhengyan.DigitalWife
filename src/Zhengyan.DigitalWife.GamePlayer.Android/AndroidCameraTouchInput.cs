@@ -7,6 +7,7 @@ namespace Zhengyan.DigitalWife.GamePlayer.Android;
 internal sealed class AndroidCameraTouchInput
 {
     private readonly HashSet<int> _guiContacts = [];
+    private readonly CameraTouchGestureTracker _gestures = new();
     private RuntimeScene? _scene;
     public Func<bool>? CursorLockReader {get;set;}
     public Func<bool,bool,bool>? CursorLockSetter {get;set;}
@@ -17,6 +18,7 @@ internal sealed class AndroidCameraTouchInput
         if (!ReferenceEquals(_scene, scene))
         {
             _guiContacts.Clear();
+            _gestures.Reset();
             _scene = scene;
         }
         if (scene is null) return RuntimeCameraInput.None;
@@ -30,19 +32,9 @@ internal sealed class AndroidCameraTouchInput
         AndroidTouchPoint[] active = input.Touches.Where(t => t.IsActive && !_guiContacts.Contains(t.Id)).ToArray();
         _guiContacts.RemoveWhere(id => !input.Touches.Any(t => t.Id == id && t.IsActive));
         var device=input.DeviceInput;
-        bool locked=CursorLockReader?.Invoke()==true;
-        var look=locked||device.IsMouseButtonDown(0)?device.MouseDelta:Vector2.Zero;
-        var pan=!locked&&device.IsMouseButtonDown(1)?device.MouseDelta:Vector2.Zero;
-        float scroll=device.ScrollDelta.Y;
-        if(active.Length==1)look+=active[0].Delta;
-        if(active.Length<2)return CompleteInput(new(look,pan,scroll),input);
-
-        Vector2 currentA = active[0].PixelPosition;
-        Vector2 currentB = active[1].PixelPosition;
-        Vector2 previousA = currentA - active[0].Delta;
-        Vector2 previousB = currentB - active[1].Delta;
-        float zoom = (Vector2.Distance(previousA, previousB) - Vector2.Distance(currentA, currentB)) * 0.01f;
-        return CompleteInput(new(look,pan+(active[0].Delta + active[1].Delta) * 0.5f,zoom+scroll),input);
+        var gesture = _gestures.Update(active.Select(t => new CameraTouchContact(t.Id,
+            t.PixelPosition, t.Delta, t.Phase == AndroidTouchPhase.Began)).ToArray());
+        return CompleteInput(new(gesture.Look, gesture.Pan, gesture.Zoom) { WheelDelta = device.ScrollDelta.Y }, input);
     }
 
     private RuntimeCameraInput CompleteInput(RuntimeCameraInput camera,AndroidInputSnapshot snapshot)
@@ -53,7 +45,7 @@ internal sealed class AndroidCameraTouchInput
         buttonValues[6]=Math.Max(buttonValues[6],pad.LeftTrigger);
         buttonValues[7]=Math.Max(buttonValues[7],pad.RightTrigger);
         return camera with{HorizontalScroll=device.ScrollDelta.X,PointerPosition=device.MousePosition,PointerDelta=device.MouseDelta,PrimaryButtonDown=device.IsMouseButtonDown(0),SecondaryButtonDown=device.IsMouseButtonDown(1),MiddleButtonDown=device.IsMouseButtonDown(2),
-            KeyState=key=>device.Keys.Any(k=>k.ToString().Equals(key,StringComparison.OrdinalIgnoreCase)),CursorLockReader=CursorLockReader,CursorLockSetter=CursorLockSetter,
+            MouseInputAvailable=true,KeyState=key=>device.Keys.Any(k=>k.ToString().Equals(key,StringComparison.OrdinalIgnoreCase)),CursorLockReader=CursorLockReader,CursorLockSetter=CursorLockSetter,
             Gamepad=new(pad.Connected,pad.Name,pad.Index,[pad.LeftStick.X,pad.LeftStick.Y,pad.RightStick.X,pad.RightStick.Y],buttonValues)};
     }
 }

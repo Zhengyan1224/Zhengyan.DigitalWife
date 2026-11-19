@@ -165,7 +165,25 @@ public abstract class Game : IDisposable
 
     public void Run() => Window.Run();
 
-    public void Exit() => Window.Close();
+    private int _exitRequested;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<Action> _afterFrame = new();
+    public void Exit() => Interlocked.Exchange(ref _exitRequested, 1);
+    public void PostAfterFrame(Action action) => _afterFrame.Enqueue(action);
+
+    private void DispatchAfterFrame()
+    {
+        int count = _afterFrame.Count;
+        while (count-- > 0 && _afterFrame.TryDequeue(out var action)) action();
+    }
+
+    private bool CloseIfRequested()
+    {
+        if (Interlocked.Exchange(ref _exitRequested, 0) == 0) return false;
+        // Window.Close raises Closing synchronously and destroys native GUI/GPU
+        // resources. Invoke it only outside the component update/draw callbacks.
+        if (_window is null) Dispose(); else _window.Close();
+        return true;
+    }
 
     public void InitializeHosted()
     {
@@ -337,7 +355,7 @@ public abstract class Game : IDisposable
 
     private void UpdateFrame(double deltaSeconds)
     {
-        if (!_initialized)
+        if (_disposed || CloseIfRequested() || !_initialized)
         {
             return;
         }
@@ -360,6 +378,8 @@ public abstract class Game : IDisposable
         LateUpdate(gameTime);
 
         _frameCount++;
+        DispatchAfterFrame();
+        CloseIfRequested();
     }
 
     private void OnRender(double deltaSeconds)
@@ -367,7 +387,7 @@ public abstract class Game : IDisposable
 
     private void RenderFrame(double deltaSeconds, bool present = true)
     {
-        if (!_initialized)
+        if (_disposed || CloseIfRequested() || !_initialized)
         {
             return;
         }
@@ -390,6 +410,8 @@ public abstract class Game : IDisposable
         {
             _renderer.Present();
         }
+        DispatchAfterFrame();
+        CloseIfRequested();
     }
 
     private void OnClosing()

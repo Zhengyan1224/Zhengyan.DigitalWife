@@ -8,7 +8,7 @@ public sealed partial class RuntimeCamera
 {
     private Vector3 _cinematicOffset = new(0, 1.8f, 5);
     private float _lookHeight = 1.5f, _yawDegrees, _pitchDegrees;
-    private float _panSensitivity = 1, _zoomSensitivity = 1;
+    private float _panSensitivity = 1, _zoomSensitivity = 1, _orbitSensitivity = .2f;
     private bool _lockOnNextInput,_unlockOnNextInput;
     public Vector3 Forward {get{var v=Target-Position;return v.LengthSquared()>1e-8f?Vector3.Normalize(v):-Vector3.UnitZ;}}
     public Vector3 Up => Settings.VmdHasUp ? Settings.VmdUp.ToVector3() : Vector3.UnitY;
@@ -81,7 +81,14 @@ public sealed partial class RuntimeCamera
     public void SetLookAt(float positionX,float positionY,float positionZ,float targetX,float targetY,float targetZ) => SetLookAt(new(positionX,positionY,positionZ),new(targetX,targetY,targetZ));
     public void SetLookAt(Vector3 position,Vector3 target) { Position=position;Target=target; }
     public void SetControlMode(string mode)
-    {var next=(mode??"custom").Trim().ToLowerInvariant().Replace('-','_');_unlockOnNextInput=Settings.ControlMode=="locked_fps"&&next!="locked_fps";Settings.ControlMode=next;}
+    {
+        var next=CameraControlPolicy.NormalizeMode(mode);
+        _unlockOnNextInput=CameraControlPolicy.NormalizeMode(Settings.ControlMode)=="fps_control"&&next!="fps_control";
+        Settings.ControlMode=next;
+        _yawDegrees=MathF.Atan2(Forward.Z,Forward.X)*180/MathF.PI;
+        _pitchDegrees=MathF.Asin(Math.Clamp(Forward.Y,-1,1))*180/MathF.PI;
+        _lastControlMode=next;
+    }
     public void SetMode(string mode) => SetControlMode(mode);
     public void ConfigureControl(float? distance=null,float? height=null,float? shoulderOffset=null,float? smoothing=null,float? moveSpeed=null,float? mouseSensitivity=null,float? safeRadius=null,float? autoOrbitSpeed=null)
     {
@@ -89,12 +96,15 @@ public sealed partial class RuntimeCamera
         if(smoothing is {} s)Smoothing=s;if(moveSpeed is {} m)MoveSpeed=m;if(mouseSensitivity is {} ms)MouseSensitivity=ms;
         if(safeRadius is {} sr)Settings.SafeRadius=Math.Max(0,sr);if(autoOrbitSpeed is {} a)Settings.AutoOrbitSpeed=a;
     }
-    public void SetYawPitch(float yawDegrees,float pitchDegrees) { _yawDegrees=yawDegrees;_pitchDegrees=Math.Clamp(pitchDegrees,-89,89);Orbit(yawDegrees-CurrentYaw(),pitchDegrees-CurrentPitch()); }
-    private float CurrentYaw() {var o=Position-Target;return MathF.Atan2(o.X,o.Z)*180/MathF.PI;}
-    private float CurrentPitch() {var o=Position-Target;return MathF.Asin(Math.Clamp(o.Y/Math.Max(.001f,o.Length()),-1,1))*180/MathF.PI;}
+    public void SetYawPitch(float yawDegrees,float pitchDegrees)
+    {
+        _yawDegrees=yawDegrees;_pitchDegrees=Math.Clamp(pitchDegrees,-85,85);
+        float yaw=_yawDegrees*MathF.PI/180,pitch=_pitchDegrees*MathF.PI/180;
+        Position=Target-new Vector3(MathF.Cos(pitch)*MathF.Cos(yaw),MathF.Sin(pitch),MathF.Cos(pitch)*MathF.Sin(yaw))*Math.Max(.1f,Vector3.Distance(Position,Target));
+    }
     public void SetMouseLook(bool enabled,bool requireRightMouse=true) { Settings.EnableMouseLook=enabled;Settings.RequireRightMouseForMouseLook=requireRightMouse; }
     public void UseCustomMode()=>SetMode("custom");
-    public void UseEditorOrbitMode(float orbitSensitivity=.2f,float panSensitivity=1,float zoomSensitivity=1) {SetMode("editor");MouseSensitivity=orbitSensitivity;_panSensitivity=panSensitivity;_zoomSensitivity=zoomSensitivity;}
+    public void UseEditorOrbitMode(float orbitSensitivity=.2f,float panSensitivity=1,float zoomSensitivity=1) {SetMode("editor");_orbitSensitivity=orbitSensitivity;_panSensitivity=panSensitivity;_zoomSensitivity=zoomSensitivity;}
     public void UseMaxEditorMode(float orbitSensitivity=.2f,float panSensitivity=1,float zoomSensitivity=1)=>UseEditorOrbitMode(orbitSensitivity,panSensitivity,zoomSensitivity);
     public void UseThirdPersonMode(string target,float distance=5,float height=1.5f,float shoulderOffset=0,float smoothing=12) {SetMode("third_person");TargetEntity=target;SubjectEntity=target;ConfigureControl(distance,height,shoulderOffset,smoothing);}
     public void UseTpsMode(string target,float distance=5,float height=1.5f,float shoulderOffset=0,float smoothing=12)=>UseThirdPersonMode(target,distance,height,shoulderOffset,smoothing);
@@ -105,65 +115,34 @@ public sealed partial class RuntimeCamera
     public void UseFpsControlMode(string target,float eyeHeight=1.65f,float smoothing=18,float mouseSensitivity=.15f) {UseFirstPersonMode(target,eyeHeight,smoothing);SetMode("fps_control");MouseSensitivity=mouseSensitivity;}
     public void UseLockedFpsMode(string target,float eyeHeight=1.65f,float smoothing=18,float mouseSensitivity=.15f){UseFpsControlMode(target,eyeHeight,smoothing,mouseSensitivity);SetMode("locked_fps");_lockOnNextInput=true;}
     public void UseFreeFlyMode(float moveSpeed=5,float mouseSensitivity=.15f) {SetMode("free_fly");ConfigureControl(moveSpeed:moveSpeed,mouseSensitivity:mouseSensitivity);}
-    public void UseRtsMode(float height=12,float pitch=55,float moveSpeed=8) {SetMode("rts");HeightOffset=height;_pitchDegrees=pitch;MoveSpeed=moveSpeed;}
-    public void UseTopDownMode(string target="",float height=12,float smoothing=12) {SetMode("top_down");TargetEntity=target;ConfigureControl(height:height,smoothing:smoothing);}
+    public void UseRtsMode(float height=12,float pitch=55,float moveSpeed=8) {SetMode("rts");HeightOffset=height;Distance=height;_pitchDegrees=-Math.Clamp(Math.Abs(pitch),10,89);_lastControlMode="rts";MoveSpeed=moveSpeed;}
+    public void UseTopDownMode(string target="",float height=12,float smoothing=12) {SetMode("top_down");TargetEntity=target;ConfigureControl(distance:height,height:height,smoothing:smoothing);}
     public void UseIsometricMode(string target="",float distance=12,float height=0,float smoothing=12) {SetMode("isometric");TargetEntity=target;ConfigureControl(distance,height,smoothing:smoothing);}
     public void UseSideScrollerMode(string target,float distance=10,float height=1.5f,float smoothing=12) {SetMode("side_scroller");TargetEntity=target;ConfigureControl(distance,height,smoothing:smoothing);}
     public void UseFixedMode(float positionX,float positionY,float positionZ,float targetX,float targetY,float targetZ)=>UseFixedMode(new(positionX,positionY,positionZ),new(targetX,targetY,targetZ));
     public void UseFixedMode(Vector3 position,Vector3 target) {SetMode("fixed");SetLookAt(position,target);}
-    public void UseCinematicFollowMode(string target,float offsetX=0,float offsetY=1.8f,float offsetZ=5,float lookHeight=1.5f,float smoothing=8) {SetMode("cinematic_follow");TargetEntity=target;_cinematicOffset=new(offsetX,offsetY,offsetZ);_lookHeight=lookHeight;Smoothing=smoothing;}
+    public void UseCinematicFollowMode(string target,float offsetX=0,float offsetY=1.8f,float offsetZ=5,float lookHeight=1.5f,float smoothing=8) {SetMode("cinematic_follow");TargetEntity=target;_cinematicOffset=new(offsetX,offsetY,offsetZ);_lookHeight=lookHeight;HeightOffset=lookHeight;Smoothing=smoothing;}
     public void UseOrbitalFollowMode(string target,float distance=6,float height=1.5f,float yawSpeed=30,float smoothing=12) {SetMode("auto_orbit");TargetEntity=target;ConfigureControl(distance,height,smoothing:smoothing,autoOrbitSpeed:yawSpeed);}
-    public void Orbit(float deltaYawDegrees,float deltaPitchDegrees) {var o=Position-Target;float r=Math.Max(.01f,o.Length()),yaw=(CurrentYaw()+deltaYawDegrees)*MathF.PI/180,pitch=Math.Clamp((CurrentPitch()+deltaPitchDegrees)*MathF.PI/180,-1.52f,1.52f);Position=Target+new Vector3(MathF.Sin(yaw)*MathF.Cos(pitch),MathF.Sin(pitch),MathF.Cos(yaw)*MathF.Cos(pitch))*r;}
-    public void Pan(float deltaPixelsX,float deltaPixelsY) {var offset=(-Right*deltaPixelsX+Vector3.Normalize(Vector3.Cross(Right,Forward))*deltaPixelsY)*Math.Max(.01f,Vector3.Distance(Position,Target))*.0025f;Position+=offset;Target+=offset;}
-    public void Dolly(float delta) {var o=Position-Target;Position=Target+Vector3.Normalize(o)*Math.Clamp(o.Length()*MathF.Exp(delta*.08f),.05f,FarClipPlane);}
+    public void Orbit(float deltaYawDegrees,float deltaPitchDegrees)
+    {
+        float yaw=MathF.Atan2(Forward.Z,Forward.X)*180/MathF.PI;
+        float pitch=MathF.Asin(Math.Clamp(Forward.Y,-1,1))*180/MathF.PI;
+        SetYawPitch(yaw+deltaYawDegrees,pitch+deltaPitchDegrees);
+    }
+    public void Pan(float deltaPixelsX,float deltaPixelsY)
+    {
+        float scale=2*MathF.Tan(Fov*MathF.PI/360)*Math.Max(.1f,Vector3.Distance(Position,Target))/Math.Max(1,Height);
+        var offset=(-Right*deltaPixelsX+Vector3.Normalize(Vector3.Cross(Right,Forward))*deltaPixelsY)*scale;
+        Position+=offset;Target+=offset;
+    }
+    public void Dolly(float delta)
+    {
+        float distance=Math.Max(.1f,Vector3.Distance(Position,Target));
+        Position=Target-Forward*Math.Max(.1f,distance-delta*Math.Max(distance*.15f,.05f));
+    }
     public RuntimeRay ViewportPointToRay(float viewportX,float viewportY)=>ScreenPointToRay(_screenX+viewportX*_screenWidth,_screenY+viewportY*_screenHeight);
     public RuntimeRay MousePointToRay(RuntimeCameraInput input)=>ScreenPointToRay(input.MouseX,input.MouseY);
     public RuntimeRay TouchPointToRay(TouchPoint touch)=>ScreenPointToRay(touch.X,touch.Y);
     public RuntimeEntity? PickEntity(float screenX,float screenY,float radius=.5f)=>RaycastEntity(ScreenPointToRay(screenX,screenY),out var hit,fallbackRadius:radius)?hit.Entity:null;
 
-    private bool ApplyScriptCameraMode(RuntimeScene scene,float delta,RuntimeCameraInput input,string mode)
-    {
-        if(input.CursorLockSetter is not null)
-        {if(_lockOnNextInput){input.LockCursor();_lockOnNextInput=false;}if(_unlockOnNextInput){input.UnlockCursor();_unlockOnNextInput=false;}}
-        if(mode is "fixed" or "custom")return true;
-        var target=scene.GetEntity(TargetEntity);var subject=scene.GetEntity(SubjectEntity)??target;
-        var focus=target?.Position??Target;Vector3 desired;
-        bool look=Settings.EnableMouseLook&&(!Settings.RequireRightMouseForMouseLook||input.SecondaryButtonDown||input.IsCursorLocked);
-        switch(mode)
-        {
-            case "fps_control": case "locked_fps":
-                if(subject is null)return true;
-                if(look){_yawDegrees-=input.LookDelta.X*MouseSensitivity;_pitchDegrees=Math.Clamp(_pitchDegrees-input.LookDelta.Y*MouseSensitivity,-89,89);}
-                var heading=Quaternion.CreateFromAxisAngle(Vector3.UnitY,_yawDegrees*MathF.PI/180);
-                var front=Vector3.Transform(-Vector3.UnitZ,heading);var right=Vector3.Transform(Vector3.UnitX,heading);
-                var motion=Vector3.Zero;
-                motion-=front*input.LeftStickY;motion+=right*input.LeftStickX;
-                if(input.IsKeyDown("W")||input.IsKeyDown("ArrowUp"))motion+=front;if(input.IsKeyDown("S")||input.IsKeyDown("ArrowDown"))motion-=front;
-                if(input.IsKeyDown("D")||input.IsKeyDown("ArrowRight"))motion+=right;if(input.IsKeyDown("A")||input.IsKeyDown("ArrowLeft"))motion-=right;
-                if(motion.LengthSquared()>0)subject.Position+=Vector3.Normalize(motion)*MoveSpeed*Math.Max(0,delta);
-                subject.RotationDegrees=new(0,_yawDegrees,0);
-                Position=subject.Position+Vector3.UnitY*HeightOffset;
-                float pitch=_pitchDegrees*MathF.PI/180;Target=Position+front*MathF.Cos(pitch)+Vector3.UnitY*MathF.Sin(pitch);
-                return true;
-            case "top_down": desired=focus+Vector3.UnitY*Math.Max(.01f,HeightOffset);break;
-            case "isometric": desired=focus+Vector3.Normalize(new Vector3(1,1,1))*Distance+Vector3.UnitY*HeightOffset;break;
-            case "side_scroller": focus+=Vector3.UnitY*HeightOffset;desired=focus+Vector3.UnitZ*Distance;break;
-            case "cinematic_follow":
-                var origin=target?.Position??focus;
-                var rotation=target is null?Quaternion.Identity:target.Rotation;
-                desired=origin+Vector3.Transform(_cinematicOffset,rotation);focus=origin+Vector3.UnitY*_lookHeight;break;
-            case "lock_on":
-                if(subject is null)return true;
-                var back=Vector3.Transform(Vector3.UnitZ,subject.Rotation);
-                desired=subject.Position+back*Distance+Vector3.UnitY*HeightOffset+Vector3.Cross(back,Vector3.UnitY)*ShoulderOffset;
-                focus+=Vector3.UnitY*HeightOffset;break;
-            case "rts":
-                var move=new Vector3((input.IsKeyDown("D")?1:0)-(input.IsKeyDown("A")?1:0),0,(input.IsKeyDown("S")?1:0)-(input.IsKeyDown("W")?1:0));
-                focus+=move*MoveSpeed*Math.Max(0,delta);focus.Y=0;
-                desired=focus+new Vector3(0,Math.Max(.01f,HeightOffset),Math.Max(.01f,HeightOffset)/MathF.Tan(Math.Clamp(_pitchDegrees,1,89)*MathF.PI/180));break;
-            default:return false;
-        }
-        float blend=Smoothing<=0?1:1-MathF.Exp(-Smoothing*Math.Max(0,delta));
-        Position=Vector3.Lerp(Position,desired,blend);Target=Vector3.Lerp(Target,focus,blend);return true;
-    }
 }

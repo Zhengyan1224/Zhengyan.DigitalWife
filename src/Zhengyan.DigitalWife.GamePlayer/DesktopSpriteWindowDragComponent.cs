@@ -25,6 +25,13 @@ internal sealed class DesktopSpriteWindowDragComponent(Func<GameWindowSettings> 
         }
 
         GameWindowSettings settings = _getWindowSettings();
+        if (Game.Input.IsTouchDown)
+        {
+            // Touch platforms can synthesize the configured mouse drag button.
+            // Real touch gestures belong to the camera, as on Android and Web.
+            _dragging = false;
+            return;
+        }
         if (!settings.DesktopSpriteMode || !TryParseDragButton(settings.DesktopSpriteDragButton, out MouseButton configuredButton))
         {
             _dragging = false;

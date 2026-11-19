@@ -14,6 +14,8 @@ GameEditor 支持 `Targets` 列表：GUI、Sprite 和实体都可以逐行添加
 
 Android 桌面精灵使用独立的菜单弹窗，不受精灵透明点击区域或小窗口尺寸限制；菜单按屏幕可见区域定位，超长列表可滚动。Web 桌面精灵的菜单保持在 iframe/画布容器可见区域内，超长列表可滚动；支持方向键、Home/End、Enter、Esc 和点击菜单外关闭。
 
+Web 嵌入桌面精灵启用 `DesktopSpriteClickThrough` 后，透明区通过宿主 iframe 的裁剪区域穿透到背后网页；人物、GUI、菜单和麦克风授权按钮仍可点击，拖动期间保留指针捕获。宿主透明区的点击会同步关闭游戏菜单，页面接收到的是原始浏览器事件。
+
 验证命令：
 
 ```powershell

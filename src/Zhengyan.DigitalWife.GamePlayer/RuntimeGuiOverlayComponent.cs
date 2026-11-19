@@ -752,11 +752,13 @@ internal sealed class RuntimeGuiOverlayComponent(
 
                 if (clicked && item.Enabled)
                 {
-                    if (_openContextMenuId == menu.Id && _openContextMenuTarget is { } target
-                        && ReferenceEquals(_contextMenuScene, _getScene()) && menu.Enabled)
-                        _dispatchContextMenuEvent(menu, item, target);
+                    var target = _openContextMenuTarget;
+                    bool dispatch = _openContextMenuId == menu.Id && target is not null
+                        && ReferenceEquals(_contextMenuScene, _getScene()) && menu.Enabled;
                     _openContextMenuTarget = null;
                     ImGui.CloseCurrentPopup();
+                    if (dispatch) Game?.PostAfterFrame(() => _dispatchContextMenuEvent(menu, item, target!));
+                    break;
                 }
             }
 

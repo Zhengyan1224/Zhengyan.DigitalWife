@@ -170,6 +170,8 @@ internal sealed class RuntimeCameraControllerComponent(
 
     public void ApplySettings(CameraSettings settings)
     {
+        Configure(settings.Distance, settings.Height, settings.ShoulderOffset, settings.Smoothing,
+            settings.MoveSpeed, settings.MouseSensitivity, settings.SafeRadius, settings.AutoOrbitSpeed);
         SetMouseLook(settings.EnableMouseLook, settings.RequireRightMouseForMouseLook);
         string mode = NormalizeMode(settings.ControlMode);
         switch (mode)
@@ -198,6 +200,9 @@ internal sealed class RuntimeCameraControllerComponent(
                 break;
             case "top_down":
                 TopDown(settings.TargetEntity, settings.Height, settings.Smoothing);
+                break;
+            case "rts":
+                SetMode("rts");
                 break;
             case "isometric":
                 Isometric(settings.TargetEntity, settings.Distance, settings.Height, settings.Smoothing);
@@ -334,337 +339,56 @@ internal sealed class RuntimeCameraControllerComponent(
         SetMode("custom");
     }
 
+    private readonly HashSet<int> _guiTouches = [];
+    private readonly CameraTouchGestureTracker _touchGestures = new();
+    public Func<Vector2, bool>? IsTouchOverGui { get; set; }
+
     public override void Update(GameTime gameTime)
     {
-        if (Game is null)
-        {
-            return;
-        }
-
+        if (Game is null) return;
         _camera.Width = Math.Max(Game.GraphicsDevice.BackBufferSize.X, 1);
         _camera.Height = Math.Max(Game.GraphicsDevice.BackBufferSize.Y, 1);
         ApplyCursorLockForCurrentMode();
+        if (Mode is "custom" or "vmd") { _dragFirstMove = true; return; }
+        if (Mode == "fixed") { ApplyLookAt(_fixedPosition, _fixedTarget, (float)gameTime.ElapsedSeconds); return; }
 
-        float dt = Math.Max(0.0f, (float)gameTime.ElapsedSeconds);
-        switch (Mode)
+        foreach (var contact in Game.Input.TouchTransitions)
+            if (contact.Phase == Zhengyan.DigitalWife.Mmd.Game.Input.TouchPhase.Started && IsTouchOverGui?.Invoke(new(contact.X, contact.Y)) == true)
+                _guiTouches.Add(contact.Id);
+        var contacts = Game.Input.Touches.Where(t => t.IsActive && !_guiTouches.Contains(t.Id))
+            .Select(t => new CameraTouchContact(t.Id, new(t.X, t.Y), new(t.DeltaX, t.DeltaY),
+                t.Phase == Zhengyan.DigitalWife.Mmd.Game.Input.TouchPhase.Started)).ToArray();
+        _guiTouches.RemoveWhere(id => !Game.Input.Touches.Any(t => t.Id == id && t.IsActive));
+        var touch = _touchGestures.Update(contacts);
+        bool editor = Mode is "editor" or "rts";
+        var current = GetEffectiveMousePosition();
+        var delta = Game.Input.IsCursorLocked ? Game.Input.MouseDelta : current - _lastMousePosition;
+        bool left = IsMouseButtonEffectivelyDown(MouseButton.Left);
+        bool right = IsMouseButtonEffectivelyDown(MouseButton.Right);
+        bool middle = IsMouseButtonEffectivelyDown(MouseButton.Middle);
+        var mouse = CameraInputPolicy.Mouse(delta, left, right, middle,
+            Game.Input.IsAltDown, editor, Game.Input.IsCursorLocked, EnableMouseLook,
+            Mode == "fps_control" ? false : RequireRightMouseForMouseLook);
+        // The first sampled press establishes an anchor, including a press after a window drag.
+        bool dragging = CameraInputPolicy.Mouse(Vector2.One, left, right, middle, Game.Input.IsAltDown,
+            editor, Game.Input.IsCursorLocked, EnableMouseLook,
+            Mode == "fps_control" ? false : RequireRightMouseForMouseLook) != default;
+        if (!dragging || CanProcessMouseDrag?.Invoke() == false) { mouse = default; _dragFirstMove = true; }
+        else if (_dragFirstMove) { mouse = default; _dragFirstMove = false; }
+        _lastMousePosition = current;
+        if (CanProcessMouseDrag?.Invoke() == false) touch = default;
+        var result = CameraControlPolicy.Update(new()
         {
-            case "custom":
-            case "vmd":
-                _dragFirstMove = true;
-                return;
-            case "fixed":
-                ApplyLookAt(_fixedPosition, _fixedTarget, dt);
-                return;
-            case "fps":
-            case "first_person":
-                UpdateFirstPerson(dt);
-                return;
-            case "fps_control":
-                UpdateFpsControl(dt);
-                return;
-            case "tps":
-            case "third_person":
-            case "shoulder":
-                UpdateThirdPerson(dt);
-                return;
-            case "lock_on":
-            case "lockon":
-                UpdateLockOn(dt);
-                return;
-            case "free_fly":
-            case "fly":
-                UpdateFreeFly(dt);
-                return;
-            case "top_down":
-                UpdateTopDown(dt);
-                return;
-            case "rts":
-                UpdateRts(dt);
-                return;
-            case "isometric":
-                UpdateIsometric(dt);
-                return;
-            case "side_scroller":
-            case "side":
-                UpdateSideScroller(dt);
-                return;
-            case "follow":
-            case "cinematic_follow":
-                UpdateCinematicFollow(dt);
-                return;
-            case "orbital_follow":
-            case "orbital":
-                UpdateOrbitalFollow(dt);
-                return;
-            case "editor":
-            case "orbit":
-            case "max":
-            default:
-                UpdateEditorOrbit(dt);
-                return;
-        }
-    }
-
-    private void UpdateThirdPerson(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        if (target is null)
-        {
-            return;
-        }
-
-        UpdateMouseLook(allowPitch: true);
-        ApplyZoom();
-        Vector3 focus = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
-        Vector3 right = SafeNormalize(Vector3.Cross(forward, Vector3.UnitY), Vector3.UnitX);
-        Vector3 desiredPosition = focus - (forward * Math.Max(Distance, 0.01f)) + (right * ShoulderOffset);
-        ApplyLookAt(desiredPosition, focus, dt);
-    }
-
-    private void UpdateLockOn(float dt)
-    {
-        RuntimeEntity? subject = ResolveSubject() ?? ResolveTarget();
-        RuntimeEntity? target = ResolveTarget();
-        if (subject is null || target is null)
-        {
-            return;
-        }
-
-        Vector3 subjectFocus = subject.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 targetFocus = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 direction = targetFocus - subjectFocus;
-        if (direction.LengthSquared() < 0.0001f)
-        {
-            direction = _camera.Front;
-        }
-
-        direction = SafeNormalize(new Vector3(direction.X, 0.0f, direction.Z), -Vector3.UnitZ);
-        if (direction.LengthSquared() < 0.0001f)
-        {
-            direction = -Vector3.UnitZ;
-        }
-
-        Vector3 right = SafeNormalize(Vector3.Cross(direction, Vector3.UnitY), Vector3.UnitX);
-        Vector3 desiredTarget = Vector3.Lerp(targetFocus, subjectFocus, Math.Clamp(SafeRadius, 0.0f, 0.45f));
-        Vector3 desiredPosition = subjectFocus - (direction * Math.Max(Distance, 0.01f))
-            + (right * ShoulderOffset)
-            + new Vector3(0.0f, Height * 0.35f, 0.0f);
-        ApplyLookAt(desiredPosition, desiredTarget, dt);
-    }
-
-    private void UpdateFirstPerson(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        if (target is null)
-        {
-            return;
-        }
-
-        UpdateMouseLook(allowPitch: true);
-        Vector3 position = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
-        ApplyLookAt(position, position + forward, dt);
-    }
-
-    private void UpdateFpsControl(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        if (target is null)
-        {
-            return;
-        }
-
-        UpdateMouseLook(allowPitch: true, requireRightMouse: false, preferRelativeDelta: true);
-        Vector3 position = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
-        ApplyLookAt(position, position + forward, dt);
-    }
-
-    private void UpdateFreeFly(float dt)
-    {
-        UpdateMouseLook(allowPitch: true);
-        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
-        Vector3 right = SafeNormalize(Vector3.Cross(forward, Vector3.UnitY), Vector3.UnitX);
-        Vector3 up = Vector3.UnitY;
-        Vector3 position = _camera.Position;
-        float step = MoveSpeed * dt;
-
-        if (Game!.Input.IsKeyDown(Key.W)) position += forward * step;
-        if (Game.Input.IsKeyDown(Key.S)) position -= forward * step;
-        if (Game.Input.IsKeyDown(Key.A)) position -= right * step;
-        if (Game.Input.IsKeyDown(Key.D)) position += right * step;
-        if (Game.Input.IsKeyDown(Key.E)) position += up * step;
-        if (Game.Input.IsKeyDown(Key.Q)) position -= up * step;
-
-        ApplyLookAt(position, position + forward, dt);
-    }
-
-    private void UpdateTopDown(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        Vector3 focus = target?.Position ?? _camera.Target;
-        Vector3 desiredPosition = focus + new Vector3(0.0f, Math.Max(Distance, 0.01f), 0.001f);
-        ApplyLookAt(desiredPosition, focus, dt);
-    }
-
-    private void UpdateRts(float dt)
-    {
-        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
-        Vector3 right = SafeNormalize(Vector3.Cross(forward, Vector3.UnitY), Vector3.UnitX);
-        Vector3 flatForward = SafeNormalize(new Vector3(forward.X, 0.0f, forward.Z), -Vector3.UnitZ);
-        Vector3 target = _camera.Target;
-        float step = MoveSpeed * dt;
-
-        if (Game!.Input.IsKeyDown(Key.W)) target += flatForward * step;
-        if (Game.Input.IsKeyDown(Key.S)) target -= flatForward * step;
-        if (Game.Input.IsKeyDown(Key.A)) target -= right * step;
-        if (Game.Input.IsKeyDown(Key.D)) target += right * step;
-        float scrollY = GetEffectiveScrollDeltaY();
-        if (scrollY != 0.0f)
-        {
-            Distance = Math.Max(1.0f, Distance - (scrollY * ZoomSensitivity));
-        }
-
-        Vector3 desiredPosition = target - (forward * Math.Max(Distance, 0.01f));
-        ApplyLookAt(desiredPosition, target, dt);
-    }
-
-    private void UpdateIsometric(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        Vector3 focus = target?.Position ?? _camera.Target;
-        Vector3 direction = Vector3.Normalize(new Vector3(-1.0f, -0.65f, -1.0f));
-        Vector3 desiredPosition = focus - (direction * Math.Max(Distance, 0.01f)) + new Vector3(0.0f, Height, 0.0f);
-        ApplyLookAt(desiredPosition, focus, dt);
-    }
-
-    private void UpdateSideScroller(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        if (target is null)
-        {
-            return;
-        }
-
-        Vector3 focus = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 desiredPosition = focus + new Vector3(0.0f, 0.0f, Math.Max(Distance, 0.01f));
-        ApplyLookAt(desiredPosition, focus, dt);
-    }
-
-    private void UpdateCinematicFollow(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        if (target is null)
-        {
-            return;
-        }
-
-        Vector3 focus = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 desiredPosition = target.Position + FollowOffset;
-        ApplyLookAt(desiredPosition, focus, dt);
-    }
-
-    private void UpdateOrbitalFollow(float dt)
-    {
-        RuntimeEntity? target = ResolveTarget();
-        if (target is null)
-        {
-            return;
-        }
-
-        _yawDegrees += AutoOrbitSpeedDegrees * dt;
-        Vector3 focus = target.Position + new Vector3(0.0f, Height, 0.0f);
-        Vector3 forward = CreateForward(_yawDegrees, _pitchDegrees);
-        Vector3 desiredPosition = focus - (forward * Math.Max(Distance, 0.01f));
-        ApplyLookAt(desiredPosition, focus, dt);
-    }
-
-    private void UpdateEditorOrbit(float dt)
-    {
-        if (Game is null)
-        {
-            return;
-        }
-
-        float scrollY = GetEffectiveScrollDeltaY();
-        if (scrollY != 0.0f)
-        {
-            _camera.Dolly(scrollY * ZoomSensitivity);
-        }
-
-        bool canProcessMouseDrag = CanProcessMouseDrag?.Invoke() != false;
-        CameraDragMode dragMode = canProcessMouseDrag ? ResolveEditorDragMode() : CameraDragMode.None;
-        if (dragMode != CameraDragMode.None && !IsEditorDragButtonStillDown(dragMode))
-        {
-            dragMode = CameraDragMode.None;
-        }
-
-        if (dragMode == CameraDragMode.None)
-        {
-            _dragFirstMove = true;
-        }
-        else
-        {
-            Vector2 current = GetEffectiveMousePosition();
-            if (_dragFirstMove)
-            {
-                _lastMousePosition = current;
-                _dragFirstMove = false;
-            }
-            else
-            {
-                float deltaX = current.X - _lastMousePosition.X;
-                float deltaY = current.Y - _lastMousePosition.Y;
-                _lastMousePosition = current;
-
-                switch (dragMode)
-                {
-                    case CameraDragMode.Orbit:
-                        _camera.Orbit(deltaX * OrbitSensitivity, -deltaY * OrbitSensitivity);
-                        SyncAnglesFromCamera();
-                        break;
-                    case CameraDragMode.Pan:
-                        _camera.Pan(deltaX * PanSensitivity, deltaY * PanSensitivity);
-                        break;
-                    case CameraDragMode.Dolly:
-                        _camera.Dolly((-deltaY * 0.05f) * ZoomSensitivity);
-                        break;
-                }
-            }
-        }
-
-        float keyboardPan = KeyboardPanSpeed * dt * 10.0f * PanSensitivity;
-        float keyboardZoom = KeyboardPanSpeed * dt * ZoomSensitivity;
-        if (Game.Input.IsKeyDown(Key.W))
-        {
-            _camera.Dolly(keyboardZoom);
-        }
-
-        if (Game.Input.IsKeyDown(Key.S))
-        {
-            _camera.Dolly(-keyboardZoom);
-        }
-
-        if (Game.Input.IsKeyDown(Key.A))
-        {
-            _camera.Pan(keyboardPan, 0.0f);
-        }
-
-        if (Game.Input.IsKeyDown(Key.D))
-        {
-            _camera.Pan(-keyboardPan, 0.0f);
-        }
-
-        if (Game.Input.IsKeyDown(Key.Q))
-        {
-            _camera.Pan(0.0f, -keyboardPan);
-        }
-
-        if (Game.Input.IsKeyDown(Key.E))
-        {
-            _camera.Pan(0.0f, keyboardPan);
-        }
+            Mode=Mode, Distance=Distance, Height=Height, ShoulderOffset=ShoulderOffset, Smoothing=Smoothing,
+            MoveSpeed=MoveSpeed, MouseSensitivity=MouseSensitivity, OrbitSensitivity=OrbitSensitivity,
+            PanSensitivity=PanSensitivity, ZoomSensitivity=ZoomSensitivity, KeyboardPanSpeed=KeyboardPanSpeed,
+            SafeRadius=SafeRadius, AutoOrbitSpeed=AutoOrbitSpeedDegrees, FollowOffset=FollowOffset,
+            Fov=_camera.Fov, ViewportHeight=_camera.Height, FarClip=_camera.FarClipPlane
+        }, _camera.Position, _camera.Target, _yawDegrees, _pitchDegrees, mouse, touch, GetEffectiveScrollDeltaY(),
+            key => Enum.TryParse<Key>(key, out var parsed) && Game.Input.IsKeyDown(parsed), (float)gameTime.ElapsedSeconds,
+            ResolveTarget()?.Position, (ResolveSubject() ?? ResolveTarget())?.Position);
+        _camera.SetLookAt(result.Position, result.Target);
+        _yawDegrees=result.Yaw; _pitchDegrees=result.Pitch; Distance=result.Distance;
     }
 
     private RuntimeEntity? ResolveTarget()
@@ -685,115 +409,10 @@ internal sealed class RuntimeCameraControllerComponent(
         _camera.SetLookAt(position, target);
     }
 
-    private void UpdateMouseLook(bool allowPitch, bool? requireRightMouse = null, bool preferRelativeDelta = false)
-    {
-        if (Game is null || !EnableMouseLook || CanProcessMouseDrag?.Invoke() == false)
-        {
-            _dragFirstMove = true;
-            return;
-        }
-
-        bool shouldRequireRightMouse = requireRightMouse ?? RequireRightMouseForMouseLook;
-        if (shouldRequireRightMouse && !IsMouseButtonEffectivelyDown(MouseButton.Right))
-        {
-            _dragFirstMove = true;
-            return;
-        }
-
-        Vector2 delta;
-        if (preferRelativeDelta || Game.Input.IsCursorLocked)
-        {
-            delta = Game.Input.MouseDelta;
-            if (_dragFirstMove)
-            {
-                _lastMousePosition = GetEffectiveMousePosition();
-                _dragFirstMove = false;
-                return;
-            }
-        }
-        else
-        {
-            Vector2 current = GetEffectiveMousePosition();
-            if (_dragFirstMove)
-            {
-                _lastMousePosition = current;
-                _dragFirstMove = false;
-                return;
-            }
-
-            delta = current - _lastMousePosition;
-            _lastMousePosition = current;
-        }
-
-        _yawDegrees += delta.X * MouseSensitivity;
-        if (allowPitch)
-        {
-            _pitchDegrees = Math.Clamp(_pitchDegrees - (delta.Y * MouseSensitivity), -85.0f, 85.0f);
-        }
-    }
-
-    private void ApplyZoom()
-    {
-        if (Game is null)
-        {
-            return;
-        }
-
-        float scrollY = GetEffectiveScrollDeltaY();
-        if (scrollY != 0.0f)
-        {
-            Distance = Math.Max(0.1f, Distance - (scrollY * ZoomSensitivity));
-        }
-    }
-
     private void SyncAnglesFromCamera()
     {
         _yawDegrees = _camera.Yaw;
         _pitchDegrees = _camera.Pitch;
-    }
-
-    private CameraDragMode ResolveEditorDragMode()
-    {
-        if (Game is null)
-        {
-            return CameraDragMode.None;
-        }
-
-        bool altPressed = Game.Input.IsAltDown;
-        if (altPressed && IsMouseButtonEffectivelyDown(MouseButton.Right))
-        {
-            return CameraDragMode.Dolly;
-        }
-
-        if (IsMouseButtonEffectivelyDown(MouseButton.Right))
-        {
-            return CameraDragMode.Orbit;
-        }
-
-        if (altPressed && (IsMouseButtonEffectivelyDown(MouseButton.Middle) || IsMouseButtonEffectivelyDown(MouseButton.Left)))
-        {
-            return CameraDragMode.Orbit;
-        }
-
-        return IsMouseButtonEffectivelyDown(MouseButton.Middle) ? CameraDragMode.Pan : CameraDragMode.None;
-    }
-
-    private bool IsEditorDragButtonStillDown(CameraDragMode dragMode)
-    {
-        if (Game is null)
-        {
-            return false;
-        }
-
-        bool altPressed = Game.Input.IsAltDown;
-        return dragMode switch
-        {
-            CameraDragMode.Dolly => IsMouseButtonEffectivelyDown(MouseButton.Right),
-            CameraDragMode.Pan => IsMouseButtonEffectivelyDown(MouseButton.Middle),
-            CameraDragMode.Orbit => IsMouseButtonEffectivelyDown(MouseButton.Right)
-                || (altPressed && (IsMouseButtonEffectivelyDown(MouseButton.Middle) || IsMouseButtonEffectivelyDown(MouseButton.Left))),
-            _ => false
-        };
     }
 
     private bool IsMouseButtonEffectivelyDown(MouseButton button)
@@ -857,48 +476,7 @@ internal sealed class RuntimeCameraControllerComponent(
         }
     }
 
-    private static Vector3 CreateForward(float yawDegrees, float pitchDegrees)
-    {
-        float yaw = MathF.PI / 180.0f * yawDegrees;
-        float pitch = MathF.PI / 180.0f * pitchDegrees;
-        Vector3 forward = new(
-            MathF.Cos(pitch) * MathF.Cos(yaw),
-            MathF.Sin(pitch),
-            MathF.Cos(pitch) * MathF.Sin(yaw));
-        return Vector3.Normalize(forward);
-    }
-
-    private static Vector3 SafeNormalize(Vector3 value, Vector3 fallback)
-    {
-        return value.LengthSquared() < 0.000001f
-            ? fallback
-            : Vector3.Normalize(value);
-    }
-
-    private static string NormalizeMode(string mode)
-    {
-        string normalized = (mode ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
-        return normalized switch
-        {
-            "thirdperson" or "third_person" or "third_person_follow" or "tp" => "tps",
-            "firstperson" or "first_person" or "fp" => "fps",
-            "fpscontrol" or "fps_control" or "first_person_control" or "firstpersoncontrol" or "locked_fps" or "fps_locked" or "first_person_locked" => "fps_control",
-            "lockon" or "hard_lock" => "lock_on",
-            "3dsmax" or "3ds_max" or "3dmax" or "editor_orbit" or "max" or "orbit" => "editor",
-            "fly" or "flycam" or "free" => "free_fly",
-            "strategy" => "rts",
-            "topdown" => "top_down",
-            "side" or "side_scroller" or "sidescroller" or "side_scroll" => "side_scroller",
-            "ortho_top" => "top_down",
-            "cinematic" or "cinematic_follow" or "smooth_follow" => "cinematic_follow",
-            "orbital" or "orbital_follow" or "auto_orbit" => "orbital_follow",
-            "motion" or "vmd_motion" => "vmd",
-            "static" => "fixed",
-            "script" or "scripted" => "custom",
-            "" => "editor",
-            _ => normalized
-        };
-    }
+    private static string NormalizeMode(string mode) => CameraControlPolicy.NormalizeMode(mode);
 
     public override void Dispose()
     {
@@ -911,11 +489,4 @@ internal sealed class RuntimeCameraControllerComponent(
         base.Dispose();
     }
 
-    private enum CameraDragMode
-    {
-        None,
-        Orbit,
-        Pan,
-        Dolly
-    }
 }

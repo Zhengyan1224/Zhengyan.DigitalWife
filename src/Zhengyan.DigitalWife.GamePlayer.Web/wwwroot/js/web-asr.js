@@ -1,6 +1,8 @@
 let active = null;
 const offlineUrl=new URL('./web-offline.js',import.meta.url);offlineUrl.search=new URL(import.meta.url).search;
 const offline=await import(offlineUrl.href);
+const microphoneUrl=new URL('./web-microphone.js',import.meta.url);microphoneUrl.search=new URL(import.meta.url).search;
+const microphone=await import(microphoneUrl.href);
 export function isAvailable() { return offline.isEnabled()?!!globalThis.navigator?.mediaDevices?.getUserMedia:typeof (globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition) === 'function'; }
 const notify = (state, eventName, callbackName, text = '', error = '', wakeWord = '') => {
     if (!callbackName || state.cancelled) return;
@@ -12,7 +14,7 @@ const notify = (state, eventName, callbackName, text = '', error = '', wakeWord 
 export function stopAll() {
     if(offline.isEnabled()){offline.stopAsr(true);return;}
     const state=active;active=null;
-    if(state){state.cancelled=true;state.recognition?.abort();if(state.restart)clearTimeout(state.restart);}
+    if(state){state.cancelled=true;state.captureAbort?.abort();state.recognition?.abort();if(state.restart)clearTimeout(state.restart);}
 }
 export function execute(command, reference) {
     if(offline.isEnabled()){offline.executeAsr(command,reference);return;}
@@ -20,14 +22,14 @@ export function execute(command, reference) {
         if(!active || (command.operation==='stop' && active.command.requestId!==command.requestId) ||
             (command.operation==='stop_wake' && active.command.operation!=='wake'))return;
         if(command.operation==='stop_wake')stopAll();else {
-            const state=active;state.stopping=true;
+            const state=active;state.stopping=true;state.captureAbort?.abort();
             if(state.restart){clearTimeout(state.restart);notify(state,'completed',state.command.completedCallback,state.text);active=null;}
             else try{state.recognition.stop();}catch{notify(state,'completed',state.command.completedCallback,state.text);active=null;}
         }
         return;
     }
     stopAll();
-    const state={command,reference,started:Date.now(),cancelled:false,stopping:false,finals:new Map(),text:'',committed:''};
+    const state={command,reference,started:Date.now(),cancelled:false,stopping:false,finals:new Map(),text:'',committed:'',captureAbort:new AbortController()};
     active=state;
     if(!isAvailable()) {notify(state,'error',command.errorCallback,'','This browser does not provide speech recognition.');active=null;return;}
     const Recognition=globalThis.SpeechRecognition||globalThis.webkitSpeechRecognition;
@@ -49,18 +51,29 @@ export function execute(command, reference) {
     recognition.onerror=event=>{
         if(active!==state || state.cancelled || event.error==='aborted')return;
         if(event.error==='no-speech' && !state.stopping)return;
+        if(typeof document!=='undefined'&&['not-allowed','service-not-allowed','audio-capture'].includes(event.error)){
+            state.waitingForMicrophone=true;microphone.blockMicrophone(event);
+            if(state.restart){clearTimeout(state.restart);state.restart=null;}
+            microphone.waitForMicrophone(state.captureAbort.signal).then(()=>{state.waitingForMicrophone=false;start();}).catch(()=>{});
+            return;
+        }
         notify(state,'error',command.errorCallback,'',event.error||'Speech recognition failed.');stopAll();
     };
     recognition.onend=()=>{
-        if(active!==state || state.cancelled)return;
+        if(active!==state || state.cancelled || state.waitingForMicrophone)return;
         if(state.stopping) {notify(state,'completed',command.completedCallback,state.text);active=null;return;}
         // Speech providers can end a continuous session after silence.
         // Keep the script's listening window until its explicit Stop command.
         state.committed=state.text;state.finals.clear();state.restart=setTimeout(()=>{
             state.restart=null;
             if(active!==state || state.cancelled)return;
-            try{recognition.start();}catch(error){notify(state,'error',command.errorCallback,'',error.message);stopAll();}
+            try{recognition.start();}catch(error){microphone.blockMicrophone(error);notify(state,'error',command.errorCallback,'',error.message);stopAll();}
         },150);
     };
-    try{recognition.start();}catch(error){notify(state,'error',command.errorCallback,'',error.message);stopAll();}
+    const start=()=>{if(active!==state || state.cancelled || state.stopping)return;
+        try{recognition.start();}catch(error){microphone.blockMicrophone(error);notify(state,'error',command.errorCallback,'',error.message);stopAll();}};
+    if(typeof document==='undefined')start();
+    else microphone.waitForMicrophone(state.captureAbort.signal).then(start).catch(error=>{
+        if(active===state && !state.cancelled && !state.stopping){notify(state,'error',command.errorCallback,'',error.message);stopAll();}
+    });
 }

@@ -18,6 +18,8 @@
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\LayoutResolver.cs" Link="LayoutResolver.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\ContextMenuLayout.cs" Link="ContextMenuLayout.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GuiPointerHitTest.cs" Link="GuiPointerHitTest.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\CameraInputPolicy.cs" Link="CameraInputPolicy.cs" />
+        <Compile Include="..\Zhengyan.DigitalWife.GameProjects\CameraControlPolicy.cs" Link="CameraControlPolicy.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\SpriteLayoutResolver.cs" Link="SpriteLayoutResolver.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\CollisionGeometry.cs" Link="CollisionGeometry.cs" />
         <Compile Include="..\Zhengyan.DigitalWife.GameProjects\GameEntityCollision.cs" Link="GameEntityCollision.cs" />

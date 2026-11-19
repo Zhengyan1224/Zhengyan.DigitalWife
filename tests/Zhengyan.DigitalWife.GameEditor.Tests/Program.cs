@@ -75,6 +75,8 @@ if (args is ["--publish-web-project", string sourceDirectory, string targetDirec
 
 (string Name, Action Run)[] tests =
 [
+    ("Camera input PC Android Web all modes", CameraControlRegression.Run),
+    ("Menu exit preserves native ImGui until frame completion", MenuExitRegression.Run),
     ("Context menu PC multiple targets and per-entity colliders", ContextMenuRegression.Picking),
     ("Context menu PC CSharp Python and three-platform script export", ContextMenuRegression.ScriptContract),
     ("Desktop script API parity compiles Android and Web", ScriptApiAudit.Verify),

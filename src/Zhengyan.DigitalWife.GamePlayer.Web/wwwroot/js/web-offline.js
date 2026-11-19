@@ -2,6 +2,7 @@ let project=null,assetUris={},enabled=false;
 let speechGeneration=0,audioContext=null,audioSource=null,asrSession=null,finishingAsr=null;
 let speaking=null,realtimeSession=null,identity=null;const conversation=[];
 const versionUrl=name=>{const u=new URL(name,import.meta.url);u.search=new URL(import.meta.url).search;return u.href;};
+const microphone=await import(versionUrl('./web-microphone.js'));
 const blobUrls=new Set();
 export function clearAssetUrls(){for(const url of blobUrls)URL.revokeObjectURL(url);blobUrls.clear();}
 export function createAssetUrl(bytes){const url=URL.createObjectURL(new Blob([bytes]));blobUrls.add(url);return url;}
@@ -93,7 +94,7 @@ export function speak(text,rate,volume,reference,entityId,callbackName,speakerId
 }
 export function stopAsr(cancel=false){
     if(cancel && finishingAsr){finishingAsr.cancelled=true;finishingAsr=null;}
-    const session=asrSession;if(!session)return;asrSession=null;session.cancelled=cancel;session.stopping=true;session.stopCapture?.();
+    const session=asrSession;if(!session)return;asrSession=null;session.cancelled=cancel;session.stopping=true;session.captureAbort?.abort();session.stopCapture?.();
     if(!cancel){finishingAsr=session;session.tail=session.tail.then(async()=>{if(session.cancelled)return;const result=await asr.request({type:'asr',samples:new Float32Array(8000),sampleRate:16000,finished:true});emitAsr(session,'completed',session.command.completedCallback,result.text);})
         .catch(error=>emitAsr(session,'error',session.command.errorCallback,'',error.message))
         .finally(()=>{if(finishingAsr===session)finishingAsr=null;});}
@@ -108,13 +109,13 @@ export function executeAsr(command,reference){
     if(command.operation==='preload')return asr.initialize();
     if(command.operation==='stop'){if(asrSession?.command.requestId===command.requestId)stopAsr();return;}
     if(command.operation==='stop_wake'){if(asrSession?.command.operation==='wake')stopAsr(true);return;}
-    stopAsr(true);const session=asrSession={command,reference,cancelled:false,tail:Promise.resolve(),text:'',segmentSeconds:0};
+    stopAsr(true);const session=asrSession={command,reference,cancelled:false,tail:Promise.resolve(),text:'',segmentSeconds:0,captureAbort:new AbortController()};
     const wakeDuration=command.chunkDurationSeconds??(command.extensionDurationSeconds!=null?2:null);
     session.wakeDeadline=wakeDuration==null?null:Math.max(.1,wakeDuration);
     session.tail=asr.initialize().then(()=>{if(!session.cancelled)asr.reset();});
     (async()=>{
         await session.tail;if(session.cancelled || session.stopping)return;
-        const stream=await navigator.mediaDevices.getUserMedia({audio:true});if(session.cancelled || session.stopping){stream.getTracks().forEach(t=>t.stop());return;}
+        const stream=await microphone.requestMicrophone(session.captureAbort.signal);if(session.cancelled || session.stopping){stream.getTracks().forEach(t=>t.stop());return;}
         // Own the tracks before resume(), which can wait for a user gesture.
         session.stopCapture=()=>stream.getTracks().forEach(t=>t.stop());
         const ctx=await context();if(session.cancelled || session.stopping || asrSession!==session)return;

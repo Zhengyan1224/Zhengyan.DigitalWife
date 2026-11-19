@@ -18,6 +18,9 @@ public readonly partial record struct RuntimeCameraInput(
     public static RuntimeCameraInput None => default;
 
     public float MouseX => PointerPosition.X;
+    public bool MouseInputAvailable { get; init; }
+    public IReadOnlyList<Zhengyan.DigitalWife.GameProjects.CameraMouseMotion> MouseMotions { get; init; } = [];
+    public float WheelDelta { get; init; }
     public Action<bool>? CursorVisibility { get; init; }
     public Func<bool>? CursorState { get; init; }
     public bool CursorVisible { get => CursorState?.Invoke() ?? true; set => CursorVisibility?.Invoke(value); }
@@ -28,7 +31,7 @@ public readonly partial record struct RuntimeCameraInput(
     public float MouseDeltaY => PointerDelta.Y;
     public float HorizontalScroll {get;init;}
     public float ScrollX => HorizontalScroll;
-    public float ScrollY => ZoomDelta;
+    public float ScrollY => MouseInputAvailable ? WheelDelta : ZoomDelta;
     public IReadOnlyList<TouchPoint> Touches { get; init; } = [];
     public IReadOnlyList<TouchPoint> TouchTransitions { get; init; } = [];
     public bool IsTouchAvailable { get; init; }
