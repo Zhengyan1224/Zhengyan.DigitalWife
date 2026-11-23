@@ -4,6 +4,10 @@ import {createServer} from 'node:http';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,extname,sep} from 'node:path';
 import {createHash} from 'node:crypto';
+if(process.argv.includes('--embed-guide')){
+    await import('./helpers/web-embed-guide-browser.mjs');
+    process.exit(0);
+}
 const root=process.cwd(),temp=resolve(root,'temp/web-desktop-sprite-browser');mkdirSync(temp,{recursive:true});
 const aotSmoke=process.argv.includes('--aot-smoke');
 const smokeProject={name:'AOT input smoke',defaultScene:'scenes/main.scene.json',scenes:['scenes/main.scene.json'],window:{width:360,height:480,desktopSpriteMode:true,desktopSpriteClickThrough:false,desktopSpriteDragButton:'left'},voice:{enabled:false},asr:{enabled:false},llm:{enabled:false}};

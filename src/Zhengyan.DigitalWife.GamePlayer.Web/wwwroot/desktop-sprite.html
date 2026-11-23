@@ -24,9 +24,11 @@
         .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 30px 0; }
         label { display: flex; align-items: center; gap: 8px; }
         .reading { max-width: 650px; margin-top: 50px; padding-bottom: 160px; }
+        .embed-guide-section { max-width: 650px; margin-bottom: 160px; }
         @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } header, main { padding: 20px; } }
     </style>
     <script defer src="desktop-sprite.js" data-width="500" data-height="720" data-right="0" data-interactive="true"></script>
+    <script type="module" src="embed-guide.js"></script>
 </head>
 <body>
     <header>
@@ -48,12 +50,15 @@
             <output id="click-count" aria-live="polite">已点击 0 次</output>
             <label><input id="pet-interaction" type="checkbox" checked>与人物交互</label>
         </div>
-        <p>透明区域可以直接点击背后的网页。人物区域支持左键按住旋转、右键按住平移、滚轮缩放，以及右键或触屏长按打开菜单。取消勾选“与人物交互”后，人物区域也会让点击穿透。</p>
+        <p>透明区域可以直接点击背后的网页。鼠标操作与 PC 一致：右键旋转、中键平移、滚轮缩放；工程指定的拖放按钮可移动人物浮层。触屏支持单指旋转、双指平移和捏合缩放；右键点击或触屏长按可打开菜单。取消勾选“与人物交互”后，人物区域也会让点击穿透。</p>
         <section class="reading">
             <h2>你的页面，你的内容</h2>
             <p>同样的浮层可以放在你自己的首页、文章或工具页面里。文字、按钮和排版属于原页面，人物拥有自己的透明画布。</p>
             <p>这张页面使用当前发布的游戏工程，模型、动作和脚本会随着游戏项目一起更新。</p>
             <p>继续向下滚动，看看页面与人物如何一起呈现。</p>
+        </section>
+        <section class="embed-guide-section" aria-label="桌面精灵嵌入说明">
+            <web-embed-guide mode="sprite"></web-embed-guide>
         </section>
     </main>
     <script>

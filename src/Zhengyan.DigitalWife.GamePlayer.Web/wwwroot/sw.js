@@ -1,6 +1,6 @@
 if(typeof importScripts==='function')importScripts('./service-worker-assets.js');
 const CACHE_NAME = "zhengyan-web-runtime-v7-"+(self.assetsManifest?.version||'development');
-const CORE_ASSETS = ["./", "./index.html", "./desktop-sprite.html", "./desktop-sprite.js", "./css/app.css", "./js/web-runtime.js", "./js/webgl2-renderer.js", "./js/web-storage.js", "./js/web-audio.js", "./js/web-platform.js"];
+const CORE_ASSETS = ["./", "./index.html", "./desktop-sprite.html", "./desktop-sprite.js", "./embed-guide.js", "./css/app.css", "./css/embed-guide.css", "./js/web-runtime.js", "./js/webgl2-renderer.js", "./js/web-storage.js", "./js/web-audio.js", "./js/web-platform.js"];
 
 self.addEventListener("install", event => {
     event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS)).then(() => self.skipWaiting()));

@@ -275,3 +275,6 @@ dd {
 .game-transparent .loading-background { display:none; }
 .game-embedded .embedded-error, .game-transparent .embedded-error { display:block; }
 .embedded-error { display:none; position:absolute; bottom:0; left:0; right:0; z-index:35; padding:.7rem; background:#300e; color:#fff; overflow-wrap:anywhere; }
+.embed-guide-page { padding-top: 0; }
+.game-transparent:not(.game-embedded) .embed-guide-page { width: min(1180px, calc(100% - 2rem)); margin: 2rem auto; padding: 1rem; border-radius: 1rem; background: #0b1020; color: #e6edf7; }
+.game-embedded .embed-guide-page { display: none; }

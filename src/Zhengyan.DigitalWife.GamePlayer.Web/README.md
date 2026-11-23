@@ -31,6 +31,8 @@
 
 ### 嵌入到其他网页、画布尺寸与全屏
 
+首页下方提供“把游戏画面嵌入你的网站”说明；`desktop-sprite.html` 下方提供桌面精灵接入说明。填写播放器入口、业务网站地址与尺寸后，可直接复制 HTML，以及两个站点各自需要的响应头。说明也涵盖麦克风 / 全屏授权、独立资源 / API 的 CORS、COEP、sandbox 与常见部署错误；嵌入模式会隐藏这部分开发者说明。
+
 播放器提供 `?embed=1` 模式，只显示游戏画布及必要的加载、错误提示，隐藏标题和调试侧栏。将 Web 发布目录部署在一个 HTTPS 站点的根目录后，把下面代码放进其他网页即可。嵌入的是完整播放器 iframe，内部的 `.canvas-frame`、WebGL 画布、GUI、脚本、音频和资源加载一起运行；不需要把引擎代码复制进宿主网页。
 
 ```html
@@ -46,6 +48,8 @@
 ```
 
 把 `games.example.com` 替换为实际播放器地址。iframe 的大小由宿主网页的 HTML/CSS 决定；默认情况下，嵌入模式填满 iframe。发布文件之外，LLM API 仍需支持浏览器跨域请求，或者提供同源转发服务。本地验证可使用仓库的 `scripts/run-web-player.ps1`，它自带项目 LLM API 转发入口。
+
+业务网站与播放器可以使用不同的协议、域名或端口。iframe 导航和普通桌面精灵外链脚本本身通常不需要 CORS；播放器 HTML 的 `Content-Security-Policy: frame-ancestors` 应允许业务网站，业务网站自己的 `frame-src`（精灵脚本还需要 `script-src`）应允许播放器。这些指令需合并进现有响应头，并检查代理 / CDN 是否仍附加了阻止嵌入的 X-Frame-Options。跨域资源 / API 若由 iframe 请求，CORS 应允许播放器来源。iframe 的 `allow` 不能覆盖上层页面禁止麦克风、自动播放或全屏的 Permissions-Policy。参见页面中的可复制配置与 [MDN iframe 授权](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe#allow)。
 
 脚本现在可以调用与 PC 同名的接口：
 
