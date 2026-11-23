@@ -35,6 +35,9 @@ public sealed class AndroidDesktopSpriteService : Service
     private AndroidGameSurfaceView? _game;
     private AndroidGuiOverlayView? _gui;
     private TextView? _handle;
+    private LinearLayout? _toolbar;
+    private Button? _expandToolbarButton;
+    private bool _toolbarCollapsed;
     private EditText? _editor;
     private GuiControlSettings? _editingControl;
     private ScreenReceiver? _screenReceiver;
@@ -47,6 +50,7 @@ public sealed class AndroidDesktopSpriteService : Service
     private AndroidContextMenuPopup? _contextMenuPopup;
     private Bitmap? _guiMask;
     private int[] _guiMaskPixels = [];
+    private List<AndroidTouchRect>? _contentTouchRects;
     private int? _touchRegionHash;
     private float _visibleOpacity = 1;
 
@@ -205,7 +209,8 @@ public sealed class AndroidDesktopSpriteService : Service
         _game.ContextMenuRequested += ShowGameMenu;
         _root.AddView(_game, new FrameLayout.LayoutParams(-1, -1));
         _root.AddView(_gui, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout bar = new(_windowContext) { Orientation = global::Android.Widget.Orientation.Horizontal };
+        _toolbarCollapsed = false;
+        LinearLayout bar = _toolbar = new(_windowContext) { Orientation = global::Android.Widget.Orientation.Horizontal };
         bar.SetBackgroundColor(Color.Argb(140, 20, 30, 45));
         _handle = new TextView(_windowContext) { Text = "拖动 · 加载中", Gravity = GravityFlags.CenterVertical };
         _handle.SetTextColor(Color.White);
@@ -213,6 +218,12 @@ public sealed class AndroidDesktopSpriteService : Service
         _handle.SetPadding(Dp(8), 0, 0, 0);
         _handle.Touch += DragWindow;
         bar.AddView(_handle, new LinearLayout.LayoutParams(0, Dp(32), 1));
+        Button collapse = new(_windowContext) { Text = "−", ContentDescription = "收起拖动栏" };
+        collapse.SetPadding(0, 0, 0, 0);
+        collapse.SetTextColor(Color.White);
+        collapse.SetBackgroundColor(Color.Transparent);
+        collapse.Click += (_, _) => SetToolbarCollapsed(true);
+        bar.AddView(collapse, new LinearLayout.LayoutParams(Dp(36), Dp(32)));
         Button close = new(_windowContext) { Text = "×", ContentDescription = "关闭桌面精灵" };
         close.SetPadding(0, 0, 0, 0);
         close.SetTextColor(Color.White);
@@ -220,6 +231,15 @@ public sealed class AndroidDesktopSpriteService : Service
         close.Click += (_, _) => StopSelf();
         bar.AddView(close, new LinearLayout.LayoutParams(Dp(36), Dp(32)));
         _root.AddView(bar, new FrameLayout.LayoutParams(-1, Dp(32), GravityFlags.Top));
+        _expandToolbarButton = new Button(_windowContext)
+        {
+            Text = "☰", ContentDescription = "展开拖动栏", Visibility = ViewStates.Gone
+        };
+        _expandToolbarButton.SetPadding(0, 0, 0, 0);
+        _expandToolbarButton.SetTextColor(Color.White);
+        _expandToolbarButton.SetBackgroundColor(Color.Argb(140, 20, 30, 45));
+        _expandToolbarButton.Click += (_, _) => SetToolbarCollapsed(false);
+        _root.AddView(_expandToolbarButton, new FrameLayout.LayoutParams(Dp(36), Dp(32), GravityFlags.Top | GravityFlags.Right));
         _windows.AddView(_root, _layout);
         _visible = true;
         _screenOn = (GetSystemService(PowerService) as PowerManager)?.IsInteractive != false
@@ -268,6 +288,20 @@ public sealed class AndroidDesktopSpriteService : Service
             case MotionEventActions.Cancel: _dragging = false; break;
         }
         args.Handled = true;
+    }
+
+    private void SetToolbarCollapsed(bool collapsed)
+    {
+        if (_toolbar is null || _expandToolbarButton is null || _stopping) return;
+        _toolbarCollapsed = collapsed;
+        _dragging = false;
+        // Only these overlay controls change; the game surface and window retain their size and position.
+        _toolbar.Visibility = collapsed ? ViewStates.Gone : ViewStates.Visible;
+        _expandToolbarButton.Visibility = collapsed ? ViewStates.Visible : ViewStates.Gone;
+        _touchRegionHash = null;
+        // Reuse the last content mask so the toolbar's touch area changes immediately,
+        // even before the next throttled GPU readback or native View layout pass.
+        ApplyTouchRegion();
     }
 
     private void UpdateWindow()
@@ -448,30 +482,49 @@ public sealed class AndroidDesktopSpriteService : Service
                 _gui?.Draw(canvas);
             }
             _guiMask.GetPixels(_guiMaskPixels, 0, width, 0, 0, width, height);
-            List<AndroidTouchRect> rects = AndroidAlphaTouchRegion.Build(pixels.Span, _guiMaskPixels, width, height);
-            rects.Add(new(0, 0, width, Math.Min(height, Dp(32)))); // Drag handle and close button stay touchable.
-            if (_editor is not null) rects.Add(new(_editor.Left, _editor.Top, _editor.Right, _editor.Bottom));
+            _contentTouchRects = AndroidAlphaTouchRegion.Build(pixels.Span, _guiMaskPixels, width, height);
+            ApplyTouchRegion();
+        }
+        catch (Exception ex) { DisableAlphaTouchRegion(ex); }
+    }
+
+    private void ApplyTouchRegion()
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33) || !_visible || _stopping
+            || _root?.RootSurfaceControl is not { } surface || _guiMask is null || _contentTouchRects is not { } rects) return;
+        try
+        {
+            int width = _guiMask.Width, height = _guiMask.Height;
+            AndroidTouchRect toolbar = new(_toolbarCollapsed ? Math.Max(0, width - Dp(36)) : 0,
+                0, width, Math.Min(height, Dp(32)));
+            AndroidTouchRect? editor = _editor is null ? null : new(_editor.Left, _editor.Top, _editor.Right, _editor.Bottom);
             HashCode hash = new(); hash.Add(width); hash.Add(height);
             foreach (var rect in rects) hash.Add(rect);
+            hash.Add(toolbar); hash.Add(editor);
             int signature = hash.ToHashCode();
             if (_touchRegionHash == signature) return;
             using Region region = new();
             foreach (var rect in rects) region.InvokeOp(rect.Left, rect.Top, rect.Right, rect.Bottom, Region.Op.Union!);
+            region.InvokeOp(toolbar.Left, toolbar.Top, toolbar.Right, toolbar.Bottom, Region.Op.Union!);
+            if (editor is { } input) region.InvokeOp(input.Left, input.Top, input.Right, input.Bottom, Region.Op.Union!);
             surface.SetTouchableRegion(region);
-            if (_touchRegionHash is null) Log.Info("ZhengyanDesktopSprite", $"Alpha touch region enabled: {rects.Count} rectangles; {width}x{height}");
+            if (_touchRegionHash is null) Log.Info("ZhengyanDesktopSprite", $"Alpha touch region enabled: {rects.Count + 1 + (editor.HasValue ? 1 : 0)} rectangles; {width}x{height}");
             _touchRegionHash = signature;
         }
-        catch (Exception ex)
-        {
-            Log.Warn("ZhengyanDesktopSprite", "Alpha touch region disabled: " + ex.Message);
-            if (_game is not null) _game.AlphaReadbackEnabled = false;
-            ResetTouchRegion();
-        }
+        catch (Exception ex) { DisableAlphaTouchRegion(ex); }
+    }
+
+    private void DisableAlphaTouchRegion(Exception exception)
+    {
+        Log.Warn("ZhengyanDesktopSprite", "Alpha touch region disabled: " + exception.Message);
+        if (_game is not null) _game.AlphaReadbackEnabled = false;
+        ResetTouchRegion();
     }
 
     private void ResetTouchRegion()
     {
         _touchRegionHash = null;
+        _contentTouchRects = null;
         if (!OperatingSystem.IsAndroidVersionAtLeast(33)) return;
         try { _root?.RootSurfaceControl?.SetTouchableRegion(null); }
         catch (Exception ex) { Log.Warn("ZhengyanDesktopSprite", "Reset touch region: " + ex.Message); }
@@ -498,7 +551,7 @@ public sealed class AndroidDesktopSpriteService : Service
     private void DestroyWindow()
     {
         _contextMenuPopup?.Dispose(); _contextMenuPopup = null;
-        _guiMask?.Dispose(); _guiMask = null; _guiMaskPixels = []; _touchRegionHash = null;
+        _guiMask?.Dispose(); _guiMask = null; _guiMaskPixels = []; _touchRegionHash = null; _contentTouchRects = null;
         CloseTextEditor();
         if (_game is not null)
         {
@@ -515,6 +568,7 @@ public sealed class AndroidDesktopSpriteService : Service
             _root.Dispose(); _root = null;
         }
         _gui?.Dispose(); _gui = null; _layout?.Dispose(); _layout = null; _handle = null;
+        _toolbar = null; _expandToolbarButton = null; _toolbarCollapsed = false;
         if (_windowContext is not null && !ReferenceEquals(_windowContext, this)) _windowContext.Dispose();
         _windowContext = null;
     }
@@ -533,7 +587,7 @@ public sealed class AndroidDesktopSpriteService : Service
 
     protected override void Dump(Java.IO.FileDescriptor? fd, Java.IO.PrintWriter? writer, string[]? args)
     {
-        writer?.Println($"desktopSprite visible={_visible} screenOn={_screenOn} frames={_game?.RenderedFrameCount ?? 0} alphaReadback={_game?.AlphaReadbackEnabled == true} touchRegion={_touchRegionHash.HasValue}");
+        writer?.Println($"desktopSprite visible={_visible} screenOn={_screenOn} frames={_game?.RenderedFrameCount ?? 0} alphaReadback={_game?.AlphaReadbackEnabled == true} touchRegion={_touchRegionHash.HasValue} toolbarCollapsed={_toolbarCollapsed}");
         if ((ApplicationInfo?.Flags & ApplicationInfoFlags.Debuggable) == ApplicationInfoFlags.Debuggable)
             writer?.Println("projectDirectory=" + _loadedProject?.ProjectDirectory);
     }
