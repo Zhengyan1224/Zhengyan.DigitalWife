@@ -30,6 +30,7 @@ internal static class AndroidRuntimeRegressionTests
             ("Android context menu PC layout, cameras, aliases and sprites", AndroidContextMenuTests.LayoutAndCameras),
             ("Android desktop sprite alpha touch regions", AndroidContextMenuTests.AlphaRegions),
             ("Android desktop sprite window bounds, transparency and frame pacing", AndroidDesktopSpriteTests.GeometryAndPacing),
+            ("Android desktop sprite size slider defaults, 10% content, screen limits and controls", AndroidDesktopSpriteTests.SizeSlider),
             ("Android desktop sprite export compatibility", AndroidDesktopSpriteTests.Compatibility),
             ("MMD IK rotation limits preserve single and multiple axes", MmdIkLimitTests.TestAxes),
             ("MMD IK PMX limits preserve reflected X/Y and positive Z", MmdIkLimitTests.TestPmxLimitConversion),

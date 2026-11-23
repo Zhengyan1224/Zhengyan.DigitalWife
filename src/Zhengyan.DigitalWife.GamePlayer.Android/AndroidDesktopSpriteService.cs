@@ -38,6 +38,9 @@ public sealed class AndroidDesktopSpriteService : Service
     private LinearLayout? _toolbar;
     private Button? _expandToolbarButton;
     private bool _toolbarCollapsed;
+    private int _spriteScalePercent = 100;
+    private (int Width, int Height) _spriteSize;
+    private AndroidDesktopSpriteSizePopup? _sizePopup;
     private EditText? _editor;
     private GuiControlSettings? _editingControl;
     private ScreenReceiver? _screenReceiver;
@@ -182,18 +185,22 @@ public sealed class AndroidDesktopSpriteService : Service
         }
         var screen = ScreenSize();
         var size = AndroidDesktopSpritePolicy.Size(settings.Window.Width, settings.Window.Height, screen.Width, screen.Height, Density);
-        _layout = new WindowManagerLayoutParams(size.Width, size.Height,
+        _spriteScalePercent = 100;
+        _spriteSize = size;
+        var overlay = AndroidDesktopSpritePolicy.OverlaySize(size.Width, size.Height, screen.Width, screen.Height, Density, false);
+        _layout = new WindowManagerLayoutParams(overlay.Width, overlay.Height,
             OperatingSystem.IsAndroidVersionAtLeast(26) ? WindowManagerTypes.ApplicationOverlay : WindowManagerTypes.Phone,
             WindowManagerFlags.NotFocusable | WindowManagerFlags.NotTouchModal, Format.Translucent)
         {
             Gravity = GravityFlags.Top | GravityFlags.Left,
-            X = Math.Max(0, screen.Width - size.Width - Dp(16)),
-            Y = Math.Max(0, screen.Height - size.Height - Dp(16)),
+            X = Math.Max(0, screen.Width - overlay.Width - Dp(16)),
+            Y = Math.Max(0, screen.Height - overlay.Height - Dp(16)),
             SoftInputMode = SoftInput.AdjustResize,
             Alpha = _visibleOpacity
         };
         _root = new SpriteRoot(this, _windowContext);
         _root.SetBackgroundColor(Color.Transparent);
+        _root.LayoutChange += (_, _) => ApplyTouchRegion();
         _game = new AndroidGameSurfaceView(_windowContext, settings, project.ProjectDirectory)
         {
             MaximumFramesPerSecond = AndroidDesktopSpritePolicy.FramesPerSecond,
@@ -207,8 +214,8 @@ public sealed class AndroidDesktopSpriteService : Service
         _game.RenderInitializationFailed += RenderFailed;
         _game.TextInputRequested += ShowTextEditor;
         _game.ContextMenuRequested += ShowGameMenu;
-        _root.AddView(_game, new FrameLayout.LayoutParams(-1, -1));
-        _root.AddView(_gui, new FrameLayout.LayoutParams(-1, -1));
+        _root.AddView(_game, new FrameLayout.LayoutParams(size.Width, size.Height, GravityFlags.Bottom | GravityFlags.Right));
+        _root.AddView(_gui, new FrameLayout.LayoutParams(size.Width, size.Height, GravityFlags.Bottom | GravityFlags.Right));
         _toolbarCollapsed = false;
         LinearLayout bar = _toolbar = new(_windowContext) { Orientation = global::Android.Widget.Orientation.Horizontal };
         bar.SetBackgroundColor(Color.Argb(140, 20, 30, 45));
@@ -218,6 +225,13 @@ public sealed class AndroidDesktopSpriteService : Service
         _handle.SetPadding(Dp(8), 0, 0, 0);
         _handle.Touch += DragWindow;
         bar.AddView(_handle, new LinearLayout.LayoutParams(0, Dp(32), 1));
+        Button sizeButton = new(_windowContext) { Text = "大小", ContentDescription = "调节桌面精灵大小" };
+        sizeButton.SetPadding(0, 0, 0, 0);
+        sizeButton.SetTextColor(Color.White);
+        sizeButton.SetTextSize(ComplexUnitType.Sp, 12);
+        sizeButton.SetBackgroundColor(Color.Transparent);
+        sizeButton.Click += (_, _) => ShowSizeControls();
+        bar.AddView(sizeButton, new LinearLayout.LayoutParams(Dp(48), Dp(32)));
         Button collapse = new(_windowContext) { Text = "−", ContentDescription = "收起拖动栏" };
         collapse.SetPadding(0, 0, 0, 0);
         collapse.SetTextColor(Color.White);
@@ -274,6 +288,7 @@ public sealed class AndroidDesktopSpriteService : Service
         switch (touch.ActionMasked)
         {
             case MotionEventActions.Down:
+                _sizePopup?.Dismiss();
                 CloseTextEditor();
                 _dragging = true; _dragX = touch.RawX; _dragY = touch.RawY; _windowX = _layout.X; _windowY = _layout.Y;
                 break;
@@ -293,15 +308,61 @@ public sealed class AndroidDesktopSpriteService : Service
     private void SetToolbarCollapsed(bool collapsed)
     {
         if (_toolbar is null || _expandToolbarButton is null || _stopping) return;
+        _sizePopup?.Dismiss();
         _toolbarCollapsed = collapsed;
         _dragging = false;
-        // Only these overlay controls change; the game surface and window retain their size and position.
+        // The content retains its size and screen position, including when it is smaller than the controls.
         _toolbar.Visibility = collapsed ? ViewStates.Gone : ViewStates.Visible;
         _expandToolbarButton.Visibility = collapsed ? ViewStates.Visible : ViewStates.Gone;
+        ResizeSpriteWindow();
+    }
+
+    private void ShowSizeControls()
+    {
+        if (_root is null || _game is null || _loadedProject?.Project is not { } project || _stopping) return;
+        _contextMenuPopup?.Dismiss();
+        CloseTextEditor();
+        var screen = ScreenSize();
+        int maximum = AndroidDesktopSpritePolicy.MaximumScalePercent(project.Window.Width, project.Window.Height,
+            screen.Width, screen.Height, Density);
+        _sizePopup ??= new(_root, _game, percent =>
+        {
+            if (_stopping) return;
+            _spriteScalePercent = percent;
+            ResizeSpriteWindow();
+        });
+        _sizePopup.Show(_spriteScalePercent, maximum);
+    }
+
+    private void ResizeSpriteWindow()
+    {
+        if (_layout is null || _loadedProject?.Project is not { } project || _stopping) return;
+        var screen = ScreenSize();
+        var content = AndroidDesktopSpritePolicy.ScaledSize(project.Window.Width, project.Window.Height,
+            screen.Width, screen.Height, Density, _spriteScalePercent);
+        var overlay = AndroidDesktopSpritePolicy.OverlaySize(content.Width, content.Height,
+            screen.Width, screen.Height, Density, _toolbarCollapsed);
+        bool contentChanged = content != _spriteSize;
+        if (contentChanged)
+        {
+            _contextMenuPopup?.Dismiss();
+            _game?.CancelInput();
+            CloseTextEditor();
+            if (_game is not null) _game.LayoutParameters = new FrameLayout.LayoutParams(content.Width, content.Height, GravityFlags.Bottom | GravityFlags.Right);
+            if (_gui is not null) _gui.LayoutParameters = new FrameLayout.LayoutParams(content.Width, content.Height, GravityFlags.Bottom | GravityFlags.Right);
+        }
+        // Keep the bottom-right corner anchored while resizing, then constrain the whole overlay to the screen.
+        var position = AndroidDesktopSpritePolicy.Position(_layout.X + _layout.Width - overlay.Width,
+            _layout.Y + _layout.Height - overlay.Height, overlay.Width, overlay.Height, screen.Width, screen.Height);
+        _spriteSize = content;
+        _layout.Width = overlay.Width; _layout.Height = overlay.Height;
+        _layout.X = position.X; _layout.Y = position.Y;
         _touchRegionHash = null;
-        // Reuse the last content mask so the toolbar's touch area changes immediately,
-        // even before the next throttled GPU readback or native View layout pass.
-        ApplyTouchRegion();
+        // A content resize invalidates the old GPU mask. Keep all controls reachable until the next alpha frame.
+        if (contentChanged) ResetTouchRegion();
+        UpdateWindow();
+        // Collapsing only the toolbar can reuse the current mask immediately.
+        if (!contentChanged) ApplyTouchRegion();
     }
 
     private void UpdateWindow()
@@ -322,12 +383,10 @@ public sealed class AndroidDesktopSpriteService : Service
                 case "exit": StopSelf(); break;
                 case "visible": SetVisible(command.Flag); break;
                 case "size":
+                    _sizePopup?.Dismiss();
                     CloseTextEditor();
                     if (_loadedProject?.Project is { } sized) { sized.Window.Width = command.Width; sized.Window.Height = command.Height; }
-                    var screen = ScreenSize();
-                    var size = AndroidDesktopSpritePolicy.Size(command.Width, command.Height, screen.Width, screen.Height, Density);
-                    _layout.Width = size.Width; _layout.Height = size.Height;
-                    ClampPosition(); UpdateWindow(); break;
+                    ResizeSpriteWindow(); break;
                 case "fullscreen": Toast.MakeText(this, "桌面精灵使用悬浮小窗。", ToastLength.Short)?.Show(); break;
                 case "title": if (_loadedProject?.Project is { } titled) titled.Window.Title = command.Text; break;
                 case "timing": if (_loadedProject?.Project is { } timed) timed.Window.TimingMode = command.Text; break;
@@ -345,6 +404,7 @@ public sealed class AndroidDesktopSpriteService : Service
 
     private void SetVisible(bool visible)
     {
+        _sizePopup?.Dismiss();
         _contextMenuPopup?.Dismiss();
         _touchRegionHash = null;
         CloseTextEditor();
@@ -375,7 +435,7 @@ public sealed class AndroidDesktopSpriteService : Service
         {
             service._screenOn = intent?.Action != Intent.ActionScreenOff
                 && (service.GetSystemService(KeyguardService) as KeyguardManager)?.IsKeyguardLocked != true;
-            if (!service._screenOn) { service._contextMenuPopup?.Dismiss(); service.CloseTextEditor(); }
+            if (!service._screenOn) { service._sizePopup?.Dismiss(); service._contextMenuPopup?.Dismiss(); service.CloseTextEditor(); }
             service.ResumeIfVisible();
         }
     }
@@ -383,20 +443,9 @@ public sealed class AndroidDesktopSpriteService : Service
     public override void OnConfigurationChanged(Configuration? newConfig)
     {
         base.OnConfigurationChanged(newConfig);
+        _sizePopup?.Dismiss();
         CloseTextEditor();
-        if (_layout is null || _loadedProject?.Project is not { } project) return;
-        var screen = ScreenSize();
-        var size = AndroidDesktopSpritePolicy.Size(project.Window.Width, project.Window.Height, screen.Width, screen.Height, Density);
-        _layout.Width = size.Width; _layout.Height = size.Height;
-        ClampPosition(); UpdateWindow();
-    }
-
-    private void ClampPosition()
-    {
-        if (_layout is null) return;
-        var screen = ScreenSize();
-        var point = AndroidDesktopSpritePolicy.Position(_layout.X, _layout.Y, _layout.Width, _layout.Height, screen.Width, screen.Height);
-        _layout.X = point.X; _layout.Y = point.Y;
+        ResizeSpriteWindow();
     }
 
     private void UpdateLoading()
@@ -423,6 +472,7 @@ public sealed class AndroidDesktopSpriteService : Service
     private void ShowGameMenu(ContextMenuSelection selection, float x, float y)
     {
         if (_game is null || _root is null) return;
+        _sizePopup?.Dismiss();
         _contextMenuPopup ??= new AndroidContextMenuPopup(_root, _game);
         _contextMenuPopup.Show(selection, x, y);
     }
@@ -430,7 +480,7 @@ public sealed class AndroidDesktopSpriteService : Service
     private void ShowTextEditor(GuiControlSettings control, LayoutRect rect)
     {
         CloseTextEditor();
-        if (_root is null || _layout is null || _game is null) return;
+        if (_root is null || _layout is null || _game is null || _gui is not { } gui) return;
         _editingControl = control;
         _editor = new EditText(_windowContext ?? this) { Text = control.Text };
         _editor.SetSingleLine(!control.Multiline);
@@ -446,9 +496,9 @@ public sealed class AndroidDesktopSpriteService : Service
             if (changed) _game?.DispatchGuiControlChanged(control);
         };
         _editor.EditorAction += (_, args) => { args.Handled = true; CloseTextEditor(); };
-        _gui!.EditingControl = control;
+        gui.EditingControl = control;
         _root.AddView(_editor, new FrameLayout.LayoutParams(Math.Max(1, (int)rect.Width), Math.Max(1, (int)rect.Height))
-        { LeftMargin = (int)rect.X, TopMargin = (int)rect.Y });
+        { LeftMargin = gui.Left + (int)rect.X, TopMargin = gui.Top + (int)rect.Y });
         _layout.Flags &= ~WindowManagerFlags.NotFocusable;
         UpdateWindow();
         _editor.RequestFocus();
@@ -494,17 +544,20 @@ public sealed class AndroidDesktopSpriteService : Service
             || _root?.RootSurfaceControl is not { } surface || _guiMask is null || _contentTouchRects is not { } rects) return;
         try
         {
-            int width = _guiMask.Width, height = _guiMask.Height;
+            int width = Math.Max(1, _root.Width), height = Math.Max(1, _root.Height);
+            int contentLeft = _game?.Left ?? 0, contentTop = _game?.Top ?? 0;
             AndroidTouchRect toolbar = new(_toolbarCollapsed ? Math.Max(0, width - Dp(36)) : 0,
                 0, width, Math.Min(height, Dp(32)));
             AndroidTouchRect? editor = _editor is null ? null : new(_editor.Left, _editor.Top, _editor.Right, _editor.Bottom);
             HashCode hash = new(); hash.Add(width); hash.Add(height);
+            hash.Add(contentLeft); hash.Add(contentTop);
             foreach (var rect in rects) hash.Add(rect);
             hash.Add(toolbar); hash.Add(editor);
             int signature = hash.ToHashCode();
             if (_touchRegionHash == signature) return;
             using Region region = new();
-            foreach (var rect in rects) region.InvokeOp(rect.Left, rect.Top, rect.Right, rect.Bottom, Region.Op.Union!);
+            foreach (var rect in rects) region.InvokeOp(rect.Left + contentLeft, rect.Top + contentTop,
+                rect.Right + contentLeft, rect.Bottom + contentTop, Region.Op.Union!);
             region.InvokeOp(toolbar.Left, toolbar.Top, toolbar.Right, toolbar.Bottom, Region.Op.Union!);
             if (editor is { } input) region.InvokeOp(input.Left, input.Top, input.Right, input.Bottom, Region.Op.Union!);
             surface.SetTouchableRegion(region);
@@ -550,6 +603,7 @@ public sealed class AndroidDesktopSpriteService : Service
 
     private void DestroyWindow()
     {
+        _sizePopup?.Dispose(); _sizePopup = null;
         _contextMenuPopup?.Dispose(); _contextMenuPopup = null;
         _guiMask?.Dispose(); _guiMask = null; _guiMaskPixels = []; _touchRegionHash = null; _contentTouchRects = null;
         CloseTextEditor();
@@ -569,6 +623,7 @@ public sealed class AndroidDesktopSpriteService : Service
         }
         _gui?.Dispose(); _gui = null; _layout?.Dispose(); _layout = null; _handle = null;
         _toolbar = null; _expandToolbarButton = null; _toolbarCollapsed = false;
+        _spriteScalePercent = 100; _spriteSize = default;
         if (_windowContext is not null && !ReferenceEquals(_windowContext, this)) _windowContext.Dispose();
         _windowContext = null;
     }
@@ -587,7 +642,7 @@ public sealed class AndroidDesktopSpriteService : Service
 
     protected override void Dump(Java.IO.FileDescriptor? fd, Java.IO.PrintWriter? writer, string[]? args)
     {
-        writer?.Println($"desktopSprite visible={_visible} screenOn={_screenOn} frames={_game?.RenderedFrameCount ?? 0} alphaReadback={_game?.AlphaReadbackEnabled == true} touchRegion={_touchRegionHash.HasValue} toolbarCollapsed={_toolbarCollapsed}");
+        writer?.Println($"desktopSprite visible={_visible} screenOn={_screenOn} frames={_game?.RenderedFrameCount ?? 0} alphaReadback={_game?.AlphaReadbackEnabled == true} touchRegion={_touchRegionHash.HasValue} toolbarCollapsed={_toolbarCollapsed} scalePercent={_spriteScalePercent} content={_spriteSize.Width}x{_spriteSize.Height}");
         if ((ApplicationInfo?.Flags & ApplicationInfoFlags.Debuggable) == ApplicationInfoFlags.Debuggable)
             writer?.Println("projectDirectory=" + _loadedProject?.ProjectDirectory);
     }
